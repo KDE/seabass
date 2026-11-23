@@ -1078,8 +1078,22 @@ tuning half and a held-back half; `--half` defaults to `tuning`, and the
 held-back half stays unread until an analyser has been tuned. The stick
 is only read: the catalogs are copied to the scratch folder first. The
 TSV names files, so it belongs in a scratch folder, never in the
-repository. `--jobs` is capped at 3: more decoders at once have run the
-development machine out of memory.
+repository. `--jobs` goes up to 16; more than 3 only where the memory is
+there, since a decoded track is held whole and more decoders at once
+have run a laptop with 32 GB out of memory. In place of a stick the
+first argument may be a track list, one track a line: row id, audio
+file, rekordbox analysis file, key, tempo.
+
+`--beats DIR`, in the `synth` and the `audio` mode, writes every grid
+that was compared as `<track>.<analyser>.tsv` and the grid it was
+compared against as `<track>.reference.tsv`, one beat a line (ms and the
+place in the bar), for looking at two grids side by side. A real track
+has its grid there: `DIR` is a scratch folder too.
+
+The drift (`drift` in the `synth` table, `drift_ms` in the TSV) is how
+far a grid runs away from the reference over the track, which is what a
+tempo that is a little off adds up to; `domain/beat_grid_comparison.hpp`
+says how it is followed across holes, stray beats and jumps.
 
 `analysis_baseline_test` (registered only with the option on) checks the
 ported ironing against beat lists made by hand, the three beat analysers

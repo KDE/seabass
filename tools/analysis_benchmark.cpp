@@ -25,7 +25,7 @@
 // root by default); where the file is not there, the row is compared on
 // rekordbox's own timeline and says so.
 //
-//   analysis_benchmark synth [--preset NAME|all] [--shift-ms X] [--check]
+//   analysis_benchmark synth [--preset NAME|all] [--shift-ms X] [--check] [--beats DIR]
 //
 // Renders synthetic tracks (tools/synth_track) and runs every registered
 // analyser over them through the GridAnalyser port, scored against the
@@ -43,6 +43,13 @@
 //
 //   analysis_benchmark audio <stick root> --analyser NAME[,NAME]|all [--audio-root DIR] [--limit N]
 //                      [--half tuning|heldback|all] [--tsv out.tsv] [--jobs N] [--scratch DIR]
+//                      [--beats DIR]
+//
+// --beats DIR, in both: every grid that was compared is written there as
+// <track>.<analyser>.tsv, and the one it was compared against as
+// <track>.reference.tsv, a beat a line (ms, place in the bar), for
+// looking at two grids side by side. A real track's grid is private data
+// like its audio: DIR is a place outside the repository.
 //
 // Built with the baseline where Qt Multimedia is there. Every rekordbox
 // track with a grid whose audio file is under --audio-root (the stick
@@ -145,10 +152,11 @@ int usage()
     std::fprintf(stderr,
                  "usage: analysis_benchmark libraries <stick root> [--tsv out.tsv] [--audio-root DIR] [--scratch DIR]\n"
                  "       analysis_benchmark synth [--preset NAME|all] [--analyser NAME[,NAME]|all] [--shift-ms X] [--check]\n"
+                 "                          [--beats DIR]\n"
 #ifdef SEABASS_ANALYSIS_AUDIO
                  "       analysis_benchmark audio <stick root|track list.tsv> --analyser NAME[,NAME]|all [--audio-root DIR]\n"
                  "                          [--limit N] [--half tuning|heldback|all] [--tsv out.tsv] [--jobs N]\n"
-                 "                          [--scratch DIR]\n"
+                 "                          [--scratch DIR] [--beats DIR]\n"
 #endif
                  );
     return 2;
@@ -711,16 +719,51 @@ std::string synthKeyName(const synth::SynthTrackSpec &spec)
 }
 #endif
 
+// One grid as a file of --beats: a beat a line, its time in ms and its
+// place in the bar. Nothing when no directory was given.
+void writeBeats(const fs::path &dir, const std::string &track, const std::string &grid,
+                const std::vector<domain::Beat> &beats)
+{
+    if (dir.empty()) {
+        return;
+    }
+    std::ofstream out(dir / pathFromUtf8(track + "." + grid + ".tsv"));
+    char line[64];
+    for (const domain::Beat &beat : beats) {
+        std::snprintf(line, sizeof line, "%.3f\t%d\n", beat.timeMs, beat.beatInBar);
+        out << line;
+    }
+}
+
+// The directory of --beats, made if it is not there. False, with a line
+// on stderr, when it cannot be.
+bool makeBeatsDir(const fs::path &dir)
+{
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (!fs::is_directory(dir, ec)) {
+        std::fprintf(stderr, "cannot make %s\n", pathToUtf8(dir).c_str());
+        return false;
+    }
+    return true;
+}
+
 int synthMode(int argc, char **argv)
 {
     std::string preset = "all";
     double shiftMs = 0.0;
     bool checkMode = false;
     std::string analyserList = "all";
+    fs::path beatsDir;
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--check") {
             checkMode = true;
+        } else if (arg == "--beats" && i + 1 < argc) {
+            beatsDir = pathFromUtf8(argv[++i]);
+            if (!makeBeatsDir(beatsDir)) {
+                return 1;
+            }
         } else if (arg == "--analyser" && i + 1 < argc) {
             analyserList = argv[++i];
         } else if (arg == "--preset" && i + 1 < argc) {
@@ -749,14 +792,16 @@ int synthMode(int argc, char **argv)
         return 2;
     }
 
-    std::printf("%-24s %-24s %-8s %5s %9s %8s %8s %8s %6s %6s %6s %6s %-6s %4s %5s %-9s %-9s %5s %8s %8s\n",
+    std::printf("%-24s %-24s %-8s %5s %9s %8s %8s %8s %6s %6s %6s %6s %-6s %4s %5s %-9s %-9s %5s %8s %8s %9s\n",
                 "preset", "analyser", "conf", "beats", "median", "scatter", "p95", "max", "<=1ms", "<=3ms", "<=8ms",
-                "<=20ms", "tempo", "bar", "share", "truth", "found", "cover", "trueBPM", "foundBPM");
-    std::printf("(trueBPM, foundBPM: the mean tempo, first beat to last)\n");
+                "<=20ms", "tempo", "bar", "share", "truth", "found", "cover", "trueBPM", "foundBPM", "drift");
+    std::printf("(trueBPM, foundBPM: the mean tempo, first beat to last; drift: how far the offset moves from\n"
+                "the start of the track to its end, in ms, where the tempo is the same)\n");
     int failures = 0;
     for (const std::string &name : names) {
         const synth::SynthTrackSpec spec = *synth::synthPreset(name);
         const synth::SynthTrack track = synth::renderSynthTrack(spec);
+        writeBeats(beatsDir, name, "reference", track.beats);
         std::vector<std::unique_ptr<domain::GridAnalyser>> analysers;
         for (const std::string &analyserName : *analyserNames) {
             if (analyserName == "oracle") {
@@ -788,15 +833,20 @@ int synthMode(int argc, char **argv)
                 continue;
             }
             const BeatGridComparison c = domain::compareBeatGrids(analysis.beats, track.beats);
+            writeBeats(beatsDir, name, analyser->name(), analysis.beats);
+            char drift[32] = "-";
+            if (c.drift.known) {
+                std::snprintf(drift, sizeof drift, "%+.3f", c.drift.ms);
+            }
             std::printf("%-24s %-24s %8.3f %5zu %+9.4f %8.4f %8.4f %8.4f %6.3f %6.3f %6.3f %6.3f %-6s %4s %5.3f %-9s "
-                        "%-9s %5.3f %8.3f %8.3f\n",
+                        "%-9s %5.3f %8.3f %8.3f %9s\n",
                         name.c_str(), analyser->name().c_str(), analysis.confidence, c.candidateBeats,
                         c.offset.medianMs, c.offset.madMs, c.offset.p95AbsMs, c.offset.maxAbsMs, c.hits.within1Ms,
                         c.hits.within3Ms, c.hits.within8Ms, c.hits.within20Ms, domain::tempoRelationName(c.tempo),
                         c.bar.known ? std::to_string(c.bar.beats).c_str() : "-", c.bar.share,
                         domain::gridShapeKindName(c.referenceShape.kind),
                         domain::gridShapeKindName(c.candidateShape.kind), c.cover, meanBpm(track.beats),
-                        meanBpm(analysis.beats));
+                        meanBpm(analysis.beats), drift);
             if (checkMode && analyser->name() == "oracle") {
                 // The oracle's answer is the truth moved by the shift: the
                 // arithmetic must give back exactly that.
@@ -804,7 +854,9 @@ int synthMode(int argc, char **argv)
                     && std::abs(c.offset.maxAbsMs - std::abs(shiftMs)) < 1e-6 && c.tempo == domain::TempoRelation::Same
                     && c.bar.known && c.bar.beats == 0 && c.bar.share == 1.0
                     && c.candidateShape.kind == c.referenceShape.kind && c.candidateBeats == track.beats.size()
-                    && (std::abs(shiftMs) > 1.0 || c.hits.within1Ms == 1.0);
+                    && (std::abs(shiftMs) > 1.0 || c.hits.within1Ms == 1.0)
+                    // A shift is no drift, on a constant grid and on a moving one.
+                    && c.drift.known && std::abs(c.drift.ms) < 1e-6;
                 if (!ok) {
                     std::printf("CHECK FAILED: %s: the oracle moved by %.4f ms does not come back as that\n",
                                 name.c_str(), shiftMs);
@@ -946,9 +998,11 @@ double msSince(std::chrono::steady_clock::time_point start)
 // Decodes one track and runs every analyser on it. The decoded samples
 // are held once per track and each analyser reads its own copy, so the
 // decode is not repeated and no analyser sees what another consumed.
-std::vector<AudioResult> analyseJob(const AudioJob &job, const std::vector<std::string> &analyserNames)
+std::vector<AudioResult> analyseJob(const AudioJob &job, const std::vector<std::string> &analyserNames,
+                                    const fs::path &beatsDir)
 {
     std::vector<AudioResult> results;
+    writeBeats(beatsDir, job.rekordboxId, "reference", job.reference);
     const auto decodeStart = std::chrono::steady_clock::now();
     infrastructure::audio::QtMultimediaPcmSource decoder(pathToUtf8(job.audio));
     const int rate = decoder.sampleRate();
@@ -987,6 +1041,7 @@ std::vector<AudioResult> analyseJob(const AudioJob &job, const std::vector<std::
             result.error = grid.error;
             if (grid.error.empty()) {
                 result.comparison = domain::compareBeatGrids(grid.beats, job.reference);
+                writeBeats(beatsDir, job.rekordboxId, name, grid.beats);
             }
         }
         results.push_back(std::move(result));
@@ -1145,6 +1200,7 @@ int audioMode(int argc, char **argv)
     std::string half = "tuning";
     fs::path audioRoot = stick;
     fs::path scratchParent = fs::temp_directory_path();
+    fs::path beatsDir;
     long limit = -1;
     int jobs = 1;
     for (int i = 3; i < argc; ++i) {
@@ -1161,6 +1217,11 @@ int audioMode(int argc, char **argv)
             audioRoot = pathFromUtf8(value);
         } else if (arg == "--scratch") {
             scratchParent = pathFromUtf8(value);
+        } else if (arg == "--beats") {
+            beatsDir = pathFromUtf8(value);
+            if (!makeBeatsDir(beatsDir)) {
+                return 1;
+            }
         } else if (arg == "--half" && (value == "tuning" || value == "heldback" || value == "all")) {
             half = value;
         } else if (arg == "--limit") {
@@ -1364,7 +1425,7 @@ int audioMode(int argc, char **argv)
                 if (index >= allJobs.size()) {
                     return;
                 }
-                perJob[index] = analyseJob(allJobs[index], *analyserNames);
+                perJob[index] = analyseJob(allJobs[index], *analyserNames, beatsDir);
                 if (tsv.is_open()) {
                     const std::lock_guard<std::mutex> lock(tsvMutex);
                     writeAudioTsvRows(tsv, perJob[index]);
