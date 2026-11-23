@@ -956,8 +956,8 @@ install(TARGETS seabass-cli RUNTIME DESTINATION bin)
 # all, not per-feature inclusion of code -- QML has no conditional-
 # compilation mechanism, so a feature's own page/controller can't be
 # compiled out this way. See docs/experimental-features.md. ON by
-# default: the toggle is there (on by default on master, off on a release
-# train, see AppSettingsController's constructor); turning this OFF instead
+# default: the toggle is there (and ticked by default, on master and on a
+# release train, see AppSettingsController's constructor); turning this OFF instead
 # produces a real "stable-only build" where that opt-in can't be reached
 # at all, regardless of anything already stored in QSettings.
 option(SEABASS_EXPERIMENTAL "Compile in the experimental-features opt-in (Settings toggle)" ON)
