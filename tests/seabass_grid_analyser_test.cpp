@@ -156,10 +156,58 @@ void nothingRegular()
     }
 }
 
+// A kick on every beat whose three parts swell one after the other (the
+// body at 250 Hz, then 100 Hz, then the sub at 50 Hz), and between the
+// beats a tick: two milliseconds of 3 kHz. Folded onto the beat the tick
+// is the taller spike, all of one band in a moment, and the kick the
+// heavier hump, three bands over thirty milliseconds; the grid belongs on
+// the kick.
+void spikeBetweenTheBeats(double clickLoudness, const std::string &what)
+{
+    const int rate = 44100;
+    const double period = 0.5;
+    const int count = 80;
+    const double pi = 3.14159265358979;
+    std::vector<float> audio(static_cast<std::size_t>((count * period + 1.0) * rate), 0.0f);
+    std::vector<Beat> truth;
+    struct Part
+    {
+        double hz, delay, attack, decay, loud;
+    };
+    const Part parts[] = {{250.0, 0.000, 0.020, 0.08, 0.25}, {100.0, 0.012, 0.025, 0.12, 0.3}, {50.0, 0.025, 0.030, 0.20, 0.35}};
+    for (int k = 0; k < count; ++k) {
+        const double beat = 0.25 + k * period;
+        truth.push_back({beat * 1000.0, k % 4 + 1});
+        for (const Part &part : parts) {
+            const auto from = static_cast<std::size_t>((beat + part.delay) * rate);
+            for (std::size_t i = 0; i < static_cast<std::size_t>(0.4 * rate) && from + i < audio.size(); ++i) {
+                const double t = static_cast<double>(i) / rate;
+                audio[from + i] += static_cast<float>(part.loud * (1.0 - std::exp(-t / part.attack)) * std::exp(-t / part.decay)
+                                                      * std::sin(2.0 * pi * part.hz * t));
+            }
+        }
+        const auto click = static_cast<std::size_t>((beat + period / 2.0) * rate);
+        const auto length = static_cast<std::size_t>(0.002 * rate);
+        for (std::size_t i = 0; i < length && click + i < audio.size(); ++i) {
+            const double t = static_cast<double>(i) / rate;
+            const double shape = std::sin(pi * static_cast<double>(i) / static_cast<double>(length));
+            audio[click + i] += static_cast<float>(clickLoudness * shape * std::sin(2.0 * pi * 3000.0 * t));
+        }
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth);
+    check(c.tempo == TempoRelation::Same, what + ": the tempo of the kicks");
+    within(c.offset.medianMs, -40.0, 70.0, what + ": the grid on the kick, in ms from where it starts");
+}
+
 }  // namespace
 
 int main()
 {
+    spikeBetweenTheBeats(0.15, "a tick between the beats");
+    spikeBetweenTheBeats(0.5, "a loud tick between the beats");
     nothingRegular();
     constantPreset("house-124", 124.0);
     constantPreset("house-124-48k", 124.0);

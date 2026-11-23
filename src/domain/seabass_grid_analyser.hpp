@@ -26,7 +26,9 @@ namespace seabass::domain
 // to decide between a tempo and its double.
 //
 // The place of the beat: the onset function folded onto one beat over the
-// whole track peaks there. Then the track is cut into windows of eight
+// whole track has most of its weight there (the weight within 30 ms, not
+// the highest point: a sharp hit between the beats makes a taller spike
+// than a kick, and a kick the heavier hump). Then the track is cut into windows of eight
 // beats and each window says how far its own peak is from that place; a
 // line through those says how much the period is off and by how much the
 // place, and the two are corrected. Windows without a peak near the place

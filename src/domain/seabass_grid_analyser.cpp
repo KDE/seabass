@@ -304,24 +304,29 @@ std::vector<double> fold(const std::vector<double> &onsets, double startMs, doub
 }
 
 // A fold smoothed around the beat (it has no ends: the step after the
-// last is the first), with a raised-cosine window 9 ms wide, so a peak is
-// one peak and not the ripple on it.
-std::vector<double> smoothed(const std::vector<double> &profile)
+// last is the first), with a raised-cosine window that reaches `reach`
+// steps either way. The fine one (5 steps, 9 ms across where it is not
+// zero) makes a peak one peak and not the ripple on it.
+constexpr std::ptrdiff_t FineReach = 5;
+
+std::vector<double> smoothed(const std::vector<double> &profile, std::ptrdiff_t reach = FineReach)
 {
-    constexpr std::ptrdiff_t Reach = 5;
-    std::array<double, 2 * Reach + 1> window{};
+    const auto n = static_cast<std::ptrdiff_t>(profile.size());
+    if (n == 0 || reach < 1) {
+        return profile;
+    }
+    std::vector<double> window(static_cast<std::size_t>(2 * reach + 1));
     double sum = 0.0;
-    for (std::ptrdiff_t k = 0; k <= 2 * Reach; ++k) {
+    for (std::ptrdiff_t k = 0; k <= 2 * reach; ++k) {
         window[static_cast<std::size_t>(k)] =
-            0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(k) / static_cast<double>(2 * Reach));
+            0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(k) / static_cast<double>(2 * reach));
         sum += window[static_cast<std::size_t>(k)];
     }
-    const auto n = static_cast<std::ptrdiff_t>(profile.size());
     std::vector<double> result(profile.size(), 0.0);
     for (std::ptrdiff_t i = 0; i < n; ++i) {
         double value = 0.0;
-        for (std::ptrdiff_t k = -Reach; k <= Reach; ++k) {
-            value += window[static_cast<std::size_t>(k + Reach)] * profile[static_cast<std::size_t>(((i + k) % n + n) % n)];
+        for (std::ptrdiff_t k = -reach; k <= reach; ++k) {
+            value += window[static_cast<std::size_t>(k + reach)] * profile[static_cast<std::size_t>(((i + k) % n + n) % n)];
         }
         result[static_cast<std::size_t>(i)] = value / sum;
     }
@@ -339,14 +344,37 @@ std::size_t indexOfMax(const std::vector<double> &values, std::size_t from, std:
     return top;
 }
 
-// Where in the beat the whole track's fold peaks, in ms from 0.
+// Where in the beat the whole track's fold has the beat, in ms from 0.
+//
+// Not at its highest point: a short sharp hit between the beats (a rim
+// shot, the first click of a clap) has all its bands rise in the same
+// few milliseconds and folds into one tall spike, and a kick, whose
+// bands rise one after the other over ten milliseconds and more, into a
+// hump that is lower and holds more. The
+// place is chosen where the fold has the most within 30 ms either way,
+// and the beat is the peak of the finely smoothed fold inside that.
 double wholeTrackPhase(const std::vector<double> &onsets, double period)
 {
     const auto beats = static_cast<std::size_t>(static_cast<double>(onsets.size() - 1) / period);
     std::size_t used = 0;
-    const std::vector<double> profile = smoothed(fold(onsets, 0.0, period, beats, used));
-    const double step = period / static_cast<double>(profile.size());
-    return parabolaPeak(profile, indexOfMax(profile, 0, profile.size() - 1)) * step;
+    const std::vector<double> folded = fold(onsets, 0.0, period, beats, used);
+    const std::vector<double> fine = smoothed(folded);
+    const auto steps = static_cast<std::ptrdiff_t>(fine.size());
+    constexpr std::ptrdiff_t WeighedOverMs = 30;
+    // Too few steps for a hump and a spike to be told apart: the highest.
+    if (steps < 8 * WeighedOverMs) {
+        return parabolaPeak(fine, indexOfMax(fine, 0, fine.size() - 1)) * (period / static_cast<double>(fine.size()));
+    }
+    const std::vector<double> broad = smoothed(folded, WeighedOverMs);
+    const auto centre = static_cast<std::ptrdiff_t>(indexOfMax(broad, 0, broad.size() - 1));
+    std::ptrdiff_t top = centre;
+    for (std::ptrdiff_t k = -WeighedOverMs; k <= WeighedOverMs; ++k) {
+        const std::ptrdiff_t i = ((centre + k) % steps + steps) % steps;
+        if (fine[static_cast<std::size_t>(i)] > fine[static_cast<std::size_t>(top)]) {
+            top = i;
+        }
+    }
+    return parabolaPeak(fine, static_cast<std::size_t>(top)) * (period / static_cast<double>(fine.size()));
 }
 
 // ------------------------------------------------------------------ tempo
