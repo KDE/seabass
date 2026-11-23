@@ -1040,6 +1040,52 @@ lead-in is read from its audio under `--audio-root` (the stick root by
 default); a stick copy without audio shows MP3 rows uncorrected and says
 so in the `timeline` column.
 
+### The baseline: Mixxx's method
+
+Phase 2 measures the method Mixxx uses, unchanged, inside the benchmark
+only. Configure with
+
+    cmake -DSEABASS_ANALYSIS_BASELINE=ON <build dir>
+
+and CMake fetches Mixxx's tree at the 2.5.3 release (pinned by commit
+and SHA-256, `cmake/SeabassAnalysisBaseline.cmake`) and builds its copy
+of qm-dsp (GPL-2.0 or later) into a library only `analysis_benchmark`
+and `analysis_baseline_test` link. Mixxx's own plugin code and its
+ironing are ported in `tools/analysis_baseline/` with Mixxx's notice. With
+the option off, the default, nothing is fetched and the build and the
+test list are as before.
+
+It registers four analysers: `qm-raw` (the tracker's beats as they
+come), `mixxx-constant` (Mixxx's default: one constant grid with its BPM
+rounding), `mixxx-constant-unrounded` (the same without the rounding),
+and the key detector `qm-key`. `analysis_benchmark synth` runs them over
+the generated tracks (`--analyser` picks some), and a new mode runs them
+over real audio:
+
+    analysis_benchmark audio <stick root> --analyser all --jobs 3 \
+        --scratch ~/scratch --tsv ~/scratch/baseline.tsv \
+        [--half tuning|heldback|all] [--limit N] [--audio-root DIR]
+
+Every rekordbox track with a grid and its audio file is decoded through
+`QtMultimediaPcmSource` and analysed; rekordbox's grid is put on
+Engine's timeline as the `libraries` mode puts it, and the summary is
+per analyser, for all tracks and for the "agreed subset" (Engine and
+rekordbox agree by the `libraries` rule), by format and by tempo band,
+with the 30 worst tracks by row id. Keys are classed against rekordbox's
+and Engine's (same, relative, fifth up or down, parallel, other). The
+library is split once by a hash of each track's rekordbox path into a
+tuning half and a held-back half; `--half` defaults to `tuning`, and the
+held-back half stays unread until an analyser has been tuned. The stick
+is only read: the catalogs are copied to the scratch folder first. The
+TSV names files, so it belongs in a scratch folder, never in the
+repository. `--jobs` is capped at 3: more decoders at once have run the
+development machine out of memory.
+
+`analysis_baseline_test` (registered only with the option on) checks the
+ported ironing against beat lists made by hand, the three beat analysers
+on generated tracks within the tracker's own 11.6 ms step, and the key
+detector on the generated tracks whose key it names correctly.
+
 ## Measuring write performance
 
 Benchmarking a save against real removable media has its own traps (a USB

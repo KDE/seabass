@@ -5406,6 +5406,27 @@ if(TARGET seabass_audio_qt)
     set_tests_properties(qt_multimedia_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
+# Phase 2's baseline: Mixxx's beat and key analysis on qm-dsp, fetched at
+# configure time, in analysis_benchmark and its tests only (see
+# cmake/SeabassAnalysisBaseline.cmake). Off by default, and with it off
+# neither the tool nor the test list changes. The audio mode decodes real
+# files, so it needs the Qt audio library as well.
+option(SEABASS_ANALYSIS_BASELINE "Build Mixxx's analysis (qm-dsp, fetched) into analysis_benchmark, for measuring" OFF)
+if(SEABASS_ANALYSIS_BASELINE)
+    include(cmake/SeabassAnalysisBaseline.cmake)
+    target_link_libraries(analysis_benchmark PRIVATE seabass_analysis_baseline)
+    target_compile_definitions(analysis_benchmark PRIVATE SEABASS_ANALYSIS_BASELINE)
+    if(TARGET seabass_audio_qt)
+        target_link_libraries(analysis_benchmark PRIVATE seabass_audio_qt Qt6::Core)
+        target_compile_definitions(analysis_benchmark PRIVATE SEABASS_ANALYSIS_AUDIO)
+    endif()
+    # The three beat analysers on generated tracks, the ported ironing on
+    # beat lists made by hand, and the key detector on a generated track.
+    add_executable(analysis_baseline_test tests/analysis_baseline_test.cpp)
+    target_link_libraries(analysis_baseline_test PRIVATE seabass_analysis_baseline seabass_synth_track seabass_core)
+    add_test(NAME analysis_baseline_test COMMAND analysis_baseline_test)
+endif()
+
 # Hardware probe for Copy Beat Grids: a grid of the caller's making on one
 # Engine row, through the feature's own writer, to ask a player what a
 # copied grid on a click track cannot (does it play by this grid at all).
