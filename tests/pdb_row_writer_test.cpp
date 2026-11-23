@@ -571,6 +571,50 @@ int main()
         std::cout << "case 12b (the deleted row stays gone, both live rows still read) OK\n";
     }
 
+    {
+        // A row whose string sits where a FULL last row group would keep
+        // its index. The index grows from the end of the page sixteen
+        // slots to a group, but only the slots a page has allocated take
+        // room: a group of two slots holds its flags and two offsets in
+        // eight bytes, not thirty-six, and rekordbox fills the heap right
+        // up to them. A real export had album rows reaching into that
+        // room, and zeroUnusedSpace() took the space of the fourteen
+        // unallocated slots for index slack and cleared it, which wiped
+        // the album name and the row's name offset and left a catalog
+        // the app could no longer read.
+        std::string buf = buildSyntheticPdb();
+        const size_t page1 = LenPage * 1;
+        constexpr size_t HeapStart = 40;
+        constexpr size_t TrackRowSize = 136;
+        constexpr size_t TrackOfsStringsOffset = 0x5E;
+        constexpr size_t TitleStringIndex = 17;
+        const size_t row1 = page1 + HeapStart + TrackRowSize;
+        // Page-relative 490..500: inside the 36 bytes a full group would
+        // take (476 onwards), outside the 8 bytes this one does (504).
+        const size_t titleAt = page1 + 490;
+        const std::string title = "Kept Title";
+        writeU16LE(buf, row1 + TrackOfsStringsOffset + 2 * TitleStringIndex, static_cast<uint16_t>(titleAt - row1));
+        buf[titleAt] = static_cast<char>(((title.size() + 1) << 1) | 1);  // short ASCII: (length << 1) | 1
+        buf.replace(titleAt + 1, title.size(), title);
+
+        const fs::path dir = seabass::testing::scratchRoot() / "pdb_zero_unused_partial_group";
+        fs::remove_all(dir);
+        fs::create_directories(dir);
+        const fs::path pdbPath = dir / "export.pdb";
+        writeFile(pdbPath, buf);
+
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
+        assert(writer.zeroUnusedSpace() > 0);  // the free bytes between the rows still go
+        assert(writer.commit());
+        const std::string after = readFile(pdbPath);
+        assert(after.compare(titleAt, title.size() + 1, buf, titleAt, title.size() + 1) == 0);
+        assert(readU16LE(after, row1 + TrackOfsStringsOffset + 2 * TitleStringIndex) == titleAt - row1);
+        auto rbAfter = readBack(pdbPath);
+        assert(contains(rbAfter.presentTrackIds, 100));
+        assert(contains(rbAfter.presentTrackIds, 101));
+        std::cout << "case 13 (zeroUnusedSpace: a string beside a partly filled row group is kept) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

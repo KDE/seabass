@@ -1997,7 +1997,15 @@ int PdbRowWriter::zeroUnusedSpace()
                 if (groups * RowGroupSizeBytes >= lenPage) {
                     return;  // nonsense geometry: leave the page alone
                 }
-                w.indexEnd = pageStart + lenPage - groups * RowGroupSizeBytes;
+                // Only the slots the page has allocated take room: every
+                // group but the last is a full 0x24 bytes, and the last
+                // holds its two flag words and one offset per allocated
+                // slot. rekordbox fills the heap right up to that, so
+                // counting the last group as full took the end of a live
+                // row for index slack and cleared it.
+                const size_t lastGroupSlots =
+                    std::min<size_t>(16, static_cast<size_t>(page->num_row_offsets()) - (groups - 1) * 16);
+                w.indexEnd = pageStart + lenPage - ((groups - 1) * RowGroupSizeBytes + 4 + 2 * lastGroupSlots);
                 w.numRows = static_cast<size_t>(page->num_rows());
                 w.rowOffsets = static_cast<size_t>(page->num_row_offsets());
                 w.groups = groups;
