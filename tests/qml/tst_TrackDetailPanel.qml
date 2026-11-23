@@ -33,7 +33,8 @@ TestCase {
             addCueController: {statusMessage: "", errorMessage: "", busy: false, calls: [],
                                addCue: function() { this.calls.push("addCue"); }},
             playbackController: {waveformFor: function(format, path, id) { return []; },
-                                 beatTicksFor: function(format, path, id, durationMs, widthPx) { return []; }},
+                                 beatTicksFor: function(format, path, id, durationMs, widthPx) { return []; },
+                                 cuesOnGridTimeline: (format, path, cues) => cues},
             format: "engine",
             libraryPath: "/media/MAIN/Engine Library",
         });
@@ -224,7 +225,8 @@ TestCase {
     }
 
     function makeLoadedPlayer(format, sourceId, libraryPath) {
-        return {waveformFor: function() { return []; }, beatTicksFor: function() { return []; }, hasTrack: true, currentFormat: format,
+        return {waveformFor: function() { return []; }, beatTicksFor: function() { return []; },
+                cuesOnGridTimeline: (format, path, cues) => cues, hasTrack: true, currentFormat: format,
                 currentLibraryPath: libraryPath || "/media/MAIN/Engine Library",
                 currentSourceId: sourceId, playing: true, position: 93000, duration: 372000,
                 seek: function() {}, togglePlay: function() {}};
@@ -238,7 +240,8 @@ TestCase {
             {tag: "the same id in the other format", player: makeLoadedPlayer("rekordbox", "42"), expected: false},
             // Nor is an id a track's name across two sticks of one format.
             {tag: "the same id on another stick", player: makeLoadedPlayer("engine", "42", "/media/OTHER/Engine Library"), expected: false},
-            {tag: "nothing loaded", player: {waveformFor: function() { return []; }, beatTicksFor: function() { return []; }},
+            {tag: "nothing loaded", player: {waveformFor: function() { return []; }, beatTicksFor: function() { return []; },
+                                             cuesOnGridTimeline: (format, path, cues) => cues},
              expected: false},
         ];
     }
@@ -280,5 +283,49 @@ TestCase {
         tryCompare(findChild(panel, "trackArtwork"), "visible", !canDraw, 2000,
                    canDraw ? "the ring carries the cover, so the sleeve steps aside"
                            : "no ring, so the sleeve stays");
+    }
+
+    // An Engine MP3's cues are held on rekordbox's timeline (#50) and its
+    // grid is Engine's: the pane draws the cues where Engine has them,
+    // as the player does (51.179 ms earlier on a LAME file at 44.1 kHz),
+    // so a cue on a kick sits on its beat line. A rekordbox track's cues
+    // and grid are on one timeline already and stay as given.
+    readonly property string lameFile: Qt.resolvedUrl("../fixtures/mp3-click/click-D-lame-44100.mp3").toString()
+        .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1")
+    Component {
+        id: realPlayerComponent
+        PlaybackController {}
+    }
+    Component {
+        id: settingsComponent
+        AppSettingsController {}
+    }
+    function test_anEngineMp3sCuesAreDrawnOnEnginesTimeline_data() {
+        return [{tag: "engine", format: "engine", expected: 5000},
+                {tag: "rekordbox", format: "rekordbox", expected: 5051.179}];
+    }
+    function test_anEngineMp3sCuesAreDrawnOnEnginesTimeline(data) {
+        const settings = createTemporaryObject(settingsComponent, testCase);
+        const was = settings.correctMp3CueTiming;
+        settings.correctMp3CueTiming = true;
+        // The setting is the application's: put back even when a check
+        // below fails.
+        try {
+            const panel = makePanel();
+            panel.playbackController = createTemporaryObject(realPlayerComponent, testCase);
+            panel.format = data.format;
+            panel.libraryPath = "/nonexistent/Library";
+            const delegate = makeDelegate();
+            delegate.filePath = testCase.lameFile;
+            delegate.cues = [{kind: "hot", hotCueNumber: 1, positionMs: 5051.179, isLoop: false, loopEndMs: 0,
+                              color: "#ffcc00", comment: ""}];
+            panel.showFor(delegate);
+            const view = findChild(panel, "trackDetailPanelWaveform");
+            compare(view.cueData.length, 1);
+            fuzzyCompare(view.cueData[0].positionMs, data.expected, 0.001);
+            compare(panel.trackCues[0].positionMs, 5051.179, "the pane's own list is left as the library holds it");
+        } finally {
+            settings.correctMp3CueTiming = was;
+        }
     }
 }

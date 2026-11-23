@@ -369,6 +369,11 @@ SeabassDialog {
     // the overview until then, and where there is nothing finer.
     readonly property var detail: root.showing && root.controller && root.controller.detailWaveform
         ? root.controller.detailWaveform : ({})
+    // Each library's detail in its own player's colours: an Engine
+    // track as a Denon player draws it, a rekordbox one in rekordbox's
+    // three-band colours (WaveformView.colorScheme).
+    readonly property string colorScheme: root.controller && root.controller.currentFormat === "engine"
+        ? "engine" : "vivid"
     readonly property bool hasDetail: root.detail.columns !== undefined && root.detail.columns !== null
         && root.detail.columns.byteLength >= 3
     // The beats drawn at this zoom, for the whole track: the same rule as
@@ -571,7 +576,8 @@ SeabassDialog {
                         }
                         Component.onCompleted: Qt.callLater(tileView.markMade)
                         showRuler: tileView.made && root ? root.ticks.length > 0 : false
-                        colorScheme: "vivid"
+                        // `root` can be gone already, as for showRuler.
+                        colorScheme: root ? root.colorScheme : "vivid"
                         // Played or not is shown by the dimming below, which
                         // moves with the playhead without a repaint.
                         unplayedOpacity: 1

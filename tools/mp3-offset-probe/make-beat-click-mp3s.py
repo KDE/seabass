@@ -27,7 +27,10 @@ B zeroed 26.1 ms, B Lavc 25.1 ms, C and D 51.2 ms (47.0 at 48 kHz).
 With quantize on, a hot cue pressed near the first beat snaps onto it in
 both apps, which puts the same instant into the cue tables too.
 
-usage: make-beat-click-mp3s.py OUT_DIR
+usage: make-beat-click-mp3s.py OUT_DIR [SECONDS]
+
+SECONDS (60 by default) shortens the files: tests/fixtures/beat-click
+holds 10-second ones (the clicks up to 9.500 s).
 """
 
 import math
@@ -51,8 +54,8 @@ BURST_S = 0.002
 TONE_HZ = 2000.0
 
 
-def beat_click_pcm(rate):
-    pcm = [0] * (SECONDS * rate)
+def beat_click_pcm(rate, seconds=SECONDS):
+    pcm = [0] * (seconds * rate)
     burst = int(BURST_S * rate)
     beat_s = 60.0 / BPM
     beat = 0
@@ -99,13 +102,14 @@ def patched(src, out, patch):
 
 
 def main():
-    if len(sys.argv) != 2:
+    if len(sys.argv) not in (2, 3):
         sys.exit(__doc__)
     out = sys.argv[1]
+    seconds = int(sys.argv[2]) if len(sys.argv) == 3 else SECONDS
     os.makedirs(out, exist_ok=True)
     p = lambda name: os.path.join(out, name)
-    pcm44 = beat_click_pcm(44100)
-    pcm48 = beat_click_pcm(48000)
+    pcm44 = beat_click_pcm(44100, seconds)
+    pcm48 = beat_click_pcm(48000, seconds)
 
     lame_encode.encode(p("beats-A-notag-44100.mp3"), 44100, 2, "joint", "64", True, pcm44)
     lame_encode.encode(p("beats-D-lame-44100.mp3"), 44100, 2, "joint", "64", False, pcm44)

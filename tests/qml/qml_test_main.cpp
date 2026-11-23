@@ -1102,6 +1102,20 @@ public:
         return !ec;
     }
 
+    // Copies `from` over `to` and gives `to` back the modification time it
+    // had: a file whose size changed and whose time did not.
+    Q_INVOKABLE bool copyKeepingTime(const QString &from, const QString &to)
+    {
+        std::error_code ec;
+        const auto target = seabass::gui::pathFromQString(to);
+        const auto modified = std::filesystem::last_write_time(target, ec);
+        if (ec || !copyFile(from, to)) {
+            return false;
+        }
+        std::filesystem::last_write_time(target, modified, ec);
+        return !ec;
+    }
+
     Q_INVOKABLE bool copyFile(const QString &from, const QString &to)
     {
         std::error_code ec;

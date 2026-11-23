@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 #include <QAudioBuffer>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
@@ -25,6 +26,9 @@
 #include "mpris_service.hpp"
 #endif
 #include "infrastructure/audio/playback_timeline.hpp"
+#ifdef SEABASS_HAVE_QT_AUDIO
+#include "infrastructure/audio/qt_multimedia_detail_waveform.hpp"
+#endif
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
@@ -70,6 +74,23 @@ QVariantList shiftedCues(const QVariantList &cues, double shiftMs)
         shifted.append(cue);
     }
     return shifted;
+}
+
+// A detail waveform as detailWaveform hands it to QML: three bytes a
+// column, low, mid and high, 0 to 255. Made in the worker that read it.
+QByteArray columnBytes(const domain::DetailWaveform &detail)
+{
+    QByteArray columns;
+    columns.reserve(static_cast<qsizetype>(detail.columns.size() * 3));
+    const auto toByte = [](double v) {
+        return static_cast<char>(static_cast<unsigned char>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)));
+    };
+    for (const domain::WaveformColumn &column : detail.columns) {
+        columns.append(toByte(column.low));
+        columns.append(toByte(column.mid));
+        columns.append(toByte(column.high));
+    }
+    return columns;
 }
 
 domain::TrackAnalysis readAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId,
@@ -242,6 +263,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_currentFormat = format;
     m_currentSourceId = sourceId;
     m_currentLibraryPath = libraryPath;
+    m_currentFilePath = filePath;
     m_title = title;
     m_artist = artist;
     m_artworkPath = artworkPath;
@@ -366,6 +388,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     m_currentFormat = format;
     m_currentSourceId = QStringLiteral("recording:") + filePath;
     m_currentLibraryPath = libraryPath;
+    m_currentFilePath = filePath;
     m_title = title;
     m_artist = artist;
     m_artworkPath.clear();
@@ -491,23 +514,13 @@ void PlaybackController::dropDetailWaveform()
     }
 }
 
-void PlaybackController::setDetailWaveform(const domain::DetailWaveform &detail, int serial)
+void PlaybackController::setDetailWaveform(const QByteArray &columns, double msPerColumn, int serial)
 {
     if (serial != m_trackSerial) {
         return;   // another track has been loaded since it was asked for
     }
-    QByteArray columns;
-    columns.reserve(static_cast<qsizetype>(detail.columns.size() * 3));
-    const auto toByte = [](double v) {
-        return static_cast<char>(static_cast<unsigned char>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)));
-    };
-    for (const domain::WaveformColumn &column : detail.columns) {
-        columns.append(toByte(column.low));
-        columns.append(toByte(column.mid));
-        columns.append(toByte(column.high));
-    }
     m_detailWaveform = {{QStringLiteral("columns"), columns},
-                        {QStringLiteral("msPerColumn"), detail.msPerColumn},
+                        {QStringLiteral("msPerColumn"), msPerColumn},
                         {QStringLiteral("startMs"), m_beatShiftMs}};
     m_detailSerial = serial;
     emit detailWaveformChanged();
@@ -529,18 +542,17 @@ void PlaybackController::requestDetailWaveform()
     const bool engine = m_currentFormat == QLatin1String("engine");
     if ((!engine && m_currentFormat != QLatin1String("rekordbox")) || m_currentLibraryPath.isEmpty()
         || m_currentSourceId.startsWith(QLatin1String("recording:"))) {
-        setDetailWaveform({}, serial);
+        setDetailWaveform({}, 0.0, serial);
         return;
     }
-    // Engine 2.x and 3.x: nothing finer than the overview load() read
-    // can come back, and load() kept it; no second opening.
-    if (engine && m_loadedDetailKept) {
-        setDetailWaveform(m_loadedDetail, serial);
-        return;
-    }
-    // Not while a library is being written: an analysis file or the
-    // database can be half rewritten. setLibraryBusy(false) asks again.
+    // Not while a library is being written: an analysis file, the
+    // database or an audio file's tags can be half rewritten.
+    // setLibraryBusy(false) asks again. An Engine 2.x or 3.x overview
+    // load() kept is handed over meanwhile.
     if (m_libraryBusy) {
+        if (engine && m_loadedDetailKept) {
+            setDetailWaveform(columnBytes(m_loadedDetail), m_loadedDetail.msPerColumn, serial);
+        }
         return;
     }
     // Everything else is read off the GUI thread (#104). export.pdb's
@@ -555,20 +567,126 @@ void PlaybackController::requestDetailWaveform()
     }
     const std::string path = m_currentLibraryPath.toStdString();
     const std::string sourceId = m_currentSourceId.toStdString();
-    const QString stickRoot = QFileInfo(m_currentLibraryPath).absolutePath();
-    m_detailRequest.start(
-        QString::number(serial), stickRoot,
-        [path, sourceId, engine, index](application::CancellationToken cancel) {
+    const QString audioPath = engine ? m_currentFilePath : QString();
+    // What this session made of the file before, checked by the worker.
+    const std::shared_ptr<const AudioDetailEntry> known = engine ? audioDetailFor(audioPath) : nullptr;
+    // The overview load() kept (Engine 2.x and 3.x), for when the audio
+    // cannot be decoded: no second opening of the database for it.
+    std::optional<domain::DetailWaveform> overview;
+    if (engine && m_loadedDetailKept) {
+        overview = m_loadedDetail;
+    }
+    // The library's stick, and the audio file's where it is elsewhere:
+    // either going away ends the read.
+    QStringList sticks{QFileInfo(m_currentLibraryPath).absolutePath()};
+    if (!audioPath.isEmpty()) {
+        sticks.append(QFileInfo(audioPath).absolutePath());
+    }
+    m_detailRequest.startOnSticks(
+        QString::number(serial), sticks,
+        [path, sourceId, engine, index, audioPath, known, overview](application::CancellationToken cancel) {
+            DetailRead read;
             if (cancel.cancelled()) {
-                return domain::DetailWaveform{};
+                return read;
             }
-            domain::DetailWaveform detail = engine
-                ? infrastructure::engine::readTrackAnalysis(path, sourceId, std::numeric_limits<std::size_t>::max()).detail
-                : infrastructure::rekordbox::readDetailWaveform(path, sourceId, nullptr, index.get());
-            return cancel.cancelled() ? domain::DetailWaveform{} : detail;
+            if (!engine) {
+                const domain::DetailWaveform detail
+                    = infrastructure::rekordbox::readDetailWaveform(path, sourceId, nullptr, index.get());
+                read.columns = columnBytes(detail);
+                read.msPerColumn = detail.msPerColumn;
+                return cancel.cancelled() ? DetailRead{} : read;
+            }
+            bool fromAudio = false;
+#ifdef SEABASS_HAVE_QT_AUDIO
+            const QFileInfo info(audioPath);
+            if (!audioPath.isEmpty() && info.isFile()) {
+                const qint64 size = info.size();
+                const qint64 modifiedMs = info.lastModified().toMSecsSinceEpoch();
+                if (known && known->size == size && known->modifiedMs == modifiedMs) {
+                    // Made before from the file as it is now: no decode,
+                    // and none for a file that could not be decoded.
+                    if (!known->failed) {
+                        read.columns = known->columns;
+                        read.msPerColumn = known->msPerColumn;
+                        fromAudio = true;
+                    }
+                } else {
+                    auto entry = std::make_shared<AudioDetailEntry>();
+                    entry->path = audioPath;
+                    entry->size = size;
+                    entry->modifiedMs = modifiedMs;
+                    {
+                        const domain::DetailWaveform detail = infrastructure::audio::audioDetailWaveform(
+                            audioPath.toStdString(), [&cancel] { return cancel.cancelled(); });
+                        entry->columns = columnBytes(detail);
+                        entry->msPerColumn = detail.msPerColumn;
+                    }
+                    if (cancel.cancelled()) {
+                        return DetailRead{};
+                    }
+                    entry->failed = entry->columns.isEmpty();
+                    fromAudio = !entry->failed;
+                    read.columns = entry->columns;
+                    read.msPerColumn = entry->msPerColumn;
+                    read.decoded = std::move(entry);
+                }
+            }
+#else
+            (void)audioPath;
+            (void)known;
+#endif
+            if (cancel.cancelled()) {
+                return DetailRead{};
+            }
+            if (!fromAudio) {
+                const domain::DetailWaveform detail = overview ? *overview
+                    : infrastructure::engine::readTrackAnalysis(path, sourceId, std::numeric_limits<std::size_t>::max()).detail;
+                read.columns = columnBytes(detail);
+                read.msPerColumn = detail.msPerColumn;
+            }
+            return cancel.cancelled() ? DetailRead{} : read;
         },
-        {[this, serial](domain::DetailWaveform &&detail) { setDetailWaveform(detail, serial); },
+        {[this, serial](DetailRead &&read) {
+             if (read.decoded) {
+                 ++m_audioDetailDecodes;
+                 keepAudioDetail(std::move(read.decoded));
+             }
+             setDetailWaveform(read.columns, read.msPerColumn, serial);
+         },
          [](const QString &) {}, [] {}});
+}
+
+std::shared_ptr<const PlaybackController::AudioDetailEntry> PlaybackController::audioDetailFor(const QString &filePath)
+{
+    for (auto it = m_audioDetails.begin(); it != m_audioDetails.end(); ++it) {
+        if ((*it)->path == filePath) {
+            m_audioDetails.splice(m_audioDetails.begin(), m_audioDetails, it);
+            return m_audioDetails.front();
+        }
+    }
+    return nullptr;
+}
+
+void PlaybackController::keepAudioDetail(std::shared_ptr<const AudioDetailEntry> entry)
+{
+    std::erase_if(m_audioDetails, [&](const auto &kept) { return kept->path == entry->path; });
+    m_audioDetails.push_front(std::move(entry));
+    while (m_audioDetails.size() > MaximumAudioDetails) {
+        m_audioDetails.pop_back();
+    }
+}
+
+QVariantList PlaybackController::cuesOnGridTimeline(const QString &format, const QString &filePath,
+                                                    const QVariantList &cues) const
+{
+    if (format != QLatin1String("engine") || filePath.isEmpty() || cues.isEmpty()) {
+        return cues;
+    }
+    // The player's own shift for this file and an Engine grid: the cues
+    // go where load() puts them, and the grid stays where it is.
+    const auto shift = infrastructure::audio::playbackShiftFor(filePath.toStdString(),
+                                                               infrastructure::audio::GridTimeline::Engine);
+    return shiftedCues(cues, shift.cuesMs - shift.beatsMs);
 }
 
 void PlaybackController::releaseDetailWaveform()
@@ -865,6 +983,7 @@ void PlaybackController::stop()
     m_hasTrack = false;
     m_currentFormat.clear();
     m_currentSourceId.clear();
+    m_currentFilePath.clear();
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
