@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <iterator>
 #include <ios>
@@ -337,6 +339,56 @@ std::vector<std::string> proseFragments(const std::string &run)
 
 }  // namespace
 
+namespace
+{
+
+// The waveform sections of a rekordbox analysis file are amplitudes and
+// colours, one byte per column, and a loud passage reads as letters: an
+// export that keeps them (AnonymizationOptions::keepWaveforms) showed
+// runs of letters long enough to pass for words in 16 of 59 real .EXT
+// files. Their bodies are blanked before the sweep, so it looks at the
+// sections that can hold text (the path, the cue comments) and the
+// framing, and nothing else changes: the file on disk is not touched.
+bool isWaveformSectionTag(const std::string &bytes, std::size_t at)
+{
+    static const char *const tags[] = {"PWAV", "PWV2", "PWV3", "PWV4", "PWV5", "PWV6", "PWV7", "PWVC"};
+    return std::any_of(std::begin(tags), std::end(tags),
+                       [&](const char *tag) { return bytes.compare(at, 4, tag) == 0; });
+}
+
+std::uint32_t readU32BigEndian(const std::string &bytes, std::size_t at)
+{
+    return (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[at])) << 24)
+        | (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[at + 1])) << 16)
+        | (static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[at + 2])) << 8)
+        | static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[at + 3]));
+}
+
+void blankAnlzWaveformBodies(std::string &bytes)
+{
+    if (bytes.size() < 12 || bytes.compare(0, 4, "PMAI") != 0) {
+        return;
+    }
+    std::size_t at = readU32BigEndian(bytes, 4);
+    // Section by section, each length checked against what is left, so a
+    // malformed file stops the blanking rather than running past its end;
+    // whatever was not blanked is swept as it is.
+    while (at <= bytes.size() && bytes.size() - at >= 12) {
+        const std::uint32_t headerLength = readU32BigEndian(bytes, at + 4);
+        const std::uint32_t sectionLength = readU32BigEndian(bytes, at + 8);
+        if (sectionLength < 12 || headerLength > sectionLength || sectionLength > bytes.size() - at) {
+            return;
+        }
+        if (isWaveformSectionTag(bytes, at)) {
+            std::fill(bytes.begin() + static_cast<std::ptrdiff_t>(at + headerLength),
+                      bytes.begin() + static_cast<std::ptrdiff_t>(at + sectionLength), '\0');
+        }
+        at += sectionLength;
+    }
+}
+
+}  // namespace
+
 std::optional<std::vector<std::string>> readableTextInRawBytes(const fs::path &file)
 {
     std::error_code sizeEc;
@@ -373,6 +425,8 @@ std::optional<std::vector<std::string>> readableTextInRawBytes(const fs::path &f
         if (bytes.empty()) {
             return std::vector<std::string>{};
         }
+
+        blankAnlzWaveformBodies(bytes);
 
         std::set<std::string> vocabulary = staticVocabulary();
         if (isSqliteFile(bytes)) {

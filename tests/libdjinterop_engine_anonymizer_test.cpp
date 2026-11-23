@@ -306,6 +306,181 @@ int main()
     }
     std::cout << "case 12 (covers leave the file as they are cleared, and a failed compaction is said) OK\n";
 
+    // A cover linked by path rather than kept: Engine's rekordbox import
+    // writes "image://fileart//<path>" into AlbumArt.hash, a player as
+    // /media/<stick label>/PIONEER/Artwork/..., a computer as wherever it
+    // had the stick or the music. The label names the stick and a
+    // computer's path names its user and folders, so neither may leave in
+    // an export; the part under PIONEER/ is rekordbox's own numbering and
+    // stays, so a link still reads as a link to an artwork file.
+    {
+        const fs::path linkSource = root / "link-source" / "Engine Library";
+        const fs::path linkDest = root / "link-dest" / "Engine Library";
+        fs::create_directories(linkSource.parent_path());
+        {
+            auto db = djinterop::engine::create_database(seabass::pathToUtf8(linkSource));
+            djinterop::track_snapshot snapshot;
+            snapshot.title = "Linked";
+            snapshot.relative_path = "../Contents/linked.mp3";
+            db.create_track(snapshot);
+        }
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(linkSource / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK);
+        const std::string onPlayer = "image://fileart//media/REALSTICKLABEL/PIONEER/Artwork/00002/a27_m.jpg";
+        const std::string onComputer = "image://fileart//home/realusername/Music/Real Artist Folder/cover.jpg";
+        sqlite3_stmt *insert = nullptr;
+        assert(sqlite3_prepare_v2(handle, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (?, ?, NULL);", -1, &insert,
+                                  nullptr)
+               == SQLITE_OK);
+        int id = 20;
+        for (const std::string *link : {&onPlayer, &onComputer}) {
+            sqlite3_bind_int(insert, 1, id++);
+            sqlite3_bind_blob(insert, 2, link->data(), static_cast<int>(link->size()), SQLITE_TRANSIENT);
+            assert(sqlite3_step(insert) == SQLITE_DONE);
+            sqlite3_reset(insert);
+        }
+        sqlite3_finalize(insert);
+        sqlite3_close(handle);
+
+        const auto linked = anonymizeEngineLibrary(seabass::pathToUtf8(linkSource), seabass::pathToUtf8(linkDest));
+        assert(linked.errorMessage.empty());
+        assert(linked.artworkLinksScrubbed == 2);
+
+        const fs::path exported = linkDest / "Database2" / "m.db";
+        assert(sqlite3_open(seabass::pathToUtf8(exported).c_str(), &handle) == SQLITE_OK);
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(handle, "SELECT typeof(hash), CAST(hash AS TEXT) FROM AlbumArt WHERE id = ?;", -1,
+                                  &stmt, nullptr)
+               == SQLITE_OK);
+        const auto hashOf = [&](int rowId) {
+            sqlite3_bind_int(stmt, 1, rowId);
+            assert(sqlite3_step(stmt) == SQLITE_ROW);
+            assert(std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0))) == "blob");
+            const std::string hash(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1)));
+            sqlite3_reset(stmt);
+            return hash;
+        };
+        assert(hashOf(20) == "image://fileart//media/STICK/PIONEER/Artwork/00002/a27_m.jpg");
+        const std::string computer = hashOf(21);
+        assert(computer.rfind("image://fileart//Contents/", 0) == 0);
+        assert(computer.size() > std::string("image://fileart//Contents/").size());
+        sqlite3_finalize(stmt);
+        sqlite3_close(handle);
+
+        std::ifstream in(exported, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        for (const char *gone : {"REALSTICKLABEL", "realusername", "Real Artist Folder"}) {
+            assert(bytes.find(gone) == std::string::npos);
+        }
+    }
+    std::cout << "case 13 (artwork links lose the stick label and the computer's path) OK\n";
+
+    // A streaming track's link names the recording on the service as
+    // surely as its title does: "streaming://TIDAL/Track/<the service's
+    // id>". The service and the shape stay, so it still reads as a
+    // streaming track; the id does not.
+    {
+        const fs::path streamSource = root / "stream-source" / "Engine Library";
+        const fs::path streamDest = root / "stream-dest" / "Engine Library";
+        fs::create_directories(streamSource.parent_path());
+        int64_t streamId = 0;
+        {
+            auto db = djinterop::engine::create_database(seabass::pathToUtf8(streamSource));
+            djinterop::track_snapshot snapshot;
+            snapshot.title = "Streamed";
+            snapshot.relative_path = "../Contents/streamed.mp4";
+            streamId = db.create_track(snapshot).id();
+        }
+        sqlite3 *handle = nullptr;
+        assert(sqlite3_open(seabass::pathToUtf8(streamSource / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK);
+        assert(sqlite3_exec(handle,
+                            ("UPDATE Track SET streamingSource = 'TIDAL', uri = 'streaming://TIDAL/Track/918273645' "
+                             "WHERE id = " + std::to_string(streamId) + ";").c_str(),
+                            nullptr, nullptr, nullptr)
+               == SQLITE_OK);
+        sqlite3_close(handle);
+
+        const auto streamed = anonymizeEngineLibrary(seabass::pathToUtf8(streamSource), seabass::pathToUtf8(streamDest));
+        assert(streamed.errorMessage.empty());
+        assert(streamed.streamingLinksScrubbed == 1);
+
+        const fs::path exported = streamDest / "Database2" / "m.db";
+        assert(sqlite3_open(seabass::pathToUtf8(exported).c_str(), &handle) == SQLITE_OK);
+        sqlite3_stmt *stmt = nullptr;
+        assert(sqlite3_prepare_v2(handle, "SELECT uri, streamingSource FROM Track WHERE id = ?;", -1, &stmt, nullptr)
+               == SQLITE_OK);
+        sqlite3_bind_int64(stmt, 1, streamId);
+        assert(sqlite3_step(stmt) == SQLITE_ROW);
+        assert(std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)))
+               == "streaming://TIDAL/Track/" + std::to_string(streamId));
+        assert(std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1))) == "TIDAL");
+        sqlite3_finalize(stmt);
+        sqlite3_close(handle);
+        std::ifstream in(exported, std::ios::binary);
+        const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        assert(bytes.find("918273645") == std::string::npos);
+    }
+    std::cout << "case 14 (a streaming link loses the service's id for the recording) OK\n";
+
+    // keepWaveforms wins over slimForTesting for the waveforms: the
+    // overview blob and the .rgb previews stay, where slim alone drops
+    // both. The titles go either way.
+    {
+        const fs::path waveSource = root / "wave-source" / "Engine Library";
+        fs::create_directories(waveSource.parent_path());
+        int64_t waveId = 0;
+        {
+            auto db = djinterop::engine::create_database(seabass::pathToUtf8(waveSource));
+            djinterop::track_snapshot snapshot;
+            snapshot.title = "Real Waveform Title";
+            snapshot.relative_path = "../Contents/wave.mp3";
+            snapshot.sample_count = 44100 * 10;
+            snapshot.sample_rate = 44100;
+            snapshot.waveform = std::vector<djinterop::waveform_entry>(
+                1024, djinterop::waveform_entry{{10, 255}, {20, 255}, {30, 255}});
+            waveId = db.create_track(snapshot).id();
+        }
+        const fs::path rgb = waveSource / "Database2" / "OverviewData" / "some-uuid" / (std::to_string(waveId) + ".rgb");
+        fs::create_directories(rgb.parent_path());
+        std::ofstream(rgb, std::ios::binary) << std::string(64, '\x7f');
+
+        const auto overviewOf = [](const fs::path &engineLibrary) {
+            sqlite3 *handle = nullptr;
+            assert(sqlite3_open(seabass::pathToUtf8(engineLibrary / "Database2" / "m.db").c_str(), &handle) == SQLITE_OK);
+            sqlite3_stmt *stmt = nullptr;
+            assert(sqlite3_prepare_v2(handle, "SELECT overviewWaveFormData FROM PerformanceData;", -1, &stmt, nullptr)
+                   == SQLITE_OK);
+            assert(sqlite3_step(stmt) == SQLITE_ROW);
+            const auto *bytes = static_cast<const char *>(sqlite3_column_blob(stmt, 0));
+            std::string blob(bytes ? bytes : "", static_cast<std::size_t>(sqlite3_column_bytes(stmt, 0)));
+            sqlite3_finalize(stmt);
+            sqlite3_close(handle);
+            return blob;
+        };
+        const std::string sourceOverview = overviewOf(waveSource);
+        assert(!sourceOverview.empty());  // fixture self-check
+
+        const fs::path slimDest = root / "wave-slim" / "Engine Library";
+        const auto slim = anonymizeEngineLibrary(seabass::pathToUtf8(waveSource), seabass::pathToUtf8(slimDest),
+                                                 /*slimForTesting=*/true, /*keepWaveforms=*/false);
+        assert(slim.errorMessage.empty());
+        assert(slim.waveformRowsEmptied == 1);
+        assert(overviewOf(slimDest).empty());
+        assert(!fs::exists(slimDest / "Database2" / "OverviewData"));
+
+        const fs::path keptDest = root / "wave-kept" / "Engine Library";
+        const auto kept = anonymizeEngineLibrary(seabass::pathToUtf8(waveSource), seabass::pathToUtf8(keptDest),
+                                                 /*slimForTesting=*/true, /*keepWaveforms=*/true);
+        assert(kept.errorMessage.empty());
+        assert(kept.waveformRowsEmptied == 0);
+        assert(overviewOf(keptDest) == sourceOverview);
+        const fs::path keptRgb = keptDest / "Database2" / "OverviewData" / "some-uuid" / (std::to_string(waveId) + ".rgb");
+        assert(fs::exists(keptRgb) && fs::file_size(keptRgb) == 64);
+        auto keptDb = djinterop::engine::load_database(seabass::pathToUtf8(keptDest));
+        assert(keptDb.track_by_id(waveId)->title() != std::optional<std::string>("Real Waveform Title"));
+    }
+    std::cout << "case 15 (keepWaveforms keeps the overview and the .rgb previews that slim drops) OK\n";
+
     std::cout << "all cases passed\n";
     return 0;
 }

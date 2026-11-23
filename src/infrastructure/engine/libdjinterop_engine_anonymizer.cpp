@@ -18,6 +18,7 @@
 #include <string>
 #include <system_error>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
@@ -97,6 +98,136 @@ int scrubFilenameColumn(const std::string &destinationRoot)
     return changed;
 }
 
+
+// Replaces the service's id in every streaming track's link with the
+// row's own id: "streaming://TIDAL/Track/123456789" names one recording
+// on the service as surely as a title does, and the title is already
+// gone. The service and the shape stay, so the row still reads as a
+// streaming track. Same rtrim() idiom as scrubFilenameColumn(): it
+// strips the last path component. Returns how many rows changed, or -1.
+int scrubStreamingLinks(const std::string &destinationRoot)
+{
+    const std::string dbPath = pathToUtf8(pathFromUtf8(destinationRoot) / "Database2" / "m.db");
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    try {
+        if (!hasColumn(db, "Track", "uri")) {
+            sqlite3_close(db);
+            return 0;
+        }
+    } catch (const std::exception &) {
+        sqlite3_close(db);
+        return -1;
+    }
+    const char *sql =
+        "UPDATE Track SET uri = rtrim(uri, replace(uri, '/', '')) || id "
+        "WHERE uri LIKE 'streaming://%/%' AND uri <> rtrim(uri, replace(uri, '/', '')) || id;";
+    char *error = nullptr;
+    int changed = -1;
+    if (sqlite3_exec(db, sql, nullptr, nullptr, &error) == SQLITE_OK) {
+        changed = sqlite3_changes(db);
+    }
+    sqlite3_free(error);
+    sqlite3_close(db);
+    return changed;
+}
+
+// The label every rewritten link names instead of the stick's own.
+constexpr const char *ArtworkLinkStickLabel = "STICK";
+
+// Rewrites every cover link in AlbumArt.hash so it names nothing real.
+//
+// Engine's rekordbox import keeps no image and no digest for these rows,
+// only "image://fileart//<path>": a player writes the stick as it mounts
+// it, "/media/<label>/PIONEER/Artwork/00002/a27_m.jpg", and a computer
+// writes wherever it saw the stick or the music, which can be a home
+// directory with the user's name and their artist and album folders in
+// it. The rest of the export never carried the label or such a path, and
+// the hash column did, in every link.
+//
+// What stays is what makes it a link: the part from PIONEER/ on is
+// rekordbox's own numbering and is kept behind a placeholder label, so the
+// row still reads as a player's link to an artwork file. Any other path
+// becomes a placeholder file name. Rows are rewritten as blobs, the way
+// Engine stores them. Returns how many rows changed, or -1 when that
+// could not be done and the export still holds the paths.
+int scrubArtworkLinks(const std::string &destinationRoot)
+{
+    const std::string dbPath = pathToUtf8(pathFromUtf8(destinationRoot) / "Database2" / "m.db");
+    sqlite3 *db = nullptr;
+    if (sqlite3_open(dbPath.c_str(), &db) != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    try {
+        if (!hasColumn(db, "AlbumArt", "hash")) {
+            sqlite3_close(db);
+            return 0;
+        }
+    } catch (const std::exception &) {
+        sqlite3_close(db);
+        return -1;
+    }
+    const std::string prefix = "image://fileart//";
+    std::vector<std::pair<sqlite3_int64, std::string>> rewrites;
+    sqlite3_stmt *select = nullptr;
+    if (sqlite3_prepare_v2(db, "SELECT id, CAST(hash AS BLOB) FROM AlbumArt WHERE hash IS NOT NULL;", -1, &select,
+                           nullptr)
+        != SQLITE_OK) {
+        sqlite3_close(db);
+        return -1;
+    }
+    int stepped = SQLITE_ROW;
+    while ((stepped = sqlite3_step(select)) == SQLITE_ROW) {
+        const auto *bytes = static_cast<const char *>(sqlite3_column_blob(select, 1));
+        const std::string hash(bytes ? bytes : "", static_cast<std::size_t>(sqlite3_column_bytes(select, 1)));
+        if (hash.compare(0, prefix.size(), prefix) != 0) {
+            continue;
+        }
+        const std::string path = hash.substr(prefix.size());
+        const std::size_t pioneer = path.find("/PIONEER/");
+        std::string replacement;
+        if (pioneer != std::string::npos) {
+            replacement = prefix + "media/" + ArtworkLinkStickLabel + path.substr(pioneer);
+        } else {
+            const std::size_t slash = path.find_last_of("/\\");
+            replacement = prefix + "Contents/"
+                + anonymizationFilenamePlaceholder(slash == std::string::npos ? path : path.substr(slash + 1));
+        }
+        if (replacement != hash) {
+            rewrites.emplace_back(sqlite3_column_int64(select, 0), replacement);
+        }
+    }
+    sqlite3_finalize(select);
+    if (stepped != SQLITE_DONE) {
+        sqlite3_close(db);
+        return -1;
+    }
+    // Overwritten as they are replaced, like the covers, and the file is
+    // compacted after this anyway.
+    bool ok = sqlite3_exec(db, "PRAGMA secure_delete = ON; BEGIN;", nullptr, nullptr, nullptr) == SQLITE_OK;
+    sqlite3_stmt *update = nullptr;
+    ok = ok && sqlite3_prepare_v2(db, "UPDATE AlbumArt SET hash = ? WHERE id = ?;", -1, &update, nullptr) == SQLITE_OK;
+    for (const auto &[id, replacement] : rewrites) {
+        if (!ok) {
+            break;
+        }
+        sqlite3_bind_blob(update, 1, replacement.data(), static_cast<int>(replacement.size()), SQLITE_TRANSIENT);
+        sqlite3_bind_int64(update, 2, id);
+        ok = sqlite3_step(update) == SQLITE_DONE;
+        sqlite3_reset(update);
+    }
+    sqlite3_finalize(update);
+    ok = ok && sqlite3_exec(db, "COMMIT;", nullptr, nullptr, nullptr) == SQLITE_OK;
+    if (!ok) {
+        sqlite3_exec(db, "ROLLBACK;", nullptr, nullptr, nullptr);
+    }
+    sqlite3_close(db);
+    return ok ? static_cast<int>(rewrites.size()) : -1;
+}
 
 }  // namespace
 
@@ -229,7 +360,7 @@ void copyTreeIfPresent(const fs::path &from, const fs::path &to)
 }  // namespace
 
 EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, const std::string &destinationRoot,
-                                                  bool slimForTesting,
+                                                  bool slimForTesting, bool keepWaveforms,
                                                   application::ProgressReporter &reporter)
 {
     EngineAnonymizationResult result;
@@ -306,7 +437,10 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
             }
         }
 
-        if (slimForTesting) {
+        // Asked to keep the waveforms, slim mode leaves this column and
+        // the .rgb previews alone: they are what an analysis fixture is
+        // for, and neither holds any text.
+        if (slimForTesting && !keepWaveforms) {
             // The waveform, and only the waveform. Engine keeps its cues
             // in PerformanceData.quickCues and .loops, in the same table
             // and right beside this column, so the two have to be told
@@ -476,6 +610,16 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
         if (result.albumArtImagesRemoved < 0) {
             result.errorMessage = "the cover images kept in the Engine database could not be removed. "
                                   "This export must not be shared.";
+        }
+        result.streamingLinksScrubbed = scrubStreamingLinks(destinationRoot);
+        if (result.errorMessage.empty() && result.streamingLinksScrubbed < 0) {
+            result.errorMessage = "the streaming links in the Engine database still name their recordings on the "
+                                  "service, and could not be rewritten. This export must not be shared.";
+        }
+        result.artworkLinksScrubbed = scrubArtworkLinks(destinationRoot);
+        if (result.errorMessage.empty() && result.artworkLinksScrubbed < 0) {
+            result.errorMessage = "the cover links in the Engine database still name the stick or a computer's "
+                                  "folders, and could not be rewritten. This export must not be shared.";
         }
         // Last thing, after every writer above: see compactDatabase().
         if (result.errorMessage.empty() && !compactDatabase(pathToUtf8(destination / "Database2" / "m.db"))) {

@@ -341,7 +341,7 @@ std::string insideExport(const std::string &text, const std::string &destination
     return out;
 }
 
-std::string anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentIndex)
+std::string anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentIndex, bool keepWaveforms)
 {
     std::error_code ec;
     const bool there = fs::exists(pathFromUtf8(path), ec);
@@ -367,8 +367,14 @@ std::string anonymizeAnlzFile(const std::string &path, size_t &nextCueCommentInd
             }
         }
         size_t before = file.sections.size();
-        file.sections.erase(std::remove_if(file.sections.begin(), file.sections.end(), isLargeUnusedWaveformSection),
-                             file.sections.end());
+        // Kept on request: the waveform sections are numbers derived from
+        // the audio, with no text in them, and an export made to test the
+        // analysis code is useless without them.
+        if (!keepWaveforms) {
+            file.sections.erase(
+                std::remove_if(file.sections.begin(), file.sections.end(), isLargeUnusedWaveformSection),
+                file.sections.end());
+        }
         // Comment obfuscation always mutates in place (same section
         // count either way), so always re-write whenever any CUES_2
         // section exists, not just when stripping actually removed one.
@@ -399,7 +405,7 @@ void copyTreeIfPresent(const fs::path &from, const fs::path &to)
 }  // namespace
 
 RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &sourceRoot, const std::string &destinationRoot,
-                                                         bool slimForTesting,
+                                                         bool slimForTesting, bool keepWaveforms,
                                                          application::ProgressReporter &reporter)
 {
     RekordboxAnonymizationResult result;
@@ -780,7 +786,7 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(const std::string &source
         // MANIFEST.txt and in whatever a contributor pastes into a bug
         // thread.
         auto scrubOrDrop = [&](const std::string &anlz, const char *what) {
-            const std::string failure = anonymizeAnlzFile(anlz, nextCueCommentIndex);
+            const std::string failure = anonymizeAnlzFile(anlz, nextCueCommentIndex, keepWaveforms);
             if (failure.empty()) {
                 return true;
             }

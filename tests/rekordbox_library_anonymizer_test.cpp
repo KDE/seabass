@@ -795,6 +795,51 @@ int main()
         std::cout << "case 14 (a PPTH whose len_header wraps is refused, not indexed) OK\n";
     }
 
+    // keepWaveforms: the same source, and every waveform section comes
+    // through byte for byte, while everything identifying is replaced
+    // exactly as without it. Case 6 above is the same file without the
+    // switch, with both sections gone.
+    {
+        const fs::path keptDest = root / "dest-keep-waveforms";
+        auto kept = anonymizeRekordboxLibrary(seabass::pathToUtf8(sourceRoot), seabass::pathToUtf8(keptDest),
+                                              /*slimForTesting=*/false, /*keepWaveforms=*/true);
+        assert(kept.errorMessage.empty());
+        assert(kept.tracksAnonymized == 3);
+        const auto sectionBytes = [](const AnlzFile &file, Anlz::section_tags_t tag) {
+            for (const auto &section : file.sections) {
+                if (section.fourcc == static_cast<uint32_t>(tag)) {
+                    return section.rawBytes;
+                }
+            }
+            return std::string();
+        };
+        const std::string relative = "USBANLZ/P001/00000002/ANLZ0000.DAT";
+        const AnlzFile before = AnlzFile::readRaw(seabass::pathToUtf8(sourceRoot / relative));
+        const AnlzFile after = AnlzFile::readRaw(seabass::pathToUtf8(keptDest / relative));
+        for (const auto tag : {Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW, Anlz::SECTION_TAGS_WAVE_SCROLL,
+                               Anlz::SECTION_TAGS_CUES}) {
+            assert(!sectionBytes(before, tag).empty());  // fixture self-check
+            assert(sectionBytes(after, tag) == sectionBytes(before, tag));
+        }
+        assert(after.sections.size() == before.sections.size());
+        // The colour preview of the file with the cue comment too, and the
+        // comment is replaced all the same.
+        const std::string first = "USBANLZ/P001/00000001/ANLZ0000.DAT";
+        assert(sectionBytes(AnlzFile::readRaw(seabass::pathToUtf8(keptDest / first)),
+                            Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW)
+               == sectionBytes(AnlzFile::readRaw(seabass::pathToUtf8(sourceRoot / first)),
+                               Anlz::SECTION_TAGS_WAVE_COLOR_PREVIEW));
+        const std::string keptComment = readCueCommentUtf8(keptDest / first);
+        assert(keptComment != "Real DJ Note" && !keptComment.empty());
+        // And the catalog is scrubbed exactly as it is without the switch.
+        const fs::path keptPdb = keptDest / "rekordbox" / "export.pdb";
+        assert(trackFieldByIndex(keptPdb, 100, 17) == trackFieldByIndex(destPdb, 100, 17));
+        assert(trackFieldByIndex(keptPdb, 102, 17) != "Real Title 102");
+        assert(artistNameById(keptPdb, 5) == artistNameById(destPdb, 5));
+        std::cout << "case 15 (keepWaveforms: every waveform section kept byte for byte, the rest scrubbed as "
+                     "without it) OK\n";
+    }
+
     std::cout << "all cases passed\n";
     return 0;
 }

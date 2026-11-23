@@ -137,7 +137,7 @@ void printUsage()
     Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
     Console::info("                 [--keep-junk-cues]");
     Console::info("  seabass-cli anonymize [--rekordbox [PATH]] [--engine [PATH]] --out DIR");
-    Console::info("                        [--hardware TEXT] [--notes TEXT]");
+    Console::info("                        [--slim] [--keep-waveforms] [--hardware TEXT] [--notes TEXT]");
     Console::info("  seabass-cli --help");
     Console::info("");
     Console::heading("Commands");
@@ -250,6 +250,11 @@ void printUsage()
     Console::info("                      the binary bulk: unreferenced analysis files, Engine's");
     Console::info("                      waveform blobs and .rgb previews all go. For building a");
     Console::info("                      test fixture; leave off for a library you are submitting.");
+    Console::info("  --keep-waveforms    anonymize only: keep every waveform of both analyses:");
+    Console::info("                      rekordbox's colour, three-band and scrolling waveform");
+    Console::info("                      sections, Engine's overview and the .rgb previews. All");
+    Console::info("                      identifying text is still replaced. Wins over --slim for");
+    Console::info("                      the waveforms. For a fixture that tests the analysis code.");
     Console::info("  --hardware TEXT     anonymize only: what hardware you use, saved into");
     Console::info("                      MANIFEST.txt verbatim. Optional.");
     Console::info("  --notes TEXT        anonymize only: anything you'd like tested, saved into");
@@ -2783,7 +2788,7 @@ int runExportXmlCommand(bool wantRekordbox, bool wantEngine, const std::optional
 
 int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPath,
                          const std::optional<std::string> &enginePath, const std::optional<std::string> &outDir,
-                         bool slim, const std::string &hardware,
+                         bool slim, bool keepWaveforms, const std::string &hardware,
                          const std::string &notes)
 {
     if (!outDir) {
@@ -2798,6 +2803,7 @@ int runAnonymizeCommand(bool wantRekordbox, bool wantEngine, const std::optional
 
     AnonymizationOptions options;
     options.slimForTesting = slim;
+    options.keepWaveforms = keepWaveforms;
     options.hardware = hardware;
     options.notes = notes;
 
@@ -2896,6 +2902,7 @@ int main(int argc, char **argv)
     bool preferEngine = false;
     bool keepJunkCues = false;
     bool slim = false;
+    bool keepWaveforms = false;
     std::string hardware;
     std::string notes;
     std::vector<std::string> commands;
@@ -3049,6 +3056,8 @@ int main(int argc, char **argv)
             keepJunkCues = true;
         } else if (arg == "--slim") {
             slim = true;
+        } else if (arg == "--keep-waveforms") {
+            keepWaveforms = true;
         } else if (arg == "--hardware") {
             if (i + 1 >= args.size()) {
                 Console::error("--hardware requires a description");
@@ -3150,7 +3159,7 @@ int main(int argc, char **argv)
 
     if (commands[0] == "anonymize") {
         return runAnonymizeCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, outDir, slim,
-                                    hardware, notes);
+                                    keepWaveforms, hardware, notes);
     }
 
     // commands[0] == "scan". Every detected stick carrying a requested

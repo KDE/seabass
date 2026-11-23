@@ -487,6 +487,43 @@ int main(int argc, char **argv)
         std::cout << "case 13 (a path whose bytes cannot be read says so) OK\n";
     }
 
+    // A rekordbox analysis file that keeps its waveforms (an export made
+    // with keepWaveforms): a loud passage of amplitude bytes reads as
+    // letters, and the sweep must not take it for a leak. The same bytes
+    // in a section that is not a waveform are still swept, so the sweep
+    // still reads the rest of the file.
+    {
+        const auto be32 = [](std::string &out, std::uint32_t v) {
+            for (int shift = 24; shift >= 0; shift -= 8) {
+                out.push_back(static_cast<char>((v >> shift) & 0xFF));
+            }
+        };
+        const auto anlzWithSection = [&](const char *tag, const std::string &body) {
+            std::string section(tag, 4);
+            be32(section, 12);
+            be32(section, static_cast<std::uint32_t>(12 + body.size()));
+            section += body;
+            std::string file = "PMAI";
+            be32(file, 12);
+            be32(file, static_cast<std::uint32_t>(12 + section.size()));
+            return file + section;
+        };
+        const std::string loudPassage = "Loud passage reads like several real words";
+        const fs::path dir = root / "anlz-waveforms";
+        fs::create_directories(dir);
+        const auto write = [&](const char *name, const std::string &bytes) {
+            std::ofstream out(dir / name, std::ios::binary);
+            out << bytes;
+        };
+        write("waveform.EXT", anlzWithSection("PWV5", loudPassage));
+        write("other.EXT", anlzWithSection("PXYZ", loudPassage));
+        const auto waveform = infrastructure::readableTextInRawBytes(dir / "waveform.EXT");
+        const auto other = infrastructure::readableTextInRawBytes(dir / "other.EXT");
+        assert(waveform.has_value() && waveform->empty());
+        assert(other.has_value() && !other->empty());
+        std::cout << "case 14 (waveform bytes in an analysis file are not swept as text, other sections are) OK\n";
+    }
+
     fs::remove_all(root, ec);
     // Said in the last line rather than left to whoever scrolls up: a
     // run that skipped the two cases proving the central claim is not

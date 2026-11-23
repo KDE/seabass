@@ -42,6 +42,13 @@ struct EngineAnonymizationResult
     // was dropped. Artwork/ files are never copied into an export, so the
     // covers kept in the database go too.
     int albumArtImagesRemoved = 0;
+    // AlbumArt rows whose hash was a path to a cover
+    // ("image://fileart//<path>") and was rewritten so it names neither
+    // the stick's label nor anything of the computer it came from.
+    int artworkLinksScrubbed = 0;
+    // Streaming tracks whose link ("streaming://TIDAL/Track/<id>") lost
+    // the service's id for the recording.
+    int streamingLinksScrubbed = 0;
     int tracksRefused = 0;
     std::string firstRefusalReason;
     std::string errorMessage;  // empty on success
@@ -82,6 +89,9 @@ EngineAnonymizationResult anonymizeEngineLibrary(
     // See AnonymizationOptions::slimForTesting: empties the waveform
     // blob and drops the .rgb previews, keeping the cues beside them.
     bool slimForTesting = false,
+    // See AnonymizationOptions::keepWaveforms: the waveform blob and the
+    // .rgb previews stay even when slimForTesting is given.
+    bool keepWaveforms = false,
     application::ProgressReporter &reporter = application::NullProgressReporter::instance());
 
 }  // namespace seabass::infrastructure::engine

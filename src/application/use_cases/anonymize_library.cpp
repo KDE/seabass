@@ -203,9 +203,21 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
          "    last-played date, whether it's a streaming-service track,\n"
          "    playlist membership/position, the low-resolution monochrome\n"
          "    waveform preview actually used by this app, beatgrid.\n"
-         "  REPLACED with placeholder text (e.g. \"Track 014\"): title,\n"
+      + (options.keepWaveforms
+             ? "  ALSO KEPT as-is, because this export was asked to keep the\n"
+               "    waveforms: every waveform section of rekordbox's analysis\n"
+               "    files (the colour and three-band previews and the\n"
+               "    scrolling waveforms of the .EXT and .2EX files), Engine's\n"
+               "    overview waveform, beat data, key and loudness, and the\n"
+               "    .rgb overview files in OverviewData. They are numbers\n"
+               "    derived from the audio and hold no text.\n"
+             : std::string())
+      + "  REPLACED with placeholder text (e.g. \"Track 014\"): title,\n"
          "    artist, comment, cue comments, filename/file path,\n"
          "    playlist/folder names.\n"
+         "  REPLACED in Engine's links too: the service's id for a\n"
+         "    streaming track, and the stick's name or a computer's\n"
+         "    folders in a link to a cover.\n"
          "  REPLACED inside the analysis files too: the file path each\n"
          "    one embeds, which is where the artist, album and title\n"
          "    would otherwise still be readable.\n"
@@ -244,10 +256,12 @@ void writeManifest(const fs::path &manifestPath, const AnonymizationSummary &sum
                    "    going wrong, and it is worth knowing before you read two\n"
                    "    identical names as a bug.\n"
              : std::string())
-      + "  REMOVED entirely: artwork images, the detailed color and\n"
-         "    scrolling waveform data rekordbox's own UI uses during\n"
-         "    playback (not read by this app), and original file paths.\n\n"
-         "Everything above is CHECKED, not just intended: this export was\n"
+      + (options.keepWaveforms
+             ? "  REMOVED entirely: artwork images and original file paths.\n\n"
+             : "  REMOVED entirely: artwork images, the detailed color and\n"
+               "    scrolling waveform data rekordbox's own UI uses during\n"
+               "    playback (not read by this app), and original file paths.\n\n")
+      + "Everything above is CHECKED, not just intended: this export was\n"
          "read back through the app's own readers and every analysis file\n"
          "was inspected before the zip was written. Had anything still\n"
          "held real data, no file would have been produced.\n\n";
@@ -352,7 +366,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         summary.rekordboxAttempted = true;
         auto result = infrastructure::rekordbox::anonymizeRekordboxLibrary(
             *rekordboxRoot, pathToUtf8(outputPath / "rekordbox"),
-            options.slimForTesting, reporter);
+            options.slimForTesting, options.keepWaveforms, reporter);
         summary.rekordboxTracksAnonymized = result.tracksAnonymized;
         summary.rekordboxArtistsRenamed = result.artistsRenamed;
         summary.rekordboxPlaylistsRenamed = result.playlistsRenamed;
@@ -373,7 +387,7 @@ AnonymizationSummary AnonymizeLibrary::execute(const std::optional<std::string> 
         summary.engineAttempted = true;
         auto result = infrastructure::engine::anonymizeEngineLibrary(
             *engineRoot, pathToUtf8(outputPath / "engine"), options.slimForTesting,
-            reporter);
+            options.keepWaveforms, reporter);
         summary.engineTracksAnonymized = result.tracksAnonymized;
         summary.enginePlaylistsRenamed = result.playlistsRenamed;
         summary.engineTracksRefused = result.tracksRefused;

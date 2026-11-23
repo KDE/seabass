@@ -40,6 +40,21 @@ struct AnonymizationOptions
     // the cleanup features exist to find.
     bool slimForTesting = false;
 
+    // Keeps every waveform the two analyses hold: all of rekordbox's
+    // waveform sections in the ANLZ .DAT/.EXT/.2EX files (PWAV, PWV2 to
+    // PWV7 and the rest), and Engine's overview blob, beat data and
+    // OverviewData .rgb files. Nothing else changes: titles, artists,
+    // paths, cue comments and every other identifying field are replaced
+    // exactly as without it, and the export is read back the same way.
+    //
+    // For publishing real analysis data as a test fixture for the
+    // analysis code, which needs the waveforms the default export drops
+    // and has no use for them stripped. Waveforms are numbers derived
+    // from the audio and carry no text. Wins over slimForTesting where
+    // the two disagree: with both, the waveforms stay and only the
+    // unreferenced analysis files go.
+    bool keepWaveforms = false;
+
     // Free text captured verbatim into MANIFEST.txt (and shown back to
     // the caller before anything is sent anywhere) -- what hardware the
     // submitter uses, and anything they'd like tested. Not validated or

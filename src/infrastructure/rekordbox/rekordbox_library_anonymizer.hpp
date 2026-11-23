@@ -114,7 +114,9 @@ struct RekordboxAnonymizationResult
 //    kaitai_rekordbox_reader.cpp's readCues(), which does read it from
 //    real files even though this project's own cue writer
 //    doesn't write new ones), keeping cue positions/colors/beatgrid/
-//    path/monochrome-preview untouched.
+//    path/monochrome-preview untouched. With keepWaveforms nothing is
+//    stripped: every waveform section stays, and only the PATH text and
+//    the cue comments change.
 //
 // sourceRoot/destinationRoot are both "pioneerRoot" paths -- the
 // directory directly containing rekordbox/ and USBANLZ/, matching
@@ -125,6 +127,10 @@ RekordboxAnonymizationResult anonymizeRekordboxLibrary(
     // files no track points at rather than scrubbing and shipping
     // them.
     bool slimForTesting = false,
+    // See AnonymizationOptions::keepWaveforms: every waveform section of
+    // the analysis files stays; the PATH section and cue comments are
+    // still replaced.
+    bool keepWaveforms = false,
     application::ProgressReporter &reporter = application::NullProgressReporter::instance());
 
 }  // namespace seabass::infrastructure::rekordbox

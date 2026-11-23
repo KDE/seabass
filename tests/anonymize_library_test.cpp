@@ -304,6 +304,11 @@ int main()
                != std::string::npos);
         assert(summary.manifestText.find("  hm.db\n") != std::string::npos);
         assert(fs::exists(engineSource / "Database2" / "hm.db") && "the source keeps its own copy");
+        // Without keepWaveforms the manifest says the detailed waveforms
+        // went, and does not claim they stayed.
+        assert(summary.manifestText.find("scrolling waveform data rekordbox's own UI uses during")
+               != std::string::npos);
+        assert(summary.manifestText.find("asked to keep the") == std::string::npos);
         std::cout << "case 1 (both catalogs: succeeds, output is one zip, manifest has hardware/notes/privacy text) OK\n";
 
         fs::path extracted = root / "out_both_extracted";
@@ -364,6 +369,29 @@ int main()
         extractZip(summary.outputZipPath, extracted);
         assert(!fs::exists(extracted / "engine"));
         std::cout << "case 2 (rekordbox only: engine catalog never attempted or written) OK\n";
+    }
+
+    // keepWaveforms: the manifest says what was kept, and no longer says
+    // the waveforms were removed.
+    {
+        fs::path outDir = root / "out_keep_waveforms";
+        AnonymizeLibrary useCase;
+        AnonymizationOptions options;
+        options.keepWaveforms = true;
+        auto summary = useCase.execute(seabass::pathToUtf8(rekordboxSource), seabass::pathToUtf8(engineSource),
+                                       seabass::pathToUtf8(outDir), options);
+        if (!summary.verificationReport.empty()) {
+            std::cerr << summary.verificationReport << std::flush;
+        }
+        assert(summary.succeeded());
+        assert(summary.manifestText.find("ALSO KEPT as-is, because this export was asked to keep the")
+               != std::string::npos);
+        assert(summary.manifestText.find(".rgb overview files in OverviewData") != std::string::npos);
+        assert(summary.manifestText.find("REMOVED entirely: artwork images and original file paths.")
+               != std::string::npos);
+        assert(summary.manifestText.find("scrolling waveform data rekordbox's own UI uses during")
+               == std::string::npos);
+        std::cout << "case 2b (keepWaveforms: the manifest says the waveforms were kept) OK\n";
     }
 
     // A real failure in one catalog is reflected in succeeded() and the
