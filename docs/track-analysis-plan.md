@@ -292,35 +292,100 @@ What it says:
   that is off. This tracker's beat list is not usable as a grid without
   a fit on top.
 
-#### The variety list: 104 tracks, provisional
+#### Who is right, half a beat apart
 
-105 FLAC files (98 at 44.1 kHz, 7 second copies at 48 kHz) in 20
-groups picked for what breaks an analyser: live drummers, breakbeat,
-garage, drum and bass, half-time, hip-hop, reggae, odd metres, tempo
-changes, no drums, jazz, very fast, very slow, long breakdowns. One has
-no rekordbox grid. rekordbox analysed them in its normal mode, which
-gives every track one constant tempo, so on the groups whose tempo
-moves the reference is constant by construction; the list is being
-analysed again in dynamic mode, and the figures by group wait for that.
+On the 606 tracks where mixxx-constant has rekordbox's tempo and sits
+half a beat from it, the audio was asked where the kick is. The band
+from 30 to 120 Hz, its envelope, the rises of the envelope; these folded
+onto one beat of rekordbox's grid, 32 beats at a time. Each block of 32
+with bass in it votes for the place in the beat where its rises peak:
+within an eighth of a beat of rekordbox's beat, within an eighth of
+ours, or neither. Two thirds of the blocks decide a track.
 
-For now, mixxx-constant on all 104: another tempo on 24 (23.1
-percent), half a beat out on 8, on the beat but more than 10 ms off on
-27, drifting on 26, within 10 ms and steady on 19 (18.3 percent,
-against 49.6 on the collection). The key is rekordbox's on 43.3
-percent. The collection flatters the method: it is the music the
-method was made for.
+What the measure is worth was looked at first:
+
+- On the twelve generated tracks, the true grid against a grid half a
+  beat from it: right on eleven. Wrong on breakbeat-swing-132, where the
+  kick is not on every beat and the low band peaks between the beats:
+  the measure holds for a kick on every beat and for nothing else.
+- On the 772 tracks of the collection where the two grids agree within
+  10 ms, rekordbox's beat against the place half a beat from it:
+  rekordbox's beat on 586 (75.9 percent), unclear on 137 (17.7), half a
+  beat away on 49 (6.3). So about one answer in sixteen goes against
+  two analysers that agree.
+
+On the 606:
+
+| the kick is | tracks |
+|---|---|
+| on rekordbox's beat | 411 (67.8 %) |
+| unclear | 138 (22.8 %) |
+| on ours | 57 (9.4 %) |
+
+The 9.4 percent for our grid is little more than what the measure gets
+wrong on its own (6.3). On the tracks half a beat apart rekordbox has
+the kick and the method has the place between: the phase is picked
+wrong, on two tracks in five of this collection. That is the first
+thing the analyser has to do better, and the low band is where to look.
+
+The worklist (every track that differs, by kind, with this verdict, by
+row id) is kept beside the private audio, not here.
+
+#### The variety list: 110 tracks
+
+114 files in 21 groups picked for what breaks an analyser: live
+drummers, breakbeat, garage, drum and bass, half-time, hip-hop, reggae,
+odd metres, tempo changes, no drums, jazz, very fast, very slow, long
+breakdowns. 98 FLAC at 44.1 kHz, 7 second copies at 48 kHz, 9 MP3. Four
+are the wrong recording and are left out. rekordbox 7.2.18 analysed
+them twice: in its normal mode (one constant tempo a track; 105 of the
+files, one without a grid) and in its dynamic mode (all of them, tempo
+between 70 and 180 BPM).
+
+rekordbox against itself, on the 101 files that have both grids:
+
+- another tempo on 19, ten of them half or double;
+- of the other 82, half a beat apart on 7;
+- the dynamic grid is 5 ms earlier than the normal one at the median,
+  and nine beats in ten are within 10 ms of each other on 3 tracks;
+- in dynamic mode no grid is a line within 1.5 ms, the drum machines'
+  included: every one of them is a moving grid by the comparison's test.
+
+So on this music rekordbox is no reference to 3 or to 10 ms: its own
+two answers are further apart than that. What it can give is the tempo
+and the side of the beat where both answers agree, on 75 tracks.
+
+The baseline against each, one outcome a track:
+
+| outcome | mixxx-constant, normal | mixxx-constant, dynamic | qm-raw, normal | qm-raw, dynamic |
+|---|---|---|---|---|
+| tracks | 104 | 110 | 104 | 110 |
+| another tempo | 24 | 22 | 26 | 20 |
+| the same tempo, half a beat out | 8 | 6 | 7 | 8 |
+| on the beat, more than 10 ms off | 27 | 22 | 27 | 8 |
+| within 10 ms, drifts more than 10 ms | 26 | 35 | 28 | 25 |
+| within 10 ms, no such drift | 19 (18.3 %) | 25 (22.7 %) | 16 (15.4 %) | 49 (44.5 %) |
+
+The key is rekordbox's on 43.3 and 46.4 percent. The collection
+flatters the method (49.6 percent within 10 ms and steady): it is the
+music the method was made for. The raw beats are nearer the dynamic
+grid than the constant grid is, which says the two follow the same
+onsets, not that either is right.
 
 ## Phase 3, in order
 
-1. Who is right on the tracks half a beat apart: the energy of the low
-   band at rekordbox's beats and at ours, over the whole track, for each
-   of the 606. `analysis_benchmark --beats` writes the grids for it.
-2. The worklist: every track that differs, by kind (half a beat,
-   another tempo, more than 10 ms, drift), by row id.
-3. The analyser: the tempo over the whole track to a few thousandths of
+1. Done: who is right on the tracks half a beat apart (above). The
+   worklist of every track that differs, by kind and by row id, is with
+   the private audio.
+2. The analyser: the tempo over the whole track to a few thousandths of
    a BPM, the phase from the low band with both half-beat phases
    compared, the beat refined on the transient to the sample, a
    confidence so that an unsure track is flagged. Tuned on the tuning
-   half, judged on the held-back half and on the generated tracks.
+   half of the collection, judged on the held-back half and on the
+   generated tracks.
+3. A reference for the music the collection does not have. rekordbox
+   is none there; the generated tracks are exact but are not that
+   music. Until there is one, the variety list scores the tempo and the
+   side of the beat on the tracks where rekordbox agrees with itself.
 4. The same tables after every change. A change that moves no number
    is not kept.
