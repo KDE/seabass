@@ -254,6 +254,51 @@ void addStab(std::vector<float> &audio, int rate, double at, double loud = 0.5)
     }
 }
 
+// A tone of `hz` that swells in `attack` seconds and dies away in `decay`.
+void addNote(std::vector<float> &audio, int rate, double at, double hz, double loud, double attack, double decay)
+{
+    const double pi = 3.14159265358979;
+    const auto from = static_cast<std::size_t>(at * rate);
+    for (std::size_t i = 0; i < static_cast<std::size_t>(6.0 * decay * rate) && from + i < audio.size(); ++i) {
+        const double t = static_cast<double>(i) / rate;
+        audio[from + i] += static_cast<float>(loud * (1.0 - std::exp(-t / attack)) * std::exp(-t / decay)
+                                              * std::sin(2.0 * pi * hz * t));
+    }
+}
+
+// House as it is made: on the beat a kick (its body at 100 Hz, a knock at
+// 700 Hz, a click at 3 kHz), between the beats the bass at 45 Hz with a
+// chord at 250 Hz and a little at 700 Hz and 3 kHz. Counting every band
+// alike, the bass and its chord outweigh the kick; the grid belongs on
+// the kick all the same, which is why the band under 70 Hz has no say in
+// where the beat is.
+void bassBetweenTheBeats()
+{
+    const int rate = 44100;
+    const double period = 60.0 / 126.0;
+    const int count = 160;
+    std::vector<float> audio(static_cast<std::size_t>((count * period + 1.0) * rate), 0.0f);
+    std::vector<Beat> truth;
+    for (int k = 0; k < count; ++k) {
+        const double beat = 0.3 + k * period;
+        truth.push_back({beat * 1000.0, k % 4 + 1});
+        addNote(audio, rate, beat, 100.0, 0.5, 0.004, 0.09);
+        addNote(audio, rate, beat, 700.0, 0.11, 0.002, 0.03);
+        addNote(audio, rate, beat, 3000.0, 0.09, 0.001, 0.008);
+        const double between = beat + period / 2.0;
+        addNote(audio, rate, between, 45.0, 0.6, 0.006, 0.12);
+        addNote(audio, rate, between, 250.0, 0.3, 0.004, 0.08);
+        addNote(audio, rate, between, 700.0, 0.09, 0.002, 0.03);
+        addNote(audio, rate, between, 3000.0, 0.06, 0.001, 0.008);
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth);
+    check(c.tempo == TempoRelation::Same, "bass between the beats: the tempo");
+    within(c.offset.medianMs, -20.0, 20.0, "bass between the beats: the grid on the kick");
+}
+
 // A kick on every beat and nothing between them, at tempos whose half
 // period repeats nowhere: the lag that scores best by its multiples is
 // then one the track does not repeat at itself, and the grid must still
@@ -365,6 +410,7 @@ void aSampleThatIsNoNumber()
 
 int main()
 {
+    bassBetweenTheBeats();
     slowAndSparse();
     heldTones();
     noiseIsUnsure();

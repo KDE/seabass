@@ -198,6 +198,15 @@ std::vector<double> autocorrelation(const std::vector<double> &x, std::size_t lo
 // 5 kHz and no further: above it are the hats, between the beats.
 constexpr std::array<std::array<double, 2>, 5> Bands{{{30.0, 70.0}, {70.0, 150.0}, {150.0, 400.0}, {400.0, 1500.0},
                                                       {1500.0, 5000.0}}};
+// The first band is for the tempo and not for the place of the beat.
+// Under 70 Hz is the bass line as much as the kick, and in house and
+// trance the bass plays between the beats: with that band heard for the
+// place of the beat, six tracks more of the tuning half of the
+// collection came out half a beat from rekordbox (39 for 33). Without it
+// for the tempo, five tracks more of 110 of varied music came out at
+// another tempo (34 for 29): where there is no kick drum on every beat,
+// the bass is what repeats.
+constexpr std::size_t FirstBandForTheBeat = 1;
 // The envelope is the band's power smoothed at this frequency: slow
 // enough to be an envelope, fast enough that a hit's rise takes a few
 // milliseconds of it and not twenty.
@@ -254,10 +263,19 @@ std::vector<double> rippleFreePower(const std::vector<double> &band, double rate
     return power;
 }
 
+// The onset function twice over: every band, which is what the tempo is
+// read from, and the bands from 70 Hz, which is what says where in the
+// beat the beat is.
+struct Onsets
+{
+    std::vector<double> forTempo;
+    std::vector<double> forBeat;
+};
+
 // One value a millisecond: value i is at i ms on the source's timeline.
 // Takes the samples and lets go of them as soon as it has its own copy:
 // a track is held whole, and twice is once too many.
-std::vector<double> onsetFunction(std::vector<float> samples, int sampleRate)
+Onsets onsetFunction(std::vector<float> samples, int sampleRate)
 {
     // A sample that is no number (a decoder's slip) is silence: left in,
     // the filters would spread it over the whole track.
@@ -282,7 +300,7 @@ std::vector<double> onsetFunction(std::vector<float> samples, int sampleRate)
         rate /= 2.0;
     }
     if (audio.size() < 2) {
-        return {};
+        return Onsets{};
     }
 
     const auto milliseconds = static_cast<std::size_t>(static_cast<double>(audio.size() - 1) * 1000.0 / rate);
@@ -344,7 +362,9 @@ std::vector<double> onsetFunction(std::vector<float> samples, int sampleRate)
     constexpr double ThereAtAll = 0.01;
     constexpr double RisesASecondOfTheLevel = 1.0;
     const double loudest = *std::max_element(levels.begin(), levels.end());
-    std::vector<double> onsets(milliseconds, 0.0);
+    Onsets onsets;
+    onsets.forTempo.assign(milliseconds, 0.0);
+    onsets.forBeat.assign(milliseconds, 0.0);
     const double seconds = static_cast<double>(milliseconds) / 1000.0;
     for (std::size_t b = 0; b < Bands.size(); ++b) {
         if (!(levels[b] > ThereAtAll * loudest) || !(risen[b] > RisesASecondOfTheLevel * levels[b] * seconds)) {
@@ -352,7 +372,10 @@ std::vector<double> onsetFunction(std::vector<float> samples, int sampleRate)
         }
         const double scale = static_cast<double>(milliseconds) / risen[b];
         for (std::size_t ms = 1; ms < milliseconds; ++ms) {
-            onsets[ms] += scale * rises[b][ms];
+            onsets.forTempo[ms] += scale * rises[b][ms];
+            if (b >= FirstBandForTheBeat) {
+                onsets.forBeat[ms] += scale * rises[b][ms];
+            }
         }
     }
     return onsets;
@@ -1182,12 +1205,13 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
         return analysis;
     }
 
-    const std::vector<double> onsets = onsetFunction(std::move(samples), rate);
+    const Onsets both = onsetFunction(std::move(samples), rate);
+    const std::vector<double> &onsets = both.forBeat;
     // Under four beats of the slowest tempo there is nothing to repeat.
     if (onsets.size() < 4 * LongestPeriodMs) {
         return analysis;
     }
-    const std::optional<double> coarse = beatPeriod(onsets);
+    const std::optional<double> coarse = beatPeriod(both.forTempo);
     if (!coarse) {
         return analysis;
     }
@@ -1267,7 +1291,7 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
     // regular in the audio at all (noise, speech) leaves it at 0, with a
     // grid that means nothing.
     double sure = 0.0;
-    if (const std::optional<TempoCurve> curve = tempoCurve(levelled(onsets), period)) {
+    if (const std::optional<TempoCurve> curve = tempoCurve(levelled(both.forTempo), period)) {
         const std::vector<WindowReading> readings = readWindows(onsets, period, phase);
         std::vector<double> offsets;
         std::size_t withRhythm = 0;

@@ -13,9 +13,11 @@ namespace seabass::domain
 //
 // What it listens to: the audio from 30 Hz to 5 kHz in five bands, the
 // envelope of each, and of the envelopes only the rises. Summed, they are
-// the onset function, one value a millisecond. The band above 5 kHz is
+// the onset function, one value a millisecond. What is above 5 kHz is
 // left out on purpose: on dance music the hats in it sit between the
-// beats, and an onset function that hears them puts the grid there.
+// beats, and an onset function that hears them puts the grid there. For
+// the place of the beat (not for the tempo) the band under 70 Hz is left
+// out too: the bass line plays between the beats as often as on them.
 //
 // The tempo: the lag at which the onset function repeats, scored together
 // with its multiples and a preference for tempos near 128 BPM, sharpened
