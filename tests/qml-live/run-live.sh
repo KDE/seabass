@@ -244,7 +244,20 @@ if rig_is_windows; then
         rig_part live-stick-pulled NOTDUE
     fi
 elif [ -n "$device" ]; then
-    ( sleep 12; unmount_device "$device" && echo "--- unmounted $device"
+    # The unmount is asked for until it takes, within the minute the test
+    # waits for the stick to go. One attempt lands, now and then, in the
+    # instant the test's own scan holds a folder on the stick open, and the
+    # system refuses ("dissented by PID <the test>", macOS round 16: two
+    # of two on one stick). A hand pulling a stick does not ask; this must
+    # not give up where a hand would not.
+    ( sleep 12
+      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+          if unmount_device "$device"; then
+              echo "--- unmounted $device (attempt $attempt)"
+              break
+          fi
+          sleep 2
+      done
       sleep 15; mount_device "$device" && echo "--- mounted $device again" ) &
     run "LiveStickPull::test_stickPulledWhileEditing" SEABASS_LIVE_STICK_PULL=1
     wait
