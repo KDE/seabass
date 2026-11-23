@@ -214,6 +214,10 @@ TestCase {
         const badge = findWhere(page, (item) => item.objectName === "kindBadge");
         verify(badge, "the group's badge was not found");
         compare(badge.label, "Not lined up");
+        // And the way out, with its cost.
+        verify(badge.tooltipText.includes("Clean Up Duplicates can remove the extra copies and free their space."),
+               badge.tooltipText);
+        verify(badge.tooltipText.includes("the cues of a copy it removes are not carried over"), badge.tooltipText);
         const note = findWhere(page, (item) => item.objectName === "alignmentNote");
         verify(note && note.visible, "the group says which copy");
         compare(note.text, "Copy 2 could not be lined up with copy 1, so no cues are copied between them.");

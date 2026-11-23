@@ -500,6 +500,11 @@ Page {
                                         : delegateRoot.kind === "unaligned"
                                         ? "The copies' audio could not be lined up, so nobody knows where one copy's "
                                           + "cues belong on another. Nothing is copied.\n\n" + delegateRoot.alignmentNote
+                                          // The other way out, and what it costs: Clean Up Duplicates
+                                          // does not merge a removed copy's cues it cannot place either.
+                                          + "\n\nClean Up Duplicates can remove the extra copies and free their space. "
+                                          + "It keeps one copy with its own cues; the cues of a copy it removes "
+                                          + "are not carried over."
                                         : "These copies disagree, so nothing is copied automatically; decide per-track with the "
                                           + "Copy buttons below.\n\n" + root.conflictDetail(delegateRoot.tracks)
                                 }
