@@ -248,6 +248,10 @@ BeatGridComparison compareBeatGrids(const std::vector<Beat> &candidate, const st
     const double spanEnd = c.back() + halfLastGap;
 
     std::vector<double> offsets;
+    // For the drift: each compared reference beat's time and its offset
+    // to the candidate beat that continues the offset before it.
+    std::vector<double> followedTimes;
+    std::vector<double> followedOffsets;
     std::vector<double> ratios;
     std::array<int, 4> turns{};
     std::size_t hits1 = 0;
@@ -261,6 +265,9 @@ BeatGridComparison compareBeatGrids(const std::vector<Beat> &candidate, const st
         const std::size_t j = nearestIndex(c, r[i]);
         const double offset = c[j] - r[i];
         offsets.push_back(offset);
+        const std::size_t follow = followedOffsets.empty() ? j : nearestIndex(c, r[i] + followedOffsets.back());
+        followedTimes.push_back(r[i]);
+        followedOffsets.push_back(c[follow] - r[i]);
         const double magnitude = std::abs(offset);
         // A hair over each bound still counts: an offset of exactly 1 ms
         // between two grids comes out of the arithmetic a few ulps either
@@ -325,6 +332,29 @@ BeatGridComparison compareBeatGrids(const std::vector<Beat> &candidate, const st
     if (!ratios.empty()) {
         result.tempoRatio = medianOf(ratios);
         result.tempo = classifyRatio(result.tempoRatio);
+    }
+
+    constexpr std::size_t FewestBeatsForDrift = 10;
+    if (result.tempo == TempoRelation::Same && followedOffsets.size() >= FewestBeatsForDrift) {
+        const std::size_t fifth = followedOffsets.size() / 5;
+        const auto first = followedOffsets.begin();
+        const auto last = followedOffsets.end();
+        const double startOffset = medianOf(std::vector<double>(first, first + static_cast<std::ptrdiff_t>(fifth)));
+        const double endOffset = medianOf(std::vector<double>(last - static_cast<std::ptrdiff_t>(fifth), last));
+        // The two medians stand for the middle of each fifth.
+        const double startTime =
+            (followedTimes[0] + followedTimes[fifth - 1]) / 2.0;
+        const double endTime =
+            (followedTimes[followedTimes.size() - fifth] + followedTimes.back()) / 2.0;
+        if (endTime > startTime) {
+            const double slope = (endOffset - startOffset) / (endTime - startTime);
+            const double middleOffset = (startOffset + endOffset) / 2.0;
+            const double middleTime = (startTime + endTime) / 2.0;
+            result.drift.known = true;
+            result.drift.startMs = middleOffset + slope * (followedTimes.front() - middleTime);
+            result.drift.endMs = middleOffset + slope * (followedTimes.back() - middleTime);
+            result.drift.ms = result.drift.endMs - result.drift.startMs;
+        }
     }
 
     if (result.bar.counted > 0) {

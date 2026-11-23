@@ -102,6 +102,25 @@ struct BarTurn
     std::size_t counted = 0;
 };
 
+// How far the candidate runs away from the reference over the track: the
+// offset at the end of the compared stretch minus the offset at its
+// start, in ms. A tempo that is a little off shows here and nowhere else:
+// 0.01 BPM at 128 is 28 ms after six minutes, on a grid whose first beats
+// are exact. Each reference beat is held to the candidate beat that
+// continues the offset of the beat before it, so an offset that grows
+// past half a beat is followed and not wrapped back. The slope is taken
+// between the median offset of the first fifth of the beats and that of
+// the last fifth, so stray beats do not move it. Known only where the two
+// have the same tempo and at least ten beats were compared.
+struct Drift
+{
+    bool known = false;
+    double ms = 0.0;
+    // The followed offset at the start and at the end of the stretch.
+    double startMs = 0.0;
+    double endMs = 0.0;
+};
+
 struct BeatGridComparison
 {
     std::size_t referenceBeats = 0;
@@ -111,6 +130,7 @@ struct BeatGridComparison
     // relation are read from.
     std::size_t matchedBeats = 0;
     OffsetStats offset;
+    Drift drift;
     HitRates hits;
     TempoRelation tempo = TempoRelation::Unknown;
     // The median of candidate tempo over reference tempo, beat by beat.

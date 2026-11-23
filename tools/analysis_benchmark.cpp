@@ -59,9 +59,21 @@
 // a hash of each track's path as rekordbox's export names it (pathHash
 // below): an analyser is tuned on the first and judged on the second, so
 // --half defaults to tuning. --limit takes the first N tracks in hash
-// order, a stable sample. At most three tracks are worked on at once
-// (--jobs). The TSV (one line per track and analyser) names files; keep
+// order, a stable sample. --jobs tracks are worked on at once (three is
+// the most a 32 GB machine has stood). The TSV (one line per track and analyser) names files; keep
 // it out of the repository. The summary names none.
+//
+// In place of a stick root the audio mode takes a list, a tab-separated
+// file with one track a line: an id, the audio file, the track's ANLZ
+// .DAT file, rekordbox's key for it. That is how a rekordbox collection
+// on a computer is measured, which has no export: its tracks, analysis
+// files and keys are in its own database (list it with any tool that
+// reads that). No Engine side then, so no agreed subset.
+//
+// The TSV is written as the tracks finish, in the order they finish, so
+// a run that is stopped keeps what it had. Next to the offset each track
+// has a drift (domain/beat_grid_comparison.hpp), and the summary counts
+// the tracks half a beat out.
 //
 // Exit code 0 on success, 1 when something could not be read or a check
 // failed, 2 for a usage error.
@@ -112,6 +124,7 @@
 #include <clocale>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <numeric>
 
 #include "application/use_cases/plan_engine_update.hpp"
@@ -133,8 +146,8 @@ int usage()
                  "usage: analysis_benchmark libraries <stick root> [--tsv out.tsv] [--audio-root DIR] [--scratch DIR]\n"
                  "       analysis_benchmark synth [--preset NAME|all] [--analyser NAME[,NAME]|all] [--shift-ms X] [--check]\n"
 #ifdef SEABASS_ANALYSIS_AUDIO
-                 "       analysis_benchmark audio <stick root> --analyser NAME[,NAME]|all [--audio-root DIR]\n"
-                 "                          [--limit N] [--half tuning|heldback|all] [--tsv out.tsv] [--jobs N<=3]\n"
+                 "       analysis_benchmark audio <stick root|track list.tsv> --analyser NAME[,NAME]|all [--audio-root DIR]\n"
+                 "                          [--limit N] [--half tuning|heldback|all] [--tsv out.tsv] [--jobs N]\n"
                  "                          [--scratch DIR]\n"
 #endif
                  );
@@ -835,6 +848,62 @@ const char *halfOf(std::uint64_t hash)
     return (hash & 1u) == 0 ? "tuning" : "heldback";
 }
 
+// The beat grid of one ANLZ .DAT file, read by its path: the PQTZ
+// section's beats, each with its place in the bar and its time in whole
+// ms (all big-endian: the section's header length and beat count, then
+// eight bytes a beat after the 24-byte header). Empty when the file is
+// not there or holds no grid.
+std::vector<domain::Beat> beatGridOfAnlzFile(const fs::path &file)
+{
+    std::ifstream in(file, std::ios::binary);
+    const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto u16 = [&bytes](std::size_t at) { return static_cast<std::uint32_t>(bytes[at] << 8 | bytes[at + 1]); };
+    const auto u32 = [&u16](std::size_t at) { return u16(at) << 16 | u16(at + 2); };
+    std::vector<domain::Beat> beats;
+    if (bytes.size() < 28 || std::string(bytes.begin(), bytes.begin() + 4) != "PMAI") {
+        return beats;
+    }
+    std::size_t at = u32(4);
+    while (at + 12 <= bytes.size()) {
+        const std::uint32_t headerLength = u32(at + 4);
+        const std::uint32_t sectionLength = u32(at + 8);
+        if (sectionLength < 12 || at + sectionLength > bytes.size()) {
+            break;
+        }
+        if (std::string(bytes.begin() + static_cast<std::ptrdiff_t>(at),
+                        bytes.begin() + static_cast<std::ptrdiff_t>(at) + 4) == "PQTZ" && headerLength >= 24) {
+            const std::uint32_t count = u32(at + 20);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const std::size_t entry = at + headerLength + 8u * i;
+                if (entry + 8 > at + sectionLength) {
+                    break;
+                }
+                domain::Beat beat;
+                beat.beatInBar = static_cast<int>(u16(entry));
+                beat.timeMs = static_cast<double>(u32(entry + 4));
+                beats.push_back(beat);
+            }
+            break;
+        }
+        at += sectionLength;
+    }
+    return beats;
+}
+
+std::vector<std::string> tabFields(const std::string &line)
+{
+    std::vector<std::string> fields;
+    std::size_t start = 0;
+    for (;;) {
+        const std::size_t tab = line.find('\t', start);
+        fields.push_back(line.substr(start, tab == std::string::npos ? tab : tab - start));
+        if (tab == std::string::npos) {
+            return fields;
+        }
+        start = tab + 1;
+    }
+}
+
 // One track to analyse: where its audio is, rekordbox's grid on Engine's
 // timeline, and what Engine holds for it.
 struct AudioJob
@@ -932,11 +1001,21 @@ double rankOffset(const BeatGridComparison &c)
     return c.offset.count == 0 ? std::numeric_limits<double>::infinity() : std::abs(c.offset.medianMs);
 }
 
+// The same tempo as rekordbox but the beats between rekordbox's: the
+// track's median offset is more than three tenths of a beat.
+bool halfABeatOut(const AudioResult &row)
+{
+    const BeatGridComparison &c = row.comparison;
+    const double bpm = meanBpm(row.job->reference);
+    return c.tempo == domain::TempoRelation::Same && c.offset.count > 0 && bpm > 0.0 &&
+           std::abs(c.offset.medianMs) > 0.3 * 60000.0 / bpm;
+}
+
 void printAudioSummaryHeader(const char *by)
 {
-    std::printf("%-28s %5s %8s %7s %7s %6s %6s %6s %6s %7s %6s %5s %5s %5s %5s %5s %5s %6s %5s\n", by, "n", "median",
+    std::printf("%-28s %5s %8s %7s %7s %6s %6s %6s %6s %7s %6s %5s %5s %5s %5s %5s %5s %6s %5s %7s %6s %6s\n", by, "n", "median",
                 "p25", "p75", "<=1ms", "<=3ms", "<=8ms", "<=20ms", "scatter", "same", "half", "dbl", "2/3", "3/2",
-                "other", "unkn", "shape", "nogrid");
+                "other", "unkn", "shape", "nogrid", "|drift|", "dr<=10", "halfbt");
 }
 
 void printAudioSummaryLine(const std::string &label, const std::vector<const AudioResult *> &rows)
@@ -946,7 +1025,9 @@ void printAudioSummaryLine(const std::string &label, const std::vector<const Aud
     }
     std::vector<double> medians;
     std::vector<double> scatters;
-    int within1 = 0, within3 = 0, within8 = 0, within20 = 0, shapeMatch = 0, noGrid = 0;
+    std::vector<double> drifts;
+    int within1 = 0, within3 = 0, within8 = 0, within20 = 0, shapeMatch = 0, noGrid = 0, driftWithin10 = 0;
+    int halfBeat = 0;
     std::map<domain::TempoRelation, int> tempo;
     for (const AudioResult *row : rows) {
         const BeatGridComparison &c = row->comparison;
@@ -957,6 +1038,11 @@ void printAudioSummaryLine(const std::string &label, const std::vector<const Aud
             medians.push_back(c.offset.medianMs);
             scatters.push_back(c.offset.madMs);
         }
+        if (c.drift.known) {
+            drifts.push_back(std::abs(c.drift.ms));
+            driftWithin10 += std::abs(c.drift.ms) <= 10.0 ? 1 : 0;
+        }
+        halfBeat += halfABeatOut(*row) ? 1 : 0;
         const double m = rankOffset(c);
         within1 += m <= 1.0 ? 1 : 0;
         within3 += m <= 3.0 ? 1 : 0;
@@ -966,26 +1052,30 @@ void printAudioSummaryLine(const std::string &label, const std::vector<const Aud
     const double n = static_cast<double>(rows.size());
     const auto pct = [n](int count) { return 100.0 * count / n; };
     std::printf("%-28s %5zu %+8.2f %+7.2f %+7.2f %5.1f%% %5.1f%% %5.1f%% %5.1f%% %7.2f %5.1f%% %5d %5d %5d %5d %5d %5d "
-                "%5.1f%% %5d\n",
+                "%5.1f%% %5d %7.2f %5.1f%% %6d\n",
                 label.c_str(), rows.size(), medianOf(medians), quantileOf(medians, 0.25), quantileOf(medians, 0.75),
                 pct(within1), pct(within3), pct(within8), pct(within20), medianOf(scatters),
                 pct(tempo[domain::TempoRelation::Same]), tempo[domain::TempoRelation::Half],
                 tempo[domain::TempoRelation::Double], tempo[domain::TempoRelation::TwoThirds],
                 tempo[domain::TempoRelation::ThreeHalves], tempo[domain::TempoRelation::Other],
-                tempo[domain::TempoRelation::Unknown], pct(shapeMatch), noGrid);
+                tempo[domain::TempoRelation::Unknown], pct(shapeMatch), noGrid, medianOf(drifts),
+                drifts.empty() ? 0.0 : 100.0 * driftWithin10 / static_cast<double>(drifts.size()), halfBeat);
 }
 
-void writeAudioTsv(const std::string &path, const std::vector<AudioResult> &results)
+void writeAudioTsvHeader(std::ofstream &out)
 {
-    std::ofstream out(path, std::ios::trunc);
-    if (!out) {
-        throw std::runtime_error("cannot write " + path);
-    }
     out << "rekordbox_id\tengine_id\tformat\thalf\tanalyser\terror\ttimeline\tshift_ms\tsample_rate\tduration_s\t"
            "decode_ms\tanalyse_ms\trekordbox_beats\tcandidate_beats\tmatched\tmedian_ms\tscatter_ms\tp95_abs_ms\t"
            "max_abs_ms\thit_1ms\thit_3ms\thit_8ms\thit_20ms\ttempo\ttempo_ratio\tcover\trekordbox_shape\t"
-           "rekordbox_bpm\tcandidate_shape\tcandidate_bpm\tcandidate_runs\tagreed_subset\tkey_found\t"
-           "key_rekordbox\tkey_engine\tkey_vs_rekordbox\tkey_vs_engine\tfile\n";
+           "rekordbox_bpm\tcandidate_shape\tcandidate_bpm\tcandidate_runs\tdrift_ms\tdrift_start_ms\t"
+           "drift_end_ms\tagreed_subset\tkey_found\tkey_rekordbox\tkey_engine\tkey_vs_rekordbox\tkey_vs_engine\t"
+           "file\n";
+}
+
+// The lines of one track, one per analyser. drift_ms and its two ends
+// are "-" where the drift is not known (another tempo, too few beats).
+void writeAudioTsvRows(std::ofstream &out, const std::vector<AudioResult> &results)
+{
     char line[2048];
     for (const AudioResult &r : results) {
         const AudioJob &job = *r.job;
@@ -1007,8 +1097,14 @@ void writeAudioTsv(const std::string &path, const std::vector<AudioResult> &resu
                           domain::gridShapeKindName(c.candidateShape.kind), c.candidateShape.bpm,
                           c.candidateShape.straightRuns);
             out << line;
+            if (c.drift.known) {
+                std::snprintf(line, sizeof line, "%.3f\t%.3f\t%.3f\t", c.drift.ms, c.drift.startMs, c.drift.endMs);
+                out << line;
+            } else {
+                out << "-\t-\t-\t";
+            }
         } else {
-            out << "-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t";
+            out << "-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t-\t";
         }
         out << job.agreed << "\t";
         if (r.key) {
@@ -1021,9 +1117,7 @@ void writeAudioTsv(const std::string &path, const std::vector<AudioResult> &resu
         }
         out << job.file << "\n";
     }
-    if (!out) {
-        throw std::runtime_error("cannot write " + path);
-    }
+    out.flush();
 }
 
 void printKeyClasses(const char *label, const std::vector<std::pair<std::string, std::string>> &pairs)
@@ -1076,9 +1170,10 @@ int audioMode(int argc, char **argv)
             }
         } else if (arg == "--jobs") {
             jobs = static_cast<int>(std::strtol(value.c_str(), nullptr, 10));
-            // More than three decoders and analysers at once have run
-            // the development machine out of memory.
-            if (jobs < 1 || jobs > 3) {
+            // More than three decoders and analysers at once have run a
+            // laptop with 32 GB out of memory; a decoded track is held
+            // whole. Go past three only where the memory is there.
+            if (jobs < 1 || jobs > 16) {
                 return usage();
             }
         } else {
@@ -1092,7 +1187,9 @@ int audioMode(int argc, char **argv)
     if (!analyserNames) {
         return 2;
     }
-    if (!fs::exists(stick / "PIONEER" / "rekordbox" / "export.pdb")) {
+    std::error_code listEc;
+    const bool fromList = fs::is_regular_file(stick, listEc);
+    if (!fromList && !fs::exists(stick / "PIONEER" / "rekordbox" / "export.pdb")) {
         std::fprintf(stderr, "%s holds no rekordbox export\n", argv[2]);
         return 1;
     }
@@ -1104,6 +1201,43 @@ int audioMode(int argc, char **argv)
     std::vector<AudioJob> allJobs;
     int rekordboxTracks = 0, noGrid = 0, noAudio = 0, otherHalf = 0;
     std::vector<AudioResult> results;
+    if (fromList) {
+        std::ifstream list(stick);
+        std::string line;
+        while (std::getline(list, line)) {
+            const std::vector<std::string> fields = tabFields(line);
+            if (fields.size() < 3 || fields[0].empty()) {
+                continue;
+            }
+            ++rekordboxTracks;
+            const std::uint64_t hash = pathHash(fields[1]);
+            if (half != "all" && half != halfOf(hash)) {
+                ++otherHalf;
+                continue;
+            }
+            const std::vector<domain::Beat> rekordboxGrid = beatGridOfAnlzFile(pathFromUtf8(fields[2]));
+            if (rekordboxGrid.empty()) {
+                ++noGrid;
+                continue;
+            }
+            AudioJob job;
+            job.audio = pathFromUtf8(fields[1]);
+            std::error_code ec;
+            if (!fs::is_regular_file(job.audio, ec)) {
+                ++noAudio;
+                continue;
+            }
+            job.rekordboxId = fields[0];
+            job.file = fields[1];
+            job.format = formatOf(fields[1]);
+            job.hash = hash;
+            job.rekordboxKey = fields.size() > 3 ? fields[3] : std::string();
+            // The list names the audio in full, so it is found from no root.
+            job.shift = rekordboxOnEngineTimeline(fields[1], fields[1], fs::path());
+            job.reference = shifted(rekordboxGrid, job.shift.shiftMs);
+            allJobs.push_back(std::move(job));
+        }
+    } else
     try {
         const ScratchRoot scratch(stick, scratchParent);
         const fs::path root = scratch.root();
@@ -1207,6 +1341,17 @@ int audioMode(int argc, char **argv)
 
     // Each worker is a QThread, so the decoder's nested event loop has an
     // event dispatcher in its thread.
+    std::ofstream tsv;
+    std::mutex tsvMutex;
+    if (!tsvPath.empty()) {
+        tsv.open(tsvPath, std::ios::trunc);
+        if (!tsv) {
+            std::fprintf(stderr, "error: cannot write %s\n", tsvPath.c_str());
+            return 1;
+        }
+        writeAudioTsvHeader(tsv);
+        tsv.flush();
+    }
     std::vector<std::vector<AudioResult>> perJob(allJobs.size());
     std::atomic<std::size_t> next{0};
     std::atomic<std::size_t> done{0};
@@ -1220,6 +1365,10 @@ int audioMode(int argc, char **argv)
                     return;
                 }
                 perJob[index] = analyseJob(allJobs[index], *analyserNames);
+                if (tsv.is_open()) {
+                    const std::lock_guard<std::mutex> lock(tsvMutex);
+                    writeAudioTsvRows(tsv, perJob[index]);
+                }
                 const std::size_t finished = done.fetch_add(1) + 1;
                 if (finished % 25 == 0 || finished == allJobs.size()) {
                     std::fprintf(stderr, "%zu/%zu tracks, %.0f s\n", finished, allJobs.size(),
@@ -1245,7 +1394,10 @@ int audioMode(int argc, char **argv)
                 "<=Nms: share of tracks whose median offset is within N ms (no matched beat counts as a miss);\n"
                 "scatter: median of the per-track scatter; same: share with the same tempo; half, dbl, 2/3, 3/2,\n"
                 "other, unkn: track counts of the analyser's tempo against rekordbox's; shape: share whose shape\n"
-                "(constant or moving) matches rekordbox's; nogrid: tracks the analyser gave no beats for\n");
+                "(constant or moving) matches rekordbox's; nogrid: tracks the analyser gave no beats for;\n"
+                "|drift|: median of how far the offset moves from the start of a track to its end (same tempo\n"
+                "only); dr<=10: share of those within 10 ms; halfbt: tracks at the same tempo whose beats fall\n"
+                "between rekordbox's\n");
 
     for (const std::string &name : *analyserNames) {
         if (isKeyAnalyser(name)) {
@@ -1354,10 +1506,8 @@ int audioMode(int argc, char **argv)
     }
 
     if (!tsvPath.empty()) {
-        try {
-            writeAudioTsv(tsvPath, results);
-        } catch (const std::exception &e) {
-            std::fprintf(stderr, "error: %s\n", e.what());
+        if (!tsv) {
+            std::fprintf(stderr, "error: cannot write %s\n", tsvPath.c_str());
             return 1;
         }
         std::printf("\n%zu line(s) written to %s\n", results.size(), tsvPath.c_str());

@@ -334,8 +334,52 @@ void cover()
 
 }  // namespace
 
+// The drift over the track: a tempo a little off, an offset that grows
+// past half a beat, a plain shift, stray beats, and where it is unknown.
+void drift()
+{
+    // 128 against 128.01 BPM over 768 beats (six minutes): the candidate's
+    // beat n is at n * (60000 / 128.01), so by the last beat it is
+    // 767 * (60000 / 128.01 - 60000 / 128) ms ahead: about 28 ms early.
+    const auto reference = constantGrid(100.0, 128.0, 768);
+    const auto fast = constantGrid(100.0, 128.01, 768);
+    const double expected = 767.0 * (60000.0 / 128.01 - 60000.0 / 128.0);
+    const auto result = compareBeatGrids(fast, reference);
+    check(result.drift.known, "drift: known on the same tempo");
+    near(result.drift.ms, expected, 1e-6, "drift: 0.01 BPM over six minutes");
+    check(result.drift.ms < -27.0 && result.drift.ms > -29.0, "drift: about 28 ms early");
+    near(result.drift.startMs, 0.0, 1e-6, "drift: the start is exact");
+    near(result.drift.endMs, expected, 1e-6, "drift: all of it at the end");
+
+    // 128 against 129: the offset passes half a beat (234 ms) well before
+    // the end, and is followed past it: 767 beats, 3.6 ms a beat.
+    const auto faster = compareBeatGrids(constantGrid(100.0, 129.0, 780), reference);
+    check(faster.tempo == TempoRelation::Same, "drift: 129 against 128 is the same tempo");
+    near(faster.drift.ms, 767.0 * (60000.0 / 129.0 - 60000.0 / 128.0), 1e-6, "drift: followed past half a beat");
+
+    // A shift is not a drift.
+    const auto moved = compareBeatGrids(shifted(reference, -12.5), reference);
+    check(moved.drift.known, "drift: known on a shifted grid");
+    near(moved.drift.ms, 0.0, 1e-9, "drift: a shift alone is none");
+    near(moved.drift.startMs, -12.5, 1e-9, "drift: a shift at the start");
+    near(moved.drift.endMs, -12.5, 1e-9, "drift: the same shift at the end");
+
+    // A few beats thrown far off do not move it.
+    auto stray = fast;
+    for (const std::size_t i : {5u, 60u, 300u, 700u, 760u}) {
+        stray[i].timeMs += 40.0;
+    }
+    near(compareBeatGrids(stray, reference).drift.ms, expected, 0.2, "drift: stray beats do not move it");
+
+    // Half the tempo, or too few beats: not said.
+    check(!compareBeatGrids(constantGrid(100.0, 64.0, 384), reference).drift.known, "drift: unknown at half tempo");
+    check(!compareBeatGrids(constantGrid(100.0, 128.0, 9), constantGrid(100.0, 128.0, 9)).drift.known,
+          "drift: unknown on nine beats");
+}
+
 int main()
 {
+    drift();
     identical();
     shifts();
     scatter();
