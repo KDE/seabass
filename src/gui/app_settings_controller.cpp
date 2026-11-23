@@ -86,10 +86,9 @@ AppSettingsController::AppSettingsController(QObject *parent)
         m_homeGroup = homeGroupKeys().constFirst();
     }
 #ifdef SEABASS_EXPERIMENTAL_BUILD
-    // On by default on master, the development line, so what is being built
-    // is what gets used; the release train (Seabass/X.Y) keeps it off until
-    // a feature graduates (Sebastian, 2026-10-16). Besides the version, this
-    // line is the one difference between master and the train.
+    // On by default, on master and on the release train (Seabass/X.Y) alike:
+    // a train's test releases ship with it on, so testers see what is being
+    // built (Sebastian, 2026-11-23). A stored setting wins over the default.
     m_experimentalFeaturesEnabled = m_settings.value("experimentalFeaturesEnabled", true).toBool();
 #endif
     // Again now the gate is known: the copy of rekordbox's analysis is

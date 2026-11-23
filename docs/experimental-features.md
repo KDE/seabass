@@ -8,9 +8,12 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 Features gated behind `AppSettingsController::experimentalFeaturesEnabled`
 (Preferences → More settings → "Enable experimental features"). On by
-default on master, the development line, so what is being built is what
-gets used; the release train (`Seabass/X.Y`) keeps it off until a feature
-graduates (Sebastian, 2026-10-16). See that property's own doc comment and
+default on master and on the release train (`Seabass/X.Y`) alike: the test
+releases of a train ship with it on, so testers see what is being built
+(Sebastian, 2026-11-23), and 1.0 shipped with it on as well. Nothing turns
+it off for a release; that would be the default in `AppSettingsController`'s
+constructor, changed on the train by hand. A setting stored by an earlier
+install wins over the default. See that property's own doc comment and
 `ActionCard.qml`'s `experimental` property for how the gate works, and the
 `SEABASS_EXPERIMENTAL` CMake option for the build-time switch: with it off
 the toggle is compiled out and `experimentalFeaturesEnabled` is a constant
