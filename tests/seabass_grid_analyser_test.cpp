@@ -9,6 +9,7 @@
 // audio that has no beat.
 
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -100,10 +101,66 @@ void noBeat()
     check(!analyser.analyse(broken).error.empty(), "a source without a rate: an error");
 }
 
+// Audio with nothing regular in it: whatever the analyser makes of it, it
+// comes back, and with beats that are times in the track, in order.
+void nothingRegular()
+{
+    const int rate = 44100;
+    std::uint32_t state = 2463534242u;
+    const auto next = [&state]() {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return static_cast<double>(state) / 4294967296.0;
+    };
+    const auto sane = [rate](const GridAnalysis &analysis, std::size_t samples, const std::string &what) {
+        check(analysis.error.empty(), what + ": not an error");
+        const double lengthMs = 1000.0 * static_cast<double>(samples) / rate;
+        bool ordered = true;
+        for (std::size_t i = 0; i < analysis.beats.size(); ++i) {
+            const double t = analysis.beats[i].timeMs;
+            ordered = ordered && std::isfinite(t) && t >= 0.0 && t <= lengthMs
+                && (i == 0 || t > analysis.beats[i - 1].timeMs);
+        }
+        check(ordered, what + ": beats in order and inside the track");
+        check(analysis.beats.size() < samples / 4000, what + ": no more beats than a track can hold");
+    };
+    SeabassGridAnalyser analyser;
+
+    // White noise.
+    std::vector<float> noise(static_cast<std::size_t>(rate) * 30);
+    for (float &sample : noise) {
+        sample = static_cast<float>(next() - 0.5);
+    }
+    InMemoryPcmSource hiss(noise, rate);
+    sane(analyser.analyse(hiss), noise.size(), "noise");
+
+    // Thumps at times that follow no tempo, of every loudness, on a hum:
+    // many seeds, since a search that ends on a slope is a matter of luck.
+    for (int seed = 0; seed < 12; ++seed) {
+        std::vector<float> thumps(static_cast<std::size_t>(rate) * 25, 0.0f);
+        for (std::size_t i = 0; i < thumps.size(); ++i) {
+            thumps[i] = 0.05f * static_cast<float>(std::sin(2.0 * 3.14159265358979 * 55.0 * static_cast<double>(i) / rate));
+        }
+        std::size_t at = static_cast<std::size_t>(next() * rate);
+        while (at + 4000 < thumps.size()) {
+            const double loud = 0.1 + 0.9 * next();
+            for (std::size_t k = 0; k < 4000; ++k) {
+                const double t = static_cast<double>(k) / rate;
+                thumps[at + k] += static_cast<float>(loud * std::exp(-t * 40.0) * std::sin(2.0 * 3.14159265358979 * 70.0 * t));
+            }
+            at += static_cast<std::size_t>((0.13 + 0.9 * next() * next()) * rate);
+        }
+        InMemoryPcmSource irregular(thumps, rate);
+        sane(analyser.analyse(irregular), thumps.size(), "thumps at no tempo, seed " + std::to_string(seed));
+    }
+}
+
 }  // namespace
 
 int main()
 {
+    nothingRegular();
     constantPreset("house-124", 124.0);
     constantPreset("house-124-48k", 124.0);
     // A tempo that is no whole number stays what it is.

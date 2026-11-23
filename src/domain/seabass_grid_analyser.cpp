@@ -78,7 +78,10 @@ void runBothWays(const Biquad &f, std::vector<double> &x)
 // -------------------------------------------------------- small arithmetic
 
 // The place of a peak near index i, to a fraction of a step: the top of
-// the parabola through the value there and its two neighbours.
+// the parabola through the value there and its two neighbours. Where the
+// value at i is not the highest of the three (the highest of a search
+// that ended on a slope), there is no top between them and i itself is
+// the answer: the parabola's would be anywhere, steps away or before 0.
 double parabolaPeak(const std::vector<double> &values, std::size_t i)
 {
     if (i == 0 || i + 1 >= values.size()) {
@@ -88,7 +91,10 @@ double parabolaPeak(const std::vector<double> &values, std::size_t i)
     const double b = values[i];
     const double c = values[i + 1];
     const double d = a - 2.0 * b + c;
-    return d == 0.0 ? static_cast<double>(i) : static_cast<double>(i) + 0.5 * (a - c) / d;
+    if (!(b >= a && b >= c) || !(d < 0.0)) {
+        return static_cast<double>(i);
+    }
+    return static_cast<double>(i) + std::clamp(0.5 * (a - c) / d, -0.5, 0.5);
 }
 
 // The value `share` of the way through the sorted values, between two of
@@ -252,67 +258,11 @@ std::vector<double> onsetFunction(const std::vector<float> &samples, int sampleR
     return onsets;
 }
 
-// ------------------------------------------------------------------ tempo
+// ------------------------------------------------------------- the limits
 
 // The tempos looked for, as beat periods in ms: 200 BPM to 60 BPM.
 constexpr std::size_t ShortestPeriodMs = 300;
 constexpr std::size_t LongestPeriodMs = 1000;
-// Between a tempo and its double or its half the audio often cannot
-// say; this can: a bell around 128 BPM, 0.45 octaves wide.
-constexpr double PreferredBpm = 128.0;
-constexpr double PreferenceOctaves = 0.45;
-
-// The beat period in ms, or nothing when the onset function repeats at no
-// lag at all.
-std::optional<double> coarsePeriod(const std::vector<double> &onsets)
-{
-    constexpr std::size_t FarthestBeats = 64;
-    const std::vector<double> ac = autocorrelation(onsets, FarthestBeats * (LongestPeriodMs + 100));
-    // A lag is a period when the function repeats there and at twice,
-    // three and four times it, the further ones counting less.
-    constexpr std::array<double, 4> MultipleWeights{1.0, 0.5, 0.33, 0.25};
-    double bestScore = 0.0;
-    std::size_t best = 0;
-    for (std::size_t lag = ShortestPeriodMs; lag <= LongestPeriodMs; ++lag) {
-        double score = 0.0;
-        for (std::size_t m = 0; m < MultipleWeights.size(); ++m) {
-            score += MultipleWeights[m] * ac[lag * (m + 1)];
-        }
-        const double octaves = std::log2(60000.0 / static_cast<double>(lag) / PreferredBpm) / PreferenceOctaves;
-        score *= std::exp(-0.5 * octaves * octaves);
-        if (best == 0 || score > bestScore) {
-            bestScore = score;
-            best = lag;
-        }
-    }
-    if (best == 0 || !(ac[best] > 0.0)) {
-        return std::nullopt;
-    }
-    double period = parabolaPeak(ac, best);
-    // The repeat 4 beats away is at 4 periods, known to the same
-    // millisecond: that is the period four times finer. Then 16, then 64,
-    // while the function still repeats that far away.
-    for (const std::size_t beats : {std::size_t{4}, std::size_t{16}, std::size_t{64}}) {
-        const double centre = period * static_cast<double>(beats);
-        const auto reach = std::max<std::size_t>(3, static_cast<std::size_t>(0.01 * centre));
-        const auto middle = static_cast<std::size_t>(centre);
-        if (middle < reach || middle + reach + 1 >= ac.size()) {
-            break;
-        }
-        std::size_t top = middle - reach;
-        for (std::size_t lag = middle - reach; lag <= middle + reach; ++lag) {
-            if (ac[lag] > ac[top]) {
-                top = lag;
-            }
-        }
-        constexpr double StillRepeats = 0.15;
-        if (ac[top] < StillRepeats * ac[best]) {
-            break;
-        }
-        period = parabolaPeak(ac, top) / static_cast<double>(beats);
-    }
-    return period;
-}
 
 // ------------------------------------------------------------------- folds
 
@@ -322,10 +272,15 @@ std::optional<double> coarsePeriod(const std::vector<double> &onsets)
 std::vector<double> fold(const std::vector<double> &onsets, double startMs, double period, std::size_t beats,
                          std::size_t &used)
 {
+    used = 0;
+    // A period that is no period (not a number, or outside any tempo)
+    // folds to nothing: one flat step.
+    if (!(period >= 100.0 && period <= 10000.0) || onsets.size() < 2) {
+        return std::vector<double>(1, 0.0);
+    }
     const auto steps = static_cast<std::size_t>(std::llround(period));
     const double step = period / static_cast<double>(steps);
     std::vector<double> total(steps, 0.0);
-    used = 0;
     for (std::size_t k = 0; k < beats; ++k) {
         const double from = startMs + static_cast<double>(k) * period;
         const double to = from + static_cast<double>(steps - 1) * step;
@@ -392,6 +347,99 @@ double wholeTrackPhase(const std::vector<double> &onsets, double period)
     const std::vector<double> profile = smoothed(fold(onsets, 0.0, period, beats, used));
     const double step = period / static_cast<double>(profile.size());
     return parabolaPeak(profile, indexOfMax(profile, 0, profile.size() - 1)) * step;
+}
+
+// ------------------------------------------------------------------ tempo
+
+// How much a tempo is preferred for being a likely one: a bell around
+// `centreBpm`, `octaves` wide. Between a tempo and its double the audio
+// often cannot say; this can.
+double preference(double periodMs, double centreBpm, double octaves)
+{
+    const double away = std::log2(60000.0 / periodMs / centreBpm) / octaves;
+    return std::exp(-0.5 * away * away);
+}
+
+// The period made finer on the repeats further away: the repeat 4 beats
+// off is at 4 periods, known to the same millisecond, which is the period
+// four times finer. Then 16, then 64, while the function still repeats
+// that far away (`floor`).
+double sharpened(const std::vector<double> &ac, double period, double floor)
+{
+    for (const std::size_t beats : {std::size_t{4}, std::size_t{16}, std::size_t{64}}) {
+        const double centre = period * static_cast<double>(beats);
+        const auto reach = std::max<std::size_t>(3, static_cast<std::size_t>(0.01 * centre));
+        const auto middle = static_cast<std::size_t>(centre);
+        if (middle < reach + 1 || middle + reach + 1 >= ac.size()) {
+            break;
+        }
+        const std::size_t top = indexOfMax(ac, middle - reach, middle + reach);
+        if (ac[top] < floor) {
+            break;
+        }
+        period = parabolaPeak(ac, top) / static_cast<double>(beats);
+    }
+    return period;
+}
+
+// The beat period in ms, or nothing when the onset function repeats at no
+// lag at all.
+std::optional<double> beatPeriod(const std::vector<double> &onsets)
+{
+    constexpr std::size_t FarthestBeats = 64;
+    const std::vector<double> ac = autocorrelation(onsets, FarthestBeats * (LongestPeriodMs + 100));
+    // A lag is a period when the function repeats there and at twice,
+    // three and four times it, the further ones counting less.
+    constexpr std::array<double, 4> MultipleWeights{1.0, 0.5, 0.33, 0.25};
+    double bestScore = 0.0;
+    std::size_t best = 0;
+    for (std::size_t lag = ShortestPeriodMs; lag <= LongestPeriodMs; ++lag) {
+        double score = 0.0;
+        for (std::size_t m = 0; m < MultipleWeights.size(); ++m) {
+            score += MultipleWeights[m] * ac[lag * (m + 1)];
+        }
+        score *= preference(static_cast<double>(lag), 128.0, 0.45);
+        if (best == 0 || score > bestScore) {
+            bestScore = score;
+            best = lag;
+        }
+    }
+    if (best == 0 || !(ac[best] > 0.0)) {
+        return std::nullopt;
+    }
+    constexpr double StillRepeats = 0.15;
+    const double floor = StillRepeats * ac[best];
+    const double base = parabolaPeak(ac, best);
+
+    // That lag is a level of the rhythm, not always the beat: a dotted
+    // rhythm at 95 BPM repeats well at three quarters of its beat, which
+    // the scoring above takes for 127. So the lag's relatives are tried:
+    // the whole track folded at each, and the one that puts the most of
+    // the track's onsets into one moment of its fold is the beat, the
+    // preference for likely tempos deciding between a period and its
+    // double, which fold alike.
+    constexpr std::array<double, 7> Relatives{0.5, 2.0 / 3.0, 0.75, 1.0, 4.0 / 3.0, 1.5, 2.0};
+    double chosen = base;
+    double chosenScore = -1.0;
+    for (const double relative : Relatives) {
+        const double about = base * relative;
+        if (about < static_cast<double>(ShortestPeriodMs) || about > static_cast<double>(LongestPeriodMs)) {
+            continue;
+        }
+        // The repeat nearest that period, within a few milliseconds.
+        constexpr std::size_t Near = 6;
+        const auto middle = static_cast<std::size_t>(std::llround(about));
+        const double period = sharpened(ac, parabolaPeak(ac, indexOfMax(ac, middle - Near, middle + Near)), floor);
+        const auto beats = static_cast<std::size_t>(static_cast<double>(onsets.size() - 1) / period);
+        std::size_t used = 0;
+        const std::vector<double> profile = smoothed(fold(onsets, 0.0, period, beats, used));
+        const double score = profile[indexOfMax(profile, 0, profile.size() - 1)] * preference(period, 128.0, 1.0);
+        if (score > chosenScore) {
+            chosenScore = score;
+            chosen = period;
+        }
+    }
+    return chosen;
 }
 
 // ---------------------------------------------------------------- windows
@@ -549,11 +597,14 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
     if (onsets.size() < 4 * LongestPeriodMs) {
         return analysis;
     }
-    const std::optional<double> coarse = coarsePeriod(onsets);
+    const std::optional<double> coarse = beatPeriod(onsets);
     if (!coarse) {
         return analysis;
     }
     double period = *coarse;
+    if (!(period >= static_cast<double>(ShortestPeriodMs) * 0.9 && period <= static_cast<double>(LongestPeriodMs) * 1.1)) {
+        return analysis;
+    }
     double phase = wholeTrackPhase(onsets, period);
 
     // The windows correct the period and the place, three times over: a
@@ -577,6 +628,12 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
         }
         const std::optional<Line> line = fitLine(readings);
         if (!line) {
+            break;
+        }
+        // A line that would change the tempo by a hundredth is no
+        // correction: the windows are following something else.
+        constexpr double MostCorrection = 0.01;
+        if (!(std::abs(line->slope) <= MostCorrection) || !std::isfinite(line->atZeroMs)) {
             break;
         }
         // A window at t ms is late by atZero + slope * t: the beat that

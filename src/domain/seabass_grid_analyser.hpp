@@ -18,9 +18,12 @@ namespace seabass::domain
 // beats, and an onset function that hears them puts the grid there.
 //
 // The tempo: the lag at which the onset function repeats, scored together
-// with its multiples and a mild preference for tempos near 128 BPM, then
-// sharpened on the repeats 4, 16 and 64 beats away, each of which says
-// the period that many times finer.
+// with its multiples, sharpened on the repeats 4, 16 and 64 beats away,
+// each of which says the period that many times finer. That lag and its
+// relatives (half, two thirds, three quarters, four thirds, three halves,
+// double) are then each tried as the beat: the one at which the whole
+// track folds sharpest is it, with a preference for tempos near 128 BPM
+// to decide between a tempo and its double.
 //
 // The place of the beat: the onset function folded onto one beat over the
 // whole track peaks there. Then the track is cut into windows of eight
