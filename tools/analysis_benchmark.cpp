@@ -105,6 +105,7 @@
 #include "application/use_cases/scan_library.hpp"
 #include "domain/beat_grid.hpp"
 #include "domain/beat_grid_comparison.hpp"
+#include "domain/seabass_grid_analyser.hpp"
 #include "domain/grid_analyser.hpp"
 #include "domain/mp3_lead_in.hpp"
 #include "domain/pcm_source.hpp"
@@ -624,6 +625,7 @@ std::optional<std::vector<std::string>> parseAnalyserList(const std::string &lis
     if (withOracle) {
         known.push_back("oracle");
     }
+    known.push_back("seabass");
 #ifdef SEABASS_ANALYSIS_BASELINE
     for (const std::string &name : baseline::baselineGridAnalyserNames()) {
         known.push_back(name);
@@ -657,6 +659,20 @@ std::optional<std::vector<std::string>> parseAnalyserList(const std::string &lis
         start = comma + 1;
     }
     return names;
+}
+
+// A grid analyser by its name: Seabass's own, or one of the baseline's
+// where the build has them. Null for a name that is neither.
+std::unique_ptr<domain::GridAnalyser> makeGridAnalyser(const std::string &name)
+{
+    if (name == "seabass") {
+        return std::make_unique<domain::SeabassGridAnalyser>();
+    }
+#ifdef SEABASS_ANALYSIS_BASELINE
+    return baseline::makeBaselineGridAnalyser(name);
+#else
+    return nullptr;
+#endif
 }
 
 bool isKeyAnalyser(const std::string &name)
@@ -806,11 +822,11 @@ int synthMode(int argc, char **argv)
         for (const std::string &analyserName : *analyserNames) {
             if (analyserName == "oracle") {
                 analysers.push_back(std::make_unique<OracleAnalyser>(track.beats, shiftMs));
+            } else if (auto analyser = makeGridAnalyser(analyserName)) {
+                analysers.push_back(std::move(analyser));
             }
 #ifdef SEABASS_ANALYSIS_BASELINE
-            else if (auto analyser = baseline::makeBaselineGridAnalyser(analyserName)) {
-                analysers.push_back(std::move(analyser));
-            } else if (auto keyAnalyser = baseline::makeBaselineKeyAnalyser(analyserName)) {
+            else if (auto keyAnalyser = baseline::makeBaselineKeyAnalyser(analyserName)) {
                 domain::InMemoryPcmSource source(track.samples, track.sampleRate);
                 const baseline::KeyAnalysis key = keyAnalyser->analyse(source);
                 if (!key.error.empty()) {
@@ -1036,7 +1052,7 @@ std::vector<AudioResult> analyseJob(const AudioJob &job, const std::vector<std::
             result.error = key.error;
             result.keyFound = key.key;
         } else {
-            const domain::GridAnalysis grid = baseline::makeBaselineGridAnalyser(name)->analyse(source);
+            const domain::GridAnalysis grid = makeGridAnalyser(name)->analyse(source);
             result.analyseMs = msSince(analyseStart);
             result.error = grid.error;
             if (grid.error.empty()) {

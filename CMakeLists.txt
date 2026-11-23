@@ -488,6 +488,7 @@ add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
     src/domain/beat_grid.cpp
     src/domain/beat_grid_comparison.cpp
+    src/domain/seabass_grid_analyser.cpp
     src/domain/camelot_key.cpp
     src/domain/engine_overview.cpp
     src/domain/hidden_engine_cues.cpp
@@ -720,6 +721,7 @@ add_library(seabass_core_testing STATIC
     src/domain/matching_policy.cpp
     src/domain/beat_grid.cpp
     src/domain/beat_grid_comparison.cpp
+    src/domain/seabass_grid_analyser.cpp
     src/infrastructure/audio/playback_timeline.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
@@ -1055,6 +1057,8 @@ endif()
 # reaches every target in this file that compiles it.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/domain/audio_alignment.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
+    # The grid analyser filters a whole track ten times over: the same.
+    set_source_files_properties(src/domain/seabass_grid_analyser.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
 endif()
 
 if(TARGET Qt6::Multimedia)
@@ -5382,6 +5386,14 @@ add_test(NAME beat_grid_comparison_test COMMAND beat_grid_comparison_test)
 add_executable(synth_track_test tests/synth_track_test.cpp)
 target_link_libraries(synth_track_test PRIVATE seabass_synth_track)
 add_test(NAME synth_track_test COMMAND synth_track_test)
+
+# Seabass's own grid analyser on the generated tracks, whose grids are
+# known: the tempo, the place of the beat, and the tracks it must not put
+# half a beat out.
+add_executable(seabass_grid_analyser_test tests/seabass_grid_analyser_test.cpp)
+target_include_directories(seabass_grid_analyser_test PRIVATE src tools)
+target_link_libraries(seabass_grid_analyser_test PRIVATE seabass_core seabass_synth_track)
+add_test(NAME seabass_grid_analyser_test COMMAND seabass_grid_analyser_test)
 
 # Phase 1's benchmark: rekordbox's grids against Engine's on a stick, and
 # every registered analyser against synthetic tracks. Reads only. The
