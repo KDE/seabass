@@ -71,6 +71,24 @@ void constantPreset(const std::string &name, double trueBpm)
     within(analysis.confidence, 0.5, 1.0, name + ": most windows agree with the grid");
 }
 
+// A preset whose tempo moves: the grid found moves with it. `within8` and
+// `within20` are the least shares of the true beats that must have one of
+// ours within 8 and 20 ms.
+void movingPreset(const std::string &name, double within8, double within20)
+{
+    const synth::SynthTrack track = synth::renderSynthTrack(*synth::synthPreset(name));
+    const GridAnalysis analysis = analysed(track);
+    check(analysis.error.empty(), name + ": no error");
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, track.beats);
+    check(c.tempo == TempoRelation::Same, name + ": the same tempo as the truth, beat for beat");
+    check(c.candidateShape.kind == GridShapeKind::Moving, name + ": a grid that moves");
+    within(c.hits.within8Ms, within8, 1.0, name + ": true beats with one of ours within 8 ms");
+    within(c.hits.within20Ms, within20, 1.0, name + ": true beats with one of ours within 20 ms");
+    check(c.drift.known, name + ": the drift is known");
+    within(c.drift.ms, -10.0, 10.0, name + ": it does not run away from the truth");
+    within(c.cover, 0.97, 1.0, name + ": beats from the start of the track to its end");
+}
+
 void noBeat()
 {
     // Silence, and a steady tone: nothing repeats, and no grid is made up.
@@ -215,6 +233,12 @@ int main()
     constantPreset("trance-137.98", 137.98);
     constantPreset("long-breakdown-126", 126.0);
     constantPreset("drumless-intro-128", 128.0);
+    // A tempo that drifts, steps, ramps, alternates, and a drummer's.
+    movingPreset("drift-122", 0.8, 0.95);
+    movingPreset("step-120-126", 0.9, 0.95);
+    movingPreset("ramp-100-125", 0.7, 0.8);
+    movingPreset("alternating-127.5-128", 0.8, 0.95);
+    movingPreset("live-drummer-96", 0.6, 0.95);
     noBeat();
     if (failures > 0) {
         std::cerr << failures << " check(s) FAILED\n";

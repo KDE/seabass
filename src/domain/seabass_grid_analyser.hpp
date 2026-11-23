@@ -36,9 +36,17 @@ namespace seabass::domain
 //
 // No whole-number rule: the tempo is what was measured.
 //
-// What it does not do yet: follow a tempo that moves (the grid is one
-// straight line), say which beat starts the bar (beatInBar is 0), or
-// refine the beat on the samples of the transient.
+// A tempo that moves: where the straight grid explains fewer than three
+// quarters of the windows that lie in a stretch with a rhythm (their own
+// peak within 10 ms of it), the track is followed instead. A tempo
+// curve is read from it every 2 s, and from the strongest window outwards
+// each next window of eight beats corrects the grid when its peak is
+// clearly the beat the grid expects; where it is not (a breakdown, a
+// fill) the grid goes on at the curve's tempo and the beats in between
+// are spaced evenly.
+//
+// What it does not do yet: say which beat starts the bar (beatInBar is
+// 0), or refine the beat on the samples of the transient.
 class SeabassGridAnalyser : public GridAnalyser
 {
 public:

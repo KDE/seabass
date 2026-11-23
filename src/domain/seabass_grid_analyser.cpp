@@ -9,6 +9,7 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -344,26 +345,23 @@ std::size_t indexOfMax(const std::vector<double> &values, std::size_t from, std:
     return top;
 }
 
-// Where in the beat the whole track's fold has the beat, in ms from 0.
+// Where a fold has the beat, in steps from its start (to a fraction).
 //
 // Not at its highest point: a short sharp hit between the beats (a rim
 // shot, the first click of a clap) has all its bands rise in the same
 // few milliseconds and folds into one tall spike, and a kick, whose
 // bands rise one after the other over ten milliseconds and more, into a
-// hump that is lower and holds more. The
-// place is chosen where the fold has the most within 30 ms either way,
-// and the beat is the peak of the finely smoothed fold inside that.
-double wholeTrackPhase(const std::vector<double> &onsets, double period)
+// hump that is lower and holds more. The place is chosen where the fold
+// has the most within 30 ms either way, and the beat is the peak of the
+// finely smoothed fold inside that.
+double heaviestPlace(const std::vector<double> &folded)
 {
-    const auto beats = static_cast<std::size_t>(static_cast<double>(onsets.size() - 1) / period);
-    std::size_t used = 0;
-    const std::vector<double> folded = fold(onsets, 0.0, period, beats, used);
     const std::vector<double> fine = smoothed(folded);
     const auto steps = static_cast<std::ptrdiff_t>(fine.size());
     constexpr std::ptrdiff_t WeighedOverMs = 30;
     // Too few steps for a hump and a spike to be told apart: the highest.
     if (steps < 8 * WeighedOverMs) {
-        return parabolaPeak(fine, indexOfMax(fine, 0, fine.size() - 1)) * (period / static_cast<double>(fine.size()));
+        return parabolaPeak(fine, indexOfMax(fine, 0, fine.size() - 1));
     }
     const std::vector<double> broad = smoothed(folded, WeighedOverMs);
     const auto centre = static_cast<std::ptrdiff_t>(indexOfMax(broad, 0, broad.size() - 1));
@@ -374,7 +372,16 @@ double wholeTrackPhase(const std::vector<double> &onsets, double period)
             top = i;
         }
     }
-    return parabolaPeak(fine, static_cast<std::size_t>(top)) * (period / static_cast<double>(fine.size()));
+    return parabolaPeak(fine, static_cast<std::size_t>(top));
+}
+
+// Where in the beat the whole track's fold has the beat, in ms from 0.
+double wholeTrackPhase(const std::vector<double> &onsets, double period)
+{
+    const auto beats = static_cast<std::size_t>(static_cast<double>(onsets.size() - 1) / period);
+    std::size_t used = 0;
+    const std::vector<double> folded = fold(onsets, 0.0, period, beats, used);
+    return heaviestPlace(folded) * (period / static_cast<double>(folded.size()));
 }
 
 // ------------------------------------------------------------------ tempo
@@ -483,6 +490,9 @@ struct WindowReading
     // peak within a quarter of a beat of that place.
     double offsetMs = std::numeric_limits<double>::quiet_NaN();
     double strength = 0.0;
+    // The highest point of the window's fold, wherever it is. 0 where the
+    // window lies partly outside the track.
+    double highest = 0.0;
 };
 
 std::vector<WindowReading> readWindows(const std::vector<double> &onsets, double period, double phase)
@@ -506,6 +516,7 @@ std::vector<WindowReading> readWindows(const std::vector<double> &onsets, double
         const std::size_t reach = profile.size() / 4;
         const std::size_t top = indexOfMax(profile, middle - reach, middle + reach);
         const double highest = profile[indexOfMax(profile, 0, profile.size() - 1)];
+        reading.highest = used == WindowBeats ? highest : 0.0;
         // No reading where beats of the window lie outside the track,
         // where the peak near the grid's place is not the window's peak
         // or near it in height (the beat is somewhere else here), or
@@ -604,6 +615,323 @@ std::optional<Line> fitLine(const std::vector<WindowReading> &readings)
     return line;
 }
 
+// ----------------------------------------------------- a tempo that moves
+
+// The onset function over its own level of the 4 s around: a quiet part
+// of the track then says as much about the tempo as a loud one.
+std::vector<double> levelled(const std::vector<double> &onsets)
+{
+    constexpr std::ptrdiff_t Half = 2000;
+    const auto n = static_cast<std::ptrdiff_t>(onsets.size());
+    std::vector<double> sums(onsets.size() + 1, 0.0);
+    for (std::size_t i = 0; i < onsets.size(); ++i) {
+        sums[i + 1] = sums[i] + onsets[i];
+    }
+    const double mean = onsets.empty() ? 0.0 : sums.back() / static_cast<double>(onsets.size());
+    std::vector<double> result(onsets.size());
+    for (std::ptrdiff_t i = 0; i < n; ++i) {
+        const std::ptrdiff_t from = std::max<std::ptrdiff_t>(0, i - Half);
+        const std::ptrdiff_t to = std::min(n, i + Half);
+        const double level = (sums[static_cast<std::size_t>(to)] - sums[static_cast<std::size_t>(from)])
+            / static_cast<double>(2 * Half);
+        result[static_cast<std::size_t>(i)] = onsets[static_cast<std::size_t>(i)] / (level + 0.1 * mean + 1e-12);
+    }
+    return result;
+}
+
+// The beat period along the track: a value every 2 s.
+struct TempoCurve
+{
+    std::vector<double> centresMs;
+    std::vector<double> periodsMs;
+    // Whether the 8 s around each centre repeat at their lag at all: a
+    // rhythm, at whatever tempo near the track's. A breakdown of pads, an
+    // intro without drums and a held chord do not.
+    std::vector<bool> rhythm;
+
+    bool rhythmAt(double timeMs) const
+    {
+        if (centresMs.empty()) {
+            return false;
+        }
+        const double spacing = centresMs.size() > 1 ? centresMs[1] - centresMs[0] : 1.0;
+        const double place = std::round((timeMs - centresMs.front()) / spacing);
+        const auto i = static_cast<std::size_t>(std::clamp(place, 0.0, static_cast<double>(centresMs.size() - 1)));
+        return rhythm[i];
+    }
+
+    double at(double timeMs) const
+    {
+        if (timeMs <= centresMs.front()) {
+            return periodsMs.front();
+        }
+        if (timeMs >= centresMs.back()) {
+            return periodsMs.back();
+        }
+        const auto above = std::upper_bound(centresMs.begin(), centresMs.end(), timeMs);
+        const auto i = static_cast<std::size_t>(above - centresMs.begin());
+        const double part = (timeMs - centresMs[i - 1]) / (centresMs[i] - centresMs[i - 1]);
+        return periodsMs[i - 1] + part * (periodsMs[i] - periodsMs[i - 1]);
+    }
+};
+
+// Every 2 s the autocorrelation of the 8 s around it, at the lags from
+// 0.78 to 1.28 of `guess` (a quarter either way: wide enough for a ramp
+// from 100 to 125 BPM, and short of the lags at two thirds, three
+// quarters, four thirds and three halves of the beat, which a rhythm
+// repeats at too and which are no change of tempo); through those the
+// path of lags that scores best without jumping. A window is scored against the track's strong windows
+// and not against its own best: one with no rhythm in it (a breakdown)
+// then has no say, and the path goes straight through it. Left to its
+// own best it would pick whatever its noise repeats at, and a grid
+// carried through the breakdown at that period comes out beside the beat.
+std::optional<TempoCurve> tempoCurve(const std::vector<double> &onsets, double guess)
+{
+    const auto firstLag = std::max<std::size_t>(280, static_cast<std::size_t>(0.78 * guess));
+    const auto lastLag = std::min<std::size_t>(1100, static_cast<std::size_t>(1.28 * guess));
+    constexpr std::size_t HopMs = 2000;
+    constexpr std::size_t HalfMs = 4000;
+    constexpr std::size_t Transform = 16384;
+    if (lastLag <= firstLag + 2 || onsets.size() < 2 * HalfMs + 2 * HopMs) {
+        return std::nullopt;
+    }
+    const std::size_t lags = lastLag - firstLag + 1;
+    TempoCurve curve;
+    std::vector<std::vector<double>> scores;
+    std::vector<std::complex<double>> z(Transform);
+    for (std::size_t centre = HalfMs; centre + HalfMs < onsets.size(); centre += HopMs) {
+        double mean = 0.0;
+        for (std::size_t i = centre - HalfMs; i < centre + HalfMs; ++i) {
+            mean += onsets[i];
+        }
+        mean /= static_cast<double>(2 * HalfMs);
+        std::fill(z.begin(), z.end(), std::complex<double>(0.0, 0.0));
+        for (std::size_t i = 0; i < 2 * HalfMs; ++i) {
+            z[i] = onsets[centre - HalfMs + i] - mean;
+        }
+        fft(z, false);
+        for (std::complex<double> &value : z) {
+            value = std::norm(value);
+        }
+        fft(z, true);
+        std::vector<double> row(lags);
+        for (std::size_t k = 0; k < lags; ++k) {
+            const std::size_t lag = firstLag + k;
+            // The lag and its double, so that half a beat does not win.
+            row[k] = std::max(z[lag].real() + 0.5 * z[std::min(2 * lag, Transform / 2 - 1)].real(), 0.0);
+        }
+        curve.centresMs.push_back(static_cast<double>(centre));
+        scores.push_back(std::move(row));
+    }
+    if (scores.size() < 2) {
+        return std::nullopt;
+    }
+    std::vector<double> tops;
+    tops.reserve(scores.size());
+    for (const std::vector<double> &row : scores) {
+        tops.push_back(row[indexOfMax(row, 0, row.size() - 1)]);
+    }
+    const double scale = quantile(tops, 0.8);
+    if (!(scale > 0.0)) {
+        return std::nullopt;
+    }
+    for (std::vector<double> &row : scores) {
+        for (double &value : row) {
+            value = std::min(value / scale, 1.5);
+        }
+    }
+
+    // The best path: a change of lag costs by the square of its size (in
+    // log), so much that only a real change of tempo pays for one.
+    constexpr double ChangeCost = 400.0;
+    std::vector<double> logLag(lags);
+    for (std::size_t k = 0; k < lags; ++k) {
+        logLag[k] = std::log(static_cast<double>(firstLag + k));
+    }
+    std::vector<double> best = scores[0];
+    std::vector<double> next(lags);
+    std::vector<std::vector<std::uint32_t>> from(scores.size(), std::vector<std::uint32_t>(lags, 0));
+    for (std::size_t w = 1; w < scores.size(); ++w) {
+        for (std::size_t j = 0; j < lags; ++j) {
+            double top = -std::numeric_limits<double>::infinity();
+            std::uint32_t topFrom = 0;
+            for (std::size_t k = 0; k < lags; ++k) {
+                const double d = logLag[j] - logLag[k];
+                const double value = best[k] - ChangeCost * d * d;
+                if (value > top) {
+                    top = value;
+                    topFrom = static_cast<std::uint32_t>(k);
+                }
+            }
+            next[j] = top + scores[w][j];
+            from[w][j] = topFrom;
+        }
+        best.swap(next);
+    }
+    std::vector<std::size_t> path(scores.size());
+    path.back() = indexOfMax(best, 0, lags - 1);
+    for (std::size_t w = scores.size() - 1; w > 0; --w) {
+        path[w - 1] = from[w][path[w]];
+    }
+
+    // Finer than a millisecond where the window has a peak at its lag;
+    // elsewhere between the windows that have.
+    constexpr double HasAPeak = 0.3;
+    curve.periodsMs.assign(scores.size(), std::numeric_limits<double>::quiet_NaN());
+    curve.rhythm.assign(scores.size(), false);
+    std::vector<std::size_t> known;
+    for (std::size_t w = 0; w < scores.size(); ++w) {
+        const std::size_t k = path[w];
+        if (scores[w][k] >= HasAPeak && k > 0 && k + 1 < lags) {
+            curve.periodsMs[w] = static_cast<double>(firstLag) + parabolaPeak(scores[w], k);
+            curve.rhythm[w] = true;
+            known.push_back(w);
+        }
+    }
+    if (known.empty()) {
+        return std::nullopt;
+    }
+    for (std::size_t w = 0; w < scores.size(); ++w) {
+        if (std::isfinite(curve.periodsMs[w])) {
+            continue;
+        }
+        const auto after = std::lower_bound(known.begin(), known.end(), w);
+        if (after == known.begin()) {
+            curve.periodsMs[w] = curve.periodsMs[*after];
+        } else if (after == known.end()) {
+            curve.periodsMs[w] = curve.periodsMs[*std::prev(after)];
+        } else {
+            const std::size_t a = *std::prev(after);
+            const std::size_t b = *after;
+            const double part = static_cast<double>(w - a) / static_cast<double>(b - a);
+            curve.periodsMs[w] = curve.periodsMs[a] + part * (curve.periodsMs[b] - curve.periodsMs[a]);
+        }
+    }
+    return curve;
+}
+
+// The beats of a track whose tempo moves, by following windows of eight
+// beats from the strongest one outwards, four beats at a time.
+//
+// The next window is folded at the period the tempo curve has there. Its
+// peak corrects the grid only when it is within an eighth of a beat of
+// where the grid already is, at least half as high as the window's
+// highest point, and the window a quarter as strong as the strongest:
+// then it is this beat, heard clearly. Otherwise the grid goes on at the
+// curve's period and nothing corrects it (a breakdown, a fill, a hit
+// between the beats). After three windows that have drums and no such
+// peak the grid is no longer on the track's beat, and the beat is taken
+// where those drums have it.
+std::vector<double> followWindows(const std::vector<double> &onsets, const TempoCurve &curve)
+{
+    const double last = static_cast<double>(onsets.size() - 1);
+    constexpr double Reach = 0.125;
+    constexpr double NearTheHighest = 0.5;
+    constexpr double HasDrums = 0.25;
+    constexpr double DrumsElsewhere = 0.3;
+    constexpr int WindowsLost = 3;
+
+    // The anchor: of windows every four beats, the strongest, and its
+    // peak wherever in the beat it is.
+    double strongest = -1.0;
+    double anchor = 0.0;
+    for (double t = 0.0; t + 9.0 * curve.at(t) < last;) {
+        const double tau = curve.at(t);
+        std::size_t used = 0;
+        const std::vector<double> folded = fold(onsets, t, tau, WindowBeats, used);
+        if (used == WindowBeats) {
+            const std::vector<double> profile = smoothed(folded);
+            const double height = profile[indexOfMax(profile, 0, profile.size() - 1)];
+            if (height > strongest) {
+                strongest = height;
+                anchor = t + heaviestPlace(folded) * (tau / static_cast<double>(folded.size()));
+            }
+        }
+        t += static_cast<double>(WindowHopBeats) * tau;
+    }
+    if (!(strongest > 0.0)) {
+        return {};
+    }
+
+    const auto run = [&](double direction) {
+        std::vector<double> beats;
+        double b = anchor;
+        int lost = 0;
+        // The last beat a window was sure of, and how many beats were
+        // given out before it. The beats since are only as good as the
+        // curve's period: when the next window is sure, they are spaced
+        // evenly between the two, so that a grid carried through a long
+        // breakdown arrives where the drums come back and does not bend
+        // on its last four beats.
+        double sure = anchor;
+        std::size_t beatsBeforeSure = 0;
+        for (;;) {
+            const double tau = curve.at(b);
+            const double next = b + direction * static_cast<double>(WindowHopBeats) * tau;
+            if (next < 0.0 || next + 9.0 * tau >= last) {
+                // No room for another window: on at the curve's period
+                // to the edge of the track.
+                for (double step = b; step >= 0.0 && step <= last; step += direction * curve.at(step)) {
+                    beats.push_back(step);
+                }
+                break;
+            }
+            const double here = curve.at(next);
+            std::size_t used = 0;
+            const std::vector<double> folded = fold(onsets, next - here / 2.0, here, WindowBeats, used);
+            const std::vector<double> profile = smoothed(folded);
+            const double step = here / static_cast<double>(profile.size());
+            const std::size_t middle = profile.size() / 2;
+            const auto reach = std::max<std::size_t>(2, static_cast<std::size_t>(Reach * static_cast<double>(profile.size())));
+            double correction = 0.0;
+            bool corrects = false;
+            if (used == WindowBeats && middle > reach && middle + reach < profile.size()) {
+                const std::size_t highestAt = indexOfMax(profile, 0, profile.size() - 1);
+                const std::size_t top = indexOfMax(profile, middle - reach, middle + reach);
+                const bool clearly = profile[top] >= NearTheHighest * profile[highestAt] && top != middle - reach
+                    && top != middle + reach && profile[top] >= HasDrums * strongest;
+                if (clearly) {
+                    correction = (parabolaPeak(profile, top) - static_cast<double>(middle)) * step;
+                    lost = 0;
+                    corrects = true;
+                } else if (profile[highestAt] >= DrumsElsewhere * strongest && ++lost >= WindowsLost) {
+                    correction = (heaviestPlace(folded) - static_cast<double>(middle)) * step;
+                    lost = 0;
+                    corrects = true;
+                }
+            }
+            const double corrected = next + correction;
+            for (std::size_t k = 0; k < WindowHopBeats; ++k) {
+                beats.push_back(b + (corrected - b) * static_cast<double>(k) / static_cast<double>(WindowHopBeats));
+            }
+            if (corrects) {
+                const std::size_t since = beats.size() - beatsBeforeSure;
+                for (std::size_t k = 0; k < since; ++k) {
+                    beats[beatsBeforeSure + k] = sure + (corrected - sure) * static_cast<double>(k) / static_cast<double>(since);
+                }
+                sure = corrected;
+                beatsBeforeSure = beats.size();
+            }
+            b = corrected;
+        }
+        return beats;
+    };
+
+    std::vector<double> beats = run(-1.0);
+    const std::vector<double> forward = run(1.0);
+    beats.insert(beats.end(), forward.begin(), forward.end());
+    std::sort(beats.begin(), beats.end());
+    // The anchor is in both runs, and two beats closer than a fifth of
+    // the shortest period are one.
+    std::vector<double> distinct;
+    for (const double beat : beats) {
+        if (distinct.empty() || beat - distinct.back() > static_cast<double>(ShortestPeriodMs) / 5.0) {
+            distinct.push_back(beat);
+        }
+    }
+    return distinct;
+}
+
 }  // namespace
 
 GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
@@ -677,11 +1005,54 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
     if (first < 0.0) {
         first += period;
     }
+    std::vector<double> straight;
     for (std::size_t k = 0;; ++k) {
         const double time = first + static_cast<double>(k) * period;
         if (time > last) {
             break;
         }
+        straight.push_back(time);
+    }
+
+    // Is the tempo constant? The windows say. Of those in a stretch that
+    // has a rhythm (the tempo curve knows: its 8 s there repeat, at
+    // whatever tempo near the track's), how many have their own peak
+    // within 10 ms of the straight grid (of the grid's middle distance
+    // from them, so that which moment of the beat it sits on does not
+    // count)? On a track made with a drum machine nearly all: on the
+    // collection the grid explains 99 percent of the windows of the
+    // middle track. Where it explains fewer than three quarters, the
+    // tempo is taken to move and the track is followed. The followed grid
+    // is not asked first: on real music it strays from a straight grid
+    // that is right more often than it finds a tempo that moves.
+    bool moves = false;
+    std::vector<double> followed;
+    if (const std::optional<TempoCurve> curve = tempoCurve(levelled(onsets), period)) {
+        const std::vector<WindowReading> readings = readWindows(onsets, period, phase);
+        std::vector<double> offsets;
+        std::size_t withRhythm = 0;
+        for (const WindowReading &reading : readings) {
+            if (reading.highest > 0.0 && curve->rhythmAt(reading.centreMs)) {
+                ++withRhythm;
+                if (std::isfinite(reading.offsetMs)) {
+                    offsets.push_back(reading.offsetMs);
+                }
+            }
+        }
+        const double middle = quantile(offsets, 0.5);
+        std::size_t explained = 0;
+        constexpr double OnTheGridWithinMs = 10.0;
+        for (const double offset : offsets) {
+            explained += std::abs(offset - middle) <= OnTheGridWithinMs ? 1 : 0;
+        }
+        constexpr double ExplainsTheTrack = 0.75;
+        if (withRhythm > 0 && static_cast<double>(explained) < ExplainsTheTrack * static_cast<double>(withRhythm)) {
+            followed = followWindows(onsets, *curve);
+            moves = followed.size() >= 8;
+        }
+    }
+    const std::vector<double> &grid = moves ? followed : straight;
+    for (const double time : grid) {
         analysis.beats.push_back({time, 0});
     }
     analysis.confidence = windowsRead > 0 ? static_cast<double>(windowsKept) / static_cast<double>(windowsRead) : 0.0;
