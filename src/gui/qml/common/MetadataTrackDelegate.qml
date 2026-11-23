@@ -138,7 +138,8 @@ Rectangle {
     // caches it, null in a test without one. Both metadata pages bind
     // waveformData to this for the open row only.
     function stickWaveform(player, source) {
-        if (!player || !source || !source.format) {
+        // analysisRevision: asked again when a write ends.
+        if (!player || !source || !source.format || player.analysisRevision === -1) {
             return [];
         }
         return player.waveformFor(source.format, source.libraryPath, source.sourceId);

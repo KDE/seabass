@@ -23,7 +23,12 @@ TestCase {
     visible: true
     when: windowShown
 
-    PlaybackController { id: realPlayback }
+    // Bound as Main.qml binds the app's one player: nothing is read
+    // while a library is being written (see tst_CleanupPage).
+    PlaybackController {
+        id: realPlayback
+        libraryBusy: EditSessionRegistry.anyWriting
+    }
     AppSettingsController { id: realAppSettings }
 
     // A copy of the small synthetic Engine library with one track filed

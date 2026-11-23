@@ -111,6 +111,15 @@ class PlaybackController : public QObject
     // next(), previous() and the end of a track load nothing; a track
     // that ended meanwhile is followed by the next one when it clears.
     Q_PROPERTY(bool libraryBusy READ libraryBusy WRITE setLibraryBusy NOTIFY libraryBusyChanged)
+    // Goes up each time forgetAnalyses() drops what waveformFor(),
+    // beatGridFor() and beatTicksFor() kept: when a write ends and when
+    // the sticks change. A binding that calls one of those reads this
+    // too, so it asks again then. Without it a row keeps what it was
+    // given: an empty answer from during a write (see libraryBusy), or
+    // the analysis the write has just replaced.
+    // Never -1: a binding reads it as `analysisRevision !== -1`, true
+    // for a stand-in player (tests) that has no such property too.
+    Q_PROPERTY(int analysisRevision READ analysisRevision NOTIFY analysisRevisionChanged)
     Q_PROPERTY(bool liveLevels READ liveLevels NOTIFY liveLevelsChanged)
     Q_PROPERTY(qreal levelLow READ levelLow NOTIFY levelsChanged)
     Q_PROPERTY(qreal levelMid READ levelMid NOTIFY levelsChanged)
@@ -154,6 +163,7 @@ public:
     bool playing() const;
     bool liveLevels() const { return m_buffersArrive; }
     bool libraryBusy() const { return m_libraryBusy; }
+    int analysisRevision() const { return m_analysisRevision; }
     void setLibraryBusy(bool busy);
     bool desktopMediaControls() const { return m_desktopMediaControls; }
     void setDesktopMediaControls(bool enabled);
@@ -209,6 +219,8 @@ public:
     // hasn't needed backgrounding so far (see load()'s own doc comment).
     // Cached (see m_waveformCache) since list views re-decode the same
     // few tracks' waveforms repeatedly as delegates scroll in and out.
+    // While libraryBusy, only what is kept: nothing is read then, and a
+    // binding asks again through analysisRevision.
     Q_INVOKABLE QVariantList waveformFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
     // Drops every analysis waveformFor(), beatGridFor() and beatTicksFor()
@@ -320,6 +332,7 @@ signals:
     void levelsChanged();
     void queueChanged();
     void libraryBusyChanged();
+    void analysisRevisionChanged();
     void liveLevelsChanged();
     // The position jumped -- a seek, a skip -- rather than played on.
     void seeked(qint64 positionMs);
@@ -378,6 +391,7 @@ private:
     QPointer<QAbstractItemModel> m_queue;
     bool m_desktopMediaControls = false;
     bool m_libraryBusy = false;
+    int m_analysisRevision = 0;
     bool m_advanceWhenLibraryFree = false;
     bool m_buffersArrive = false;
     QObject *m_mpris = nullptr;

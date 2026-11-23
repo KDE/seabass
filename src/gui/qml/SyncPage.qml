@@ -382,7 +382,8 @@ Page {
                 opacity: card.dimmed ? 0.75 : 1.0
                 // Fetched on demand, and only for a row someone opened --
                 // see SyncPlanListModel::setAnalysis() for why that matters.
-                waveformData: root.playbackController
+                // analysisRevision: asked again when a write ends.
+                waveformData: root.playbackController && root.playbackController.analysisRevision !== -1
                     ? root.playbackController.waveformFor(card.track.side, root.pathForFormat(card.track.side),
                                                           card.track.sourceId)
                     : []

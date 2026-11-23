@@ -635,12 +635,15 @@ HealthCheckPage {
                                     // blob exists for this specific track (empty for
                                     // a track Engine/rekordbox never analyzed, not a
                                     // bug, see the class's own read-only contract).
-                                    waveformData: root.playbackController.waveformFor(issueDelegate.format,
+                                    // analysisRevision: asked again when a write ends.
+                                    waveformData: root.playbackController.analysisRevision === -1 ? []
+                                        : root.playbackController.waveformFor(issueDelegate.format,
                                         root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
                                     // The same cached read as the waveform's, only
                                     // the beats drawn at this width.
                                     beatsSelected: true
-                                    beatData: root.playbackController.beatTicksFor(issueDelegate.format,
+                                    beatData: root.playbackController.analysisRevision === -1 ? []
+                                        : root.playbackController.beatTicksFor(issueDelegate.format,
                                         root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId,
                                         modelData.durationMs, width)
                                     format: issueDelegate.format

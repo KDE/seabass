@@ -442,6 +442,16 @@ PlaybackController::CachedAnalysis PlaybackController::cachedAnalysis(const QStr
     if (const CachedAnalysis *cached = m_analysisCache.object(key)) {
         return *cached;
     }
+    // Not while a library is being written, the rule the popup's detail
+    // read keeps. Engine's analysis is read through libdjinterop, which
+    // opens m.db: a save's own connection then meets this one's lock and
+    // fails at once with "database is locked", and the whole save rolls
+    // back. A list's rows ask here as they are built, which a save's
+    // changes to the list make happen in the middle of it. Nothing is
+    // kept, so the row asks again when the write ends (analysisRevision).
+    if (m_libraryBusy) {
+        return {};
+    }
     const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
     domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId, index.get());
     CachedAnalysis read{toVariantList(analysis.waveform), std::move(analysis.beats), analysis.beatRateRecorded};
@@ -452,6 +462,8 @@ PlaybackController::CachedAnalysis PlaybackController::cachedAnalysis(const QStr
 void PlaybackController::forgetAnalyses()
 {
     m_analysisCache.clear();
+    ++m_analysisRevision;
+    emit analysisRevisionChanged();
 }
 
 QVariantList PlaybackController::waveformFor(const QString &format, const QString &libraryPath,
