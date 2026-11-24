@@ -5236,18 +5236,26 @@ endif()
 # run proves the committed fixture is clean; it cannot prove the verifier
 # would refuse anything, because the fixture never leaks.
 #
-# WILL_FAIL, and not because the check is wrong. The fixture was exported
+# EXIT 1, and not because the check is wrong. The fixture was exported
 # by Seabass 0.6, whose anonymizer overwrote rows without compacting the
 # files afterwards, so the pre-scrub values are still legible in the free
 # space of engine/Database2/m.db (52 real artist names) and
 # rekordbox/export.pdb (403). The byte sweep added to the verifier finds
 # them; the reader-based checks never could. Regenerating the fixture from
 # the originating USB sticks is the fix. When that lands this test starts
-# failing *because it passed*, which is the reminder to delete this
-# property and the matching baseline list in anonymization_verifier_test.
-add_test(NAME anonymized_fixture_is_clean_test COMMAND verify_anonymized_export
-    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
-set_tests_properties(anonymized_fixture_is_clean_test PROPERTIES LABELS "integration" WILL_FAIL TRUE)
+# failing *because it passed*, which is the reminder to make this EXIT 0
+# and delete the matching baseline list in anonymization_verifier_test.
+#
+# It verifies a byte-for-byte copy, because the verifier reads
+# exportLibrary.db, and the first SQLite connection to a WAL database
+# truncates its -shm and rebuilds it: a cli_* test hashing the committed
+# fixture at that moment saw the -shm changed (CI, 2026-11-24).
+set(_anonymized_clean_copy "${CMAKE_BINARY_DIR}/test-fixture-copies/anonymized_fixture_is_clean")
+add_test(NAME anonymized_fixture_is_clean_test
+    COMMAND ${CMAKE_COMMAND} "-DCLI=$<TARGET_FILE:verify_anonymized_export>" "-DARGS=${_anonymized_clean_copy}"
+            "-DEXIT=1" "-DUNCHANGED=${_cli_catalogs}" "-DCOPY_FROM=${_cli_fixture}" "-DCOPY_TO=${_anonymized_clean_copy}"
+            -P ${CMAKE_SOURCE_DIR}/tests/cli_expect.cmake)
+set_tests_properties(anonymized_fixture_is_clean_test PROPERTIES LABELS "integration")
 
 # Plants a specific leak per case and asserts the verifier catches it.
 add_executable(onelibrary_anonymizer_test tests/onelibrary_anonymizer_test.cpp)
