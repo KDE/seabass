@@ -589,6 +589,15 @@ int main(int argc, char **argv)
                == std::optional<std::string>("../Music/Caf\xc3\xa9 \xc3\x84.wav"));
         assert(text(cdb, "SELECT filename FROM Track WHERE id = " + std::to_string(id44) + ";")
                == std::optional<std::string>("Caf\xc3\xa9 \xc3\x84.wav"));
+        // Neither row came with the file's tags: the columns Track has
+        // no field for are as libdjinterop leaves them.
+        for (const std::int64_t id : {id48, id44}) {
+            const std::string where = " FROM Track WHERE id = " + std::to_string(id) + ";";
+            for (const char *column : {"album", "genre", "composer", "label"}) {
+                const auto value = text(cdb, std::string("SELECT ") + column + where);
+                assert((!value || value->empty()) && "nothing invented for a row without tags");
+            }
+        }
         // Only these two: the 350 the player analysed are still analysed.
         // A library-wide "UPDATE Track SET isAnalyzed = 0" leaves 0 here.
         assert(scalar(cdb, "SELECT count(*) FROM Track WHERE isAnalyzed = 1;") == 350);
@@ -867,6 +876,69 @@ int main(int argc, char **argv)
             assert(scalar(db2, "SELECT count(*) FROM Track;") == tracks && "nothing added");
         }
         std::cout << "case 14 (an Information row at id 2 is accepted and stays; two rows are refused) OK\n";
+
+        // 14b. A row made from a file alone (the track import): what the
+        //      file's tags say goes into the columns Track has no field
+        //      for, and a tag that says nothing leaves its column as a row
+        //      without tags has it.
+        {
+            const fs::path lib4 = root / "Engine Library 4";
+            fs::copy(fixture / "engine", lib4, fs::copy_options::recursive);
+            const std::string lib4Utf8 = pathToUtf8(lib4);
+            const std::string db4 = pathToUtf8(lib4 / "Database2" / "m.db");
+            NewEngineTrack full = makeTrack(wav48, "Tagged", rate48);
+            full.realEngineLibraryPath = lib4Utf8;
+            full.source.cues.clear();
+            domain::TrackTags tags;
+            tags.album = "An \xc3\x84lbum";
+            tags.genre = "Techno";
+            tags.composer = "A Composer";
+            tags.label = "A Label";
+            tags.year = 1997;
+            tags.trackNumber = 7;
+            // Not taken from here: Track's own fields are the caller's.
+            tags.title = "the tag's title";
+            tags.artist = "the tag's artist";
+            tags.comment = "the tag's comment";
+            full.fileTags = tags;
+            EngineTrackCover c;
+            std::string e;
+            const std::int64_t id = createEngineTrack(lib4Utf8, full, &c, &e);
+            if (id < 0) {
+                std::cerr << "createEngineTrack (tags): " << e << "\n";
+            }
+            assert(id == 1575 && e.empty());
+            const std::string where = " FROM Track WHERE id = " + std::to_string(id) + ";";
+            assert(text(db4, "SELECT album" + where) == std::optional<std::string>("An \xc3\x84lbum"));
+            assert(text(db4, "SELECT genre" + where) == std::optional<std::string>("Techno"));
+            assert(text(db4, "SELECT composer" + where) == std::optional<std::string>("A Composer"));
+            assert(text(db4, "SELECT label" + where) == std::optional<std::string>("A Label"));
+            assert(scalar(db4, "SELECT year" + where) == 1997);
+            // Engine keeps the track number in playOrder (Engine DJ's own
+            // library, 2026-11-24: 1079 of 1087 rows, the album's numbers).
+            assert(scalar(db4, "SELECT playOrder" + where) == 7);
+            assert(text(db4, "SELECT title" + where) == std::optional<std::string>("Tagged"));
+            assert(text(db4, "SELECT artist" + where) == std::optional<std::string>("Art\xc3\xafst"));
+            assert(text(db4, "SELECT comment" + where) == std::optional<std::string>("made by hand"));
+
+            NewEngineTrack bare = makeTrack(wav44, "Untagged", rate44);
+            bare.realEngineLibraryPath = lib4Utf8;
+            bare.source.cues.clear();
+            bare.fileTags = domain::TrackTags{};
+            const std::int64_t bareId = createEngineTrack(lib4Utf8, bare, &c, &e);
+            assert(bareId == 1576 && e.empty());
+            const std::string bareWhere = " FROM Track WHERE id = " + std::to_string(bareId) + ";";
+            const std::string plainWhere = " FROM Track WHERE id = " + std::to_string(id48) + ";";
+            for (const char *column : {"album", "genre", "composer", "label"}) {
+                assert(text(db4, std::string("SELECT ") + column + bareWhere)
+                       == text(cdb, std::string("SELECT ") + column + plainWhere));
+            }
+            for (const char *column : {"year", "typeof(year)", "playOrder", "typeof(playOrder)"}) {
+                assert(text(db4, std::string("SELECT ") + column + bareWhere)
+                       == text(cdb, std::string("SELECT ") + column + plainWhere));
+            }
+        }
+        std::cout << "case 14b (album, genre, composer, label, year, track number from the file's tags; none invented) OK\n";
 
         // 15. Junk is never written onto a stick (domain::isJunkCue): a
         //     rekordbox export cue on pad 1 at 7 ms and a negative "no cue"

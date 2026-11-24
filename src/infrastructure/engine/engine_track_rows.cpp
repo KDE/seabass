@@ -618,6 +618,22 @@ std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrac
         snapshot.file_bytes = source.fileSizeBytes;
     }
     snapshot.relative_path = relativePath;
+    if (track.fileTags) {
+        const domain::TrackTags &tags = *track.fileTags;
+        const auto said = [](const std::string &text) {
+            return text.empty() ? std::nullopt : std::optional(text);
+        };
+        snapshot.album = said(tags.album);
+        snapshot.genre = said(tags.genre);
+        snapshot.composer = said(tags.composer);
+        snapshot.publisher = said(tags.label);
+        if (tags.year > 0) {
+            snapshot.year = tags.year;
+        }
+        if (tags.trackNumber > 0) {
+            snapshot.track_number = tags.trackNumber;
+        }
+    }
 
     std::int64_t id = -1;
     try {

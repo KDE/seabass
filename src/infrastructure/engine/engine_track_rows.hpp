@@ -13,6 +13,7 @@
 
 #include "application/ports/kept_engine_analysis.hpp"
 #include "domain/track.hpp"
+#include "domain/track_tags.hpp"
 
 namespace seabass::infrastructure::engine
 {
@@ -105,6 +106,17 @@ struct NewEngineTrack
     // row's path is relative to (engineRelativePath) and where a cover
     // file goes (Artwork/ is never redirected into a save's scratch copy).
     std::string realEngineLibraryPath;
+    // For a row made from a file alone (the track import): what the
+    // file's own tags say, for the columns Track has no field for. When
+    // set, the row also gets album, genre, composer, label (Engine's
+    // "publisher"), year and track number (Engine's playOrder) from
+    // here, each only where the tag says something. Not the remixer:
+    // libdjinterop's snapshot has no field for it, and Engine DJ's own
+    // rows leave the column empty. Everything Track does carry (title, artist,
+    // bpm, key, comment) is taken from `source` as always, so the caller
+    // decides what of the tags goes there. Unset for a row made from a
+    // rekordbox row, which is then written exactly as before.
+    std::optional<domain::TrackTags> fileTags;
 };
 
 // The cover half of createEngineTrack, in and out. Required: a row that
