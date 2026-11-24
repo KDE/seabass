@@ -533,6 +533,7 @@ add_library(seabass_core STATIC
     src/domain/rekordbox_xml.cpp
     src/domain/library_consistency.cpp
     src/domain/moved_files.cpp
+    src/domain/imported_track.cpp
     src/domain/track_import_plan.cpp
     src/domain/library_statistics.cpp
     src/domain/stick_performance.cpp
@@ -751,6 +752,7 @@ add_library(seabass_core_testing STATIC
     src/domain/engine_update_planning.cpp
     src/domain/tracks_in_no_playlist.cpp
     src/domain/moved_files.cpp
+    src/domain/imported_track.cpp
     src/domain/track_import_plan.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/sync_planning.cpp
@@ -2387,6 +2389,11 @@ add_executable(track_import_plan_test tests/track_import_plan_test.cpp)
 target_link_libraries(track_import_plan_test PRIVATE seabass_core_testing)
 target_include_directories(track_import_plan_test PRIVATE src)
 add_test(NAME track_import_plan_test COMMAND track_import_plan_test)
+
+add_executable(imported_track_test tests/imported_track_test.cpp)
+target_link_libraries(imported_track_test PRIVATE seabass_core_testing)
+target_include_directories(imported_track_test PRIVATE src)
+add_test(NAME imported_track_test COMMAND imported_track_test)
 
 add_executable(verified_file_copy_test tests/verified_file_copy_test.cpp)
 target_link_libraries(verified_file_copy_test PRIVATE seabass_core_testing)
