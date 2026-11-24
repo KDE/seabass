@@ -133,6 +133,21 @@ Page {
         }
     }
 
+    // Scrolling the tracks folds the header's explanation away (the intro
+    // and the experimental note) and leaves the crumb, the boxes, the
+    // summary and its buttons: what is read once gives its room to the
+    // list, what is used stays. Back at the top of the list it unfolds
+    // again (#134). The mechanism is Clean Up Duplicates'
+    // (CleanupPage.qml); see ScrollCollapse for when.
+    ScrollCollapse {
+        id: headerCollapse
+        flickable: trackList
+        // At most what the header gives back: all of it but the crumb row,
+        // which never folds. An over-estimate only makes it fold a little
+        // later on a list that barely overflows.
+        collapsibleHeight: root.header ? root.header.height - crumbRow.height : 0
+    }
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin and
         // nothing else (see SyncPage.qml's header for why).
@@ -150,6 +165,7 @@ Page {
             spacing: Theme.sectionSpacing
 
             RowLayout {
+                id: crumbRow
                 objectName: "crumbRow"
                 Layout.fillWidth: true
                 Layout.bottomMargin: Theme.crumbGap - headerLayout.spacing
@@ -175,27 +191,49 @@ Page {
                 Layout.fillWidth: true
                 spacing: Theme.tightSpacing
 
-                // What this page does, in two sentences.
-                Label {
-                    objectName: "introLabel"
+                // Everything the header says rather than offers, in one
+                // block so it folds as one. Clipped while it folds; hidden
+                // once it has, so it gives back its spacing too.
+                Item {
+                    id: headerDetails
+                    objectName: "headerDetails"
                     Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: "Copies rekordbox's beat grids and waveforms into this stick's Engine library, for the "
-                        + "tracks you tick. A track the player has not analysed yet then loads without analysis; "
-                        + "on one it has, Engine's own grid stays beside the copy, so the player can go back to it."
-                }
-                Label {
-                    objectName: "experimentalLabel"
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Theme.conflictText
-                    // What is replaced and what is not, as the boxes below
-                    // have it, and the way back.
-                    text: "Experimental: the beat grid and the waveform are converted from rekordbox's, and "
-                        + "the conversion has been checked on a player with test tracks only. The grid goes "
-                        + "beside Engine's own; a grid locked or changed on the player, and a waveform the "
-                        + "player drew, are replaced only when you tick their box. Seabass keeps the "
-                        + "player's own analysis on the stick first, so Restore Engine's Analysis can put it back."
+                    Layout.preferredHeight: detailsColumn.implicitHeight * (1 - headerCollapse.progress)
+                    implicitHeight: detailsColumn.implicitHeight
+                    visible: headerCollapse.progress < 1
+                    opacity: 1 - headerCollapse.progress
+                    clip: true
+
+                    ColumnLayout {
+                        id: detailsColumn
+                        width: parent.width
+                        spacing: Theme.tightSpacing
+
+                        // What this page does, in two sentences.
+                        Label {
+                            objectName: "introLabel"
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            text: "Copies rekordbox's beat grids and waveforms into this stick's Engine library, "
+                                + "for the tracks you tick. A track the player has not analysed yet then loads "
+                                + "without analysis; on one it has, Engine's own grid stays beside the copy, so "
+                                + "the player can go back to it."
+                        }
+                        Label {
+                            objectName: "experimentalLabel"
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.conflictText
+                            // What is replaced and what is not, as the boxes
+                            // below have it, and the way back.
+                            text: "Experimental: the beat grid and the waveform are converted from rekordbox's, "
+                                + "and the conversion has been checked on a player with test tracks only. The grid "
+                                + "goes beside Engine's own; a grid locked or changed on the player, and a waveform "
+                                + "the player drew, are replaced only when you tick their box. Seabass keeps the "
+                                + "player's own analysis on the stick first, so Restore Engine's Analysis can put "
+                                + "it back."
+                        }
+                    }
                 }
 
                 // What to copy. The boxes themselves on the page's left line.
@@ -205,6 +243,10 @@ Page {
                     id: optionsRow
                     objectName: "optionsRow"
                     Layout.fillWidth: true
+                    // While the explanation folds, the spacing under it is
+                    // taken off as it goes, so the boxes end up the crumb's
+                    // gap under it without a jump when it hides.
+                    Layout.topMargin: headerDetails.visible ? -Theme.tightSpacing * headerCollapse.progress : 0
                     visible: root.usable
                     spacing: Theme.rowSpacing
                     SeabassCheckBox {

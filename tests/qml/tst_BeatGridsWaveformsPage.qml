@@ -1110,6 +1110,58 @@ TestCase {
         waitSettled(o.c);
     }
 
+    // Scrolling the tracks folds the header's explanation away (the
+    // intro and the experimental note) and keeps what is used: the boxes,
+    // the summary and its buttons. Back at the top of the list it unfolds
+    // (#134; ScrollCollapse, as Clean Up Duplicates and Sync after
+    // Rekordbox Export do).
+    function test_scrollingFoldsTheIntro() {
+        const o = openOn(t73(), {height: 560});
+        waitSettled(o.c);
+        verify(waitForPolish(o.page.Window.window));
+        const list = findChild(o.page, "trackList");
+        verify(list.contentHeight > list.height, "the tracks overflow the list: something to scroll");
+        const intro = findChild(o.page.header, "introLabel");
+        const note = findChild(o.page.header, "experimentalLabel");
+        const details = findChild(o.page.header, "headerDetails");
+        verify(intro.visible && note.visible, "the intro shows before any scroll");
+        const fullHeader = o.page.header.height;
+        // A wheel step at a time, each waited for (see
+        // tst_RekordboxExportSyncPage's test_scrollingFoldsTheHeader).
+        for (let i = 0; i < 10 && (details === null || details.visible); ++i) {
+            const before = list.contentY;
+            mouseWheel(list, list.width / 2, list.height / 2, 0, -120);
+            tryVerify(() => list.contentY > before || list.atYEnd, 2000, "a wheel step scrolls the list");
+            tryVerify(() => !list.moving, 2000, "the wheel step settles");
+        }
+        if (screenshotDir) {
+            wait(300);
+            waitForRendering(o.page);
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-scrolled.png");
+        }
+        verify(details !== null, "the explanation is one block that folds");
+        tryVerify(() => !details.visible, 2000, "scrolling folds the intro away");
+        compare(intro.visible, false);
+        compare(note.visible, false);
+        verify(o.page.header.height < fullHeader - 40, "folded " + o.page.header.height + ", was " + fullHeader);
+        for (const name of ["breadcrumb", "optionsRow", "summaryRow", "stageButton", "selectAllButton"]) {
+            const control = findChild(o.page.header, name);
+            verify(control.visible, name + " stays");
+            const top = control.mapToItem(o.page, 0, 0).y;
+            verify(top >= 0 && top + control.height <= o.page.header.height + 0.5,
+                   name + " is inside the folded header");
+        }
+        // The crumb's gap is the one-row header's, folded too.
+        const crumb = findChild(o.page.header, "crumbRow");
+        const options = findChild(o.page.header, "optionsRow");
+        compare(options.mapToItem(o.page, 0, 0).y - crumb.mapToItem(o.page, 0, crumb.height).y, Theme.crumbGap,
+                "the boxes sit the crumb's gap under it");
+
+        list.positionViewAtBeginning();
+        tryCompare(o.page.header, "height", fullHeader, 2000, "the header unfolds at the top");
+        verify(details.visible && intro.visible && note.visible);
+    }
+
     // The edge states, each with its own sentence.
     function test_engine1xLibrary() {
         const stick = t73();
