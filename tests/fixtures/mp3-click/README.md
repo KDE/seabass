@@ -36,6 +36,7 @@ each decoder's output and the lag between decoders measured:
 | click-D-lame-nocounts-44100.mp3 | D   | the D file with the Info frame's frame and byte counts 0: FFmpeg plays the frame and still trims |
 | click-D-l399-44100.mp3        | D     | the D file with the encoder string "L3.99r": FFmpeg skips the Info frame and trims nothing |
 | click-VBRI-nocounts-44100.mp3 | D     | the VBRI file with its byte and frame counts 0: FFmpeg plays the frame  |
+| click-D-lame-delay1200-44100.mp3 | D  | the D file with its tag stating a 1200-sample delay: FFmpeg trims 1729 samples, past the first frame |
 
 All CBR, 64 kbit/s except 80 at 48 kHz (a 64 kbit/s frame there is too
 short for libmp3lame to write the tag frame).

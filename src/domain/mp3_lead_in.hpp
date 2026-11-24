@@ -101,6 +101,16 @@ enum class Mp3Decoder { RekordboxMpg123NoGapless, EngineFfmpegGapless };
 // into it.
 int samplesBeforeAudio(const Mp3LeadIn &leadIn, Mp3Decoder decoder);
 
+// #109: when FFmpeg's trim (EngineFfmpegGapless) ends inside a frame, the
+// samples left of that frame: the first frame it hands out, which keeps
+// the time of the frame it was cut from (FFmpeg logs "Could not update
+// timestamps for skipped samples" when the caller, as Qt Multimedia's
+// player does, sets no packet time base). 0 when nothing is trimmed or
+// the trim ends on a frame boundary. 47 for a LAME or Lavc file with a
+// 576-sample delay, at any rate: 1105 samples trimmed, 1152 a frame (576
+// in MPEG-2, where the trim ends 47 samples before the third frame too).
+int ffmpegPartialFirstFrameSamples(const Mp3LeadIn &leadIn);
+
 // rekordbox position minus Engine position of the same audio instant, in
 // ms at the file's sample rate. Positive when rekordbox's number is the
 // larger one: add it to an Engine position to get rekordbox's, subtract

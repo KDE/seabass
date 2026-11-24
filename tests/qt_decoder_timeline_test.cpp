@@ -143,6 +143,7 @@ int main(int argc, char **argv)
         "click-VBRI-44100.mp3",         "click-VBRI-modediffers-44100.mp3",
         "click-D-lame-junk-44100.mp3",  "click-D-lame-id3junk-44100.mp3", "click-D-lame-id3id3-44100.mp3",
         "click-D-lame-nocounts-44100.mp3", "click-VBRI-nocounts-44100.mp3", "click-D-l399-44100.mp3",
+        "click-D-lame-delay1200-44100.mp3",
     };
 
     int failures = 0;

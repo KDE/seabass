@@ -21,8 +21,12 @@ first frame. These variants pin both behaviours:
   l399       the LAME encoder string replaced by "L3.99r   ", the string
              LAME 3.99 alpha builds wrote; the tag CRC is recomputed so
              only the string differs
+  delay1200  the LAME tag's encoder delay field set to 1200 samples
+             (the audio's own is 576), the CRC recomputed: a trim of
+             1729 samples, longer than a frame, ending 577 samples into
+             the second (#109)
 
-usage: tag_frame_variants.py IN OUT junk|id3junk|id3id3|nocounts|l399
+usage: tag_frame_variants.py IN OUT junk|id3junk|id3id3|nocounts|l399|delay1200
 """
 
 import struct
@@ -96,6 +100,17 @@ def l399(data):
     return fix_crc(data)
 
 
+def delay1200(data):
+    data = bytearray(data)
+    # After the encoder string: revision, lowpass, peak (4), two gains
+    # (2 each), flags, bitrate, then 12 bits of delay and 12 of padding.
+    at = encoder_string_offset(data) + 21
+    padding = ((data[at + 1] & 0x0F) << 8) | data[at + 2]
+    delay = 1200
+    data[at:at + 3] = bytes([delay >> 4, ((delay & 0x0F) << 4) | (padding >> 8), padding & 0xFF])
+    return fix_crc(data)
+
+
 def fix_crc(data):
     """Recompute the LAME tag CRC (over the frame up to it)."""
     crc_at = encoder_string_offset(data) + 34
@@ -103,7 +118,8 @@ def fix_crc(data):
     return bytes(data)
 
 
-VARIANTS = {"junk": junk, "id3junk": id3junk, "id3id3": id3id3, "nocounts": nocounts, "l399": l399}
+VARIANTS = {"junk": junk, "id3junk": id3junk, "id3id3": id3id3, "nocounts": nocounts, "l399": l399,
+            "delay1200": delay1200}
 
 
 def main():

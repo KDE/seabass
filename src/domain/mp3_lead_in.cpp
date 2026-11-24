@@ -54,6 +54,26 @@ const DecoderModel &modelOf(Mp3Decoder decoder)
     return decoder == Mp3Decoder::RekordboxMpg123NoGapless ? RekordboxModel : EngineModel;
 }
 
+bool readsTagFrame(const Mp3LeadIn &leadIn, const DecoderModel &model)
+{
+    const bool tagFrame = leadIn.infoFrame || leadIn.vbri;
+    return !(tagFrame && model.readsTagFrameOnlyFirst && !leadIn.tagFrameFirst);
+}
+
+// Samples the decoder drops from the start of what it decodes. The delay
+// field lives in the Xing/Info frame's LAME extension, so there is
+// nothing to trim without one, nor when the frame is never read as a tag.
+int trimmedSamples(const Mp3LeadIn &leadIn, const DecoderModel &model)
+{
+    if (!readsTagFrame(leadIn, model)) {
+        return 0;
+    }
+    const bool trims = leadIn.infoFrame
+        && ((leadIn.tag == Mp3LeadIn::Tag::Lame && model.trimsLame)
+            || (leadIn.tag == Mp3LeadIn::Tag::Lavc && model.trimsLavc));
+    return trims ? leadIn.encoderDelay + model.extraTrimSamples : 0;
+}
+
 }  // namespace
 
 Mp3Case classify(const Mp3LeadIn &leadIn)
@@ -73,12 +93,12 @@ Mp3Case classify(const Mp3LeadIn &leadIn)
 int samplesBeforeAudio(const Mp3LeadIn &leadIn, Mp3Decoder decoder)
 {
     const DecoderModel &model = modelOf(decoder);
-    const bool tagFrame = leadIn.infoFrame || leadIn.vbri;
-    if (tagFrame && model.readsTagFrameOnlyFirst && !leadIn.tagFrameFirst) {
+    if (!readsTagFrame(leadIn, model)) {
         // Never recognised as a tag frame: decoded like audio, and no
         // delay field read to trim by.
         return leadIn.samplesPerFrame;
     }
+    const bool tagFrame = leadIn.infoFrame || leadIn.vbri;
     int samples = 0;
     if (tagFrame && model.playsTagFrameWithoutCounts && !leadIn.tagFrameHasCounts) {
         samples += leadIn.samplesPerFrame;
@@ -94,15 +114,16 @@ int samplesBeforeAudio(const Mp3LeadIn &leadIn, Mp3Decoder decoder)
         // reaches.
         samples += leadIn.samplesPerFrame;
     }
-    // The delay field lives in the Xing/Info frame's LAME extension, so
-    // there is nothing to trim without one.
-    const bool trims = leadIn.infoFrame
-        && ((leadIn.tag == Mp3LeadIn::Tag::Lame && model.trimsLame)
-            || (leadIn.tag == Mp3LeadIn::Tag::Lavc && model.trimsLavc));
-    if (trims) {
-        samples -= leadIn.encoderDelay + model.extraTrimSamples;
+    return samples - trimmedSamples(leadIn, model);
+}
+
+int ffmpegPartialFirstFrameSamples(const Mp3LeadIn &leadIn)
+{
+    if (leadIn.samplesPerFrame <= 0) {
+        return 0;
     }
-    return samples;
+    const int intoFrame = trimmedSamples(leadIn, EngineModel) % leadIn.samplesPerFrame;
+    return intoFrame == 0 ? 0 : leadIn.samplesPerFrame - intoFrame;
 }
 
 double engineToRekordboxOffsetMs(const Mp3LeadIn &leadIn)

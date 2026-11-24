@@ -1054,13 +1054,14 @@ if(TARGET Qt6::Multimedia)
         src/infrastructure/audio/qt_multimedia_silence_probe.cpp
         src/infrastructure/audio/qt_multimedia_alignment_probe.cpp
         src/infrastructure/audio/qt_multimedia_detail_waveform.cpp
+        src/infrastructure/audio/player_start_guard.cpp
         # Qt-free arithmetic, but their one caller is each a decoder
         # above, and a static seabass_core listed before this library on
         # a link line could not supply them.
         src/domain/audio_alignment.cpp
         src/domain/audio_detail_waveform.cpp)
     target_include_directories(seabass_audio_qt PUBLIC src)
-    target_link_libraries(seabass_audio_qt PUBLIC Qt6::Core Qt6::Multimedia)
+    target_link_libraries(seabass_audio_qt PUBLIC Qt6::Core Qt6::Multimedia seabass_mp3_lead_in)
     target_compile_definitions(seabass_audio_qt PUBLIC SEABASS_HAVE_QT_AUDIO)
     # seabass-cli is declared above this point, so it is linked here
     # rather than at its own definition.
@@ -1133,6 +1134,19 @@ if(TARGET seabass_audio_qt AND SEABASS_TESTS)
     add_test(NAME qt_decoder_timeline_test COMMAND qt_decoder_timeline_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click)
     set_tests_properties(qt_decoder_timeline_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+# The player itself, from the start of a file and after a seek, against
+# that decoder (#109): the position it gives the samples it plays, with
+# the start guard PlaybackController puts on it.
+if(TARGET seabass_audio_qt AND SEABASS_TESTS)
+    add_executable(player_start_timeline_test tests/player_start_timeline_test.cpp)
+    target_include_directories(player_start_timeline_test PRIVATE src)
+    target_link_libraries(player_start_timeline_test PRIVATE seabass_audio_qt Qt6::Core Qt6::Multimedia)
+    add_test(NAME player_start_timeline_test COMMAND player_start_timeline_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/beat-click ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment)
+    set_tests_properties(player_start_timeline_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
 endif()
 
 # An Engine track's scrolling waveform made from its audio, on Engine's

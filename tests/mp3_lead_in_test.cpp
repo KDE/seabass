@@ -222,6 +222,45 @@ int main()
         assert(std::abs(engineToRekordboxOffsetMs(l) - 1152 * 1000.0 / 44100) < 1e-9);
     }
 
+    // #109: the samples left of the frame FFmpeg's trim ends in, the frame
+    // Qt's player would otherwise count its timeline from.
+    {
+        assert(ffmpegPartialFirstFrameSamples(lame(true)) == 1152 - 1105);
+        assert(ffmpegPartialFirstFrameSamples(lame(false, 48000)) == 1152 - 1105);
+        // MPEG-2: one whole frame trimmed, then 529 of the next.
+        assert(ffmpegPartialFirstFrameSamples(lame(true, 22050, 576)) == 576 - 529);
+        Mp3LeadIn lavc = lame(false);
+        lavc.tag = Mp3LeadIn::Tag::Lavc;
+        assert(ffmpegPartialFirstFrameSamples(lavc) == 47);
+        // A trim that ends on a frame boundary leaves no cut frame.
+        Mp3LeadIn boundary = lame(true);
+        boundary.encoderDelay = 1152 - 529;
+        assert(ffmpegPartialFirstFrameSamples(boundary) == 0);
+        // A trim longer than a frame: 1729 samples, 577 into the second.
+        Mp3LeadIn longDelay = lame(true);
+        longDelay.encoderDelay = 1200;
+        assert(ffmpegPartialFirstFrameSamples(longDelay) == 1152 - 577);
+        // Nothing trimmed: no tag, no encoder string, L3.99, VBRI, a tag
+        // frame FFmpeg does not find first.
+        assert(ffmpegPartialFirstFrameSamples(mpeg1()) == 0);
+        Mp3LeadIn info = mpeg1();
+        info.infoFrame = true;
+        assert(ffmpegPartialFirstFrameSamples(info) == 0);
+        Mp3LeadIn l399 = lame(true);
+        l399.tag = Mp3LeadIn::Tag::LameL3;
+        assert(ffmpegPartialFirstFrameSamples(l399) == 0);
+        Mp3LeadIn vbri = mpeg1();
+        vbri.vbri = true;
+        assert(ffmpegPartialFirstFrameSamples(vbri) == 0);
+        Mp3LeadIn late = lame(true);
+        late.tagFrameFirst = false;
+        assert(ffmpegPartialFirstFrameSamples(late) == 0);
+        // A tag frame without counts plays as silence and is still trimmed.
+        Mp3LeadIn noCounts = lame(true);
+        noCounts.tagFrameHasCounts = false;
+        assert(ffmpegPartialFirstFrameSamples(noCounts) == 47);
+    }
+
     std::cout << "mp3_lead_in_test: all passed\n";
     return 0;
 }
