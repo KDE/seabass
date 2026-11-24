@@ -789,6 +789,44 @@ faster grid are, and whether the pattern repeats every two or every
 four of them, in three bands, tell his choice apart no better than
 "always the slower one". What he wants goes by the music's kind.
 
+### Heard, not seen: the pictures misjudge tempo
+
+At a tempo that is neither double nor half of rekordbox's, he had
+given 15 tracks to ours on which Beat This has rekordbox's tempo: two
+analysers of different make against ours. For those he got excerpts
+to listen to, 15 s from the first part of the track and 15 s from the
+last, once with a click on rekordbox's beats and once with a click on
+ours (the clips are his music and stay on his machines). By ear he gave
+13 of the 15 to rekordbox, found both fine on one and neither right on
+one. So the pictures, the track laid over itself at each grid's beats,
+are a good judge of where on a hit a grid sits and of which of two
+beats half a beat apart has the kick, and a poor one of tempo: a grid
+at a wrong tempo that sits on a hit every few beats still draws a
+start at its line.
+
+After that the CD rips stand at ours 50, both 1, rekordbox 33, neither
+1, undecided 10 (with rekordbox or approved 195 of 368, rekordbox
+itself 307) and the second playlist at ours 16, rekordbox 17,
+undecided 3 (80 of 126, rekordbox itself 107). The other 27 tracks he
+gave to ours or to both from the pictures at such a tempo are with
+him to be heard; until then they count as he ticked them.
+
+Judged by his decision where he made one (ours: the approved grid must
+be kept; rekordbox: its grid within 10 ms and steady) and by rekordbox
+elsewhere, the analyser of 373e328e is right on 1078 of the 1330
+tuning-half tracks of the four sets that can be judged: 732 of 743 of
+the collection, 71 of 107 of the first variety list, 80 of 123 of the
+second playlist, 195 of 357 of the CD rips. That is the measure for
+the next round. Two things were tried against it and not kept.
+Following the tempo more readily (a straight grid has to explain 85 or
+92 percent of the track and not 75) gains four CD tracks and loses 17
+and 37 of the collection. And most of what is left is not tempo: on
+139 tracks of the varied music the two grids have the same tempo and
+beat and run apart over the track, and where our grid follows the
+tempo there, both sit as tightly on the hits as each other on 61 of
+85 tracks; where we kept one straight grid, rekordbox's is the tighter
+one on 38 of 87 and ours on 7.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
