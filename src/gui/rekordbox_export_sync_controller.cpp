@@ -564,6 +564,27 @@ std::vector<std::string> withCueItems(const domain::EngineUpdateItemHeader &head
     return keys;
 }
 
+// The items an answer's row settles beyond its own key: its conflict's
+// heldWhileOpen, for the rows that carry the conflict's key.
+std::vector<std::string> heldWithAnswer(const std::vector<Row> &rows, const Row &row)
+{
+    if (row.fromConflictUid < 0) {
+        return {};
+    }
+    std::vector<std::string> held;
+    for (const Row &conflictRow : rows) {
+        if (conflictRow.uid != row.fromConflictUid) {
+            continue;
+        }
+        for (const auto *conflict : RekordboxExportSyncListModel::conflictsOf(conflictRow)) {
+            if (conflict->header.key == row.header.key) {
+                held.insert(held.end(), conflict->heldWhileOpen.begin(), conflict->heldWhileOpen.end());
+            }
+        }
+    }
+    return held;
+}
+
 // What a stage records beside its changes (domain::nextBaseline): every
 // item the page offered, the items it applies (the ticked rows', and the
 // conflicts decided without a write), and the items left unticked, which
@@ -653,6 +674,11 @@ RecordPlan recordPlanOf(const std::vector<Row> &rows, const RekordboxExportSyncA
                     continue;
                 }
                 const bool openWithoutRecord = !analysis.baseline && !refusal;
+                // Held only while the conflict is open: answered, they go
+                // with the answer (EngineUpdateConflict::heldWhileOpen).
+                if (!emptyAnswer && !answeredByARow.count(row.uid)) {
+                    offered.insert(conflict->heldWhileOpen.begin(), conflict->heldWhileOpen.end());
+                }
                 if ((emptyAnswer || openWithoutRecord) && !answeredByARow.count(row.uid)) {
                     for (const auto &key : withCueItems(conflict->header)) {
                         applied.insert(key);
@@ -1550,7 +1576,12 @@ void RekordboxExportSyncController::stageSelected()
             p.make(engineChanges), PageChange::Said{{}, {}, {}, {}, unitKeysOf(rows, p.rows)});
         std::vector<std::string> keys;
         for (std::size_t i : p.rows) {
-            for (const auto &key : withCueItems(rows[i].header)) {
+            std::vector<std::string> rowKeys = withCueItems(rows[i].header);
+            // What an answer settles beyond its key goes with it: a save
+            // that stops before it lands puts those items back too.
+            const auto held = heldWithAnswer(rows, rows[i]);
+            rowKeys.insert(rowKeys.end(), held.begin(), held.end());
+            for (const auto &key : rowKeys) {
                 applied.insert(key);
                 if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
                     keys.push_back(key);

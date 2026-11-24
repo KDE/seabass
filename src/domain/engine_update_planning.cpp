@@ -338,6 +338,9 @@ private:
     // Engine playlist members by Engine path, in Engine's order.
     std::map<std::string, std::vector<std::string>> eMembers;
     std::map<std::string, int> eCount;
+    // Engine playlist entries the plan cannot see, by Engine path: streaming
+    // tracks and tracks with no key (not on the stick). Not in eMembers.
+    std::map<std::string, std::vector<const Track *>> unseenIn;
 
     struct PlaylistStatus
     {
@@ -464,11 +467,21 @@ private:
             auto &count = eCount[playlist.path];
             count = std::max(count, playlist.countAtPath);
         }
+        for (const auto &track : in.engine) {
+            if (!track.streamingSource.empty()) {
+                for (const auto &membership : track.playlists) {
+                    unseenIn[membership.name].push_back(&track);
+                }
+            }
+        }
         std::map<std::string, std::vector<MemberEntry>> entries;
         std::size_t seen = 0;
         for (const auto &track : engine) {
             const auto it = keyOfEngineRow.find(&track);
             if (it == keyOfEngineRow.end()) {
+                for (const auto &membership : track.playlists) {
+                    unseenIn[membership.name].push_back(&track);
+                }
                 continue;
             }
             for (const auto &membership : track.playlists) {
@@ -918,16 +931,18 @@ private:
     // rekordbox's order, each after the one before it, for a conflict's
     // answer; the members in `skip` (Engine's playlist holds them) stay
     // where they are. A track that cannot go in is left out: its own row
-    // says why.
+    // says why. The members in `leftOut` are neither added nor placed
+    // after (Engine took them out since the record, #125).
     std::vector<EngineUpdateEdit> addsInto(const BaselinePlaylist &r, const std::string &path,
                                            const std::set<std::string> &skip,
-                                           const std::vector<std::string> &deps) const
+                                           const std::vector<std::string> &deps,
+                                           const std::set<std::string> &leftOut = {}) const
     {
         std::vector<EngineUpdateEdit> edits;
         std::string after;
         for (const auto &member : firstOccurrences(r.members)) {
             if (!rByKey.count(member) || duplicateKeys.count(member)
-                || (!engineRow(member) && !addedKeys.count(member))) {
+                || (!engineRow(member) && !addedKeys.count(member)) || leftOut.count(member)) {
                 continue;
             }
             if (!skip.count(member)) {
@@ -949,6 +964,316 @@ private:
             after = member;
         }
         return edits;
+    }
+
+    // Whether the members leave open if rekordbox's `r` is the recorded
+    // playlist `b` renamed (#125): one id, two playlists under it, and
+    // `r` keeps fewer than half of what rekordbox's `b` held (the record's
+    // members and the ones the DJ declined for it). Then a rename would
+    // take most of the playlist out of Engine, and a deleted playlist
+    // whose id rekordbox gave to a new one reads just the same. Half or
+    // more kept reads as the same playlist renamed, its other changes as
+    // they come; an empty `b` loses nothing by a rename.
+    bool membersUnsure(const BaselinePlaylist &b, const BaselinePlaylist &r) const
+    {
+        const auto [kept, held] = keptOfHeld(b, r);
+        return held > 0 && kept * 2 < held;
+    }
+
+    // What membersUnsure counts, for the texts too, so their numbers are
+    // the decision's: of the tracks rekordbox's `b` held (the record's
+    // members and the ones the DJ declined for it), how many `r` keeps,
+    // and how many there were.
+    std::pair<std::size_t, std::size_t> keptOfHeld(const BaselinePlaylist &b, const BaselinePlaylist &r) const
+    {
+        std::set<std::string> held(b.members.begin(), b.members.end());
+        if (base && !held.empty()) {
+            const std::string prefix = "member:" + std::to_string(b.id) + ":";
+            for (const auto &[declinedKey, hash] : base->declined) {
+                if (declinedKey.rfind(prefix, 0) == 0) {
+                    if (const auto parsed = parseItemKey(declinedKey)) {
+                        held.insert(parsed->pathKey);
+                    }
+                }
+            }
+        }
+        const std::set<std::string> rSet(r.members.begin(), r.members.end());
+        std::size_t kept = 0;
+        for (const auto &member : held) {
+            kept += rSet.count(member);
+        }
+        return {kept, held.size()};
+    }
+
+    // What Engine's copy of the recorded playlist `b` holds beside the
+    // record (#125): the DJ's own edits on the player since, and entries
+    // the plan cannot place (a file with two Engine rows, a streaming
+    // track, a file not on the stick), which no row can move.
+    struct EngineCopy
+    {
+        std::vector<std::string> added;    // members the record lacks, in Engine's order
+        std::vector<std::string> tookOut;  // recorded members Engine no longer holds
+        std::vector<std::string> twoRows;  // members whose file has two Engine rows
+        std::vector<const Track *> unseen;
+        // The same tracks as recorded, but moved or doubled on the player.
+        bool reordered = false;
+        // As recorded entry for entry, every entry one the plan can place (#99's
+        // plainDelete): only then can it be deleted and rekordbox's
+        // playlist made anew without losing anything only it holds.
+        bool exactlyRecorded = false;
+    };
+
+    EngineCopy engineCopyOf(const BaselinePlaylist &b) const
+    {
+        EngineCopy copy;
+        std::vector<std::string> entries;  // every entry, in Engine's order, a doubled track twice
+        if (const auto it = eMembers.find(b.path); it != eMembers.end()) {
+            entries = it->second;
+        }
+        const std::vector<std::string> em = firstOccurrences(entries);
+        const std::set<std::string> eSet(em.begin(), em.end());
+        const std::set<std::string> before(b.members.begin(), b.members.end());
+        for (const auto &member : em) {
+            if (!before.count(member)) {
+                copy.added.push_back(member);
+            }
+            if (duplicateKeys.count(member)) {
+                copy.twoRows.push_back(member);
+            }
+        }
+        for (const auto &member : firstOccurrences(b.members)) {
+            if (!eSet.count(member)) {
+                copy.tookOut.push_back(member);
+            }
+        }
+        if (const auto it = unseenIn.find(b.path); it != unseenIn.end()) {
+            copy.unseen = it->second;
+        }
+        // Entry for entry: a track moved or doubled on the player is an
+        // edit of the DJ's too, which a delete would lose.
+        copy.reordered = entries != b.members && copy.added.empty() && copy.tookOut.empty();
+        copy.exactlyRecorded = entries == b.members && copy.twoRows.empty() && copy.unseen.empty();
+        for (const auto &member : before) {
+            copy.exactlyRecorded = copy.exactlyRecorded && engineRow(member);
+        }
+        return copy;
+    }
+
+    // The reason of the rename row planned where #125's question has one
+    // answer: rekordbox's `r` under the id of the recorded `b`, its tracks
+    // not saying it is `b` renamed, but Engine's copy holding what only it
+    // can keep (engineCopyOf), so both readings write the same: `b`
+    // renamed, rekordbox's changes in, the DJ's own edits kept. Says what
+    // happens, what stays, and why nothing is asked.
+    std::string keptByTheRenameText(const BaselinePlaylist &b, const BaselinePlaylist &r) const
+    {
+        const std::string engineName = catalogDisplayName("engine");
+        const auto tracks = [](std::size_t n) { return std::to_string(n) + (n == 1 ? " track" : " tracks"); };
+        const auto verb = [](std::size_t n, const char *one, const char *many) { return n == 1 ? one : many; };
+        const auto nameOf = [](const Track &row) { return row.title.empty() ? row.filename : row.title; };
+        const auto named = [&](const std::vector<std::string> &keys, const std::vector<const Track *> &rows = {}) {
+            std::vector<std::string> names;
+            for (const auto &key : keys) {
+                const Track *row = engineRow(key);
+                names.push_back(row ? nameOf(*row) : key);
+            }
+            for (const Track *row : rows) {
+                names.push_back(nameOf(*row));
+            }
+            std::string text;
+            for (std::size_t i = 0; i < names.size() && i < 3; ++i) {
+                text += (i == 0 ? "" : ", ") + quoted(std::as_const(names[i]));
+            }
+            if (names.size() > 3) {
+                text += " and " + std::to_string(names.size() - 3) + " more";
+            }
+            return text;
+        };
+        const EngineCopy copy = engineCopyOf(b);
+        const std::set<std::string> rSet(r.members.begin(), r.members.end());
+        const auto [kept, held] = keptOfHeld(b, r);
+        // What the text names: the DJ's additions rekordbox does not list
+        // (one rekordbox lists too is just in both), the removals of tracks
+        // rekordbox still lists (the others go either way), and what the
+        // plan cannot place that is not among those additions.
+        std::vector<std::string> added;
+        for (const auto &member : copy.added) {
+            if (!rSet.count(member)) {
+                added.push_back(member);
+            }
+        }
+        std::vector<std::string> tookOut;
+        for (const auto &member : copy.tookOut) {
+            if (rSet.count(member)) {
+                tookOut.push_back(member);
+            }
+        }
+        std::vector<std::string> unmatched;
+        for (const auto &member : copy.twoRows) {
+            if (std::find(added.begin(), added.end(), member) == added.end()) {
+                unmatched.push_back(member);
+            }
+        }
+        std::string text = "rekordbox gave " + quoted(b.path) + "'s id to " + quoted(r.path) + ", which keeps "
+            + std::to_string(kept) + " of its " + tracks(held) + ": " + engineName + "'s " + quoted(b.path)
+            + " becomes " + quoted(r.path) + " with rekordbox's tracks, each after the track before it in rekordbox's "
+            + "list";
+        if (!added.empty()) {
+            text += "; the " + tracks(added.size()) + " added on the player (" + named(added) + ") "
+                + verb(added.size(), "stays", "stay") + " where " + verb(added.size(), "it is", "they are");
+        }
+        if (!tookOut.empty()) {
+            text += "; the " + tracks(tookOut.size()) + " taken out on the player (" + named(tookOut) + ") "
+                + verb(tookOut.size(), "stays out", "stay out");
+        }
+        if (copy.reordered) {
+            text += "; its tracks as moved or doubled on the player stay as they are";
+        }
+        if (!unmatched.empty() || !copy.unseen.empty()) {
+            const std::size_t n = unmatched.size() + copy.unseen.size();
+            text += "; the " + tracks(n) + " Seabass cannot match (a file with two " + engineName
+                + " rows, a streaming track, or a file not on the stick: " + named(unmatched, copy.unseen) + ") "
+                + verb(n, "stays", "stay") + " where " + verb(n, "it is", "they are");
+        }
+        return text + ". " + quoted(b.path) + " is not deleted, and this is not asked: a delete would lose what only "
+            + engineName + "'s copy holds, so either reading comes to this";
+    }
+
+    // #125: rekordbox's playlist `r` under the id of the recorded playlist
+    // `b`, which Engine has at its recorded path exactly as recorded
+    // (engineCopyOf), and the members do not say whether `r` is `b`
+    // renamed (membersUnsure). One conflict under the id that names both
+    // readings, each answer the whole of it:
+    //   rekordbox's side: `b` deleted and `r` a new playlist, created with
+    //     its tracks (what the export shows: `b` gone, `r` there);
+    //   Engine's side: Engine's playlist kept, renamed to `r` and given
+    //     `r`'s tracks (the id's reading).
+    // Either way Engine ends holding `r` as rekordbox has it, so the record
+    // takes rekordbox's playlist under the id. Where Engine's copy is not
+    // exactly as recorded, a delete could lose what only it holds, so both
+    // readings would write the same: no question, a rename row of the
+    // usual kind instead (keptByTheRenameText). Unanswered, the
+    // record keeps `b` whole, its members and their order with it
+    // (heldWhileOpen), so the conflict comes back as it is.
+    void unsureReuse(const BaselinePlaylist &b, const BaselinePlaylist &r, const std::string &state,
+                     const std::vector<std::string> &parentDeps)
+    {
+        const std::string engineName = catalogDisplayName("engine");
+        const std::string key = playlistItemKey(r.id);
+        const std::string from = pathAfterRenames(b.path);
+        std::vector<std::string> em;
+        if (const auto it = eMembers.find(b.path); it != eMembers.end()) {
+            em = firstOccurrences(it->second);
+        }
+        const std::vector<std::string> rm = firstOccurrences(r.members);
+        const std::set<std::string> rSet(rm.begin(), rm.end());
+        const std::set<std::string> eSet(em.begin(), em.end());
+        const std::set<std::string> before(b.members.begin(), b.members.end());
+        // The decision's own numbers (membersUnsure).
+        const auto [kept, heldCount] = keptOfHeld(b, r);
+        const auto tracks = [](std::size_t n) { return std::to_string(n) + (n == 1 ? " track" : " tracks"); };
+
+        EngineUpdateConflict conflict;
+        conflict.header = makeHeader(
+            key, false, true, EngineUpdateReason::BothChanged,
+            "rekordbox gave the id of " + quoted(b.path) + " (" + tracks(heldCount) + ") to " + quoted(r.path) + " ("
+                + tracks(rSet.size()) + ", " + std::to_string(kept) + " of them from " + quoted(b.path)
+                + "), so Seabass cannot tell: either rekordbox deleted " + quoted(b.path) + " and " + quoted(r.path)
+                + " is a new playlist, or " + quoted(b.path) + " was renamed and lost " + tracks(heldCount - kept),
+            state, parentDeps);
+
+        // Engine's side: the id's reading. Engine's playlist renamed and
+        // rekordbox's changes since the record applied, in one unit under
+        // the playlist's key (a cancel never stops between them): a recorded
+        // track rekordbox dropped taken out, a new one put in after the
+        // track before it in rekordbox's list.
+        conflict.engineSide = "Rename " + quoted(from) + " to " + quoted(r.path) + " and give it rekordbox's tracks";
+        {
+            auto &choice = conflict.engineChoice;
+            PlaylistRename rename;
+            rename.pdbId = r.id;
+            rename.fromPath = from;
+            rename.toPath = r.path;
+            rename.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxRenamed,
+                                       "Rename " + quoted(from) + " to " + quoted(r.path), state, parentDeps);
+            choice.emplace_back(std::move(rename));
+            for (const auto &member : em) {
+                if (rSet.count(member) || !before.count(member) || !rByKey.count(member)
+                    || duplicateKeys.count(member)) {
+                    continue;  // kept, Engine's own, or one the plan cannot place
+                }
+                MembershipEdit edit;
+                edit.kind = MembershipEdit::Kind::Remove;
+                edit.pdbId = r.id;
+                edit.playlistPath = r.path;
+                edit.pathKey = member;
+                if (const Track *row = engineRow(member)) {
+                    edit.track = *row;
+                }
+                edit.header = makeHeader(memberItemKey(r.id, member), true, false,
+                                         EngineUpdateReason::RekordboxRemoved, "", "", parentDeps);
+                choice.emplace_back(std::move(edit));
+            }
+            for (auto &edit : addsInto(r, r.path, eSet, parentDeps)) {
+                choice.push_back(std::move(edit));
+            }
+        }
+
+        // rekordbox's side: the old playlist deleted, the new one created
+        // with rekordbox's tracks. Safe because Engine's copy is exactly as
+        // recorded: nothing of Engine's own for a stop to lose.
+        {
+            conflict.rekordboxSide = "Delete " + quoted(from) + " and create " + quoted(r.path) + " in " + engineName;
+            PlaylistCreate create;
+            create.pdbId = r.id;
+            create.path = r.path;
+            create.folder = false;
+            create.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxAdded,
+                                       "Create " + quoted(r.path) + " in " + engineName, state, parentDeps);
+            conflict.rekordboxChoice.emplace_back(std::move(create));
+            for (auto &edit : addsInto(r, r.path, {}, parentDeps)) {
+                conflict.rekordboxChoice.push_back(std::move(edit));
+            }
+            // Under the plan's own key, as #99's delete of a reused id's
+            // old playlist: the page stages it directly before the create,
+            // so no stopped save lands the new playlist beside the old one,
+            // and the record of a save that stops between them is #99's.
+            PlaylistDelete del;
+            del.pdbId = b.id;
+            del.path = from;
+            del.folder = false;
+            del.engineMembers = static_cast<int>(em.size());
+            del.header = makeHeader(reusedPlaylistItemKey(b.id, b.path), true, false,
+                                    EngineUpdateReason::RekordboxRemoved, "Delete " + quoted(from) + " from " + engineName,
+                                    playlistState(nullptr));
+            conflict.rekordboxChoice.emplace_back(std::move(del));
+        }
+
+        // A member of rekordbox's list no row can put into Engine (a file
+        // with two Engine rows, one Engine does not get): the record keeps
+        // it out under the id, as it was, so it is never read as one Engine
+        // took out.
+        for (const auto &member : rm) {
+            if (!rByKey.count(member) || duplicateKeys.count(member)
+                || (!engineRow(member) && !addedKeys.count(member))) {
+                heldBack.insert(memberItemKey(r.id, member));
+            }
+        }
+
+        // Open, the record keeps `b` whole: its members and their order.
+        // Answered, the answer's rows (all under `key`) are what was
+        // applied, and the members advance with them.
+        std::set<std::string> held;
+        for (const auto &member : b.members) {
+            held.insert(memberItemKey(r.id, member));
+        }
+        for (const auto &member : r.members) {
+            held.insert(memberItemKey(r.id, member));
+        }
+        held.insert(orderItemKey(r.id));
+        conflict.heldWhileOpen.assign(held.begin(), held.end());
+        out.conflicts.push_back(std::move(conflict));
+        claimedEnginePaths.insert(b.path);
     }
 
     // An Engine-only playlist in the same folder holding nearly the same
@@ -1321,6 +1646,20 @@ private:
                 status[r.id] = st;
                 continue;
             }
+            // A playlist renamed under an id whose members do not say it
+            // is the same one (#125): a conflict with both readings, never
+            // a rename that empties Engine's playlist on a guess. Asked
+            // only where the readings write differently, Engine's copy
+            // exactly as recorded; otherwise the rename below, its reason
+            // saying why nothing is asked.
+            const bool unsureWhich = b && b->path != r.path && countAt(b->path) == 1 && !b->folder && !r.folder
+                && (leafName(b->path) != leafName(r.path) || b->parentId != r.parentId) && membersUnsure(*b, r);
+            if (unsureWhich && engineCopyOf(*b).exactlyRecorded) {
+                unsureReuse(*b, r, state, parentDeps);
+                st.deps.push_back(key);
+                status[r.id] = st;
+                continue;
+            }
             if (b && b->path != r.path && countAt(b->path) == 1) {
                 claimedEnginePaths.insert(b->path);
                 st.planMembers = true;
@@ -1332,8 +1671,9 @@ private:
                     rename.fromPath = pathAfterRenames(b->path);
                     rename.toPath = r.path;
                     rename.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxRenamed,
-                                               "rekordbox renamed this playlist from " + quoted(b->path) + " to "
-                                                   + quoted(r.path) + since(),
+                                               unsureWhich ? keptByTheRenameText(*b, r)
+                                                           : "rekordbox renamed this playlist from " + quoted(b->path)
+                                                       + " to " + quoted(r.path) + since(),
                                                state, parentDeps);
                     renamesInOrder.emplace_back(rename.fromPath, rename.toPath);
                     out.playlistsToRename.push_back(std::move(rename));
