@@ -529,6 +529,41 @@ Engine is a third opinion here and not a reference: what it shows is
 that on this music two commercial analysers agree with each other no
 better than ours agrees with either.
 
+## A third opinion: Beat This!
+
+The neural tracker of "What the literature says" was run over both
+sets (a private environment beside the benchmark; nothing of it is in
+the app). It places beats to 20 ms on another decoder's timeline, so it
+says whose tempo and whose beat it has, never whose milliseconds: a
+grid has its opinion when the tempo is the same and over six in ten of
+its beats are within a fifth of a beat of the grid's.
+
+How far its word goes, on the tuning half of the collection (751
+tracks):
+
+- Where Seabass and rekordbox agree (671 tracks), it is with both on
+  662 and with neither on 9.
+- Where Mixxx's method is half a beat from rekordbox (317 tracks), it
+  is with rekordbox on 288, with Mixxx on 21, with neither on 8. So it
+  does not lean away from rekordbox.
+- Where Seabass is half a beat from rekordbox (33 tracks), it is with
+  Seabass on 28, with rekordbox on 3, with neither on 2.
+- Where Seabass has another tempo (7 tracks), it has rekordbox's tempo
+  on 5 and ours on none.
+
+Read together: on some 25 tracks of 751 rekordbox itself has the grid
+between the beats, and those are most of what is left of "half a beat
+out"; on the tempo rekordbox is right and we are not. On the varied
+music (110 tracks, another tempo on 29) it has rekordbox's tempo and
+beat on 14 of the 29, ours on 3, neither on 11.
+
+None of this moves a number: rekordbox stays the reference in every
+table. The tracks where the audio sides with our grid (the kick band
+and this tracker for those half a beat out, the start of the hit for
+those over 10 ms off: 46 of the 91 that differ on the tuning half) are
+listed with pictures for Sebastian to hear and approve or not; the list
+is with the private audio.
+
 ## Phase 3, in order
 
 1. Done: who is right on the tracks half a beat apart (above). The
