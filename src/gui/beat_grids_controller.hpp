@@ -423,6 +423,28 @@ public:
     // comparison's Engine lane: Engine's waveform, grid and cues. Empty
     // for a track with no Engine row.
     Q_INVOKABLE QVariantMap engineZoomTrack(const QString &rekordboxId) const;
+    // The zoomed popup's two lanes, for its Both (#131), at the detail
+    // each side's own zoomed view draws: rekordbox's detailed waveform
+    // from the track's analysis file (readDetailWaveform()), and Engine's
+    // made from Engine's copy of the audio file, 150 columns a second, as
+    // the popup makes it for an Engine track. Never from the database.
+    // One track at a time, read off the GUI thread and held while a
+    // library is written, as a row's analysis is. Only the sides asked
+    // for: the side the player has loaded comes with its own detail, and
+    // is not read twice. A side already read is read again only after a
+    // write has ended.
+    Q_INVOKABLE void requestZoomDetail(const QString &rekordboxId, bool rekordbox, bool engine);
+    // The popup has closed: a read under way stops (an Engine decode is
+    // the length of the track). What was read is kept.
+    Q_INVOKABLE void releaseZoomDetail(const QString &rekordboxId);
+    // How many of those reads were started (for the tests).
+    Q_INVOKABLE int zoomDetailReads() const { return m_zoomDetailReads; }
+    // {ready} false until a side is read; then {ready, rekordboxRead,
+    // rekordboxColumns, rekordboxMsPerColumn, engineRead, engineColumns,
+    // engineMsPerColumn}, the columns as rowAnalysis()'s (empty where
+    // there is none, a millisecond step of 0 where the source does not
+    // say).
+    Q_INVOKABLE QVariantMap zoomDetail(const QString &rekordboxId) const;
 
     // Reads the stick holding these two catalogs. A request for the same
     // paths while one runs is served by it.
@@ -488,8 +510,23 @@ signals:
     void rowAnalysisReadsChanged();
     // An opened row's Engine side is in (engineAnalysis()).
     void engineAnalysisReady(const QString &rekordboxId);
+    // The popup's detail of that track is in (zoomDetail()).
+    void zoomDetailReady(const QString &rekordboxId);
 
 private:
+    // Both sides' detail of one track, for the zoomed popup.
+    struct ZoomDetail
+    {
+        // Which sides were read, at m_rowGeneration `generation`.
+        bool rekordboxRead = false;
+        bool engineRead = false;
+        std::uint64_t generation = 0;
+        QByteArray rekordboxColumns;
+        double rekordboxMsPerColumn = 0.0;
+        QByteArray engineColumns;
+        double engineMsPerColumn = 0.0;
+    };
+    void pumpZoomDetail();
     // One track's analysis as a row draws it, read off the GUI thread.
     struct RowAnalysis
     {
@@ -633,12 +670,22 @@ private:
     static constexpr int EngineAnalysisCacheKb = 8 * 1024;
     QCache<QString, EngineAnalysis> m_engineAnalyses{EngineAnalysisCacheKb};
     QStringList m_engineWanted;
+    // The popup's track and its detail as read; the sides still to be
+    // read (m_zoomWants*), and those the read under way reads.
+    QString m_zoomId;
+    std::shared_ptr<const ZoomDetail> m_zoomDetail;
+    bool m_zoomWantsRekordbox = false;
+    bool m_zoomWantsEngine = false;
+    bool m_zoomReadsRekordbox = false;
+    bool m_zoomReadsEngine = false;
+    int m_zoomDetailReads = 0;
 
     // Last, so they are destroyed first: their destructors cancel the work.
     AsyncRequest<std::shared_ptr<BeatGridLibrary>> m_load{this, [this]() { emit loadingChanged(); }};
     AsyncRequest<QString> m_preview{this, [this]() { emit previewBusyChanged(); }};
     AsyncRequest<std::shared_ptr<RowAnalysis>> m_rowRead{this, nullptr};
     AsyncRequest<std::shared_ptr<EngineAnalysis>> m_engineRead{this, nullptr};
+    AsyncRequest<std::shared_ptr<ZoomDetail>> m_zoomRead{this, nullptr};
 };
 
 }  // namespace seabass::gui

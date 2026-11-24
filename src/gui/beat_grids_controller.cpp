@@ -30,6 +30,9 @@
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#ifdef SEABASS_HAVE_QT_AUDIO
+#include "infrastructure/audio/qt_multimedia_detail_waveform.hpp"
+#endif
 #include "infrastructure/audio/playback_timeline.hpp"
 #include "domain/matching_policy.hpp"
 #include "domain/mp3_lead_in.hpp"
@@ -742,6 +745,11 @@ void BeatGridsController::onWriteStateChanged()
             m_engineWanted.removeAll(id);
             m_engineWanted.prepend(id);
         }
+        if (m_zoomRead.busy()) {
+            m_zoomRead.cancel();
+            m_zoomWantsRekordbox = m_zoomWantsRekordbox || m_zoomReadsRekordbox;
+            m_zoomWantsEngine = m_zoomWantsEngine || m_zoomReadsEngine;
+        }
         return;
     }
     // Any library may now say something else about any track. What was
@@ -750,6 +758,7 @@ void BeatGridsController::onWriteStateChanged()
     emit rowAnalysesStale();
     pumpRowReads();
     pumpEngineReads();
+    pumpZoomDetail();
 }
 
 const BeatGridLibrary::Track *BeatGridsController::libraryTrack(const QString &rekordboxId) const
@@ -849,6 +858,11 @@ void BeatGridsController::forgetRowAnalyses()
     m_engineRead.cancel();
     m_engineWanted.clear();
     m_engineAnalyses.clear();
+    m_zoomRead.cancel();
+    m_zoomId.clear();
+    m_zoomDetail.reset();
+    m_zoomWantsRekordbox = false;
+    m_zoomWantsEngine = false;
     ++m_rowGeneration;
 }
 
@@ -1119,6 +1133,145 @@ QVariantMap BeatGridsController::engineZoomTrack(const QString &rekordboxId) con
         {QStringLiteral("cues"), metadataCueList(track->engineCues)},
         {QStringLiteral("fallbackArtworkPath"), track->artworkUrl},
     };
+}
+
+void BeatGridsController::requestZoomDetail(const QString &rekordboxId, bool rekordbox, bool engine)
+{
+    if (libraryTrack(rekordboxId) == nullptr) {
+        return;
+    }
+    if (m_zoomId != rekordboxId) {
+        m_zoomRead.cancel();
+        m_zoomId = rekordboxId;
+        m_zoomDetail.reset();
+        m_zoomWantsRekordbox = false;
+        m_zoomWantsEngine = false;
+    }
+    // Read already, since the last write: not again.
+    const bool fresh = m_zoomDetail && m_zoomDetail->generation == m_rowGeneration;
+    m_zoomWantsRekordbox = m_zoomWantsRekordbox || (rekordbox && !(fresh && m_zoomDetail->rekordboxRead));
+    m_zoomWantsEngine = m_zoomWantsEngine || (engine && !(fresh && m_zoomDetail->engineRead));
+    pumpZoomDetail();
+}
+
+void BeatGridsController::releaseZoomDetail(const QString &rekordboxId)
+{
+    if (rekordboxId != m_zoomId) {
+        return;
+    }
+    m_zoomRead.cancel();
+    m_zoomWantsRekordbox = false;
+    m_zoomWantsEngine = false;
+}
+
+QVariantMap BeatGridsController::zoomDetail(const QString &rekordboxId) const
+{
+    if (rekordboxId != m_zoomId || !m_zoomDetail) {
+        return {{QStringLiteral("ready"), false}};
+    }
+    return {
+        {QStringLiteral("ready"), true},
+        {QStringLiteral("rekordboxRead"), m_zoomDetail->rekordboxRead},
+        {QStringLiteral("rekordboxColumns"), m_zoomDetail->rekordboxColumns},
+        {QStringLiteral("rekordboxMsPerColumn"), m_zoomDetail->rekordboxMsPerColumn},
+        {QStringLiteral("engineRead"), m_zoomDetail->engineRead},
+        {QStringLiteral("engineColumns"), m_zoomDetail->engineColumns},
+        {QStringLiteral("engineMsPerColumn"), m_zoomDetail->engineMsPerColumn},
+    };
+}
+
+void BeatGridsController::pumpZoomDetail()
+{
+    if ((!m_zoomWantsRekordbox && !m_zoomWantsEngine) || m_zoomRead.busy() || m_rowReadsHeld || !m_library) {
+        return;
+    }
+    const BeatGridLibrary::Track *track = libraryTrack(m_zoomId);
+    if (track == nullptr) {
+        m_zoomWantsRekordbox = false;
+        m_zoomWantsEngine = false;
+        return;
+    }
+    const bool readRekordbox = m_zoomWantsRekordbox;
+    const bool readEngine = m_zoomWantsEngine;
+    const QString id = m_zoomId;
+    const std::uint64_t generation = m_rowGeneration;
+    using Request = AsyncRequest<std::shared_ptr<ZoomDetail>>;
+    // The two files only: rekordbox's analysis file, by the paths of the
+    // export.pdb read with the library, and Engine's copy of the audio.
+    // Engine's database is not opened.
+    Request::Work work = [library = m_library, sourceId = id.toStdString(), engineFilePath = track->engineFilePath,
+                          readRekordbox, readEngine](application::CancellationToken cancel) {
+        auto out = std::make_shared<ZoomDetail>();
+        const auto bytes = [](const domain::DetailWaveform &detail) {
+            QByteArray columns;
+            columns.reserve(static_cast<qsizetype>(detail.columns.size() * 3));
+            const auto byte = [](double v) {
+                return static_cast<char>(static_cast<unsigned char>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)));
+            };
+            for (const domain::WaveformColumn &column : detail.columns) {
+                columns.append(byte(column.low));
+                columns.append(byte(column.mid));
+                columns.append(byte(column.high));
+            }
+            return columns;
+        };
+        if (readRekordbox && !cancel.cancelled()) {
+            const domain::DetailWaveform rekordbox = infrastructure::rekordbox::readDetailWaveform(
+                library->rekordboxPath.toStdString(), sourceId, nullptr, library->anlzIndex.get());
+            out->rekordboxColumns = bytes(rekordbox);
+            out->rekordboxMsPerColumn = rekordbox.msPerColumn;
+            out->rekordboxRead = true;
+        }
+        if (readEngine && !cancel.cancelled()) {
+#ifdef SEABASS_HAVE_QT_AUDIO
+            std::error_code ec;
+            if (!engineFilePath.empty() && fs::is_regular_file(pathFromUtf8(engineFilePath), ec)) {
+                const domain::DetailWaveform engine = infrastructure::audio::audioDetailWaveform(
+                    engineFilePath, [&cancel] { return cancel.cancelled(); });
+                out->engineColumns = bytes(engine);
+                out->engineMsPerColumn = engine.msPerColumn;
+            }
+#else
+            (void)engineFilePath;
+#endif
+            out->engineRead = true;
+        }
+        return out;
+    };
+    Request::Ending ending{
+        [this, id, generation](std::shared_ptr<ZoomDetail> &&read) {
+            if (id != m_zoomId) {
+                return;
+            }
+            // What this read did not read stays, if it is still current.
+            if (m_zoomDetail && m_zoomDetail->generation == generation) {
+                if (!read->rekordboxRead && m_zoomDetail->rekordboxRead) {
+                    read->rekordboxRead = true;
+                    read->rekordboxColumns = m_zoomDetail->rekordboxColumns;
+                    read->rekordboxMsPerColumn = m_zoomDetail->rekordboxMsPerColumn;
+                }
+                if (!read->engineRead && m_zoomDetail->engineRead) {
+                    read->engineRead = true;
+                    read->engineColumns = m_zoomDetail->engineColumns;
+                    read->engineMsPerColumn = m_zoomDetail->engineMsPerColumn;
+                }
+            }
+            read->generation = generation;
+            m_zoomDetail = std::move(read);
+            emit zoomDetailReady(id);
+            pumpZoomDetail();
+        },
+        // A stick gone or a worker refused: the lanes keep what the rows
+        // read.
+        [](const QString &) {},
+        [] {},
+    };
+    m_zoomWantsRekordbox = false;
+    m_zoomWantsEngine = false;
+    m_zoomReadsRekordbox = readRekordbox;
+    m_zoomReadsEngine = readEngine;
+    ++m_zoomDetailReads;
+    m_zoomRead.start(id, stickRootOf(m_library->rekordboxPath), std::move(work), std::move(ending));
 }
 
 bool BeatGridsController::canStageAnything() const

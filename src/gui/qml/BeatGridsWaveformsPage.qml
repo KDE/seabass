@@ -702,7 +702,7 @@ Page {
                                 pointerShape: rekordboxLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 onPositionClicked: {
                                     if (rekordboxLane.opensZoom) {
-                                        zoomPopup.openFor(root.controller.zoomTrack(trackRow.analysisId));
+                                        root.openZoom(trackRow.analysisId, "rekordbox");
                                     }
                                 }
                             }
@@ -744,7 +744,7 @@ Page {
                                 pointerShape: engineLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 onPositionClicked: {
                                     if (engineLane.opensZoom) {
-                                        zoomPopup.openFor(engineLane.zoomTrack);
+                                        root.openZoom(trackRow.engineAskedFor, "engine");
                                     }
                                 }
                             }
@@ -836,7 +836,7 @@ Page {
                                 pointerShape: rowWaveform.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
                                 onPositionClicked: {
                                     if (rowWaveform.opensZoom) {
-                                        zoomPopup.openFor(root.controller.zoomTrack(trackRow.analysisId));
+                                        root.openZoom(trackRow.analysisId, "both");
                                     }
                                 }
                             }
@@ -1015,10 +1015,139 @@ Page {
     }
 
     // One zoomed waveform for the page, opened from a row's waveform.
+    // It has both sides of the track (#131): opened from a comparison
+    // lane it shows that side, from the row's own waveform both, one
+    // above the other; its box switches between them.
     WaveformZoomPopup {
         id: zoomPopup
         playbackController: root.playbackController
         settings: root.appSettingsController
+        sides: root.zoomSides
+        // Closed: a read of its detail under way stops.
+        onClosed: {
+            root.controller.releaseZoomDetail(root.zoomId);
+            root.zoomId = "";
+            zoomPopup.wantBoth = false;
+        }
+        onWantBothChanged: root.askZoomDetail()
+        onLoadedSideChanged: root.askZoomDetail()
+    }
+    // The track the popup shows, by rekordbox id; empty while it is shut.
+    property string zoomId: ""
+    // Counts up as either side's read of that track comes in.
+    property int zoomRevision: 0
+    // Both sides as the popup takes them (WaveformZoomPopup.sides), on
+    // Engine's timeline as the comparison lanes are: rekordbox's moved by
+    // its lead-in (rowGridFacts().shiftMs). Each at the detail its own
+    // zoomed view draws once read (zoomDetail()), the rows' overview until
+    // then; the popup draws the side the player has from the player's.
+    readonly property var zoomSides: {
+        root.zoomRevision;
+        const id = root.zoomId;
+        if (id.length === 0) {
+            return [];
+        }
+        const c = root.controller;
+        const rekordbox = c.rowAnalysis(id);
+        const engine = c.engineAnalysis(id);
+        const facts = c.rowGridFacts(id);
+        const engineTrack = c.engineZoomTrack(id);
+        const detail = c.zoomDetail(id);
+        const detailed = (columns) => detail.ready === true && !!columns && columns.byteLength >= 3;
+        const columnsOf = (side) => side.ready === true && side.columns && side.columns.byteLength >= 3
+            ? side.columns : null;
+        const spread = (side) => {
+            const columns = columnsOf(side);
+            return columns && side.durationMs > 0 ? side.durationMs / (columns.byteLength / 3) : 0;
+        };
+        return [{
+            label: "rekordbox",
+            scheme: "vivid",
+            track: c.zoomTrack(id),
+            available: rekordbox.ready === true && rekordbox.playable === true,
+            detailed: detailed(detail.rekordboxColumns),
+            columns: detailed(detail.rekordboxColumns) ? detail.rekordboxColumns : columnsOf(rekordbox),
+            msPerColumn: detailed(detail.rekordboxColumns)
+                ? (detail.rekordboxMsPerColumn > 0 ? detail.rekordboxMsPerColumn
+                   : rekordbox.durationMs > 0 ? rekordbox.durationMs / (detail.rekordboxColumns.byteLength / 3) : 0)
+                : spread(rekordbox),
+            startMs: facts.ready === true ? facts.shiftMs || 0 : 0,
+            ticksAt: (durationMs, widthPx) => c.comparisonBeatTicks(id, widthPx),
+        }, {
+            label: "Engine",
+            scheme: "engine",
+            track: engineTrack,
+            available: engine.ready === true && engine.hasEngineTrack === true && engine.playable === true
+                && engineTrack.filePath !== undefined,
+            detailed: detailed(detail.engineColumns),
+            columns: detailed(detail.engineColumns) ? detail.engineColumns : columnsOf(engine),
+            msPerColumn: detailed(detail.engineColumns) ? detail.engineMsPerColumn : spread(engine),
+            startMs: 0,
+            ticksAt: (durationMs, widthPx) => c.engineBeatTicks(id, widthPx),
+        }];
+    }
+    // What was read for the popup may be out of date: asked for again.
+    function askZoomAgain() {
+        if (root.zoomId.length > 0) {
+            root.controller.requestRowAnalysis(root.zoomId);
+            root.controller.requestEngineAnalysis(root.zoomId);
+            root.askZoomDetail();
+            ++root.zoomRevision;
+        }
+    }
+    // Both's detail, for the side the player has not loaded: the loaded
+    // one is drawn from the player's own (WaveformZoomPopup.lanes), and an
+    // Engine file is not decoded twice. With Both left for one side, or
+    // the player gone on to another track, a read under way stops and
+    // none starts for a track no longer shown.
+    function askZoomDetail() {
+        if (root.zoomId.length === 0) {
+            return;
+        }
+        if (zoomPopup.wantBoth && zoomPopup.loadedSide >= 0) {
+            root.controller.requestZoomDetail(root.zoomId, zoomPopup.loadedSide !== 0, zoomPopup.loadedSide !== 1);
+        } else {
+            root.controller.releaseZoomDetail(root.zoomId);
+        }
+    }
+    // Opens the popup on a track: "rekordbox" or "engine" for that side's
+    // copy, "both" for the two stacked (rekordbox's copy in the player).
+    // Both sides are asked for, so the box can offer each.
+    function openZoom(id, view) {
+        if (root.zoomId !== id) {
+            root.controller.requestRowAnalysis(id);
+            root.controller.requestEngineAnalysis(id);
+            root.zoomId = id;
+        }
+        ++root.zoomRevision;
+        // Loaded first, so Both asks only for the side the player has not.
+        zoomPopup.openFor(view === "engine" ? root.controller.engineZoomTrack(id) : root.controller.zoomTrack(id));
+        zoomPopup.wantBoth = view === "both";
+        root.askZoomDetail();
+    }
+    Connections {
+        target: root.controller
+        function onRowAnalysisReady(id) {
+            if (id === root.zoomId) {
+                ++root.zoomRevision;
+            }
+        }
+        function onEngineAnalysisReady(id) {
+            if (id === root.zoomId) {
+                ++root.zoomRevision;
+            }
+        }
+        function onZoomDetailReady(id) {
+            if (id === root.zoomId) {
+                ++root.zoomRevision;
+            }
+        }
+        function onRowAnalysesStale() {
+            root.askZoomAgain();
+        }
+        function onLibraryChanged() {
+            root.askZoomAgain();
+        }
     }
 
     BusyOverlay {

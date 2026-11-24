@@ -45,6 +45,9 @@ SeabassDialog {
     readonly property string trackArtist: root.controller && root.controller.artist ? root.controller.artist : ""
     parent: Overlay.overlay
     width: parent ? Math.round(parent.width * 0.92) : 1000
+    // As tall as what it holds, also when that grows while it is open
+    // (both sides, stacked): the dialog does not follow on its own.
+    contentHeight: popupBody.implicitHeight
 
     // ---- Opening ---------------------------------------------------
 
@@ -67,6 +70,9 @@ SeabassDialog {
 
     // The track the player has, as it is, at the zoom last used.
     function openLoaded() {
+        // A side switch left unfinished when it last closed is dropped:
+        // no seek or zoom of it reaches this opening.
+        root.pendingSideMs = -1;
         root.attached = true;
         root.spanBars = root.settings && root.settings.waveformZoomBars > 0
             ? root.settings.waveformZoomBars : root.localZoomBars;
@@ -86,6 +92,7 @@ SeabassDialog {
             flick.cancelFlick();
             root.storeZoom();
             root.releaseDetail();
+            root.pendingSideMs = -1;
         }
     }
     // Whether this popup asked for the detail and has not let it go: the
@@ -117,7 +124,7 @@ SeabassDialog {
             || root.controller.durationSerial === root.controller.trackSerial)
     readonly property real durationMs: root.lengthKnown ? root.controller.duration : 0
     // How many tiles are drawn (for the tests).
-    readonly property int tilesShown: tileRepeater.count
+    readonly property int tilesShown: root.showing && root.durationMs > 0 && root.pxPerMs > 0 ? root.tileCount : 0
     // A bar of this track: four beats of its grid at their median
     // spacing, or of 120 BPM where it has no grid.
     readonly property real barMs: {
@@ -357,8 +364,24 @@ SeabassDialog {
         // player is, following it, and its finer waveform asked for.
         function onTrackChanged() {
             root.resync(root.controller.position || 0);
-            root.attach();
             root.askForDetail();
+            // The other side's copy, picked in the box: it goes back to
+            // where the player was, at the zoom it had, once its length
+            // is known (finishSideSwitch()). Any other track (a media key
+            // before that) drops the switch.
+            if (root.pendingSideMs >= 0) {
+                if (root.loadedSide === root.pendingSide) {
+                    Qt.callLater(root.finishSideSwitch);
+                    return;
+                }
+                root.pendingSideMs = -1;
+            }
+            root.attach();
+        }
+        // The load has ended: with no length (a file that did not open),
+        // a switch waiting for one is given up.
+        function onDurationSerialChanged() {
+            root.dropSideSwitchWithoutLength();
         }
     }
 
@@ -389,9 +412,8 @@ SeabassDialog {
     }
     // The marks a tile from `fromMs` to `toMs` draws: its own, and those a
     // little before it whose numbers reach into it.
-    function ticksBetween(fromMs, toMs) {
+    function ticksBetween(all, fromMs, toMs) {
         const before = Theme.scaled(40) / Math.max(root.pxPerMs, 1e-9);
-        const all = root.ticks;
         const out = [];
         for (let i = 0; i < all.length; ++i) {
             const t = all[i].timeMs;
@@ -411,7 +433,131 @@ SeabassDialog {
     // The lane's height, the same on every tile.
     readonly property real laneHeight: root.ticks.length > 0 ? Theme.beatRulerMaximumHeight : 0
 
+    // ---- The two sides of a track (#131) ----------------------------
+
+    // The Beat Grids & Waveforms page hands over both copies of the
+    // track, rekordbox's first: [{label, available (there is something to
+    // show), track (as openFor() takes it), scheme (WaveformView's
+    // colorScheme), columns, msPerColumn, startMs, ticksAt(durationMs,
+    // widthPx)}], every one on the player's timeline; in Both the side the
+    // player has loaded is drawn from the player's detail. Elsewhere it is
+    // empty: the popup shows the track the player has, with no box.
+    property var sides: []
+    // Both sides at once, one above the other, as the page's row
+    // waveform opens it: shown only while both have something to show.
+    property bool wantBoth: false
+    readonly property bool hasSides: root.sides.length === 2
+    readonly property bool bothAvailable: root.hasSides && root.sides.every((side) => side.available === true)
+    // Only while the player has one of the two copies: once it moves on
+    // to another track (the queue, a media key), the popup follows it as
+    // a single view, as it does anywhere else.
+    readonly property bool showingBoth: root.wantBoth && root.bothAvailable && root.loadedSide >= 0
+    // The side whose copy the player has, or -1.
+    readonly property int loadedSide: {
+        const c = root.controller;
+        if (!c || !root.hasSides) {
+            return -1;
+        }
+        c.trackSerial;
+        return root.sides.findIndex((side) => !!side.track && side.track.format === c.currentFormat
+            && side.track.sourceId === c.currentSourceId && side.track.libraryPath === c.currentLibraryPath);
+    }
+    // The box's entries: each side, then both.
+    readonly property var sideChoices: root.hasSides
+        ? root.sides.map((side) => ({label: side.label, available: side.available === true}))
+            .concat([{label: "Both", available: root.bothAvailable}])
+        : []
+    readonly property int sideChoice: root.showingBoth ? root.sides.length : root.loadedSide
+    function chooseSide(index) {
+        const choice = root.sideChoices[index];
+        if (!choice || choice.available !== true) {
+            return;
+        }
+        if (index === root.sides.length) {
+            root.wantBoth = true;
+            return;
+        }
+        root.wantBoth = false;
+        root.showSide(index);
+    }
+    // Loads that side's copy of the track, keeping the zoom, the place
+    // and whether the view follows the playhead.
+    property real pendingSideMs: -1
+    property int pendingSide: -1
+    property bool pendingSideFollow: false
+    property real heldSpanMs: 0
+    function showSide(index) {
+        const side = root.sides[index];
+        if (!side || side.available !== true || !side.track || index === root.loadedSide) {
+            return;
+        }
+        const c = root.controller;
+        const t = side.track;
+        flick.cancelFlick();
+        root.pendingSideFollow = root.attached;
+        root.pendingSideMs = c.position || 0;
+        root.pendingSide = index;
+        root.heldSpanMs = root.shownSpanMs;
+        root.manualMs = root.centerMs;
+        root.attached = false;
+        c.load(t.format, t.libraryPath, t.sourceId, t.filePath, t.title, t.artist, t.artworkPath || "", t.cues || [],
+               t.fallbackArtworkPath || "", c.playing === true);
+    }
+    function finishSideSwitch() {
+        if (root.pendingSideMs < 0 || !root.lengthKnown) {
+            return;
+        }
+        const ms = root.pendingSideMs;
+        const follow = root.pendingSideFollow;
+        root.pendingSideMs = -1;
+        root.spanBars = root.heldSpanMs / root.barMs;
+        root.controller.seek(ms);
+        root.resync(ms);
+        root.attached = follow;
+    }
+    onLengthKnownChanged: root.finishSideSwitch()
+    // The switched side's load ended without a length (a file that did
+    // not open): nothing to go back to, and the view follows the player.
+    function dropSideSwitchWithoutLength() {
+        const c = root.controller;
+        if (root.pendingSideMs >= 0 && c && c.durationSerial !== undefined && c.durationSerial === c.trackSerial
+                && !(c.duration > 0)) {
+            root.pendingSideMs = -1;
+            root.attach();
+        }
+    }
+
+    // What each lane draws: the track the player has, or both sides.
+    readonly property var lanes: {
+        if (!root.showingBoth) {
+            return [{
+                scheme: root.colorScheme,
+                columns: root.hasDetail ? root.detail.columns : null,
+                columnMs: root.hasDetail ? root.detail.msPerColumn || 0 : 0,
+                startMs: root.hasDetail ? root.detail.startMs || 0 : 0,
+                waveform: root.hasDetail || !root.controller ? [] : root.controller.waveform,
+                ticks: root.ticks,
+                cues: root.controller ? root.controller.cues : [],
+            }];
+        }
+        const widthPx = root.durationMs * root.pxPerMs;
+        // The side the player has is drawn from the player's own detail,
+        // as its single view draws it; the other from what the page read.
+        const own = (i) => i === root.loadedSide && root.hasDetail;
+        return root.sides.map((side, i) => ({
+            scheme: side.scheme,
+            columns: own(i) ? root.detail.columns : side.columns && side.columns.byteLength >= 3 ? side.columns : null,
+            columnMs: own(i) ? root.detail.msPerColumn || 0 : side.msPerColumn || 0,
+            startMs: own(i) ? root.detail.startMs || 0 : side.startMs || 0,
+            waveform: [],
+            ticks: own(i) ? root.ticks
+                : root.showing && widthPx > 0 && side.ticksAt ? side.ticksAt(root.durationMs, widthPx) : [],
+            cues: i === root.loadedSide && root.controller ? root.controller.cues : [],
+        }));
+    }
+
     ColumnLayout {
+        id: popupBody
         Layout.fillWidth: true
         spacing: Theme.tightSpacing
 
@@ -440,6 +586,34 @@ SeabassDialog {
                     text: root.trackArtist
                     color: Theme.textMuted
                     elide: Text.ElideRight
+                }
+            }
+            // Whose waveform and grid: rekordbox's, Engine's or both, on
+            // the page that has both (#131).
+            ComboBox {
+                id: sideBox
+                objectName: "zoomSideBox"
+                visible: root.hasSides && root.loadedSide >= 0
+                focusPolicy: Qt.NoFocus
+                model: root.sideChoices
+                textRole: "label"
+                currentIndex: root.sideChoice
+                Accessible.name: "Show"
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+                ToolTip.text: "Show rekordbox's waveform and beat grid, Engine's, or both, one above the other"
+                delegate: ItemDelegate {
+                    required property int index
+                    required property var modelData
+                    objectName: "zoomSideEntry_" + index
+                    width: sideBox.width
+                    text: modelData.label
+                    enabled: modelData.available === true
+                    highlighted: sideBox.highlightedIndex === index
+                }
+                onActivated: (index) => {
+                    root.chooseSide(index);
+                    sideBox.currentIndex = Qt.binding(() => root.sideChoice);
                 }
             }
             IconToolButton {
@@ -517,91 +691,113 @@ SeabassDialog {
             id: area
             objectName: "zoomArea"
             Layout.fillWidth: true
-            Layout.preferredHeight: Theme.scaled(200)
+            // Taller with both sides, each half a lane of its own.
+            Layout.preferredHeight: root.showingBoth ? Theme.scaled(320) : Theme.scaled(200)
             clip: true
 
-            Item {
-                id: strip
-                objectName: "waveformStrip"
-                x: root.stripX
-                width: 1
-                height: area.height
+            // One lane, or two stacked (both sides): each strip at the
+            // same place, so they scroll and zoom together.
+            Repeater {
+                model: root.lanes.length
+                delegate: Item {
+                    id: laneItem
+                    required property int index
+                    objectName: "zoomLane"
+                    readonly property var lane: root.lanes[laneItem.index] || ({})
+                    readonly property real rulerHeight: laneItem.lane.ticks && laneItem.lane.ticks.length > 0
+                        ? Theme.beatRulerMaximumHeight : 0
+                    readonly property real laneCount: Math.max(1, root.lanes.length)
+                    y: Theme.snap(laneItem.index * area.height / laneItem.laneCount)
+                    width: area.width
+                    height: Theme.snap((laneItem.index + 1) * area.height / laneItem.laneCount) - laneItem.y
+                    clip: true
 
-                Repeater {
-                    id: tileRepeater
-                    // No tiles until the length is known: a tile with no
-                    // length to place its columns by would spread the
-                    // whole track across its own width, once per tile.
-                    model: root.showing && root.durationMs > 0 && root.pxPerMs > 0 ? root.tileCount : 0
-                    delegate: WaveformView {
-                        id: tileView
-                        required property int index
-                        objectName: "zoomTile"
-                        // Slot `index` shows the one tile of the visible run
-                        // that falls to it: a slot keeps its tile while the
-                        // strip moves, and only the slot whose tile scrolled
-                        // out takes the one scrolling in.
-                        readonly property int tile: root.firstTile
-                            + (((tileView.index - root.firstTile) % root.tileCount) + root.tileCount) % root.tileCount
-                        x: tileView.tile * root.tileWidth
-                        width: root.tileWidth
-                        height: strip.height
-                        enabled: false
-                        viewStartMs: tileView.tile * root.tileWidth / root.pxPerMs
-                        viewSpanMs: root.tileWidth / root.pxPerMs
-                        trackDurationMs: root.durationMs
-                        columnBytes: root.hasDetail ? root.detail.columns : null
-                        columnMs: root.hasDetail ? root.detail.msPerColumn || 0 : 0
-                        columnStartMs: root.hasDetail ? root.detail.startMs || 0 : 0
-                        waveformData: root.hasDetail || !root.controller ? [] : root.controller.waveform
-                        beatsSelected: true
-                        // Read once the tile is made, as showRuler is.
-                        beatData: tileView.made
-                            ? root.ticksBetween(tileView.viewStartMs, tileView.viewStartMs + tileView.viewSpanMs) : []
-                        gridStyle: "ruler"
-                        // Evaluated once more in a tile the Repeater is
-                        // dropping as the player reports the length (a
-                        // real one, opened from a page), when `root` is
-                        // already gone from its context. And evaluated
-                        // first, as the popup opens, before `root` can be
-                        // reached from a new tile: a binding that found no
-                        // `root` never looks again, and the tile kept no
-                        // lane (Sebastian's screenshot, 2026-11-21). So it
-                        // is decided once the tile is made, and only after
-                        // the change that made it has been handed out in
-                        // full: a binding that starts listening while a
-                        // change is still being sent misses it.
-                        property bool made: false
-                        function markMade() {
-                            tileView.made = true;
+                    Item {
+                        id: strip
+                        objectName: "waveformStrip"
+                        x: root.stripX
+                        width: 1
+                        height: laneItem.height
+
+                        Repeater {
+                            // No tiles until the length is known: a tile with no
+                            // length to place its columns by would spread the
+                            // whole track across its own width, once per tile.
+                            model: root.showing && root.durationMs > 0 && root.pxPerMs > 0 ? root.tileCount : 0
+                            delegate: WaveformView {
+                                id: tileView
+                                required property int index
+                                objectName: "zoomTile"
+                                // `laneItem` can be gone already, as `root` can
+                                // (see showRuler).
+                                readonly property var lane: laneItem ? laneItem.lane : ({})
+                                // Slot `index` shows the one tile of the visible run
+                                // that falls to it: a slot keeps its tile while the
+                                // strip moves, and only the slot whose tile scrolled
+                                // out takes the one scrolling in.
+                                readonly property int tile: root.firstTile
+                                    + (((tileView.index - root.firstTile) % root.tileCount) + root.tileCount) % root.tileCount
+                                x: tileView.tile * root.tileWidth
+                                width: root.tileWidth
+                                height: strip.height
+                                enabled: false
+                                viewStartMs: tileView.tile * root.tileWidth / root.pxPerMs
+                                viewSpanMs: root.tileWidth / root.pxPerMs
+                                trackDurationMs: root.durationMs
+                                columnBytes: tileView.lane.columns || null
+                                columnMs: tileView.lane.columnMs || 0
+                                columnStartMs: tileView.lane.startMs || 0
+                                waveformData: tileView.lane.waveform || []
+                                beatsSelected: true
+                                // Read once the tile is made, as showRuler is.
+                                beatData: tileView.made && root
+                                    ? root.ticksBetween(tileView.lane.ticks || [], tileView.viewStartMs,
+                                                        tileView.viewStartMs + tileView.viewSpanMs) : []
+                                gridStyle: "ruler"
+                                // Evaluated once more in a tile the Repeater is
+                                // dropping as the player reports the length (a
+                                // real one, opened from a page), when `root` is
+                                // already gone from its context. And evaluated
+                                // first, as the popup opens, before `root` can be
+                                // reached from a new tile: a binding that found no
+                                // `root` never looks again, and the tile kept no
+                                // lane (Sebastian's screenshot, 2026-11-21). So it
+                                // is decided once the tile is made, and only after
+                                // the change that made it has been handed out in
+                                // full: a binding that starts listening while a
+                                // change is still being sent misses it.
+                                property bool made: false
+                                function markMade() {
+                                    tileView.made = true;
+                                }
+                                Component.onCompleted: Qt.callLater(tileView.markMade)
+                                showRuler: tileView.made && tileView.lane.ticks ? tileView.lane.ticks.length > 0 : false
+                                colorScheme: tileView.lane.scheme || "vivid"
+                                // Played or not is shown by the dimming below, which
+                                // moves with the playhead without a repaint.
+                                unplayedOpacity: 1
+                                cueData: tileView.lane.cues || []
+                                progress: -1
+                            }
                         }
-                        Component.onCompleted: Qt.callLater(tileView.markMade)
-                        showRuler: tileView.made && root ? root.ticks.length > 0 : false
-                        // `root` can be gone already, as for showRuler.
-                        colorScheme: root ? root.colorScheme : "vivid"
-                        // Played or not is shown by the dimming below, which
-                        // moves with the playhead without a repaint.
-                        unplayedOpacity: 1
-                        cueData: root.controller ? root.controller.cues : []
-                        progress: -1
+                    }
+
+                    // The part already played, dimmed: what is ahead of the
+                    // playhead is what matters on a player.
+                    Rectangle {
+                        objectName: "playedShade"
+                        readonly property real playheadX: root.stripX
+                            + (root.controller ? (root.playing && root.attached ? root.smoothMs
+                                                                               : root.controller.position || 0) : 0)
+                              * root.pxPerMs
+                        x: Math.max(0, root.stripX)
+                        y: laneItem.rulerHeight
+                        width: Math.max(0, Math.min(area.width, playheadX) - x)
+                        height: laneItem.height - y
+                        color: Theme.background
+                        opacity: Theme.waveformPlayedShade
                     }
                 }
-            }
-
-            // The part already played, dimmed: what is ahead of the
-            // playhead is what matters on a player.
-            Rectangle {
-                objectName: "playedShade"
-                readonly property real playheadX: root.stripX
-                    + (root.controller ? (root.playing && root.attached ? root.smoothMs
-                                                                       : root.controller.position || 0) : 0)
-                      * root.pxPerMs
-                x: Math.max(0, root.stripX)
-                y: root.laneHeight
-                width: Math.max(0, Math.min(area.width, playheadX) - x)
-                height: area.height - y
-                color: Theme.background
-                opacity: Theme.waveformPlayedShade
             }
 
             // "This position": fixed, the waveform moves under it.

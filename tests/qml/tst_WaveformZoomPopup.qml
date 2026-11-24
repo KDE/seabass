@@ -1792,4 +1792,304 @@ TestCase {
         compare(player.durationSerial, player.trackSerial, "the same broken file again: known at once");
         player.stop();
     }
+
+    // ---- The two sides of a track (#131) ------------------------------
+
+    // The Beat Grids & Waveforms page hands the popup both copies of a
+    // track: rekordbox's and Engine's.
+    function sidesFor(engineAvailable) {
+        return [
+            {label: "rekordbox", available: true, scheme: "vivid",
+             columns: columnsOf(230, 128, 51).columns, msPerColumn: 1000 / 150, startMs: 0,
+             ticksAt: (durationMs, widthPx) => BeatGridTicks.layout(testCase.grid(0, durationMs), durationMs, widthPx).ticks,
+             track: {format: "rekordbox", libraryPath: "/fixture/PIONEER", sourceId: "7",
+                     filePath: "/fixture/Contents/major-tom.mp3", title: "Major Tom", artist: "DJ Amador"}},
+            {label: "Engine", available: engineAvailable, scheme: "engine",
+             columns: columnsOf(120, 90, 60).columns, msPerColumn: 1000 / 150, startMs: 0,
+             ticksAt: (durationMs, widthPx) => BeatGridTicks.layout(testCase.grid(10, durationMs), durationMs, widthPx).ticks,
+             track: {format: "engine", libraryPath: "/fixture/Engine Library", sourceId: "e7",
+                     filePath: "/fixture/Engine Library/Music/major-tom.mp3", title: "Major Tom", artist: "DJ Amador"}},
+        ];
+    }
+    function lanesOf(popup) {
+        const out = [];
+        const a = area(popup);
+        for (let i = 0; i < a.children.length; ++i) {
+            if (a.children[i].objectName === "zoomLane") {
+                out.push(a.children[i]);
+            }
+        }
+        return out.sort((x, y) => x.y - y.y);
+    }
+    function tilesOf(lane) {
+        const s = findChild(lane, "waveformStrip");
+        const out = [];
+        for (let i = 0; i < s.children.length; ++i) {
+            if (s.children[i].objectName === "zoomTile") {
+                out.push(s.children[i]);
+            }
+        }
+        return out;
+    }
+
+    // Elsewhere the popup has one side and no box to switch.
+    function test_noSideBoxWithoutTwoSides() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        const box = findChild(popup.contentItem, "zoomSideBox");
+        verify(box !== null, "the popup has the box");
+        compare(box.visible, false, "hidden: there is only one side");
+    }
+
+    // The box shows the side that is loaded, in its own colours; picking
+    // the other loads that copy and keeps the zoom and the place.
+    function test_theSideBoxSwitchesKeepingZoomAndPlace() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(true);
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        tryVerify(() => popup.pxPerMs > 0, 2000, "laid out");
+        const box = findChild(popup.contentItem, "zoomSideBox");
+        compare(box.visible, true, "both sides: the box is shown");
+        compare(box.count, 3, "rekordbox, Engine and Both");
+        compare(box.currentIndex, 0, "rekordbox's copy is loaded");
+        compare(box.currentText, "rekordbox");
+        compare(popup.colorScheme, "vivid", "in rekordbox's colours");
+
+        popup.zoomBy(2, popup.lineX);
+        const span = popup.shownSpanMs;
+        popup.scrollBy(400);
+        compare(popup.attached, false);
+        const at = popup.manualMs;
+
+        box.activated(1);
+        compare(player.loads.length, 1, "Engine's copy is loaded");
+        compare(player.loads[0].sourceId, "e7");
+        compare(player.currentFormat, "engine");
+        tryCompare(player, "position", 60000, 2000, "the player goes back to where it was");
+        compare(box.currentIndex, 1);
+        compare(popup.colorScheme, "engine", "in Engine's colours");
+        compare(popup.shownSpanMs, span, "at the same zoom");
+        compare(popup.attached, false, "still held where it was scrolled to");
+        compare(popup.manualMs, at, "at the same place");
+
+        // And back, following the playhead: it still follows after.
+        popup.follow();
+        box.activated(0);
+        compare(player.currentFormat, "rekordbox");
+        tryCompare(player, "position", 60000, 2000);
+        compare(popup.attached, true, "following, as before the switch");
+        compare(popup.colorScheme, "vivid");
+        compare(popup.shownSpanMs, span);
+    }
+
+    // A side with nothing to show is in the box, switched off.
+    function test_aSideWithoutDataIsDisabled() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(false);
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        const box = findChild(popup.contentItem, "zoomSideBox");
+        compare(box.visible, true);
+        box.popup.open();
+        tryCompare(box.popup, "opened", true);
+        const entry = findChild(box.popup.contentItem, "zoomSideEntry_1");
+        verify(entry !== null, "Engine's entry");
+        compare(entry.enabled, false, "Engine has nothing: its entry is off");
+        compare(findChild(box.popup.contentItem, "zoomSideEntry_0").enabled, true);
+        compare(findChild(box.popup.contentItem, "zoomSideEntry_2").enabled, false, "nor Both");
+        box.popup.close();
+        box.activated(1);
+        compare(player.loads.length, 0, "nothing loaded");
+        compare(box.currentIndex, 0, "the box stays on rekordbox");
+        box.activated(2);
+        compare(popup.showingBoth, false, "Both needs both sides");
+        compare(box.currentIndex, 0);
+        compare(lanesOf(popup).length, 1, "one lane");
+    }
+
+    // Both: rekordbox's and Engine's stacked, each in its own look, on one
+    // timeline: zoomed and scrolled together.
+    function test_bothSidesStackedAndInStep() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(true);
+        popup.wantBoth = true;
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        tryVerify(() => popup.pxPerMs > 0, 2000, "laid out");
+        const box = findChild(popup.contentItem, "zoomSideBox");
+        compare(box.currentText, "Both");
+        compare(popup.showingBoth, true);
+        const lanes = lanesOf(popup);
+        compare(lanes.length, 2, "two lanes");
+        verify(lanes[0].y + lanes[0].height <= lanes[1].y, "one above the other");
+        const a = area(popup);
+        tryVerify(() => a.mapToItem(popup.contentItem, 0, a.height).y <= popup.availableHeight, 2000,
+                  "the popup grows to hold both: " + a.height + " in " + popup.availableHeight);
+        compare(lanes[0].height, lanes[1].height);
+        tryVerify(() => tilesOf(lanes[0]).length > 0 && tilesOf(lanes[1]).length > 0, 2000, "tiles in both");
+        for (const tile of tilesOf(lanes[0])) {
+            compare(tile.colorScheme, "vivid", "rekordbox's half in rekordbox's look");
+        }
+        for (const tile of tilesOf(lanes[1])) {
+            compare(tile.colorScheme, "engine", "Engine's half in Engine's look");
+        }
+        verify(tilesOf(lanes[0]).every((t) => t.byteColumns > 0), "rekordbox's columns drawn");
+        verify(tilesOf(lanes[1]).every((t) => t.byteColumns > 0), "Engine's columns drawn");
+        const inStep = (why) => {
+            compare(findChild(lanes[0], "waveformStrip").x, findChild(lanes[1], "waveformStrip").x, why);
+            const top = tilesOf(lanes[0]);
+            const bottom = tilesOf(lanes[1]);
+            compare(top.length, bottom.length, why);
+            for (const t of top) {
+                const twin = bottom.find((b) => b.tile === t.tile);
+                verify(twin !== undefined, why + ": tile " + t.tile + " in both");
+                compare(twin.viewStartMs, t.viewStartMs, why);
+                compare(twin.viewSpanMs, t.viewSpanMs, why);
+                compare(twin.x, t.x, why);
+            }
+            tryVerify(() => tilesOf(lanes[1]).some((b) => b.beatTicks.length > 0), 2000, why + ": Engine's grid");
+            // The same moment under the playhead line in both.
+            for (const lane of lanes) {
+                const s = findChild(lane, "waveformStrip");
+                const tile = tilesOf(lane).find((t) => s.x + t.x <= popup.lineX && s.x + t.x + t.width > popup.lineX);
+                verify(tile !== undefined, why + ": a tile under the line");
+                const ms = tile.viewStartMs + (popup.lineX - s.x - tile.x) / popup.pxPerMs;
+                verify(Math.abs(ms - popup.centerMs) <= 1 / popup.pxPerMs, why + ": " + ms + " under the line, the playhead at "
+                       + popup.centerMs);
+            }
+        };
+        inStep("opened");
+        popup.zoomBy(2, popup.lineX);
+        inStep("zoomed");
+        popup.scrollBy(700);
+        inStep("scrolled");
+        player.seek(90000);
+        inStep("seeked");
+        if (screenshotDir && screenshotDir.length > 0) {
+            waitForPolish(testCase.Window.window);
+            waitForRendering(popup.contentItem);
+            grabImage(testCase).save(screenshotDir + "/waveform-zoom-popup-both.png");
+        }
+
+        // One side picked: one lane, that side's copy, the same place.
+        box.activated(1);
+        compare(popup.showingBoth, false);
+        compare(player.currentFormat, "engine");
+        tryCompare(player, "position", 90000, 2000);
+        compare(lanesOf(popup).length, 1);
+        compare(popup.colorScheme, "engine");
+        box.activated(2);
+        compare(popup.showingBoth, true, "and Both again");
+        compare(lanesOf(popup).length, 2);
+    }
+
+    // The player moving on to another track (the queue, a media key) while
+    // Both shows: the popup follows it as one view, with no box, and draws
+    // nothing of the page's track.
+    function test_bothFollowsThePlayerOntoAnotherTrack() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(true);
+        popup.wantBoth = true;
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        tryVerify(() => popup.pxPerMs > 0, 2000, "laid out");
+        compare(popup.showingBoth, true);
+        compare(lanesOf(popup).length, 2);
+        player.load("rekordbox", "/fixture/PIONEER", "99", "/fixture/Contents/next.mp3", "Next", "", "", [], "", false);
+        compare(popup.loadedSide, -1, "the page's track is no longer loaded");
+        compare(popup.showingBoth, false, "Both stops");
+        compare(lanesOf(popup).length, 1, "one lane, the player's");
+        compare(popup.lanes[0].columns, popup.hasDetail ? popup.detail.columns : null, "drawn from the player");
+        compare(findChild(popup.contentItem, "zoomSideBox").visible, false, "and no box for a track it is not");
+    }
+
+    // A side switch still waiting for the length when the popup closes is
+    // dropped: the next opening, on another track, gets no seek and no
+    // zoom of it.
+    function test_aSwitchLeftUnfinishedIsDropped() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(true);
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        tryVerify(() => popup.pxPerMs > 0, 2000, "laid out");
+        popup.zoomBy(2, popup.lineX);
+        const box = findChild(popup.contentItem, "zoomSideBox");
+        // The length of what is loaded next is not known yet.
+        player.durationSerial = 0;
+        box.activated(1);
+        compare(player.currentFormat, "engine");
+        verify(popup.pendingSideMs >= 0, "the switch waits for the length");
+        popup.close();
+        tryCompare(popup, "visible", false);
+
+        // Another track, of another tempo, opened as a page opens one.
+        popup.sides = [];
+        player.beatTimesMs = testCase.grid(0, testCase.trackMs, 400).map((beat) => beat.timeMs);
+        const calls = player.calls.length;
+        popup.openFor({format: "rekordbox", libraryPath: "/fixture/PIONEER", sourceId: "42",
+                       filePath: "/fixture/Contents/other.mp3", title: "Other", artist: ""});
+        tryCompare(popup, "opened", true);
+        player.durationSerial = Qt.binding(() => player.trackSerial);
+        tryVerify(() => popup.lengthKnown, 2000);
+        wait(50);
+        compare(player.calls.slice(calls).indexOf("seek"), -1, "no seek carried over: " + player.calls.slice(calls));
+        compare(player.position, 0, "the new track at its start");
+        compare(popup.spanBars, popup.localZoomBars, "at the popup's own zoom in bars");
+        compare(popup.attached, true, "following the playhead");
+    }
+
+    // A side switch whose copy never gets a length (the load ends with
+    // none) is given up: the popup follows the player again, and a length
+    // that comes later seeks nowhere.
+    function test_aSwitchWithoutALengthIsGivenUp() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(true);
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        tryVerify(() => popup.pxPerMs > 0, 2000, "laid out");
+        popup.scrollBy(400);
+        compare(popup.attached, false);
+        player.durationSerial = 0;
+        findChild(popup.contentItem, "zoomSideBox").activated(1);
+        verify(popup.pendingSideMs >= 0, "the switch waits for the length");
+        const calls = player.calls.length;
+        // The load ends: its length is reported, and it is none.
+        player.duration = 0;
+        player.durationSerial = player.trackSerial;
+        compare(popup.pendingSideMs, -1, "given up");
+        compare(popup.attached, true, "following the player again");
+        player.duration = testCase.trackMs;
+        wait(50);
+        compare(player.calls.slice(calls).indexOf("seek"), -1, "nothing seeks: " + player.calls.slice(calls));
+    }
+
+    // The player going on to another track (a media key) before the
+    // switched side's length came: the switch is given up, and the other
+    // track is not moved to the old place.
+    function test_aSwitchOvertakenByAnotherTrackIsGivenUp() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(true);
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        tryVerify(() => popup.pxPerMs > 0, 2000, "laid out");
+        player.durationSerial = 0;
+        findChild(popup.contentItem, "zoomSideBox").activated(1);
+        verify(popup.pendingSideMs >= 0, "the switch waits for the length");
+        const calls = player.calls.length;
+        player.load("rekordbox", "/fixture/PIONEER", "99", "/fixture/Contents/next.mp3", "Next", "", "", [], "", false);
+        compare(popup.pendingSideMs, -1, "given up for the other track");
+        player.durationSerial = Qt.binding(() => player.trackSerial);
+        tryVerify(() => popup.lengthKnown, 2000);
+        wait(50);
+        compare(player.calls.slice(calls).indexOf("seek"), -1, "the other track stays at its start");
+        compare(player.position, 0);
+        compare(popup.attached, true, "and is followed");
+    }
 }
