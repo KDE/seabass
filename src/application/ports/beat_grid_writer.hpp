@@ -84,6 +84,10 @@ struct BeatGridWriteResult
     // for every other outcome. Kept by the caller, it says on a later
     // call whether the grid there is still the one written here.
     std::string gridFingerprint;
+    // The row's flag says analysed but it holds no analysis at all (see
+    // AnalysisImportResult::analysedNothingStored): not filled with a grid
+    // alone, RowNotAnalysed.
+    bool analysedNothingStored = false;
 };
 
 // Puts a rekordbox beat grid into one Engine row. The Engine writer

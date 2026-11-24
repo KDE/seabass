@@ -112,6 +112,12 @@ struct AnalysisImportResult
     // marked analysed (in a preview: would be).
     bool completedRow = false;
 
+    // The row's flag says analysed, but it holds no analysis at all: no
+    // beat data, overview or analysis record, and no overview file (Engine
+    // DJ 5.1 left rows so). Completed like one the player has not analysed,
+    // with both parts or not at all; nothing of the player's to keep.
+    bool analysedNothingStored = false;
+
     // The overview file's path from the Engine Library folder, '/'-separated,
     // when one was (in a preview: would be) written.
     std::string overviewFileRelativePath;

@@ -527,13 +527,35 @@ QString unreadableTip()
                           "it is left alone.");
 }
 
+// A row Engine marked analysed but stored no beat grid or waveform for.
+QString nothingStoredTip(const QString &then)
+{
+    return QStringLiteral("Engine marked this track analysed but stored no beat grid or waveform for it, so ") + then;
+}
+
+// A row that cannot be completed: the player's to analyse, or, marked
+// analysed with nothing stored, left as it is.
+Words leftWords(const BeatGridTrackState &s)
+{
+    return s.result.analysedNothingStored
+        ? Words{QStringLiteral("Left as it is"), QStringLiteral("warn"),
+                QStringLiteral("Engine marked this track analysed but stored no beat grid or waveform, and it "
+                               "cannot be completed from rekordbox, so it is left as it is.")}
+        : Words{QStringLiteral("Left for the player"), QStringLiteral("warn"),
+                QStringLiteral("The player has not analysed this track yet and it cannot be completed from "
+                               "rekordbox, so the player analyses it when it is first loaded.")};
+}
+
 Words gridWords(const BeatGridTrackState &s)
 {
     switch (s.result.grid.outcome) {
     case Outcome::Written:
         return s.result.completedRow
             ? Words{QStringLiteral("New"), QStringLiteral("good"),
-                    QStringLiteral("The player has not analysed this track: it gets rekordbox's beat grid as its own.")}
+                    s.result.analysedNothingStored
+                        ? nothingStoredTip(QStringLiteral("rekordbox's beat grid and waveform become its own."))
+                        : QStringLiteral("The player has not analysed this track: it gets rekordbox's beat grid as its "
+                                         "own.")}
             : Words{QStringLiteral("Replaces Engine's"), QStringLiteral("good"),
                     QStringLiteral("rekordbox's beat grid becomes the one the player plays by. Engine's own stays "
                                    "beside it, so the player can go back to it.")};
@@ -545,9 +567,7 @@ Words gridWords(const BeatGridTrackState &s)
                 QStringLiteral("rekordbox has no beat grid for this track, so there is none to copy.")};
     case Outcome::RowNotAnalysed:
     case Outcome::NoSampleRate:
-        return {QStringLiteral("Left for the player"), QStringLiteral("warn"),
-                QStringLiteral("The player has not analysed this track yet and it cannot be completed from "
-                               "rekordbox, so the player analyses it when it is first loaded.")};
+        return leftWords(s);
     case Outcome::RowLocked:
         return {QStringLiteral("Locked on the player"), QStringLiteral("warn"),
                 QStringLiteral("The beat grid is locked on the player. \"Also replace grids locked or changed on "
@@ -575,7 +595,10 @@ Words waveformWords(const BeatGridTrackState &s)
     case Waveform::Written:
         return s.result.completedRow
             ? Words{QStringLiteral("New"), QStringLiteral("good"),
-                    QStringLiteral("The player has not analysed this track: it gets rekordbox's waveform as its own.")}
+                    s.result.analysedNothingStored
+                        ? nothingStoredTip(QStringLiteral("rekordbox's beat grid and waveform become its own."))
+                        : QStringLiteral("The player has not analysed this track: it gets rekordbox's waveform as its "
+                                         "own.")}
             : Words{QStringLiteral("Replaces Engine's"), QStringLiteral("good"),
                     QStringLiteral("rekordbox's waveform replaces the one the player drew.")};
     case Waveform::AlreadySame:
@@ -586,9 +609,7 @@ Words waveformWords(const BeatGridTrackState &s)
                 QStringLiteral("rekordbox has no colour or three-band waveform for this track.")};
     case Waveform::RowNotAnalysed:
     case Waveform::NoSampleCount:
-        return {QStringLiteral("Left for the player"), QStringLiteral("warn"),
-                QStringLiteral("The player has not analysed this track yet and it cannot be completed from "
-                               "rekordbox, so the player analyses it when it is first loaded.")};
+        return leftWords(s);
     case Waveform::UnsupportedSchema:
         return {QStringLiteral("Engine library too old"), QStringLiteral("warn"), QString()};
     case Waveform::NotRequested:
@@ -613,28 +634,32 @@ bool notAnalysed(const BeatGridTrackState &s)
         || s.result.waveform == Waveform::RowNotAnalysed || s.result.waveform == Waveform::NoSampleCount;
 }
 
-// Why a row the player has not analysed cannot be completed.
+// Why a row the player has not analysed cannot be completed. A row Engine
+// marked analysed with nothing stored says so first, then the same reason.
 QString whyLeftForThePlayer(const BeatGridTrackState &s)
 {
+    const QString head = s.result.analysedNothingStored
+        ? QStringLiteral("Marked analysed by Engine with no beat grid or waveform stored, left as it is")
+        : QStringLiteral("Not analysed by the player yet");
     if (!s.options.grids || !s.options.waveforms) {
-        return QStringLiteral("Not analysed by the player yet: only completed with both beat grids and waveforms");
+        return head + QStringLiteral(": only completed with both beat grids and waveforms");
     }
     if (s.result.grid.outcome == Outcome::NoSourceGrid) {
-        return QStringLiteral("Not analysed by the player yet: rekordbox has no beat grid to complete it with");
+        return head + QStringLiteral(": rekordbox has no beat grid to complete it with");
     }
     if (s.result.waveform == Waveform::NoSourceWaveform) {
-        return QStringLiteral("Not analysed by the player yet: rekordbox has no waveform to complete it with");
+        return head + QStringLiteral(": rekordbox has no waveform to complete it with");
     }
     if (s.result.waveform == Waveform::PlayersWaveform) {
-        return QStringLiteral("Not analysed by the player yet, and it holds a waveform the player drew");
+        return head + QStringLiteral(", and it holds a waveform the player drew");
     }
     if (s.result.grid.outcome == Outcome::RowLocked) {
-        return QStringLiteral("Not analysed by the player yet, and its beat grid is locked");
+        return head + QStringLiteral(", and its beat grid is locked");
     }
     if (s.result.waveform == Waveform::NoSampleCount || s.result.grid.outcome == Outcome::NoSampleRate) {
-        return QStringLiteral("Not analysed by the player yet: its length could not be read from the file");
+        return head + QStringLiteral(": its length could not be read from the file");
     }
-    return QStringLiteral("Not analysed by the player yet");
+    return head;
 }
 
 // Why a ticked track would be left alone, in the summary's words; empty
@@ -660,7 +685,7 @@ QString leftAloneReason(const BeatGridTrackState &s)
         return QStringLiteral("waveform drawn by the player");
     }
     if (notAnalysed(s)) {
-        return QStringLiteral("left for the player");
+        return s.result.analysedNothingStored ? QStringLiteral("left as it is") : QStringLiteral("left for the player");
     }
     if (s.result.grid.outcome == Outcome::RowLocked) {
         return QStringLiteral("locked on the player");

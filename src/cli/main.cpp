@@ -2403,6 +2403,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         line("already the same:", r.alreadySame);
         line("no rekordbox beat grid:", r.noRekordboxGrid);
         line("not analysed by the player yet:", r.notAnalysed);
+        line("marked analysed by Engine with nothing stored, left as it is:", r.analysedNothingStored);
         line("locked on Engine:", r.lockedOnEngine);
         line("edited on Engine:", r.editedOnEngine);
         line("no sample rate for the file:", r.noSampleRate);
@@ -2623,7 +2624,7 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
         if (waveforms && (result.waveforms.written > 0 || result.completedRows > 0)) {
             log.record("copy-beatgrids: wrote " + std::to_string(result.waveforms.written)
                        + " waveform(s) from rekordbox to Engine and completed " + std::to_string(result.completedRows)
-                       + " track(s) the player had not analysed, " + std::to_string(result.overviewFiles.size())
+                       + " track(s) the player had not analysed or Engine had marked analysed with nothing stored, " + std::to_string(result.overviewFiles.size())
                        + " overview file(s) written");
         }
     } catch (const std::exception &e) {

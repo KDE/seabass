@@ -320,6 +320,8 @@ private:
     // The row's analysis as stored; with its overview file when asked.
     struct RowNow;
     RowNow readRowNow(std::int64_t id, bool withOverviewFile);
+    // Whether the row's overview file is on the stick; true when unsure.
+    bool overviewFileThere(const RowNow &now, std::int64_t id);
     // The columns of `after` into the row in one transaction, when any
     // differs from `before`. Throws when it cannot.
     //

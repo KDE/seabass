@@ -130,6 +130,9 @@ struct BeatGridCopyResult
     int alreadySame = 0;
     int noRekordboxGrid = 0;
     int notAnalysed = 0;
+    // Marked analysed by Engine with nothing stored and not completed (a
+    // grid alone, or no length): left as it is. Not in notAnalysed.
+    int analysedNothingStored = 0;
     int lockedOnEngine = 0;
     int editedOnEngine = 0;
     int noSampleRate = 0;
@@ -164,8 +167,8 @@ struct BeatGridCopyResult
 
     int total() const
     {
-        return written + wouldWrite + alreadySame + noRekordboxGrid + notAnalysed + lockedOnEngine + editedOnEngine + noSampleRate
-            + unsupportedLibrary + notRequested + cannotKeep + rowUnreadable + failed + notReached;
+        return written + wouldWrite + alreadySame + noRekordboxGrid + notAnalysed + analysedNothingStored + lockedOnEngine
+            + editedOnEngine + noSampleRate + unsupportedLibrary + notRequested + cannotKeep + rowUnreadable + failed + notReached;
     }
 };
 

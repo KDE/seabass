@@ -119,7 +119,7 @@ void countGrid(BeatGridCopyResult &result, const BeatGridWriteResult &grid, cons
         ++result.noRekordboxGrid;
         break;
     case Outcome::RowNotAnalysed:
-        ++result.notAnalysed;
+        ++(grid.analysedNothingStored ? result.analysedNothingStored : result.notAnalysed);
         break;
     case Outcome::RowLocked:
         ++result.lockedOnEngine;
