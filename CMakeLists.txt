@@ -1052,6 +1052,7 @@ if(TAGLIB_FOUND OR TARGET TagLib::tag)
         src/infrastructure/audio/taglib_metadata_probe.cpp
         src/infrastructure/audio/exact_sample_count.cpp
         src/infrastructure/audio/taglib_duration_probe.cpp
+        src/infrastructure/audio/taglib_tag_reader.cpp
         src/infrastructure/audio/embedded_artwork.cpp)
     target_include_directories(seabass_taglib PUBLIC src)
     target_link_libraries(seabass_taglib PUBLIC seabass_mp3_lead_in)
@@ -2289,6 +2290,13 @@ if(TARGET seabass_taglib)
     target_include_directories(embedded_artwork_test PRIVATE src)
     target_link_libraries(embedded_artwork_test PRIVATE seabass_taglib)
     add_test(NAME embedded_artwork_test COMMAND embedded_artwork_test)
+
+    # What the track import reads from a file's own tags, against files
+    # built byte by byte (tests/audio_file_fixture.hpp).
+    add_executable(taglib_tag_reader_test tests/taglib_tag_reader_test.cpp)
+    target_include_directories(taglib_tag_reader_test PRIVATE src)
+    target_link_libraries(taglib_tag_reader_test PRIVATE seabass_taglib)
+    add_test(NAME taglib_tag_reader_test COMMAND taglib_tag_reader_test)
 
     # The whole unreferenced-file scan, composed the way the GUI
     # composes it -- which is only meaningful with a real probe behind
