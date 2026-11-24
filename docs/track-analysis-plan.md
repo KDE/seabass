@@ -516,9 +516,9 @@ On the tracks at rekordbox's tempo and on its beat, Engine's grid is
 4.3 ms late at the median and anywhere between 26 ms early and 39 ms
 late (5th to 95th percentile); ours is 1.2 ms late, between 5 early and
 7 late. The tempo is where the two stand alike: 29 tracks each at
-another tempo than rekordbox's, 19 of them the same tracks (of the
-rest, Engine: six of seven in odd or triple metre; ours: four of seven
-hip-hop, four of six without drums).
+another tempo than rekordbox's, 19 of them the same tracks (among
+Engine's are six of the seven in odd or triple metre; among ours four
+of seven hip-hop and four of six without drums).
 
 Against rekordbox's Normal grids (101 tracks), which are straight like
 Engine's: within 10 ms and steady Engine 18, Seabass 22; another tempo
