@@ -12,6 +12,7 @@
 
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,13 @@ namespace seabass::gui
 // every row that depends on it (a playlist's create takes its members
 // with it), and ticking a row ticks what it depends on (a member brings
 // its playlist's create and its track's add).
+//
+// A row that depends on a conflict's key is held back while the conflict
+// is open (#128): unticked from the start, and it cannot be ticked until
+// an answer's rows stand for that key. An answer that writes something
+// ticks the rows held back for it (those ticked by default); taking the
+// answer back, or one that writes nothing, leaves them unticked, so a
+// new playlist inside a folder the DJ left out is not made with it.
 //
 // Answering a conflict adds the chosen side's edits as rows of their own
 // sections, under the conflict's key, ticked; answering it the other way
@@ -276,6 +284,24 @@ private:
     int endOfSection(Section section) const;
     void removeAnswerRows(int conflictUid);
     void announceIncluded();
+    // The keys of conflicts no ticked row answers yet (#128).
+    std::set<std::string> openConflictKeys() const;
+    // Ticks or unticks the rows of `keys` and, by dependsOn, what goes
+    // with them (setIncluded's rule). Refuses a tick (false, nothing
+    // changed) that would bring a row depending on an open conflict.
+    bool setKeysIncluded(std::vector<std::string> keys, bool included);
+    // The rows held back for an answer to the conflict row `conflictUid`
+    // (its `keys`): writable, ticked by default, depending on one of them,
+    // not the answer's own (#128).
+    std::vector<int> dependentsOfAnswer(int conflictUid, const std::vector<std::string> &keys) const;
+    // Before an answer that writes something is taken back or switched:
+    // which of its dependents the DJ unticked, so the next answer leaves
+    // them out (m_leftOutByHand).
+    void rememberLeftOutByHand(int conflictUid, const std::vector<std::string> &keys);
+    // The conflict row an answered conflict's rows wait on: the answer
+    // writes something, none of its rows is ticked, and what it depends on
+    // leads to a conflict still open (#128). Null when it waits on none.
+    const Row *answerWaitsOn(const Row &row) const;
     QStringList detailsOf(const Row &row) const;
     QStringList editLines(const domain::EngineUpdateEdit &edit) const;
     QVariantList cueSidesOf(const Row &row) const;
@@ -289,6 +315,10 @@ private:
     int m_nextUid = 1;
     // Rows so far per planKey prefix, for the ordinal that ends a key.
     std::map<QString, int> m_ordinals;
+    // Per conflict row uid: the uids of rows that waited on its answer and
+    // that the DJ unticked while an answer writing something stood. A
+    // later answer gives every other one its default tick, not these.
+    std::map<int, std::set<int>> m_leftOutByHand;
 };
 
 }  // namespace seabass::gui

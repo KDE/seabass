@@ -1363,9 +1363,20 @@ void RekordboxExportSyncController::stageSelected()
             deletedEarly.insert(d->second);
         }
     }
+    // Two rows that create the same path (two answers that each make a
+    // folder Engine deleted again, #128) make it once: the later row joins
+    // the earlier row's change and is applied, and recorded, with it.
+    // Staged as a change of its own it would fail, Engine refusing a path
+    // that already names a playlist, and the whole save with it.
+    std::map<std::string, std::size_t> createdAt;
     for (std::size_t i : creates) {
         const auto e = std::get<PlaylistCreate>(*rows[i].edit);
+        if (const auto made = createdAt.find(e.path); made != createdAt.end()) {
+            planned[made->second].rows.push_back(i);
+            continue;
+        }
         stageRenamesNeededBy(i);
+        createdAt.emplace(e.path, planned.size());
         planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
                                return std::make_unique<CreateEnginePlaylistChange>(enginePath, e.path, hint);
                            }});

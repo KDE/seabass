@@ -2019,6 +2019,108 @@ void testCancelUnits(const fs::path &fixture)
                  "conflict's answer to its track and a member to its folder's rename) OK\n";
 }
 
+// 15. #128, on the page's model alone: a folder "F" under an open
+//     conflict P (rekordbox's side creates it, Engine's renames "Old" to
+//     it), a conflict C about "F/G" inside it, and two new playlists "F/H"
+//     and "F/I" that wait on P.
+//     a: C answered while P is open: its row says it waits for P, not
+//        answered with nothing written; P answered, C's answer is ticked.
+//     b: P answered, F/H unticked by the DJ; P switched to Engine's side,
+//        then taken back and answered again: F/H stays out, F/I ticked.
+void testWaitingAnswers()
+{
+    namespace d = seabass::domain;
+    const auto header = [](const std::string &key, std::vector<std::string> dependsOn, bool conflict) {
+        d::EngineUpdateItemHeader h;
+        h.key = key;
+        h.checkedByDefault = !conflict;
+        h.conflict = conflict;
+        h.reasonText = "test";
+        h.dependsOn = std::move(dependsOn);
+        return h;
+    };
+    const auto create = [&](const std::string &key, std::uint32_t id, const std::string &path,
+                            std::vector<std::string> dependsOn) {
+        d::PlaylistCreate c;
+        c.header = header(key, std::move(dependsOn), false);
+        c.pdbId = id;
+        c.path = path;
+        return c;
+    };
+    d::EngineUpdateProposal proposal;
+    d::EngineUpdateConflict p;
+    p.header = header("playlist:1", {}, true);
+    p.rekordboxSide = "Create \"F\"";
+    p.engineSide = "Rename \"Old\" to \"F\"";
+    p.rekordboxChoice.emplace_back(create("playlist:1", 1, "F", {}));
+    d::PlaylistRename rename;
+    rename.header = header("playlist:1", {}, false);
+    rename.pdbId = 1;
+    rename.fromPath = "Old";
+    rename.toPath = "F";
+    p.engineChoice.emplace_back(rename);
+    proposal.conflicts.push_back(p);
+    d::EngineUpdateConflict c;
+    c.header = header("playlist:2", {"playlist:1"}, true);
+    c.rekordboxSide = "Create \"F/G\"";
+    c.engineSide = "Leave Engine without \"F/G\"";
+    c.rekordboxChoice.emplace_back(create("playlist:2", 2, "F/G", {"playlist:1"}));
+    proposal.conflicts.push_back(c);
+    proposal.playlistsToCreate.push_back(create("playlist:3", 3, "F/H", {"playlist:1"}));
+    proposal.playlistsToCreate.push_back(create("playlist:4", 4, "F/I", {"playlist:1"}));
+
+    RekordboxExportSyncListModel model;
+    model.setProposal(proposal, "/stick");
+    const auto at = [&](const std::string &key, bool conflictRow) {
+        for (std::size_t i = 0; i < model.rows().size(); ++i) {
+            const Row &row = model.rows()[i];
+            if (row.header.key == key && (row.section == Section::Conflicts) == conflictRow) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    const auto ticked = [&](const std::string &key) {
+        const int i = at(key, false);
+        return i >= 0 && model.rows()[static_cast<std::size_t>(i)].included;
+    };
+    const auto direction = [&](const std::string &key) {
+        return model.index(at(key, true)).data(RekordboxExportSyncListModel::DirectionRole).toString().toStdString();
+    };
+    assert(!ticked("playlist:3") && !ticked("playlist:4") && "held back while P is open");
+
+    // a: C answered first.
+    assert(model.resolveConflict(at("playlist:2", true), true));
+    assert(!ticked("playlist:2") && "C's create waits for P");
+    const QStringList details = model.index(at("playlist:2", true)).data(RekordboxExportSyncListModel::DetailsRole).toStringList();
+    std::cout << "  C answered while P is open: [" << direction("playlist:2") << "] "
+              << (details.isEmpty() ? std::string() : details.front().toStdString()) << "\n";
+    if (direction("playlist:2") != "waits") {
+        std::cerr << "FAIL (a): C reads \"" << direction("playlist:2") << "\" while nothing of its answer is written\n";
+    }
+    assert(direction("playlist:2") == "waits");
+    assert(!details.isEmpty() && details.front().startsWith(QStringLiteral("Waits for an answer to ")));
+    assert(model.resolveConflict(at("playlist:1", true), true));
+    assert(ticked("playlist:1") && ticked("playlist:2") && "P answered: C's answer goes with it");
+    assert(direction("playlist:2") == "to Engine");
+    assert(ticked("playlist:3") && ticked("playlist:4"));
+
+    // b: F/H unticked by the DJ, then P switched, taken back, answered.
+    assert(model.setIncluded(at("playlist:3", false), false));
+    assert(!ticked("playlist:3") && ticked("playlist:4"));
+    assert(model.resolveConflict(at("playlist:1", true), false));
+    if (ticked("playlist:3")) {
+        std::cerr << "FAIL (b): switching P's answer ticks F/H again, which the DJ unticked\n";
+    }
+    assert(!ticked("playlist:3") && ticked("playlist:4"));
+    model.setIncluded(at("playlist:1", true), false);  // taken back
+    assert(!ticked("playlist:3") && !ticked("playlist:4"));
+    assert(model.resolveConflict(at("playlist:1", true), true));
+    assert(!ticked("playlist:3") && ticked("playlist:4") && "F/H stays out");
+    std::cout << "case 15 (#128: an answer waiting on an open conflict says so; switching an answer keeps what the "
+                 "DJ unticked out) OK\n";
+}
+
 // 10. See the top of the file.
 void testMetadataWords()
 {
@@ -2688,9 +2790,14 @@ int main(int argc, char **argv)
     testing::sandboxSettings(scratch / "config");
     QCoreApplication app(argc, argv);
 
-    // One case of 14 alone (argv[2]: a to f), for a quick red/green run.
+    // One case alone, for a quick red/green run (argv[2]: a to f of
+    // 14, or "waiting" for 15).
     if (argc >= 3) {
         const std::string which = argv[2];
+        if (which == "waiting") {
+            testWaitingAnswers();
+            return 0;
+        }
         const std::map<std::string, UnsureSave> cases{{"a", UnsureSave::Rekordbox},
                                                       {"b", UnsureSave::Engine},
                                                       {"c", UnsureSave::CancelAfterCreate},
@@ -2707,6 +2814,7 @@ int main(int argc, char **argv)
     }
 
     testOrderAndDetails();
+    testWaitingAnswers();
     testMetadataWords();
     testProposalTicksAndAnswers(fixture);
     testSmallSave(fixture);

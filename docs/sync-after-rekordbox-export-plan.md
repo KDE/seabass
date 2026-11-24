@@ -524,6 +524,31 @@ What it reuses, and what it must not:
   and choosing the create there can bring "Engine took this track out"
   rows at the sync after it.
 
+  **Decision (#128, 2026-11-24):** a row that depends on a conflict's
+  key waits for its answer. The page holds it back, unticked, while the
+  conflict is open, and it cannot be ticked then; an answer that writes
+  something gives it its default tick, taking that answer back or one
+  that writes nothing leaves it out. So a new playlist inside a renamed
+  folder Engine no longer has is not made (with the folder) when the DJ
+  answers "Leave Engine without it". Left out that way it is neither
+  applied nor declined, so it comes back; and a create inside a folder
+  Engine does not have and no plain row makes (Engine deleted it, or it
+  was left out) is a conflict of its own, "creating it makes the folder
+  too", never a ticked create that brings the folder back. A conflict
+  answered while one it depends on is still open says so ("waits", and
+  which answer it waits for), not answered with nothing written; its
+  answer's rows are ticked once that answer is given. Switching an
+  answer, or taking it back and answering again, keeps out the rows the
+  DJ unticked while the earlier answer stood. A recorded playlist
+  rekordbox moved into a folder Engine deleted since the record is a
+  conflict too, never a ticked rename (Engine refuses a move into a
+  folder it does not have, and the save would fail whole): rekordbox's
+  side makes the folder again and moves it in, Engine's leaves it where
+  it is; its members wait as recorded until it has moved. This comes
+  before #125's question for a reused id: whichever reading, Engine
+  cannot hold the playlist at its new path until the folder exists
+  again. A folder two answers make in one save is made once.
+
   Without a baseline a rename is guessed only when parent and members
   agree closely, and the guess is a conflict. An Engine path
   that resolves to more than one playlist
