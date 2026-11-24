@@ -18,7 +18,10 @@ namespace seabass::infrastructure::engine
 {
 
 // The same, of a track of a database that is open already.
-std::vector<domain::Beat> beatGridOf(const djinterop::track &track);
+// readRecordedRate false: the row's trackData is not read (it is damaged,
+// EngineBlobGuard), and the rate is worked out from the markers and the
+// tempo, as for a record libdjinterop cannot read.
+std::vector<domain::Beat> beatGridOf(const djinterop::track &track, bool readRecordedRate = true);
 
 // A track's beat grid from an Engine library. Engine stores markers, not
 // beats (see domain::BeatGridMarker), in samples; this gives the beats

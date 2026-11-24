@@ -11,6 +11,8 @@
 
 #include <djinterop/djinterop.hpp>
 
+#include "infrastructure/engine/engine_blob_check.hpp"
+
 namespace seabass::infrastructure::engine
 {
 
@@ -24,11 +26,15 @@ namespace
 // then gives the rate away: samples per beat, against the tempo Engine
 // recorded, is samples per second. Taken only when it lands within a
 // hundredth of a rate audio files really have; anything else is a guess,
-// and a grid that drifts is worse than none.
-double sampleRateOf(const djinterop::track &track, const std::vector<djinterop::beatgrid_marker> &markers)
+// and a grid that drifts is worse than none. A damaged trackData
+// (EngineBlobGuard) is not read at all (`readRecorded` false): its rate is
+// worked out the same way.
+double sampleRateOf(const djinterop::track &track, const std::vector<djinterop::beatgrid_marker> &markers,
+                    bool readRecorded)
 {
     try {
-        if (const std::optional<double> recorded = track.sample_rate(); recorded && *recorded > 0.0) {
+        if (const std::optional<double> recorded = readRecorded ? track.sample_rate() : std::nullopt;
+            recorded && *recorded > 0.0) {
             return *recorded;
         }
     } catch (const std::exception &) {
@@ -52,13 +58,13 @@ double sampleRateOf(const djinterop::track &track, const std::vector<djinterop::
 
 }  // namespace
 
-std::vector<domain::Beat> beatGridOf(const djinterop::track &track)
+std::vector<domain::Beat> beatGridOf(const djinterop::track &track, bool readRecordedRate)
 {
     const std::vector<djinterop::beatgrid_marker> engineMarkers = track.beatgrid();
     if (engineMarkers.size() < 2) {
         return {};
     }
-    const double sampleRate = sampleRateOf(track, engineMarkers);
+    const double sampleRate = sampleRateOf(track, engineMarkers, readRecordedRate);
     if (sampleRate <= 0.0) {
         return {};
     }
@@ -76,14 +82,29 @@ std::vector<domain::Beat> beatGridOf(const djinterop::track &track)
 std::vector<domain::Beat> readBeatGrid(const std::string &engineLibraryPath, const std::string &trackSourceId)
 {
     try {
+        const std::int64_t id = std::stoll(trackSourceId);
         // From a copy when a read would write beside m.db (#110).
         const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+        // Not from a damaged blob (EngineBlobGuard), nor while one may be
+        // half written; read unchecked only where the check cannot run.
+        // Checked in the database the decode reads (the copy, when there
+        // is one), before anything opens it read-write, which would roll
+        // a hot journal back and then read what it left.
+        std::string error;
+        const std::optional<EngineBlobs> damaged = EngineBlobGuard(read.rootUtf8()).damaged(id, &error);
+        // A damaged beatData leaves no grid; a damaged trackData only its
+        // recorded rate, which the markers then give, as for a record
+        // libdjinterop cannot read.
+        if (damaged ? contains(*damaged, EngineBlob::BeatData) : !engineBlobGuardFailureReadsUnchecked(error)) {
+            return {};
+        }
+        const bool rateReadable = !damaged || !contains(*damaged, EngineBlob::TrackData);
         if (!djinterop::engine::database_exists(read.rootUtf8())) {
             return {};
         }
         auto db = djinterop::engine::load_database(read.rootUtf8());
-        std::optional<djinterop::track> track = db.track_by_id(std::stoll(trackSourceId));
-        return track ? beatGridOf(*track) : std::vector<domain::Beat>{};
+        std::optional<djinterop::track> track = db.track_by_id(id);
+        return track ? beatGridOf(*track, rateReadable) : std::vector<domain::Beat>{};
     } catch (const std::exception &) {
         return {};
     }

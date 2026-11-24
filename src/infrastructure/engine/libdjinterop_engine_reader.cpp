@@ -6,6 +6,7 @@
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/engine/engine_sqlite.hpp"
@@ -125,10 +126,13 @@ void collectPlaylistMemberships(const djinterop::playlist &pl, const std::string
 // djinterop::engine::load_database() above already has open, never
 // written through.
 // A snapshot assembled from the per-field getters, for a row whose
-// snapshot() threw. Each getter is its own statement and its own
-// try/catch: a field that cannot be read is left unset and named in a
-// warning, and the rest of the track reads as usual.
-djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &progress, const djinterop::track &tr)
+// snapshot() threw, or that holds a damaged blob. Each getter is its own
+// statement and its own try/catch: a field that cannot be read is left
+// unset and named in a warning, and the rest of the track reads as usual.
+// A getter that would decode one of the `damaged` blobs is not called at
+// all (the caller has named them).
+djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &progress, const djinterop::track &tr,
+                                              EngineBlobs damaged = 0)
 {
     djinterop::track_snapshot snap;
     const int64_t id = tr.id();
@@ -150,11 +154,46 @@ djinterop::track_snapshot snapshotFromGetters(application::ProgressReporter &pro
     field("last_played_at", [&] { snap.last_played_at = tr.last_played_at(); });
     field("rating", [&] { snap.rating = tr.rating(); });
     field("comment", [&] { snap.comment = tr.comment(); });
-    field("sample_rate", [&] { snap.sample_rate = tr.sample_rate(); });
-    field("hot_cues", [&] { snap.hot_cues = tr.hot_cues(); });
-    field("loops", [&] { snap.loops = tr.loops(); });
-    field("main_cue", [&] { snap.main_cue = tr.main_cue(); });
+    if ((damaged & engine_blobs_for::trackData) == 0) {
+        field("sample_rate", [&] { snap.sample_rate = tr.sample_rate(); });
+    }
+    if ((damaged & engine_blobs_for::quickCues) == 0) {
+        field("hot_cues", [&] { snap.hot_cues = tr.hot_cues(); });
+        field("main_cue", [&] { snap.main_cue = tr.main_cue(); });
+    }
+    if ((damaged & engine_blobs_for::loops) == 0) {
+        field("loops", [&] { snap.loops = tr.loops(); });
+    }
     return snap;
+}
+
+// Every row of the library holding a blob libdjinterop must not be handed
+// (EngineBlobGuard), by id. When that cannot be read the rows are read
+// unchecked, as before there was a check, and a warning says so; a
+// database still locked fails the pass (`what` says which), as a half
+// written blob is what a check is for.
+std::unordered_map<int64_t, EngineBlobs> damagedBlobRows(const std::string &engineLibraryPath,
+                                                         application::ProgressReporter &progress, const char *what)
+{
+    EngineBlobGuard guard(engineLibraryPath);
+    std::string error;
+    auto rows = guard.damagedRows(&error);
+    if (rows) {
+        return std::move(*rows);
+    }
+    if (!engineBlobGuardFailureReadsUnchecked(error)) {
+        throw std::runtime_error(std::string(what) + ": the Engine Library is being written right now (" + error
+                                 + "); try again once that has finished");
+    }
+    progress.warn("the tracks' blobs could not be checked before they were read (" + error + ")");
+    return {};
+}
+
+// The warning for a row whose damaged blobs are not read.
+std::string damagedBlobWarning(int64_t id, const std::optional<std::string> &title, EngineBlobs damaged)
+{
+    return "track id=" + std::to_string(id) + (title && !title->empty() ? " (" + *title + ")" : std::string())
+        + ": damaged " + engineBlobNames(damaged) + " blob left unread";
 }
 
 // The image an AlbumArt row keeps in the database, as a file on this
@@ -971,9 +1010,12 @@ std::vector<domain::Track *> LibdjinteropEngineReader::fillRatesFromSource(std::
             m_progress->warn("the sample rates of unanalysed tracks were not looked up: " + busy + " is locked");
             return reRead;
         }
-        // From a copy when a read would write beside m.db (#110).
+        // From a copy when a read would write beside m.db (#110), and the
+        // blobs checked in that same copy.
         const StickDatabaseRead read = StickDatabaseRead::engine(m_engineLibraryPath);
         auto db = djinterop::engine::load_database(read.rootUtf8());
+        const std::unordered_map<int64_t, EngineBlobs> damagedRows =
+            damagedBlobRows(read.rootUtf8(), *m_progress, "the blobs were not checked");
         for (domain::Track *track : cued) {
             m_cancel.throwIfCancelled();
             std::int64_t id = 0;
@@ -981,6 +1023,17 @@ std::vector<domain::Track *> LibdjinteropEngineReader::fillRatesFromSource(std::
                 id = std::stoll(track->sourceId);
             } catch (const std::logic_error &) {
                 continue;  // not a row id: not a track of this catalog
+            }
+            // The rate and the cues are read again only from blobs that are
+            // sound; a row with a damaged one keeps the cues it was read
+            // with, and says why.
+            if (const auto damaged = damagedRows.find(id); damaged != damagedRows.end()) {
+                constexpr EngineBlobs needed =
+                    engine_blobs_for::trackData | engine_blobs_for::quickCues | engine_blobs_for::loops;
+                if ((damaged->second & needed) != 0) {
+                    m_progress->warn(damagedBlobWarning(id, track->title, damaged->second & needed));
+                    continue;
+                }
             }
             try {
                 const auto row = db.track_by_id(id);
@@ -1142,6 +1195,11 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
 
     takeRekordboxImportMarks(databaseRoot);
 
+    // Checked in the database the decodes below read: the read copy, when
+    // there is one.
+    const std::unordered_map<int64_t, EngineBlobs> damagedRows =
+        damagedBlobRows(databaseRoot, *m_progress, "the tracks were not read");
+
     m_progress->start("Scanning Engine tracks", allTracks.size());
     size_t processed = 0;
 
@@ -1155,17 +1213,26 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
         // 53,000 such stats and 0.6 s of a warm read. snapshot() reads
         // the row once and hands every field back.
         djinterop::track_snapshot snap;
-        try {
-            snap = tr.snapshot();
-        } catch (const std::exception &e) {
-            // snapshot() decodes every blob of the row, waveforms included,
-            // and throws for one it cannot (a real stick had a track with a
-            // truncated overview waveform). The track is not lost over
-            // that: its fields are read one by one instead, the way this
-            // reader always did, each on its own so one bad field costs
-            // only itself.
-            m_progress->warn("track id=" + std::to_string(id) + ": read field by field (" + e.what() + ")");
-            snap = snapshotFromGetters(*m_progress, tr);
+        const auto damaged = damagedRows.find(id);
+        if (damaged != damagedRows.end()) {
+            // snapshot() decodes every blob, and on some damaged ones never
+            // returns. The row is read field by field without them: what is
+            // not in a damaged blob (title, path, key, ...) reads as ever.
+            snap = snapshotFromGetters(*m_progress, tr, damaged->second);
+            m_progress->warn(damagedBlobWarning(id, snap.title, damaged->second));
+        } else {
+            try {
+                snap = tr.snapshot();
+            } catch (const std::exception &e) {
+                // snapshot() decodes every blob of the row, waveforms
+                // included, and throws for one it cannot (a real stick had
+                // a track with a truncated overview waveform). The track is
+                // not lost over that: its fields are read one by one
+                // instead, the way this reader always did, each on its own
+                // so one bad field costs only itself.
+                m_progress->warn("track id=" + std::to_string(id) + ": read field by field (" + e.what() + ")");
+                snap = snapshotFromGetters(*m_progress, tr);
+            }
         }
         domain::Track track;
         track.sourceId = std::to_string(id);

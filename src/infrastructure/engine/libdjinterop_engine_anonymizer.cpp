@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_engine_anonymizer.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
 #include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
@@ -339,6 +340,18 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
         size_t nextArtistIndex = 0;
         size_t nextCueLabelIndex = 0;
 
+        // Rows whose cue blobs are damaged (EngineBlobGuard): their labels
+        // cannot be read safely, so such a row is refused like one
+        // libdjinterop cannot decode, before anything of it is touched.
+        // Unchecked when the check cannot run, as before it existed.
+        std::unordered_map<std::int64_t, EngineBlobs> damagedRows;
+        {
+            std::string error;
+            if (auto rows = EngineBlobGuard(destinationRoot).damagedRows(&error)) {
+                damagedRows = std::move(*rows);
+            }
+        }
+
         size_t trackIndex = 0;
         for (auto &t : allTracks) {
           // Per track, not per run. libdjinterop throws on performance
@@ -348,6 +361,13 @@ EngineAnonymizationResult anonymizeEngineLibrary(const std::string &sourceRoot, 
           // in an export that still got written and zipped. Refusing one
           // track has to cost one track.
           try {
+            if (const auto damaged = damagedRows.find(t.id()); damaged != damagedRows.end()
+                && (damaged->second & (engine_blobs_for::quickCues | engine_blobs_for::loops)) != 0) {
+                throw std::runtime_error("track id=" + std::to_string(t.id()) + ": damaged "
+                                         + engineBlobNames(damaged->second
+                                                           & (engine_blobs_for::quickCues | engine_blobs_for::loops))
+                                         + " blob");
+            }
             std::string realArtist = t.artist().value_or("");
             auto artistIt = artistPlaceholderByRealName.find(realArtist);
             if (artistIt == artistPlaceholderByRealName.end()) {

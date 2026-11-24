@@ -17,6 +17,7 @@
 #include "application/ports/cue_writer.hpp"
 #include "domain/beat_grid.hpp"
 #include "domain/mp3_lead_in.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
 
 namespace seabass::infrastructure::engine
 {
@@ -412,6 +413,15 @@ private:
     // thirdPartySourceId set to NULL where it is 1 (the mark), through the
     // library's tables (one connection with database()). Nothing on 1.x.
     void takeOffRekordboxImportMark(std::int64_t id);
+    // The row's damaged blobs (EngineBlobGuard). Throws
+    // DamagedEngineRowError, naming the row (id and title) and the blob,
+    // when one of `needed` is damaged, before the libdjinterop call `what`
+    // decodes it: such a call may never return, and here it would hang a
+    // save halfway. A save skips that change and goes on. A row that
+    // cannot be checked because the database is locked or has a hot
+    // journal is refused with a plain runtime_error, which fails the save.
+    EngineBlobs refuseDamagedBlobs(djinterop::track &track, EngineBlobs needed, const char *what);
+    std::shared_ptr<EngineBlobGuard> m_blobGuard;
 
     // The open library, kept rather than reopened per call.
     //

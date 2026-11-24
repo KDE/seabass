@@ -898,7 +898,7 @@ bool SaveContext::setAsideMixedSidecars(const std::string &dbPath, const std::se
     return true;
 }
 
-std::optional<QString> SaveContext::rollBackChange()
+std::optional<QString> SaveContext::rollBackChange(bool skipped)
 {
     // Which registered databases this save actually wrote -- asked now,
     // because the next line destroys the writers that know.
@@ -963,10 +963,11 @@ std::optional<QString> SaveContext::rollBackChange()
         }
     }
     if (hasStick()) {
-        log().record(firstError ? "save: putting back what the failed change had written FAILED: "
+        const std::string which = skipped ? "the skipped change" : "the failed change";
+        log().record(firstError ? "save: putting back what " + which + " had written FAILED: "
                                       + firstError->toStdString()
-                                : "save: put back " + std::to_string(putBackCount)
-                                      + " file(s) the failed change had written");
+                                : "save: put back " + std::to_string(putBackCount) + " file(s) " + which
+                                      + " had written");
     }
 
     for (auto &hook : m_changeEndHooks) {
@@ -975,6 +976,11 @@ std::optional<QString> SaveContext::rollBackChange()
     m_checkpoints.clear();
     m_protected.clear();
     m_checkpointDir.reset();
+    // Moved back above, and out of the save's list with them: a save that
+    // goes on past a skipped change must not move them back again in a
+    // later rollback (putBackMoves() empties the list; said here too, as
+    // what a rollback leaves).
+    m_movesThisChange.clear();
     m_inChange = false;
     return firstError;
 }

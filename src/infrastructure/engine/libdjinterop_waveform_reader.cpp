@@ -8,16 +8,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <optional>
 
 #include <djinterop/djinterop.hpp>
 
-#include "application/ports/kept_engine_analysis.hpp"
 #include "infrastructure/engine/engine_blob_check.hpp"
-#include "infrastructure/engine/engine_library_layout.hpp"
-#include "infrastructure/engine/engine_track_rows.hpp"
-#include "infrastructure/paths/utf8_path.hpp"
 
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 
@@ -85,13 +80,13 @@ std::vector<domain::WaveformColumn> previewOf(const std::vector<djinterop::wavef
 namespace
 {
 
-// Which of a 2.x or 3.x row's blobs libdjinterop may be handed (see
-// engineBlobDecodable()). A library without Database2/m.db is 1.x: its
-// blobs are elsewhere and are not checked. A row that cannot be read
+// Which of a row's blobs libdjinterop may be handed (EngineBlobGuard):
+// m.db's on 2.x and 3.x, p.db's on 1.x. A row that cannot be read
 // because the database is locked is not handed over at all (see
 // decodableBlobs()).
 struct DecodableBlobs
 {
+    // The overview on 2.x and 3.x, the high-resolution waveform on 1.x.
     bool waveform = true;
     bool beats = true;
     // trackData: the sample rate and count are read from it.
@@ -100,37 +95,32 @@ struct DecodableBlobs
 
 DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t trackId)
 {
-    const std::filesystem::path mainDb = pathFromUtf8(engineLibraryPath) / Database2Dir / MainDbName;
-    std::error_code ec;
-    if (!std::filesystem::exists(mainDb, ec)) {
-        return {};
-    }
+    EngineBlobGuard guard(engineLibraryPath);
     std::string error;
-    auto row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
-    if (!row) {
+    std::optional<EngineBlobs> damaged = guard.damaged(trackId, &error);
+    if (!damaged) {
         // Not a damaged blob: the row could not be read at all. Once more.
         // If the database is still locked (a write under way, SQLite's
-        // own "database is locked" / "database table is locked"), nothing
-        // is handed over: that is exactly when a blob may be half
-        // written, and a decoder that reads past it or loops on it hangs
-        // whoever called (the player's load() runs on the GUI thread);
-        // every view reads again once the write is over. Any other
-        // failure lasts (a read-only mount of a WAL database, a schema
-        // this reader does not know), and there libdjinterop reads the
+        // own "database is locked" / "database table is locked"), or has a
+        // hot journal, or cannot be opened (engineBlobGuardFailureReads
+        // Unchecked()), nothing is handed over: that is exactly when a
+        // blob may be half written, and a decoder that reads past it or
+        // loops on it hangs whoever called (the player's load() runs on
+        // the GUI thread); every view reads again once the write is over.
+        // Any other failure lasts (a schema this reader does not know),
+        // and there libdjinterop reads the
         // blobs unchecked as it did before the check, rather than the
         // library never showing a waveform at all.
-        row = readEngineAnalysisRow(pathToUtf8(mainDb), trackId, &error);
-        if (!row) {
-            if (error.find("locked") != std::string::npos) {
+        damaged = guard.damaged(trackId, &error);
+        if (!damaged) {
+            if (!engineBlobGuardFailureReadsUnchecked(error)) {
                 return {false, false, false};
             }
             return {};
         }
     }
-    const auto ok = [](const application::EngineSqlValue &value) {
-        return value.isNull() || internal::engineBlobDecodable(value.bytes);
-    };
-    return {ok(row->columns.overviewWaveFormData), ok(row->columns.beatData), ok(row->columns.trackData)};
+    return {(*damaged & engine_blobs_for::waveform) == 0, !contains(*damaged, EngineBlob::BeatData),
+            !contains(*damaged, EngineBlob::TrackData)};
 }
 
 }  // namespace
@@ -146,11 +136,17 @@ domain::TrackAnalysis readTrackAnalysisFrom(const StickDatabaseRead &read, const
     domain::TrackAnalysis analysis;
     try {
         const std::string databaseRoot = read.rootUtf8();
+        // The blobs checked in the database the decodes read (the copy,
+        // when there is one), before anything opens it read-write, which
+        // would roll a hot journal back and read what it left.
+        const std::int64_t trackId = std::stoll(trackSourceId);
+        const DecodableBlobs decodable = decodableBlobs(databaseRoot, trackId);
+        if (!decodable.waveform && !decodable.beats && !decodable.trackData) {
+            return {};
+        }
         if (!djinterop::engine::database_exists(databaseRoot)) {
             return {};
         }
-        const std::int64_t trackId = std::stoll(trackSourceId);
-        const DecodableBlobs decodable = decodableBlobs(databaseRoot, trackId);
         auto db = djinterop::engine::load_database(databaseRoot);
         std::optional<djinterop::track> track = db.track_by_id(trackId);
         if (!track) {
