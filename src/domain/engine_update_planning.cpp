@@ -408,14 +408,7 @@ private:
 
     std::string pathAfterRenames(std::string path) const
     {
-        for (const auto &[from, to] : renamesInOrder) {
-            if (path == from) {
-                path = to;
-            } else if (path.size() > from.size() && path.compare(0, from.size(), from) == 0 && path[from.size()] == '/') {
-                path = to + path.substr(from.size());
-            }
-        }
-        return path;
+        return domain::pathAfterRenames(std::move(path), renamesInOrder);
     }
 
     void index()
@@ -908,6 +901,7 @@ private:
         PlaylistDelete del;
         del.pdbId = b.id;
         del.path = b.path;
+        del.pathNow = b.path;
         del.folder = b.folder;
         if (const auto members = eMembers.find(b.path); members != eMembers.end()) {
             del.engineMembers = static_cast<int>(members->second.size());
@@ -1244,6 +1238,7 @@ private:
             PlaylistDelete del;
             del.pdbId = b.id;
             del.path = from;
+            del.pathNow = b.path;
             del.folder = false;
             del.engineMembers = static_cast<int>(em.size());
             del.header = makeHeader(reusedPlaylistItemKey(b.id, b.path), true, false,
@@ -1901,6 +1896,7 @@ private:
                 PlaylistDelete del;
                 del.pdbId = b->id;
                 del.path = pathAfterRenames(b->path);
+                del.pathNow = b->path;
                 del.folder = b->folder;
                 const auto members = eMembers.find(b->path);
                 del.engineMembers = members == eMembers.end() ? 0 : static_cast<int>(members->second.size());
@@ -3217,6 +3213,18 @@ EngineUpdateProposal EngineUpdatePlanner::plan(const EngineUpdateInput &input)
 std::string analysisItemKey(AnalysisEdit::Part part, const std::string &pathKey)
 {
     return std::string(part == AnalysisEdit::Part::Grid ? "analysis:grid:" : "analysis:waveform:") + pathKey;
+}
+
+std::string pathAfterRenames(std::string path, const std::vector<std::pair<std::string, std::string>> &renames)
+{
+    for (const auto &[from, to] : renames) {
+        if (path == from) {
+            path = to;
+        } else if (path.size() > from.size() && path.compare(0, from.size(), from) == 0 && path[from.size()] == '/') {
+            path = to + path.substr(from.size());
+        }
+    }
+    return path;
 }
 
 std::string engineUpdateStateHash(std::string_view canonicalState)

@@ -1165,6 +1165,40 @@ int main()
         std::cout << "a folder renamed with an empty playlist in it: only the folder's rename (#99) OK\n";
     }
 
+    // #112: rekordbox renamed folder F to G and deleted F/X. The delete
+    // does not need the rename (it ticks apart: no dependsOn), so it says
+    // where Engine has X before the save, F/X, besides where it is after
+    // every rename of the plan, G/X. With the rename left out, the writer
+    // finds X at F/X; with it, at G/X; never at G/X while Engine has F.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"F/X", 0}}), rb("2", "Music/B.mp3", {{"F/Y", 0}})};
+        w.engine = {en("e1", "Music/A.mp3", {{"F/X", 0}}), en("e2", "Music/B.mp3", {{"F/Y", 0}})};
+        w.rekordboxPlaylists = {{"F", true, 3}, {"F/X", false, 4}, {"F/Y", false, 5}};
+        w.enginePlaylists = {{"F", true, 1}, {"F/X", false, 1}, {"F/Y", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox = {rb("1", "Music/A.mp3"), rb("2", "Music/B.mp3", {{"G/Y", 0}})};
+        w.rekordboxPlaylists = {{"G", true, 3}, {"G/Y", false, 5}};
+        const auto p = plan(w, base);
+        assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].header.key == "playlist:3"
+               && p.playlistsToRename[0].fromPath == "F" && p.playlistsToRename[0].toPath == "G");
+        assert(p.playlistsToDelete.size() == 1);
+        const PlaylistDelete &del = p.playlistsToDelete[0];
+        assert(del.header.key == "playlist:4" && del.header.checkedByDefault && !del.folder);
+        assert(del.header.dependsOn.empty() && "the delete does not need the folder's rename");
+        assert(del.path == "G/X");
+        if (del.pathNow != "F/X") {
+            std::cerr << "FAIL: the delete of \"F/X\" names Engine's path before the save as \"" << del.pathNow
+                      << "\"\n";
+        }
+        assert(del.pathNow == "F/X");
+        const std::vector<std::pair<std::string, std::string>> rename{{"F", "G"}};
+        assert(pathAfterRenames(del.pathNow, {}) == "F/X");
+        assert(pathAfterRenames(del.pathNow, rename) == "G/X");
+        assert(pathAfterRenames("FX", rename) == "FX" && pathAfterRenames("F", rename) == "G");
+        std::cout << "a delete under a renamed folder names Engine's path before the save (#112) OK\n";
+    }
+
     // #99, then #125: a recorded list and rekordbox's under its id that
     // share tracks, or one with no tracks. A rename by id where rekordbox's
     // keeps at least half of the recorded tracks, or the recorded list is

@@ -440,9 +440,24 @@ What it reuses, and what it must not:
   conflict, as for any playlist without a record. A save that stops
   before that late delete records the old playlist whole under the id,
   and none of the new one's tracks that landed before it, so the next
-  analysis offers the delete again. Staged late, such a delete shares
-  #112's case: under a folder rename left unticked it names the path
-  after that rename (not fixed here).
+  analysis offers the delete again. Staged late, such a delete is #112's
+  case below, and finds the playlist the same way.
+  **Decision (#112, 2026-11-24):** a delete does not depend on the
+  renames above it: the playlist goes whatever name its folder has, so
+  it ticks apart from them, and the page never holds it back for one.
+  Deletes are staged after the renames (a folder's delete waits for what
+  rekordbox moved out of it), so the planner's path assumed every rename
+  of the plan: under a folder rename left unticked it named a path Engine
+  did not have, the delete found nothing, was skipped, and the skip
+  counted as done (the record dropped the playlist, Engine kept it). The
+  delete now carries Engine's path before the save (`pathNow`), and the
+  page stages it at that path with only the renames staged before it
+  applied (`pathAfterRenames`), so it is made where Engine has it then.
+  Holding it while it waits on the unticked rename, as #128 holds a row
+  on an open conflict, was the other way: it would turn a ticked delete
+  into one not made for a dependency the delete does not have, and come
+  back at every sync while the rename stays out. The row still shows the
+  path after every rename of the plan, as the plan reads with all ticked.
   **Decision (#99, 2026-11-21):** the delete and the create are two
   items, ticked apart. The create is `playlist:<id>` as always; the
   delete has a key of the plan's own, `reused:<id>:<old path>`, outside
