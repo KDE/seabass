@@ -827,6 +827,30 @@ tempo there, both sit as tightly on the hits as each other on 61 of
 85 tracks; where we kept one straight grid, rekordbox's is the tighter
 one on 38 of 87 and ours on 7.
 
+### The rest heard as well
+
+He then heard the other 27. Of all 42 tracks at a tempo that is
+neither double nor half of rekordbox's which he had given to ours or to
+both from the pictures, the ear leaves 2 with ours, finds both fine on
+9, gives 27 to rekordbox, neither on 2, and 2 he cannot tell. Where the
+analyser has such a tempo and rekordbox another, rekordbox is right:
+these are the analyser's errors, not rekordbox's. What stays with ours
+at another tempo is nearly all double or half, where the question is
+which tempo he wants.
+
+| After both rounds | Ours | Both | rekordbox | Neither | Undecided | With rekordbox or approved | rekordbox itself |
+|---|---|---|---|---|---|---|---|
+| First variety list | 8 | 2 | 13 | 0 | 4 | 64 of 110 | 98 |
+| Second playlist | 14 | 2 | 17 | 0 | 3 | 80 of 126 | 109 |
+| CD rips | 34 | 7 | 41 | 2 | 11 | 185 of 368 | 321 |
+
+By the score that judges a run by his decisions the analyser of
+373e328e is right on 1061 of 1327 tuning-half tracks (collection 732
+of 743, first variety list 64 of 106, second playlist 80 of 123, CD
+rips 185 of 355), and the version before it on 1018: the tempo by
+windows and the path are still a gain by the corrected decisions. The
+figures of the section before this one were taken after the first 15.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
