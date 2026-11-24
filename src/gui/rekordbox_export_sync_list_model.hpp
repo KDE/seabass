@@ -131,8 +131,9 @@ public:
         // deleteFolder, addTrack, removeTrack, addMember, removeMember,
         // rating, comment, cues, conflict, kept, notAdded.
         QString kind;
-        // The planner's; an answer's rows carry the conflict's key, and
-        // its dependsOn joined with the edit's.
+        // The planner's; an answer's rows carry the conflict's key (but
+        // an old item's delete under a reused: key keeps it), and its
+        // dependsOn joined with the edit's.
         domain::EngineUpdateItemHeader header;
         // Rows the save can write.
         std::optional<domain::EngineUpdateEdit> edit;

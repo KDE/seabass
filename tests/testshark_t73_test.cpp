@@ -59,6 +59,8 @@
 //           id in a folder rekordbox renamed in the same export; its delete
 //           is staged before the create and the rename, under the path
 //           Engine has then (testReusedInRenamedFolder).
+// kindrefused  Not a hardware step (#124): nothing inside a refused folder
+//           is made by a save (testKindChangedRefused).
 //
 // argv[1]: tests/fixtures/testshark_t73, argv[2]: the case.
 
@@ -3731,13 +3733,99 @@ void testReusedInRenamedFolder()
     std::cout << "reusedrenamed: the old playlist deleted before its folder's rename, the save whole OK\n";
 }
 
+const d::BaselineTrack *recordedTrack(const d::RekordboxBaseline &record, const std::string &name)
+{
+    for (const auto &track : record.tracks) {
+        if (track.pathKey.find("t73-" + name) != std::string::npos) {
+            return &track;
+        }
+    }
+    return nullptr;
+}
+
+// #124 on the page, saved: the record at 128 and Engine hold "T73 Old"
+// (B01) under the id rekordbox now gives the new folder "T73 NewF", which
+// holds "T73 NewF/T73 Kid" (B07); Engine's "T73 Old" also holds B02 since
+// the record. One refusal for the folder, one for the playlist in it;
+// saved with everything ticked, Engine has neither "T73 NewF" nor "T73
+// Kid" and keeps "T73 Old", and the next analysis refuses again.
+void testKindChangedRefused()
+{
+    const auto stick = makeStick("t73_kind_refused", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+    std::string error;
+    auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(record && error.empty());
+    const d::BaselineTrack *b01 = recordedTrack(*record, "b01");
+    const d::BaselineTrack *b07 = recordedTrack(*record, "b07");
+    assert(b01 && b07 && b07->pdbId);
+    std::uint32_t folderId = 0;
+    std::uint32_t kidId = 0;
+    {
+        seabass::infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+        folderId = pdb.createPlaylist(0, "T73 NewF", true);
+        kidId = pdb.createPlaylist(folderId, "T73 Kid", false);
+        assert(folderId && kidId);
+        assert(pdb.appendPlaylistEntries(kidId, {b07->pdbId}) == 1);
+        // A change of its own, so every round has a save.
+        assert(pdb.setTrackRating(b07->pdbId, b07->rating == 5 ? 3 : 5));
+        assert(pdb.commit());
+    }
+    record->playlists.push_back(d::BaselinePlaylist{folderId, 0, false, "T73 Old", {b01->pathKey}});
+    assert(seabass::infrastructure::local::writeRekordboxBaseline(stick.root, *record, [](const std::string &) {},
+                                                                    &error));
+    const std::string enginePath = pathToUtf8(stick.engine);
+    assert(seabass::infrastructure::engine::createEnginePlaylist(enginePath, "T73 Old") > 0);
+    assert(seabass::infrastructure::engine::addToEnginePlaylist(enginePath, "T73 Old", trackIdOf(stick, "B01")));
+    assert(seabass::infrastructure::engine::addToEnginePlaylist(enginePath, "T73 Old", trackIdOf(stick, "B02")));
+
+    RekordboxExportSyncController controller;
+    for (int round = 0; round < 2; ++round) {
+        analyze(controller, stick);
+        int refusals = 0;
+        for (const Row &row : controller.rows()->rows()) {
+            std::cout << "  round " << round << " lists: " << (row.included ? "[x] " : "[ ] ")
+                      << row.kind.toStdString() << " " << describe(row) << " " << row.header.key << ": "
+                      << row.header.reasonText << "\n";
+            assert(describe(row).rfind("rename ", 0) != 0);
+            if (row.section == Section::Conflicts
+                && (row.header.key == "playlist:" + std::to_string(folderId)
+                    || row.header.key == "playlist:" + std::to_string(kidId))) {
+                ++refusals;
+            }
+        }
+        if (round == 1) {
+            assert(refusals == 2 && "the next analysis refuses again");
+            break;
+        }
+        controller.stageSelected();
+        assert(controller.errorMessage().isEmpty() && !sessionOf(stick)->pendingChanges().empty());
+        waitForSave(sessionOf(stick), controller, false);
+        for (const auto &row : testing::sqlRows(stick.db, "SELECT p.id, p.title, p.parentListId FROM Playlist p ORDER BY p.id;")) {
+            std::cout << "    Engine playlist " << row[0] << " \"" << row[1] << "\" in " << row[2] << "\n";
+        }
+        if (testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title IN ('T73 NewF', 'T73 Kid');") != 0) {
+            std::cerr << "FAIL: the save made what Sync refused\n";
+        }
+        assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title IN ('T73 NewF', 'T73 Kid');")
+               == 0);
+        assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Old';") == 1);
+        assert(refusals >= 1);
+    }
+    const auto after = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(after && error.empty());
+    const auto *old = after->findPlaylist(folderId);
+    assert(old && old->path == "T73 Old" && !old->folder && old->members == std::vector<std::string>{b01->pathKey});
+    assert(!after->findPlaylist(kidId));
+    std::cout << "kindrefused: nothing of a refused folder is made, and it is refused again OK\n";
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|kindrefused\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -3781,6 +3869,8 @@ int main(int argc, char **argv)
         testReusedId();
     } else if (which == "reusedrenamed") {
         testReusedInRenamedFolder();
+    } else if (which == "kindrefused") {
+        testKindChangedRefused();
     } else {
         std::cerr << "unknown case " << which << "\n";
         return 2;

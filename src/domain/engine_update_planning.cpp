@@ -317,6 +317,10 @@ public:
         planMetadata();
         planCues();
         suppressDeclined();
+        // Held with the refusal they depend on (kindChanged's cascade).
+        std::set<std::string> held(out.declinedSuppressed.begin(), out.declinedSuppressed.end());
+        held.insert(heldBack.begin(), heldBack.end());
+        out.declinedSuppressed.assign(held.begin(), held.end());
         return std::move(out);
     }
 
@@ -351,6 +355,16 @@ private:
     // one certainly is not (reusedForAnother): the record's item of the
     // id is planned as deleted under its own key, rekordbox's as created.
     std::set<std::uint32_t> idsReused;
+    // rekordbox ids refused because their kind changed (kindChanged), and
+    // everything inside them: nothing of them is planned to be written.
+    std::set<std::uint32_t> refusedIds;
+    // Of those, the ones an answer can make (replacedWithItsFolder), and
+    // everything inside them.
+    std::map<std::uint32_t, std::string> madeByAnAnswer;  // id: the path of the folder that answer makes
+    // The member and order items of a recorded playlist refused with its
+    // folder: left out because the refusal they depend on is, so the
+    // record keeps them as they were (declinedSuppressed's second kind).
+    std::set<std::string> heldBack;
     // Cue items left out of their rows because the user declined them.
     std::set<std::string> cueSuppressed;
 
@@ -620,20 +634,40 @@ private:
     bool reusedForAnother(const BaselinePlaylist &b, const BaselinePlaylist &r,
                           const std::set<std::string> &rekordboxPaths) const
     {
+        return certainlyAnother(b, r) && plainDelete(b, rekordboxPaths) && plainCreate(r);
+    }
+
+    // The certain half of reusedForAnother: `b` and `r`, one id under two
+    // paths, are two items.
+    bool certainlyAnother(const BaselinePlaylist &b, const BaselinePlaylist &r) const
+    {
         if (b.folder && r.folder) {
             return false;
         }
+        if (b.folder != r.folder) {
+            return true;
+        }
         const std::set<std::string> before(b.members.begin(), b.members.end());
-        if (!b.folder && !r.folder) {
-            if (before.empty() || r.members.empty()) {
+        if (before.empty() || r.members.empty()) {
+            return false;
+        }
+        for (const auto &key : r.members) {
+            if (before.count(key) || declinedMemberOf(b.id, key)) {
                 return false;
             }
-            for (const auto &key : r.members) {
-                if (before.count(key) || declinedMemberOf(b.id, key)) {
-                    return false;
-                }
-            }
         }
+        return true;
+    }
+
+    // The safe half for the old item: its delete is a plain row. A
+    // recorded folder Engine's reader gives as a playlist holding nothing
+    // is that folder: Engine tells an empty folder from an empty playlist
+    // by nothing (#124).
+    // With `insideCounts` false, what Engine holds inside the old folder
+    // is left out of it (kindChanged's reason).
+    bool plainDelete(const BaselinePlaylist &b, const std::set<std::string> &rekordboxPaths,
+                     bool insideCounts = true) const
+    {
         if (rekordboxPaths.count(b.path) || countAt(b.path) != 1) {
             return false;
         }
@@ -642,30 +676,71 @@ private:
             if (playlist.path == b.path) {
                 engineFolder = playlist.folder;
             }
-            if (b.folder && playlist.path.size() > b.path.size()
-                && playlist.path.compare(0, b.path.size(), b.path) == 0 && playlist.path[b.path.size()] == '/') {
+            if (insideCounts && b.folder && isInside(playlist.path, b.path)) {
                 return false;  // something of Engine's inside the old folder
             }
         }
-        if (engineFolder != b.folder) {
+        const auto members = eMembers.find(b.path);
+        const std::set<std::string> engineSet = members == eMembers.end()
+            ? std::set<std::string>()
+            : std::set<std::string>(members->second.begin(), members->second.end());
+        if (b.folder) {
+            return engineFolder || engineSet.empty();
+        }
+        if (engineFolder) {
             return false;
         }
-        if (!b.folder) {
-            const auto members = eMembers.find(b.path);
-            const std::set<std::string> engineSet = members == eMembers.end()
-                ? std::set<std::string>()
-                : std::set<std::string>(members->second.begin(), members->second.end());
-            if (engineSet != before) {
+        const std::set<std::string> before(b.members.begin(), b.members.end());
+        if (engineSet != before) {
+            return false;
+        }
+        for (const auto &key : before) {
+            if (!engineRow(key) || duplicateKeys.count(key)) {
                 return false;
             }
-            for (const auto &key : before) {
-                if (!engineRow(key) || duplicateKeys.count(key)) {
-                    return false;
+        }
+        return true;
+    }
+
+    static bool isInside(const std::string &path, const std::string &folder)
+    {
+        return path.size() > folder.size() && path.compare(0, folder.size(), folder) == 0 && path[folder.size()] == '/';
+    }
+
+    // Whether everything Engine holds inside the recorded folder `b` is a
+    // recorded item rekordbox deleted or moved out of `b`, whose delete or
+    // move this plan offers.
+    bool holdsOnlyWhatRekordboxTookOut(const BaselinePlaylist &b, const std::set<std::string> &rekordboxPaths,
+                                       const std::set<std::uint32_t> &rekordboxIds) const
+    {
+        bool any = false;
+        for (const auto &playlist : in.enginePlaylists) {
+            if (!isInside(playlist.path, b.path)) {
+                continue;
+            }
+            const BaselinePlaylist *recordedThere = base ? base->findPlaylistByPath(playlist.path) : nullptr;
+            if (!recordedThere || rekordboxPaths.count(playlist.path)) {
+                return false;
+            }
+            if (rekordboxIds.count(recordedThere->id)) {
+                const BaselinePlaylist *moved = now.findPlaylist(recordedThere->id);
+                if (!moved || moved->folder != recordedThere->folder || moved->path == b.path
+                    || isInside(moved->path, b.path)) {
+                    return false;  // still inside, or not that item any more
                 }
             }
+            any = true;
         }
+        return any;
+    }
+
+    // The safe half for the new item: its create is a plain row. With
+    // `parentCounts` false, whether Engine has its folder is left out of it
+    // (kindChanged's answer that makes the folder with it).
+    bool plainCreate(const BaselinePlaylist &r, bool parentCounts = true) const
+    {
         const std::string parent = parentPath(r.path);
-        if (!parent.empty() && countAt(parent) != 1) {
+        if (parentCounts && !parent.empty() && countAt(parent) != 1) {
             return false;
         }
         if (!r.folder) {
@@ -718,6 +793,151 @@ private:
                                      state);
         // A refusal: no buttons, the reason says what to do.
         out.conflicts.push_back(std::move(conflict));
+    }
+
+    // #124: rekordbox gave the id of the recorded item `b` to `r`, of the
+    // other kind, and Engine still has `b` at its path, which rekordbox
+    // leaves free, but the two cannot be planned as `b` deleted and `r`
+    // created (reusedForAnother). Never a rename: a refusal under the id
+    // that says why and what to do. The record keeps `b` under the id, so
+    // it comes back until Engine's copy is out of the way (then `r` is
+    // created alone) or plain. Engine's `b` is accounted for by it. Where
+    // only `r`'s folder stands in the way and no save would make it, a
+    // conflict the DJ can answer instead (replacedWithItsFolder).
+    void kindChanged(const BaselinePlaylist &b, const BaselinePlaylist &r, const std::set<std::string> &rekordboxPaths,
+                     const std::set<std::uint32_t> &rekordboxIds, const std::string &state,
+                     const std::vector<std::string> &parentDeps)
+    {
+        const std::string engineName = catalogDisplayName("engine");
+        const auto kind = [](const BaselinePlaylist &p) { return std::string(p.folder ? "folder" : "playlist"); };
+        const std::string parent = parentPath(r.path);
+        const auto parentSt = r.parentId != 0 ? status.find(r.parentId) : status.end();
+        const bool parentMadeHere = parentSt != status.end() && parentSt->second.created;
+        std::string why;
+        if (b.folder && !plainDelete(b, rekordboxPaths) && plainDelete(b, rekordboxPaths, false)
+            && holdsOnlyWhatRekordboxTookOut(b, rekordboxPaths, rekordboxIds)) {
+            // What keeps it is rekordbox's own deletes and moves, offered
+            // here: a save with them ticked clears the way.
+            why = engineName + "'s " + quoted(b.path)
+                + " still holds what rekordbox moved out of it or deleted from it, offered here, so Seabass does "
+                  "not delete the folder yet: save with those ticked, then sync again";
+        } else if (!plainDelete(b, rekordboxPaths)) {
+            why = engineName + "'s " + quoted(b.path) + " is not as Seabass last recorded it, so Seabass does not "
+                  "delete it: delete or rename it in " + engineName + " DJ, then sync again";
+        } else if (!parent.empty() && countAt(parent) == 0 && parentMadeHere) {
+            why = "its folder " + quoted(parent) + " is not in " + engineName
+                + " yet, so Seabass does not replace the one with the other in this save: save the rest, then sync "
+                  "again";
+        } else if (!parent.empty() && countAt(parent) == 0 && plainCreate(r, false)) {
+            // A folder Engine does not have and no plain row of this plan
+            // makes (Engine deleted it, or it waits on a conflict): no save
+            // makes it on its own, so the DJ decides, the folder with it.
+            replacedWithItsFolder(b, r, state, parentDeps);
+            return;
+        } else if (!parent.empty() && countAt(parent) > 1) {
+            why = engineName + " has " + std::to_string(countAt(parent)) + " playlists at " + quoted(parent)
+                + ": rename one in " + engineName + " DJ first";
+        } else {
+            why = "some of its tracks cannot be put into " + engineName
+                + ", so Seabass does not make it yet: their own rows say why";
+        }
+        claimedEnginePaths.insert(b.path);
+        EngineUpdateConflict conflict;
+        conflict.header = makeHeader(playlistItemKey(r.id), false, true, EngineUpdateReason::BothChanged,
+                                     "rekordbox gave the id of the " + kind(b) + " " + quoted(b.path) + " to the new "
+                                         + kind(r) + " " + quoted(r.path) + ", so it is no rename; " + why,
+                                     state, parentDeps);
+        // A refusal: no buttons, the reason says what to do.
+        out.conflicts.push_back(std::move(conflict));
+    }
+
+    // kindChanged's pair where all that stands in the way is `r`'s folder,
+    // which Engine does not have and no plain row of this plan makes: a
+    // refusal would come back at every sync. A conflict under the id:
+    //   rekordbox's side: `b` deleted (under the plan's own key, so the
+    //     page stages it first, as #99's) and `r` created, its folder
+    //     with it, and its tracks;
+    //   Engine's side: Engine left as it is; the record takes `r`, so `b`
+    //     is Engine's own from then on and `r` one Engine does not have.
+    // Unanswered, the record keeps `b` under the id, as for the refusal.
+    void replacedWithItsFolder(const BaselinePlaylist &b, const BaselinePlaylist &r, const std::string &state,
+                               const std::vector<std::string> &parentDeps)
+    {
+        const std::string engineName = catalogDisplayName("engine");
+        const auto kind = [](const BaselinePlaylist &p) { return std::string(p.folder ? "folder" : "playlist"); };
+        const std::string parent = parentPath(r.path);
+        claimedEnginePaths.insert(b.path);
+        madeByAnAnswer.emplace(r.id, r.path);
+        EngineUpdateConflict conflict;
+        conflict.header = makeHeader(playlistItemKey(r.id), false, true, EngineUpdateReason::BothChanged,
+                                     "rekordbox gave the id of the " + kind(b) + " " + quoted(b.path) + " to the new "
+                                         + kind(r) + " " + quoted(r.path) + ", so it is no rename; its folder "
+                                         + quoted(parent) + " is not in " + engineName
+                                         + ", so creating it makes the folder too",
+                                     state, parentDeps);
+        conflict.rekordboxSide =
+            "Delete " + quoted(b.path) + " and create " + quoted(r.path) + " and its folder in " + engineName;
+        conflict.engineSide = "Leave " + engineName + " as it is";
+        PlaylistDelete del;
+        del.pdbId = b.id;
+        del.path = b.path;
+        del.folder = b.folder;
+        if (const auto members = eMembers.find(b.path); members != eMembers.end()) {
+            del.engineMembers = static_cast<int>(members->second.size());
+        }
+        del.header = makeHeader(reusedPlaylistItemKey(b.id, b.path), true, false, EngineUpdateReason::RekordboxRemoved,
+                                "Delete " + quoted(b.path) + " from " + engineName, playlistState(nullptr));
+        conflict.rekordboxChoice.emplace_back(std::move(del));
+        PlaylistCreate create;
+        create.pdbId = r.id;
+        create.path = r.path;
+        create.folder = r.folder;
+        create.header = makeHeader(playlistItemKey(r.id), true, false, EngineUpdateReason::RekordboxAdded,
+                                   "Create " + quoted(r.path) + " in " + engineName, state, parentDeps);
+        conflict.rekordboxChoice.emplace_back(std::move(create));
+        if (!r.folder) {
+            for (auto &edit : addsInto(r, r.path, {}, parentDeps)) {
+                conflict.rekordboxChoice.push_back(std::move(edit));
+            }
+        }
+        out.conflicts.push_back(std::move(conflict));
+    }
+
+    // The adds of rekordbox's members of `r` into Engine's `path`, in
+    // rekordbox's order, each after the one before it, for a conflict's
+    // answer; the members in `skip` (Engine's playlist holds them) stay
+    // where they are. A track that cannot go in is left out: its own row
+    // says why.
+    std::vector<EngineUpdateEdit> addsInto(const BaselinePlaylist &r, const std::string &path,
+                                           const std::set<std::string> &skip,
+                                           const std::vector<std::string> &deps) const
+    {
+        std::vector<EngineUpdateEdit> edits;
+        std::string after;
+        for (const auto &member : firstOccurrences(r.members)) {
+            if (!rByKey.count(member) || duplicateKeys.count(member)
+                || (!engineRow(member) && !addedKeys.count(member))) {
+                continue;
+            }
+            if (!skip.count(member)) {
+                MembershipEdit edit;
+                edit.kind = MembershipEdit::Kind::Add;
+                edit.pdbId = r.id;
+                edit.playlistPath = path;
+                edit.pathKey = member;
+                edit.track = *rByKey.at(member);
+                edit.afterPathKey = after;
+                std::vector<std::string> memberDeps = deps;
+                if (addedKeys.count(member)) {
+                    memberDeps.push_back(trackItemKey(member));
+                }
+                edit.header = makeHeader(memberItemKey(r.id, member), true, false, EngineUpdateReason::RekordboxAdded,
+                                         "", "", std::move(memberDeps));
+                edits.emplace_back(std::move(edit));
+            }
+            after = member;
+        }
+        return edits;
     }
 
     // An Engine-only playlist in the same folder holding nearly the same
@@ -968,6 +1188,54 @@ private:
             st.deps = parentDeps;
             const BaselinePlaylist *b = base ? base->findPlaylist(r.id) : nullptr;
 
+            // Inside a new folder refused above (kindChanged): nothing of
+            // it is made in this save, and each item says so. Left as a
+            // row that writes nothing, the record keeps it as it was, so
+            // it is offered again once the folder is made (#124). A
+            // recorded playlist moved in stays whole in the record, its
+            // members and their order too, and Engine's copy at its
+            // recorded path is accounted for by the refusal.
+            if (r.parentId != 0 && refusedIds.count(r.parentId)) {
+                if (b && b->path != r.path) {
+                    if (countAt(b->path) > 0) {
+                        claimedEnginePaths.insert(b->path);
+                    }
+                    for (const auto &member : b->members) {
+                        heldBack.insert(memberItemKey(r.id, member));
+                    }
+                    for (const auto &member : r.members) {
+                        heldBack.insert(memberItemKey(r.id, member));
+                    }
+                    heldBack.insert(orderItemKey(r.id));
+                }
+                // Under a folder whose row can be answered by making it
+                // (replacedWithItsFolder), however deep: it says what each
+                // answer to that row means for it, and points at that row,
+                // the one with buttons, not at a refusal in between.
+                const auto answerable = madeByAnAnswer.find(r.parentId);
+                const std::string what = r.folder ? "folder" : "playlist";
+                std::string why;
+                if (answerable != madeByAnAnswer.end()) {
+                    const std::string folder = answerable->second;
+                    madeByAnAnswer.emplace(r.id, folder);
+                    why = "this " + what + " waits on the row about " + quoted(folder)
+                        + ": answered rekordbox's way, " + quoted(folder)
+                        + " is made by that save and this comes at the next sync; answered " + engineName
+                        + "'s way, it does not come until " + quoted(folder) + " is in " + engineName;
+                } else {
+                    why = "Seabass does not make its folder " + quoted(parentPath(r.path))
+                        + " in this save (see that row), so not this " + what + " either";
+                }
+                EngineUpdateConflict conflict;
+                conflict.header = makeHeader(key, false, true, EngineUpdateReason::BothChanged, why, state, parentDeps);
+                // A refusal: no buttons, the reason says what to do.
+                out.conflicts.push_back(std::move(conflict));
+                refusedIds.insert(r.id);
+                st.deps.push_back(key);
+                status[r.id] = st;
+                continue;
+            }
+
             if (const auto group = shared.find(r.path); group != shared.end()) {
                 const auto pairedIt = pairedAt.find(r.path);
                 const BaselinePlaylist *paired = pairedIt == pairedAt.end() ? nullptr : pairedIt->second;
@@ -998,6 +1266,25 @@ private:
             if (b && b->path != r.path && reusedForAnother(*b, r, rekordboxPaths)) {
                 idsReused.insert(r.id);
                 b = nullptr;
+            }
+            // An id that changed kind, a folder's given to a playlist or
+            // the reverse, is never a rename (#124). With nothing of the
+            // old item to delete (Engine has nothing at its path, or
+            // rekordbox has another item there that takes Engine's), the
+            // new one is created like any other; Engine's old item at a
+            // path it alone holds, which cannot go plainly with the new
+            // one's create, is a refusal that says why.
+            if (b && b->path != r.path && b->folder != r.folder) {
+                if (countAt(b->path) == 0 || rekordboxPaths.count(b->path)) {
+                    idsReused.insert(r.id);
+                    b = nullptr;
+                } else if (countAt(b->path) == 1) {
+                    kindChanged(*b, r, rekordboxPaths, rekordboxIds, state, parentDeps);
+                    refusedIds.insert(r.id);
+                    st.deps.push_back(key);
+                    status[r.id] = st;
+                    continue;
+                }
             }
             if (b && b->path != r.path && countAt(b->path) > 1) {
                 claimedEnginePaths.insert(b->path);

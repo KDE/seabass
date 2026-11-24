@@ -12,6 +12,7 @@
 #include <tuple>
 #include <utility>
 
+#include "domain/rekordbox_baseline.hpp"
 #include "gui/edit/rekordbox_baseline_ledger.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/sync_plan_list_model.hpp"
@@ -1039,7 +1040,12 @@ void RekordboxExportSyncListModel::insertAnswerRows(const domain::EngineUpdateCo
         Row row = rowForEdit(edit);
         row.uid = m_nextUid++;
         row.fromConflictUid = conflictUid;
-        row.header.key = conflict.header.key;
+        // An old item's delete under the plan's own key (a reused id, #99)
+        // stays an item of its own, so the page stages it before the new
+        // item's create and the record reads it as #99's (stageSelected).
+        if (!domain::parseReusedPlaylistItemKey(row.header.key)) {
+            row.header.key = conflict.header.key;
+        }
         row.header.checkedByDefault = true;
         row.header.conflict = false;
         for (const auto &key : conflict.header.dependsOn) {
