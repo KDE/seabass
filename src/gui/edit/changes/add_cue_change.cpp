@@ -58,10 +58,13 @@ AddCueChange::AddCueChange(QString format, QString path, QString sourceId, doubl
 QString AddCueChange::id() const
 {
     // A hot slot can hold one cue: staging the same slot twice replaces
-    // the earlier one. Memory cues are distinct per position.
+    // the earlier one. Memory cues are distinct per position. The track is
+    // its library and its id: each stick numbers its tracks from its own
+    // catalog, so the same id and slot on another stick is another cue.
+    // The path last, as it may hold a colon of its own.
     QString slot = m_kind == "hot" ? QStringLiteral("hot%1").arg(m_hotCueNumber)
                                    : QStringLiteral("memory@%1").arg(static_cast<int>(m_positionMs));
-    return "addcue:" + m_format + ":" + m_sourceId + ":" + slot;
+    return "addcue:" + m_format + ":" + m_sourceId + ":" + slot + ":" + m_path;
 }
 
 QString AddCueChange::description() const
@@ -92,6 +95,8 @@ QVariantMap AddCueChange::summary() const
 {
     return {
         {"changeId", id()},
+        {"format", m_format},
+        {"path", m_path},
         {"sourceId", m_sourceId},
         {"kind", m_kind},
         {"hotCueNumber", m_hotCueNumber},

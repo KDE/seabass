@@ -96,15 +96,23 @@ Pane {
     }
 
     property string trackSourceId: ""
+    // The library the shown track is a row of, taken with it by showFor().
+    // The id means nothing without it: rekordbox and Engine number their
+    // tracks independently, so "42" is a track in each, and in each of two
+    // sticks of the same format. `format` and `libraryPath` above are the
+    // page's library as it is now, which the page can switch while the
+    // pane still shows a row of the other one: Engine's 786 is another
+    // track in export.pdb. So everything that reads, plays or writes the
+    // shown track names it by these, never by the page's.
+    property string trackFormat: ""
+    property string trackLibraryPath: ""
     // Whether the track shown is the one the player has loaded, playing
-    // or paused. The id alone would not do: rekordbox and Engine number
-    // their tracks independently, so "42" is a track in each -- and in
-    // each of two sticks of the same format, so the library counts too.
+    // or paused.
     readonly property bool isLoadedTrack: panel.trackSourceId.length > 0
         && panel.playbackController.hasTrack === true
         && panel.playbackController.currentSourceId === panel.trackSourceId
-        && panel.playbackController.currentFormat === panel.format
-        && panel.playbackController.currentLibraryPath === panel.libraryPath
+        && panel.playbackController.currentFormat === panel.trackFormat
+        && panel.playbackController.currentLibraryPath === panel.trackLibraryPath
     property string trackTitle: ""
     property string trackArtist: ""
     property var trackCues: []
@@ -135,6 +143,8 @@ Pane {
         // An edit open in the comment field belongs to the track shown
         // until now: staged for it, or dropped, before this one is shown.
         const droppedFor = commentEditor.endEdit();
+        panel.trackFormat = panel.format;
+        panel.trackLibraryPath = panel.libraryPath;
         panel.trackSourceId = delegate.sourceId;
         panel.trackTitle = delegate.title;
         panel.trackArtist = delegate.artist;
@@ -174,8 +184,8 @@ Pane {
         panel.pendingPositionMs = -1;
         panel.pendingLoopEndMs = -1;
         waveformView.waveformData = playbackController.waveformFor(
-            panel.format, panel.libraryPath, delegate.sourceId);
-        waveformView.format = panel.format;
+            panel.trackFormat, panel.trackLibraryPath, delegate.sourceId);
+        waveformView.format = panel.trackFormat;
         // Last, once every field above is set.
         panel.refreshArtistTracks();
     }
@@ -205,7 +215,7 @@ Pane {
         if (typeof panel.addCueController.pendingCuesFor !== "function" || panel.trackSourceId.length === 0) {
             return [];
         }
-        return panel.addCueController.pendingCuesFor(panel.trackSourceId);
+        return panel.addCueController.pendingCuesFor(panel.trackFormat, panel.trackLibraryPath, panel.trackSourceId);
     }
 
     // The waveform is set when a track is shown, not bound: asked again
@@ -217,7 +227,7 @@ Pane {
         function onAnalysisRevisionChanged() {
             if (panel.trackSourceId.length > 0) {
                 waveformView.waveformData = panel.playbackController.waveformFor(
-                    panel.format, panel.libraryPath, panel.trackSourceId);
+                    panel.trackFormat, panel.trackLibraryPath, panel.trackSourceId);
             }
         }
     }
@@ -583,7 +593,7 @@ Pane {
                     anchors.fill: parent
                     enabled: artwork.playable
                     cursorShape: artwork.playable ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: panel.playbackController.load(panel.format, panel.libraryPath,
+                    onClicked: panel.playbackController.load(panel.trackFormat, panel.trackLibraryPath,
                         panel.trackSourceId, panel.trackFilePath, panel.trackTitle, panel.trackArtist,
                         panel.trackArtworkPath, panel.trackCues, panel.trackFallbackArtworkPath)
                 }
@@ -695,14 +705,14 @@ Pane {
             Layout.preferredHeight: 80
             // On the timeline of the grid drawn below: an Engine MP3's cues
             // are held on rekordbox's, its grid is on Engine's (#50).
-            cueData: panel.playbackController.cuesOnGridTimeline(panel.format, panel.trackFilePath, panel.trackCues)
+            cueData: panel.playbackController.cuesOnGridTimeline(panel.trackFormat, panel.trackFilePath, panel.trackCues)
             trackDurationMs: panel.trackDurationMs
             // The same read as the waveform's (one cache entry), only the
             // beats drawn at this width.
             beatsSelected: true
             // analysisRevision: asked again when a write ends.
             beatData: panel.trackSourceId.length > 0 && panel.playbackController.analysisRevision !== -1
-                ? panel.playbackController.beatTicksFor(panel.format, panel.libraryPath, panel.trackSourceId,
+                ? panel.playbackController.beatTicksFor(panel.trackFormat, panel.trackLibraryPath, panel.trackSourceId,
                                                         panel.trackDurationMs, width)
                 : []
             progress: -1
@@ -721,7 +731,7 @@ Pane {
             gridStyle: "ruler"
             onPositionClicked: (ms) => {
                 if (waveformView.opensZoom) {
-                    zoomPopup.openFor({format: panel.format, libraryPath: panel.libraryPath,
+                    zoomPopup.openFor({format: panel.trackFormat, libraryPath: panel.trackLibraryPath,
                                        sourceId: panel.trackSourceId, filePath: panel.trackFilePath,
                                        title: panel.trackTitle, artist: panel.trackArtist,
                                        artworkPath: panel.trackArtworkPath, cues: panel.trackCues,
@@ -815,7 +825,7 @@ Pane {
                 // AddCueController's own class comment for why
                 // rekordbox/OneLibrary loop writes are refused
                 // rather than silently downgraded to a point.
-                visible: panel.pendingLoopEndMs >= 0 && panel.format !== "engine"
+                visible: panel.pendingLoopEndMs >= 0 && panel.trackFormat !== "engine"
                 text: "Hot loops can only be added to Engine tracks right now."
                 color: Theme.danger
                 wrapMode: Text.WordWrap
@@ -861,11 +871,11 @@ Pane {
                 Button {
                     text: panel.pendingLoopEndMs >= 0 ? "Add Loop" : "Add Cue"
                     enabled: !addCueController.busy
-                        && !(panel.pendingLoopEndMs >= 0 && panel.format !== "engine")
+                        && !(panel.pendingLoopEndMs >= 0 && panel.trackFormat !== "engine")
                     onClicked: {
                         var isLoop = panel.pendingLoopEndMs >= 0;
                         var isHot = isLoop || cueKindCombo.currentIndex === 0;
-                        addCueController.addCue(panel.format, panel.libraryPath,
+                        addCueController.addCue(panel.trackFormat, panel.trackLibraryPath,
                             panel.trackSourceId, panel.pendingPositionMs,
                             isHot ? "hot" : "memory", hotCueNumberSpin.value,
                             isLoop ? "#3daee9" : (isHot ? "#ffcc00" : "#00a5e3"), cueCommentField.text,
