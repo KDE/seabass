@@ -497,6 +497,51 @@ EngineUpdateProposal tickedOnly(const EngineUpdateProposal &p, const std::set<st
     return out;
 }
 
+// `p` with the conflict under `key` answered as the page answers it: the
+// chosen side's edits become rows of the conflict's key, ticked, and the
+// conflict leaves the list.
+EngineUpdateProposal answered(const EngineUpdateProposal &p, const std::string &key, bool rekordboxSide)
+{
+    EngineUpdateProposal out = p;
+    out.conflicts.clear();
+    for (const auto &c : p.conflicts) {
+        if (c.header.key != key) {
+            out.conflicts.push_back(c);
+            continue;
+        }
+        for (EngineUpdateEdit edit : rekordboxSide ? c.rekordboxChoice : c.engineChoice) {
+            std::visit(
+                [&](auto &e) {
+                    using T = std::decay_t<decltype(e)>;
+                    // An old item's delete under a reused: key keeps it,
+                    // as on the page.
+                    if (!parseReusedPlaylistItemKey(e.header.key)) {
+                        e.header.key = key;
+                    }
+                    e.header.checkedByDefault = true;
+                    e.header.conflict = false;
+                    if constexpr (std::is_same_v<T, PlaylistCreate>) {
+                        out.playlistsToCreate.push_back(e);
+                    } else if constexpr (std::is_same_v<T, TrackToAdd>) {
+                        out.tracksToAdd.push_back(e);
+                    } else if constexpr (std::is_same_v<T, PlaylistRename>) {
+                        out.playlistsToRename.push_back(e);
+                    } else if constexpr (std::is_same_v<T, MembershipEdit>) {
+                        out.membership.push_back(e);
+                    } else if constexpr (std::is_same_v<T, PlaylistDelete>) {
+                        out.playlistsToDelete.push_back(e);
+                    } else if constexpr (std::is_same_v<T, TrackToRemove>) {
+                        out.tracksToRemove.push_back(e);
+                    } else {
+                        assert(false && "not a playlist conflict's edit");
+                    }
+                },
+                edit);
+        }
+    }
+    return out;
+}
+
 // Every key a record holds in its x lines is of the file's grammar
 // (rekordbox_baseline.hpp's itemKey), the grammar Seabass 1.0.1 reads:
 // nothing of a plan's own reaches the stick.
@@ -1221,8 +1266,10 @@ int main()
             v.rekordboxPlaylists = {{"NewP", false, 7}};
             const auto q = plan(v, vbase);
             if (engineHoldsSomething) {
-                assert(q.playlistsToRename.size() == 1 && q.playlistsToRename[0].fromPath == "OldF");
+                // #124: never a rename; the refusal of the next case.
+                assert(q.playlistsToRename.empty());
                 assert(q.playlistsToDelete.empty() && q.playlistsToCreate.empty());
+                assert(q.conflicts.size() == 1 && q.conflicts[0].header.key == "playlist:7");
                 continue;
             }
             assert(q.playlistsToRename.empty());
@@ -1235,6 +1282,499 @@ int main()
         }
         std::cout << "an id reused across playlist and folder: delete and create, as before where unsafe (#99) OK\n";
     }
+
+    // #124: an id whose kind changed between the record and the export is
+    // never a rename.
+    //   a: the record's empty folder "OldF" (id 7), which Engine's reader
+    //      gives as a playlist holding nothing; rekordbox gives 7 to the
+    //      new playlist "NewP": OldF deleted, NewP created.
+    //   b: the reverse, the record's playlist "OldP" (id 8, A) given to
+    //      the new folder "NewF", with Engine's OldP holding B too since
+    //      the record: Engine's copy cannot be deleted plainly, so one
+    //      refusal under the id that says why, nothing written, and
+    //      Engine's OldP accounted for by it.
+    //   c: the record's folder "OldF", which Engine no longer has: only
+    //      the create, no conflict that calls it a rename.
+    //   d: the record's folder "OldF" with Engine's own playlist inside:
+    //      the refusal, as in b.
+    {
+        const auto folderToPlaylist = [](bool engineHasIt, bool engineHoldsSomething) {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3")};
+            v.engine = {en("e1", "Music/A.mp3")};
+            v.rekordboxPlaylists = {{"OldF", true, 7}};
+            const auto vbase = baselineOf(v);
+            if (engineHasIt) {
+                v.enginePlaylists = {{"OldF", false, 1}};  // an empty folder, as Engine's reader gives it
+            }
+            if (engineHoldsSomething) {
+                v.enginePlaylists = {{"OldF", true, 1}, {"OldF/Own", false, 1}};
+            }
+            v.rekordbox[0].playlists = {{"NewP", 0}};
+            v.rekordboxPlaylists = {{"NewP", false, 7}};
+            return std::make_pair(v, vbase);
+        };
+        {
+            const auto [v, vbase] = folderToPlaylist(true, false);
+            const auto q = plan(v, vbase);
+            if (!q.playlistsToRename.empty()) {
+                std::cerr << "FAIL (a): the folder's id given to a playlist renames \"" << q.playlistsToRename[0].fromPath
+                          << "\" to \"" << q.playlistsToRename[0].toPath << "\"\n";
+            }
+            assert(q.playlistsToRename.empty());
+            assert(q.playlistsToDelete.size() == 1 && q.playlistsToDelete[0].path == "OldF");
+            assert(q.playlistsToDelete[0].header.key == "reused:7:OldF" && q.playlistsToDelete[0].header.checkedByDefault);
+            assert(q.playlistsToCreate.size() == 1 && q.playlistsToCreate[0].path == "NewP");
+            assert(q.playlistsToCreate[0].header.key == "playlist:7" && !q.playlistsToCreate[0].folder);
+            assert(q.conflicts.empty());
+            World after = v;
+            apply(after, q);
+            assert(!hasPlaylist(after, "OldF") && engineOrder(after, "NewP") == Deps{"music/a.mp3"});
+            const auto record = recordAfterSave(vbase, v, q);
+            assert(keysOfTheFileGrammar(record));
+            assert(plan(after, record).empty());
+        }
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldP", 0}}), rb("2", "Music/B.mp3")};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldP", 0}}), en("e2", "Music/B.mp3")};
+            v.rekordboxPlaylists = {{"OldP", false, 8}};
+            v.enginePlaylists = {{"OldP", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.engine[1].playlists = {{"OldP", 1}};  // Engine DJ added B since the record
+            v.rekordbox[0].playlists.clear();
+            v.rekordboxPlaylists = {{"NewF", true, 8}};
+            const auto q = plan(v, vbase);
+            if (!q.playlistsToRename.empty()) {
+                std::cerr << "FAIL (b): the playlist's id given to a folder renames \"" << q.playlistsToRename[0].fromPath
+                          << "\" to \"" << q.playlistsToRename[0].toPath << "\"\n";
+            }
+            assert(q.playlistsToRename.empty());
+            assert(q.playlistsToDelete.empty() && q.playlistsToCreate.empty() && q.membership.empty());
+            assert(q.conflicts.size() == 1);
+            const auto &c = q.conflicts[0];
+            std::cout << "  #124 b: " << c.header.reasonText << "\n";
+            assert(c.header.key == "playlist:8" && c.header.conflict && !c.header.checkedByDefault);
+            assert(c.rekordboxChoice.empty() && c.engineChoice.empty() && "a refusal");
+            assert(c.header.reason == EngineUpdateReason::BothChanged);
+            assert(c.header.reasonText
+                   == "rekordbox gave the id of the playlist \"OldP\" to the new folder \"NewF\", so it is no rename; "
+                      "Engine's \"OldP\" is not as Seabass last recorded it, so Seabass does not delete it: delete "
+                      "or rename it in Engine DJ, then sync again");
+            assert(q.engineOwnKept.empty() && "Engine's OldP is accounted for by the refusal");
+            // The record keeps the old playlist under the id: the refusal
+            // comes back until Engine's copy is out of the way.
+            const auto record = recordAfterSave(vbase, v, q);
+            assert(recorded(record, 8) && recorded(record, 8)->path == "OldP");
+            assert(keysOfTheFileGrammar(record));
+            // Kept whole, its tracks with it, so the next analysis refuses
+            // for the same reason.
+            if (recorded(record, 8)->folder || recorded(record, 8)->members != Deps{"music/a.mp3"}) {
+                std::cerr << "FAIL (b): the record keeps \"OldP\" with " << recorded(record, 8)->members.size()
+                          << " member(s)\n";
+            }
+            assert(!recorded(record, 8)->folder && recorded(record, 8)->members == Deps{"music/a.mp3"});
+            const auto again = plan(v, record);
+            assert(again.conflicts.size() == 1 && again.conflicts[0].header.reasonText == c.header.reasonText);
+            // Renamed in Engine DJ: nothing at the old path, so the folder
+            // is created and Engine's renamed copy is Engine's own.
+            World renamed = v;
+            renamed.enginePlaylists = {{"Kept", false, 1}};
+            for (auto &t : renamed.engine) {
+                for (auto &m : t.playlists) {
+                    m.name = "Kept";
+                }
+            }
+            const auto later = plan(renamed, record);
+            assert(later.conflicts.empty() && later.playlistsToRename.empty() && later.playlistsToDelete.empty());
+            assert(later.playlistsToCreate.size() == 1 && later.playlistsToCreate[0].path == "NewF"
+                   && later.playlistsToCreate[0].folder);
+        }
+        {
+            const auto [v, vbase] = folderToPlaylist(false, false);
+            const auto q = plan(v, vbase);
+            for (const auto &c : q.conflicts) {
+                std::cerr << "FAIL (c): conflict \"" << c.header.reasonText << "\"\n";
+            }
+            assert(q.playlistsToRename.empty() && q.conflicts.empty() && q.playlistsToDelete.empty());
+            assert(q.playlistsToCreate.size() == 1 && q.playlistsToCreate[0].path == "NewP");
+            assert(q.playlistsToCreate[0].header.reason == EngineUpdateReason::RekordboxAdded);
+            assert(q.membership.size() == 1 && q.membership[0].pathKey == "music/a.mp3");
+            World after = v;
+            apply(after, q);
+            assert(plan(after, recordAfterSave(vbase, v, q)).empty());
+        }
+        {
+            const auto [v, vbase] = folderToPlaylist(true, true);
+            const auto q = plan(v, vbase);
+            assert(q.playlistsToRename.empty() && q.playlistsToDelete.empty() && q.playlistsToCreate.empty());
+            assert(q.conflicts.size() == 1 && q.conflicts[0].header.key == "playlist:7");
+            assert(q.conflicts[0].rekordboxChoice.empty() && q.conflicts[0].engineChoice.empty());
+            std::cout << "  #124 d: " << q.conflicts[0].header.reasonText << "\n";
+            assert(q.conflicts[0].header.reasonText
+                   == "rekordbox gave the id of the folder \"OldF\" to the new playlist \"NewP\", so it is no rename; "
+                      "Engine's \"OldF\" is not as Seabass last recorded it, so Seabass does not delete it: delete "
+                      "or rename it in Engine DJ, then sync again");
+            // Engine's own playlist inside is still listed as Engine's own.
+            assert(q.engineOwnKept.size() == 1 && q.engineOwnKept[0].playlistPath == "OldF/Own");
+            // Saved with the refusal open: the record keeps the folder
+            // under the id, and the next analysis refuses again.
+            const auto record = recordAfterSave(vbase, v, q);
+            assert(keysOfTheFileGrammar(record));
+            assert(recorded(record, 7) && recorded(record, 7)->path == "OldF" && recorded(record, 7)->folder);
+            const auto again = plan(v, record);
+            assert(again.playlistsToRename.empty() && again.playlistsToCreate.empty());
+            assert(again.conflicts.size() == 1 && again.conflicts[0].header.reasonText == q.conflicts[0].header.reasonText);
+        }
+        // e: the recorded playlist "OldP" (id 8, A), as Engine has it, given
+        //    to the new folder "P/NewF" inside the new folder "P": the
+        //    create waits for P (a refusal that says so), P is created.
+        //    Saved, the record keeps OldP with A, so the next analysis
+        //    finds the pair plain: OldP deleted, P/NewF created.
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldP", 0}})};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldP", 0}})};
+            v.rekordboxPlaylists = {{"OldP", false, 8}};
+            v.enginePlaylists = {{"OldP", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.rekordbox[0].playlists.clear();
+            v.rekordboxPlaylists = {{"P", true, 20}, {"P/NewF", true, 8}};
+            const auto q = plan(v, vbase);
+            assert(q.playlistsToRename.empty() && q.playlistsToDelete.empty());
+            assert(q.playlistsToCreate.size() == 1 && q.playlistsToCreate[0].path == "P");
+            assert(q.conflicts.size() == 1 && q.conflicts[0].header.key == "playlist:8");
+            std::cout << "  #124 e: " << q.conflicts[0].header.reasonText << "\n";
+            assert(q.conflicts[0].header.reasonText
+                   == "rekordbox gave the id of the playlist \"OldP\" to the new folder \"P/NewF\", so it is no "
+                      "rename; its folder \"P\" is not in Engine yet, so Seabass does not replace the one with the "
+                      "other in this save: save the rest, then sync again");
+            assert(q.conflicts[0].header.dependsOn == Deps{"playlist:20"} && "the new parent's create, kept");
+            World after = v;
+            apply(after, q);
+            const auto record = recordAfterSave(vbase, v, q);
+            assert(recorded(record, 8) && recorded(record, 8)->members == Deps{"music/a.mp3"});
+            const auto next = plan(after, record);
+            for (const auto &c : next.conflicts) {
+                std::cerr << "FAIL (e): after the save, \"" << c.header.reasonText << "\"\n";
+            }
+            assert(next.conflicts.empty());
+            assert(next.playlistsToDelete.size() == 1 && next.playlistsToDelete[0].header.key == "reused:8:OldP");
+            assert(next.playlistsToCreate.size() == 1 && next.playlistsToCreate[0].path == "P/NewF");
+        }
+        // f: as b, the new folder holding a playlist of its own, "NewF/C"
+        //    with B, the folder inside the new folder "P". Nothing inside
+        //    the refused folder is planned to be written: C is a refusal
+        //    of its own, so no save makes NewF through it. Each refusal
+        //    keeps its parents' rows as dependencies.
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldP", 0}}), rb("2", "Music/B.mp3")};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldP", 0}}), en("e2", "Music/B.mp3")};
+            v.rekordboxPlaylists = {{"OldP", false, 8}};
+            v.enginePlaylists = {{"OldP", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.engine[1].playlists = {{"OldP", 1}};  // Engine DJ added B since the record
+            v.rekordbox[0].playlists.clear();
+            v.rekordbox[1].playlists = {{"P/NewF/C", 0}};
+            v.rekordboxPlaylists = {{"P", true, 20}, {"P/NewF", true, 8}, {"P/NewF/C", false, 9}};
+            const auto q = plan(v, vbase);
+            for (const auto &c : q.playlistsToCreate) {
+                if (c.path != "P") {
+                    std::cerr << "FAIL (f): \"" << c.path << "\" is created inside the refused folder\n";
+                }
+            }
+            assert(q.playlistsToCreate.size() == 1 && q.playlistsToCreate[0].path == "P");
+            assert(q.membership.empty() && q.playlistsToRename.empty() && q.playlistsToDelete.empty());
+            assert(q.conflicts.size() == 2);
+            for (const auto &c : q.conflicts) {
+                assert(c.rekordboxChoice.empty() && c.engineChoice.empty() && "refusals");
+                assert(std::count(c.header.dependsOn.begin(), c.header.dependsOn.end(), "playlist:20") == 1);
+            }
+            assert(q.conflicts[0].header.key == "playlist:8" && q.conflicts[1].header.key == "playlist:9");
+            std::cout << "  #124 f: " << q.conflicts[1].header.reasonText << "\n";
+            assert(q.conflicts[1].header.reasonText
+                   == "Seabass does not make its folder \"P/NewF\" in this save (see that row), so not this "
+                      "playlist either");
+            // Saved: the record knows nothing of C, so it is offered as
+            // new once its folder is made.
+            const auto record = recordAfterSave(vbase, v, q);
+            assert(!recorded(record, 9));
+        }
+        // g: the recorded folder "OldF" (id 7) still holds its recorded
+        //    playlist "OldF/X" (id 11, A), which rekordbox deleted; the
+        //    folder's id went to the new playlist "NewP". X's delete is
+        //    offered; the refusal says a save with it ticked clears the
+        //    way, and after that save the pair is plain.
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldF/X", 0}}), rb("2", "Music/B.mp3")};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldF/X", 0}}), en("e2", "Music/B.mp3")};
+            v.rekordboxPlaylists = {{"OldF", true, 7}, {"OldF/X", false, 11}};
+            v.enginePlaylists = {{"OldF", true, 1}, {"OldF/X", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.rekordbox[0].playlists.clear();
+            v.rekordbox[1].playlists = {{"NewP", 0}};
+            v.rekordboxPlaylists = {{"NewP", false, 7}};
+            const auto q = plan(v, vbase);
+            assert(q.playlistsToRename.empty() && q.playlistsToCreate.empty());
+            assert(q.playlistsToDelete.size() == 1 && q.playlistsToDelete[0].path == "OldF/X");
+            assert(q.playlistsToDelete[0].header.key == "playlist:11" && q.playlistsToDelete[0].header.checkedByDefault);
+            assert(q.conflicts.size() == 1 && q.conflicts[0].header.key == "playlist:7");
+            std::cout << "  #124 g: " << q.conflicts[0].header.reasonText << "\n";
+            assert(q.conflicts[0].header.reasonText
+                   == "rekordbox gave the id of the folder \"OldF\" to the new playlist \"NewP\", so it is no "
+                      "rename; Engine's \"OldF\" still holds what rekordbox moved out of it or deleted from it, "
+                      "offered here, so Seabass does not delete the folder yet: save with those ticked, then sync "
+                      "again");
+            World after = v;
+            apply(after, q);
+            const auto record = recordAfterSave(vbase, v, q);
+            const auto next = plan(after, record);
+            assert(next.conflicts.empty() && next.playlistsToRename.empty());
+            assert(next.playlistsToDelete.size() == 1 && next.playlistsToDelete[0].header.key == "reused:7:OldF");
+            assert(next.playlistsToCreate.size() == 1 && next.playlistsToCreate[0].path == "NewP");
+        }
+        // h: as b, and the recorded playlist "P" (id 9, X and Y, as Engine
+        //    has it) moved by rekordbox into the refused folder "NewF",
+        //    where rekordbox also took Y out and put Z in. P's move is a
+        //    refusal of its own; while it is open the record keeps P whole
+        //    (X and Y) and Engine's P is accounted for by it, not listed as
+        //    Engine's own. Once Engine's OldP is out of the way, P moves
+        //    and rekordbox's changes are offered as rekordbox's.
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldP", 0}}), rb("2", "Music/B.mp3"),
+                           rb("3", "Music/X.mp3", {{"P", 0}}), rb("4", "Music/Y.mp3", {{"P", 1}}),
+                           rb("5", "Music/Z.mp3")};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldP", 0}}), en("e2", "Music/B.mp3"),
+                        en("e3", "Music/X.mp3", {{"P", 0}}), en("e4", "Music/Y.mp3", {{"P", 1}}),
+                        en("e5", "Music/Z.mp3")};
+            v.rekordboxPlaylists = {{"OldP", false, 8}, {"P", false, 9}};
+            v.enginePlaylists = {{"OldP", false, 1}, {"P", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.engine[1].playlists = {{"OldP", 1}};  // Engine DJ added B since the record
+            v.rekordbox[0].playlists.clear();
+            v.rekordbox[2].playlists = {{"NewF/P", 0}};
+            v.rekordbox[3].playlists.clear();
+            v.rekordbox[4].playlists = {{"NewF/P", 1}};
+            v.rekordboxPlaylists = {{"NewF", true, 8}, {"NewF/P", false, 9}};
+            const auto q = plan(v, vbase);
+            assert(q.playlistsToRename.empty() && q.playlistsToCreate.empty() && q.membership.empty());
+            assert(q.conflicts.size() == 2 && q.conflicts[1].header.key == "playlist:9");
+            const auto listedAsOwn = [](const EngineUpdateProposal &p) {
+                return std::any_of(p.engineOwnKept.begin(), p.engineOwnKept.end(),
+                                   [](const auto &k) { return k.engineOnlyPlaylist && k.playlistPath == "P"; });
+            };
+            if (listedAsOwn(q)) {
+                std::cerr << "FAIL (h): Engine's \"P\" is listed as Engine's own while its move is refused\n";
+            }
+            assert(!listedAsOwn(q));
+            const auto record = recordAfterSave(vbase, v, q);
+            assert(keysOfTheFileGrammar(record));
+            assert(recorded(record, 9) && recorded(record, 9)->path == "P");
+            if (recorded(record, 9)->members != (Deps{"music/x.mp3", "music/y.mp3"})) {
+                std::cerr << "FAIL (h): the record holds \"P\" with " << recorded(record, 9)->members.size()
+                          << " member(s), not X and Y\n";
+            }
+            assert(recorded(record, 9)->members == (Deps{"music/x.mp3", "music/y.mp3"}));
+            const auto again = plan(v, record);
+            assert(again.conflicts.size() == 2 && !listedAsOwn(again));
+            // Engine DJ renames OldP out of the way.
+            World cleared = v;
+            for (auto &pl : cleared.enginePlaylists) {
+                if (pl.path == "OldP") {
+                    pl.path = "Kept";
+                }
+            }
+            for (auto &t : cleared.engine) {
+                for (auto &m : t.playlists) {
+                    if (m.name == "OldP") {
+                        m.name = "Kept";
+                    }
+                }
+            }
+            const auto later = plan(cleared, recordAfterSave(record, v, again));
+            assert(later.conflicts.empty());
+            assert(later.playlistsToRename.size() == 1 && later.playlistsToRename[0].fromPath == "P"
+                   && later.playlistsToRename[0].toPath == "NewF/P");
+            std::multiset<std::string> edits;
+            for (const auto &m : later.membership) {
+                assert(m.header.checkedByDefault
+                       && (m.header.reason == EngineUpdateReason::RekordboxRemoved
+                           || m.header.reason == EngineUpdateReason::RekordboxAdded));
+                edits.insert((m.kind == MembershipEdit::Kind::Add ? "+" : "-") + m.pathKey);
+            }
+            for (const auto &k : later.engineOwnKept) {
+                if (k.playlistPath == "NewF/P") {
+                    std::cerr << "FAIL (h): \"" << k.header.reasonText << "\"\n";
+                }
+            }
+            assert((edits == std::multiset<std::string>{"-music/y.mp3", "+music/z.mp3"}));
+        }
+        // i: as g, but rekordbox moved "OldF/X" out to "X" rather than
+        //    deleting it: X's move is offered, and the refusal says a save
+        //    with it ticked clears the way, not to delete or rename the
+        //    folder in Engine DJ. After that save the pair is plain.
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldF/X", 0}}), rb("2", "Music/B.mp3")};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldF/X", 0}}), en("e2", "Music/B.mp3")};
+            v.rekordboxPlaylists = {{"OldF", true, 7}, {"OldF/X", false, 11}};
+            v.enginePlaylists = {{"OldF", true, 1}, {"OldF/X", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.rekordbox[0].playlists = {{"X", 0}};
+            v.rekordbox[1].playlists = {{"NewP", 0}};
+            v.rekordboxPlaylists = {{"X", false, 11}, {"NewP", false, 7}};
+            const auto q = plan(v, vbase);
+            assert(q.playlistsToCreate.empty() && q.playlistsToDelete.empty());
+            assert(q.playlistsToRename.size() == 1 && q.playlistsToRename[0].fromPath == "OldF/X"
+                   && q.playlistsToRename[0].toPath == "X");
+            assert(q.conflicts.size() == 1 && q.conflicts[0].header.key == "playlist:7");
+            std::cout << "  #124 i: " << q.conflicts[0].header.reasonText << "\n";
+            assert(q.conflicts[0].header.reasonText
+                   == "rekordbox gave the id of the folder \"OldF\" to the new playlist \"NewP\", so it is no "
+                      "rename; Engine's \"OldF\" still holds what rekordbox moved out of it or deleted from it, "
+                      "offered here, so Seabass does not delete the folder yet: save with those ticked, then sync "
+                      "again");
+            World after = v;
+            apply(after, q);
+            const auto record = recordAfterSave(vbase, v, q);
+            const auto next = plan(after, record);
+            assert(next.conflicts.empty() && next.playlistsToRename.empty());
+            assert(next.playlistsToDelete.size() == 1 && next.playlistsToDelete[0].header.key == "reused:7:OldF");
+            assert(next.playlistsToCreate.size() == 1 && next.playlistsToCreate[0].path == "NewP");
+        }
+        // j: the recorded playlist "OldP" (id 8, A), as Engine has it, given
+        //    to the new folder "P/NewF" inside the recorded folder "P" (id
+        //    20), which Engine DJ deleted since the record. No save makes P
+        //    on its own, so a refusal would come back at every sync: a
+        //    conflict under the id the DJ can answer. Unanswered, the record
+        //    keeps OldP and it is asked again. rekordbox's side deletes OldP
+        //    (under its reused: key) and makes P/NewF with its folder;
+        //    Engine's side leaves Engine as it is. Either way the next
+        //    analysis asks nothing about it.
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldP", 0}})};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldP", 0}})};
+            v.rekordboxPlaylists = {{"P", true, 20}, {"OldP", false, 8}};
+            v.enginePlaylists = {{"P", true, 1}, {"OldP", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.enginePlaylists = {{"OldP", false, 1}};  // Engine DJ deleted P
+            v.rekordbox[0].playlists.clear();
+            v.rekordboxPlaylists = {{"P", true, 20}, {"P/NewF", true, 8}};
+            const auto q = plan(v, vbase);
+            assert(q.playlistsToRename.empty() && q.playlistsToDelete.empty() && q.playlistsToCreate.empty());
+            const auto conflictOf = [](const EngineUpdateProposal &p) -> const EngineUpdateConflict * {
+                for (const auto &c : p.conflicts) {
+                    if (c.header.key == "playlist:8") {
+                        return &c;
+                    }
+                }
+                return nullptr;
+            };
+            const EngineUpdateConflict *c = conflictOf(q);
+            assert(c);
+            std::cout << "  #124 j: " << c->header.reasonText << "\n    [" << c->rekordboxSide << "] ["
+                      << c->engineSide << "]\n";
+            if (c->rekordboxChoice.empty()) {
+                std::cerr << "FAIL (j): a refusal that comes back at every sync\n";
+            }
+            assert(c->rekordboxChoice.size() == 2 && c->engineChoice.empty());
+            const auto *del = std::get_if<PlaylistDelete>(&c->rekordboxChoice[0]);
+            const auto *make = std::get_if<PlaylistCreate>(&c->rekordboxChoice[1]);
+            assert(del && del->path == "OldP" && del->header.key == "reused:8:OldP");
+            assert(make && make->path == "P/NewF" && make->folder);
+            assert(c->header.reasonText
+                   == "rekordbox gave the id of the playlist \"OldP\" to the new folder \"P/NewF\", so it is no "
+                      "rename; its folder \"P\" is not in Engine, so creating it makes the folder too");
+            // Unanswered: the record keeps OldP, and it is asked again.
+            const auto open = recordAfterSave(vbase, v, q);
+            assert(recorded(open, 8) && recorded(open, 8)->path == "OldP" && !recorded(open, 8)->folder);
+            const auto again = plan(v, open);
+            assert(conflictOf(again) && !conflictOf(again)->rekordboxChoice.empty());
+            {
+                const auto a = answered(q, "playlist:8", true);
+                World after = v;
+                apply(after, a);
+                after.enginePlaylists.push_back({"P", true, 1});  // the create makes its folder
+                assert(!hasPlaylist(after, "OldP") && hasPlaylist(after, "P/NewF"));
+                const auto record = recordAfterSave(vbase, v, a);
+                assert(keysOfTheFileGrammar(record));
+                assert(recorded(record, 8) && recorded(record, 8)->path == "P/NewF" && recorded(record, 8)->folder);
+                const auto next = plan(after, record);
+                assert(next.empty() && next.conflicts.empty());
+            }
+            {
+                const auto e = answered(q, "playlist:8", false);
+                World after = v;
+                apply(after, e);
+                assert(hasPlaylist(after, "OldP") && !hasPlaylist(after, "P/NewF"));
+                const auto record = recordAfterSave(vbase, v, e);
+                assert(recorded(record, 8) && recorded(record, 8)->path == "P/NewF");
+                const auto next = plan(after, record);
+                for (const auto &n : next.conflicts) {
+                    std::cerr << "FAIL (j): after Engine's side, \"" << n.header.reasonText << "\"\n";
+                }
+                assert(next.conflicts.empty() && next.playlistsToDelete.empty() && next.playlistsToCreate.empty());
+            }
+        }
+        // k: as j, with rekordbox's new folder "P/NewF/C" (id 9) inside the
+        //    new folder, holding the new playlist "P/NewF/C/D" (id 10, B).
+        //    Both rows name the row about "P/NewF", the one with buttons,
+        //    never the refusal in between, and say what each answer to it
+        //    means: rekordbox's way, they come at the next sync; Engine's
+        //    way, not until "P/NewF" is in Engine. Answered rekordbox's way
+        //    and saved, the next analysis creates both.
+        {
+            World v;
+            v.rekordbox = {rb("1", "Music/A.mp3", {{"OldP", 0}}), rb("2", "Music/B.mp3")};
+            v.engine = {en("e1", "Music/A.mp3", {{"OldP", 0}}), en("e2", "Music/B.mp3")};
+            v.rekordboxPlaylists = {{"P", true, 20}, {"OldP", false, 8}};
+            v.enginePlaylists = {{"P", true, 1}, {"OldP", false, 1}};
+            const auto vbase = baselineOf(v);
+            v.enginePlaylists = {{"OldP", false, 1}};  // Engine DJ deleted P
+            v.rekordbox[0].playlists.clear();
+            v.rekordbox[1].playlists = {{"P/NewF/C/D", 0}};
+            v.rekordboxPlaylists = {
+                {"P", true, 20}, {"P/NewF", true, 8}, {"P/NewF/C", true, 9}, {"P/NewF/C/D", false, 10}};
+            const auto q = plan(v, vbase);
+            const auto rowOf = [&](const std::string &key) -> const EngineUpdateConflict * {
+                for (const auto &c : q.conflicts) {
+                    if (c.header.key == key) {
+                        return &c;
+                    }
+                }
+                return nullptr;
+            };
+            for (const auto &[key, what] : std::vector<std::pair<std::string, std::string>>{
+                     {"playlist:9", "folder"}, {"playlist:10", "playlist"}}) {
+                const EngineUpdateConflict *row = rowOf(key);
+                assert(row && row->rekordboxChoice.empty() && row->engineChoice.empty());
+                std::cout << "  #124 k (" << key << "): " << row->header.reasonText << "\n";
+                assert(row->header.reasonText
+                       == "this " + what
+                           + " waits on the row about \"P/NewF\": answered rekordbox's way, \"P/NewF\" is made by "
+                             "that save and this comes at the next sync; answered Engine's way, it does not come "
+                             "until \"P/NewF\" is in Engine");
+            }
+            const auto a = answered(q, "playlist:8", true);
+            World after = v;
+            apply(after, a);
+            after.enginePlaylists.push_back({"P", true, 1});  // the create makes its folder
+            const auto next = plan(after, recordAfterSave(vbase, v, a));
+            assert(next.conflicts.empty());
+            std::set<std::string> made;
+            for (const auto &c : next.playlistsToCreate) {
+                made.insert(c.path);
+            }
+            assert((made == std::set<std::string>{"P/NewF/C", "P/NewF/C/D"}));
+        }
+        std::cout << "an id whose kind changed is never a rename: delete and create, the create alone, or a refusal "
+                     "(#124) OK\n";
+    }
+
 
     // No baseline: an Engine-only playlist beside a new rekordbox one,
     // holding the same tracks, may be it renamed. One conflict: rename

@@ -492,6 +492,13 @@ void keepPlaylist(RekordboxBaseline &next, const RekordboxBaseline *previous, st
         next.playlists.erase(it);
         return;
     }
+    if (it->folder != before->folder) {
+        // next holds the id as an item of the other kind (#124): what it
+        // holds is that item's, never previous's. previous's playlist is
+        // put back whole, its members in its order.
+        *it = *before;
+        return;
+    }
     it->path = before->path;
     it->parentId = before->parentId;
     it->folder = before->folder;

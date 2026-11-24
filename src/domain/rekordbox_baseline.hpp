@@ -323,7 +323,11 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
 //               back whole, a row next has and previous lacked is taken
 //               out; a row both have is left as next has it
 //   playlist    path, parent and folder flag; put back with no members
-//               (each member is an item of its own) or taken out
+//               (each member is an item of its own) or taken out. Where
+//               next holds the id as the other kind (a folder for a
+//               playlist, or the reverse), previous's item whole, its
+//               members and their order with it: next's are another
+//               item's
 //   member      the track's entries in that playlist: next's taken out,
 //               previous's put back at their indexes (clamped)
 //   order       the members previous has, in the places they take in

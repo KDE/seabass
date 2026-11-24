@@ -389,6 +389,8 @@ struct EngineUpdateProposal
     std::vector<TrackToAdd> notAdded;
     // Keys left out because the user declined them and rekordbox has not
     // changed them since, or because a row they depend on was left out.
+    // Also the member and order items of a recorded playlist moved into
+    // a refused new folder (#124): the record keeps them as they were.
     std::vector<std::string> declinedSuppressed;
 
     // Nothing to write and nothing to decide. Engine's own, the refusals

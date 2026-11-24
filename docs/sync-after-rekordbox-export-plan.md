@@ -364,6 +364,33 @@ What it reuses, and what it must not:
   Everywhere else the id pairs as before: a rename (also where the
   lists share some tracks, or one is empty, or the delete would be a
   conflict), or the conflict that raises. Two folders pair by id.
+  Engine's reader gives an empty folder as a playlist holding nothing,
+  so a recorded folder Engine has that way is a plain delete too.
+  **Decision (#124, 2026-11-24):** an id that changed kind (a folder's
+  given to a playlist, or the reverse) is never a rename. With nothing
+  of the old item to delete (Engine has nothing at its path, or rekordbox
+  has another item there), the new one is created like any other. Where
+  Engine still has the old item and the pair is not plain, it is one
+  refusal under `playlist:<id>` that says why and what to do (delete or
+  rename Engine's copy in Engine DJ; save the rest and sync again when
+  the new item's folder is made by the same plan; save with them ticked
+  when what keeps a recorded folder is what rekordbox deleted from it or
+  moved out of it, offered in the same plan). Where only the new item's
+  folder stands in the way and no plain row makes it (Engine deleted it,
+  or it waits on a conflict), a refusal would come back at every sync, so
+  it is a conflict instead: rekordbox's side deletes the old item under
+  its `reused:` key (an answer's row that keeps its own key, staged first
+  as #99's) and creates the new one with its folder; Engine's side leaves
+  Engine as it is, the record taking the new item. The record keeps the old item under the id
+  whole, its members and their order with it (`keepPreviousItems` puts
+  back the whole item where the record would hold the id as the other
+  kind), so it comes back for the same reason until then. Nothing inside
+  a refused new folder is planned to be written: each item in it is a
+  refusal of its own, so no save makes the folder through a child. A
+  recorded playlist rekordbox moved into such a folder stays whole in
+  the record while refused, its members and their order with them (the
+  plan lists them as held, `declinedSuppressed`), and Engine's copy is
+  accounted for by its refusal, not listed as Engine's own.
   **Decision (#99, 2026-11-21):** the delete and the create are two
   items, ticked apart. The create is `playlist:<id>` as always; the
   delete has a key of the plan's own, `reused:<id>:<old path>`, outside
