@@ -314,6 +314,12 @@ int main(int argc, char **argv)
     // Not vacuous: between them the two exports hold every kind of row.
     assert(t73.genres + tones.genres > 0 && t73.labels + tones.labels > 0 && t73.artwork + tones.artwork > 0);
     assert(strayPadding == 0 && "the fixtures' rows are the encoder's bytes, every one");
+    // Not held against the two anonymized libraries of the fixtures:
+    // Seabass's anonymizer writes its placeholders into the string a row
+    // already has, so they hold plain ASCII in UTF-16 strings, which
+    // rekordbox writes as short ones. The UTF-16 artist, album, file and
+    // path strings they would add are covered by a real library run by
+    // hand (1161 tracks, 833 artists, 1044 albums: every row the same).
     // Any other export given on the command line, for a developer with a
     // real library at hand (none is in the repository).
     for (int i = 2; i < argc; ++i) {

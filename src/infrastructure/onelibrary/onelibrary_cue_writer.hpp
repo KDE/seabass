@@ -378,13 +378,15 @@ public:
     //     rekordbox's own rows that were never analysed);
     //   - property.numberOfContents goes up by one.
     // Then everything bound is read back through the verify connection;
-    // a row that is not as written is removed again before the throw.
+    // a row that is not as written is removed again before the throw,
+    // with the lookup rows this call made.
     //
     // Refused with std::invalid_argument, nothing written: an empty
-    // title; a date that is not YYYY-MM-DD; a tempo outside 0 to 1000, a
-    // negative number, a size past what the column holds; a file type
-    // rekordbox has no number for here (mp3, m4a, mp4, flac, wav, aif,
-    // aiff are known); a file that is not there or not on this stick; a
+    // title; a text that is not UTF-8 or ends in a blank
+    // (domain::isStorableText); a date that is not a day as YYYY-MM-DD; a
+    // tempo outside 0 to 1000, a negative number, a size past what the
+    // column holds; a file type rekordbox has no number for here (mp3,
+    // m4a, flac, wav, aif, aiff are known); a file that is not there or not on this stick; a
     // file some content row already names, compared as the stick's
     // filesystem compares names; an analysis file another row already
     // names; an analysis or image path not under /PIONEER/.

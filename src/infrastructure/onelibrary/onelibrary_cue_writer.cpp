@@ -23,6 +23,7 @@
 #include <stdexcept>
 
 #include "application/path_key.hpp"
+#include "domain/import_field_checks.hpp"
 #include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
@@ -1344,7 +1345,10 @@ constexpr const char *KnownContentColumns[] = {
 
 // rekordbox's number for a file's type, by its extension; 0 for one it
 // has no number for here. 1, 4, 5 and 12 are read off rekordbox 7.2.18
-// exports; 11 (wav) is the documented value, not yet seen in one.
+// exports. 11 (wav) is what the published descriptions of rekordbox's
+// databases give (Deep Symmetry's, pyrekordbox's), which have the other
+// four as measured; no export at hand holds a wav. An .mp4 has no number
+// anyone measured or published for this column, so it has none here.
 int contentFileType(const std::string &fileName)
 {
     const size_t dot = fileName.rfind('.');
@@ -1360,7 +1364,7 @@ int contentFileType(const std::string &fileName)
     if (extension == "mp3") {
         return 1;
     }
-    if (extension == "m4a" || extension == "mp4") {
+    if (extension == "m4a") {
         return 4;
     }
     if (extension == "flac") {
@@ -1373,21 +1377,6 @@ int contentFileType(const std::string &fileName)
         return 12;
     }
     return 0;
-}
-
-bool isIsoDate(const std::string &text)
-{
-    if (text.size() != 10 || text[4] != '-' || text[7] != '-') {
-        return false;
-    }
-    for (const size_t i : {0U, 1U, 2U, 3U, 5U, 6U, 8U, 9U}) {
-        if (text[i] < '0' || text[i] > '9') {
-            return false;
-        }
-    }
-    const int month = (text[5] - '0') * 10 + (text[6] - '0');
-    const int day = (text[8] - '0') * 10 + (text[9] - '0');
-    return month >= 1 && month <= 12 && day >= 1 && day <= 31;
 }
 
 // The columns of `table`, as the database names them.
@@ -1455,8 +1444,16 @@ int64_t nextId(SqlCipherDb &db, const std::string &table, const std::string &idC
 // The id of the row of a one-name lookup table (artist, genre, label,
 // key, image) spelled exactly `name`, made when there is none. nullopt
 // for an empty name: the track names no row.
+// One lookup row a call made, for taking it out again.
+struct MadeRow
+{
+    std::string table;
+    std::string idColumn;
+    int64_t id = 0;
+};
+
 std::optional<int64_t> lookupRow(SqlCipherDb &db, const std::string &table, const std::string &idColumn,
-                                 const std::string &nameColumn, const std::string &name)
+                                 const std::string &nameColumn, const std::string &name, std::vector<MadeRow> &made)
 {
     if (name.empty()) {
         return std::nullopt;
@@ -1476,13 +1473,15 @@ std::optional<int64_t> lookupRow(SqlCipherDb &db, const std::string &table, cons
     insert.bindInt64(1, id);
     insert.bindText(2, name);
     insert.run();
+    made.push_back({table, idColumn, id});
     return id;
 }
 
 // An album is its name with its artist: rekordbox keeps two albums of one
 // name apart by artist_id (36 names twice in a 1644-track export, never
 // with the same artist).
-std::optional<int64_t> albumRow(SqlCipherDb &db, const std::string &name, const std::optional<int64_t> &artistId)
+std::optional<int64_t> albumRow(SqlCipherDb &db, const std::string &name, const std::optional<int64_t> &artistId,
+                                std::vector<MadeRow> &made)
 {
     if (name.empty()) {
         return std::nullopt;
@@ -1510,6 +1509,7 @@ std::optional<int64_t> albumRow(SqlCipherDb &db, const std::string &name, const 
         insert.bindNull(3);
     }
     insert.run();
+    made.push_back({"album", "album_id", id});
     return id;
 }
 
@@ -1529,8 +1529,16 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
     if (track.title.empty()) {
         throw std::invalid_argument("onelibrary: a track row needs a title");
     }
-    if (!isIsoDate(track.date)) {
+    if (!domain::isCalendarDate(track.date)) {
         throw std::invalid_argument("onelibrary: \"" + track.date + "\" is not a date as YYYY-MM-DD");
+    }
+    for (const std::string *text : {&track.title, &track.artist, &track.album, &track.albumArtist, &track.genre, &track.label,
+                                    &track.remixer, &track.composer, &track.key, &track.comment, &track.filePath,
+                                    &track.analysisDataFilePath, &track.imagePath}) {
+        if (!domain::isStorableText(*text)) {
+            throw std::invalid_argument("onelibrary: a text of " + track.filePath
+                                        + " is not UTF-8, or ends in a blank; the caller trims what a tag holds");
+        }
     }
     // Not clamped: a number the row cannot hold is the caller's mistake,
     // and a row quietly given 0 for it would say something else.
@@ -1575,6 +1583,7 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
         // file two rows name in two other spellings, which is the right
         // answer to "which row" and the wrong one to "is there a row".
         const std::string wanted = application::normalizedPathKey(contentPath);
+        const std::string wantedAnalysis = application::normalizedPathKey(track.analysisDataFilePath);
         SqlCipherStatement scan(db, "SELECT path, analysisDataFilePath FROM content");
         while (scan.step()) {
             if (!scan.columnIsNull(0)) {
@@ -1584,7 +1593,7 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
                 }
             }
             if (!track.analysisDataFilePath.empty() && !scan.columnIsNull(1)
-                && scan.columnText(1) == track.analysisDataFilePath) {
+                && application::normalizedPathKey(scan.columnText(1)) == wantedAnalysis) {
                 // Two rows on one analysis file share its cues: a cue
                 // written for either lands on both.
                 throw std::invalid_argument("onelibrary: another track's row already names the analysis file "
@@ -1611,17 +1620,18 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
     }
 
     int64_t id = 0;
+    std::vector<MadeRow> made;
     db.exec("BEGIN IMMEDIATE;");
     try {
-        const std::optional<int64_t> artist = lookupRow(db, "artist", "artist_id", "name", track.artist);
-        const std::optional<int64_t> remixer = lookupRow(db, "artist", "artist_id", "name", track.remixer);
-        const std::optional<int64_t> composer = lookupRow(db, "artist", "artist_id", "name", track.composer);
-        const std::optional<int64_t> albumArtist = lookupRow(db, "artist", "artist_id", "name", track.albumArtist);
-        const std::optional<int64_t> album = albumRow(db, track.album, albumArtist);
-        const std::optional<int64_t> genre = lookupRow(db, "genre", "genre_id", "name", track.genre);
-        const std::optional<int64_t> label = lookupRow(db, "label", "label_id", "name", track.label);
-        const std::optional<int64_t> key = lookupRow(db, "key", "key_id", "name", track.key);
-        const std::optional<int64_t> image = lookupRow(db, "image", "image_id", "path", track.imagePath);
+        const std::optional<int64_t> artist = lookupRow(db, "artist", "artist_id", "name", track.artist, made);
+        const std::optional<int64_t> remixer = lookupRow(db, "artist", "artist_id", "name", track.remixer, made);
+        const std::optional<int64_t> composer = lookupRow(db, "artist", "artist_id", "name", track.composer, made);
+        const std::optional<int64_t> albumArtist = lookupRow(db, "artist", "artist_id", "name", track.albumArtist, made);
+        const std::optional<int64_t> album = albumRow(db, track.album, albumArtist, made);
+        const std::optional<int64_t> genre = lookupRow(db, "genre", "genre_id", "name", track.genre, made);
+        const std::optional<int64_t> label = lookupRow(db, "label", "label_id", "name", track.label, made);
+        const std::optional<int64_t> key = lookupRow(db, "key", "key_id", "name", track.key, made);
+        const std::optional<int64_t> image = lookupRow(db, "image", "image_id", "path", track.imagePath, made);
         id = nextContentId(db);
 
         SqlCipherStatement insert(
@@ -1723,14 +1733,21 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
         }
     }
     if (!asWritten) {
-        // Not left for a player to find: the row goes again, and the
-        // count with it. Lookup rows it made stay; nothing names them.
+        // Not left for a player to find: the row goes again, the count
+        // with it, and the lookup rows this call made, newest first (an
+        // album before the artist it names). Nothing else names those:
+        // they did not exist before this call.
         std::string undone = "; the row was taken out again";
         try {
             db.exec("BEGIN IMMEDIATE;");
             SqlCipherStatement remove(db, "DELETE FROM content WHERE content_id = ?");
             remove.bindInt64(1, id);
             remove.run();
+            for (auto row = made.rbegin(); row != made.rend(); ++row) {
+                SqlCipherStatement removeLookup(db, "DELETE FROM " + row->table + " WHERE " + row->idColumn + " = ?");
+                removeLookup.bindInt64(1, row->id);
+                removeLookup.run();
+            }
             SqlCipherStatement count(db, "UPDATE property SET numberOfContents = ?");
             count.bindInt64(1, countBefore);
             count.run();

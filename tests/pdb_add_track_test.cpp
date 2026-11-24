@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "domain/import_field_checks.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_encoding.hpp"
@@ -350,40 +351,84 @@ int main(int argc, char **argv)
         good.title = "Fresh";
         good.artist = "Never Made Unless Added";
         good.analyzePath = "/PIONEER/USBANLZ/P0AC/0000BEEF/ANLZ0000.DAT";
-        const auto refused = [&](const std::function<void(PdbRowWriter::NewTrack &)> &spoil) {
+        // Refused, and for the reason under test: `why` is in the words
+        // of the refusal.
+        const auto refused = [&](const std::function<void(PdbRowWriter::NewTrack &)> &spoil, const std::string &why) {
             PdbRowWriter::NewTrack t = good;
             spoil(t);
-            return throws<std::invalid_argument>([&] { (void)writer.addTrack(t); });
+            try {
+                (void)writer.addTrack(t);
+            } catch (const std::invalid_argument &e) {
+                if (std::string(e.what()).find(why) != std::string::npos) {
+                    return true;
+                }
+                std::cerr << "refused, but with: " << e.what() << " (wanted: " << why << ")\n";
+            } catch (const std::exception &e) {
+                std::cerr << "threw: " << e.what() << "\n";
+            }
+            return false;
         };
-        assert(refused([](auto &t) { t.title.clear(); }));
+        assert(refused([](auto &t) { t.title.clear(); }, "needs a title"));
         for (const char *date : {"", "24-11-2026", "2026-11-24 10:00", "2026/11/24", "2026-1-24", "2026-11/24", "2026-x1-24",
-                                 "2026-11-2x", "x026-11-24", "2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00"}) {
-            assert(refused([&](auto &t) { t.date = date; }));
+                                 "2026-11-2x", "x026-11-24", "2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00",
+                                 "2026-02-29", "2026-02-30", "2026-04-31", "2100-02-29"}) {
+            assert(refused([&](auto &t) { t.date = date; }, "is not a date"));
         }
+        assert(seabass::domain::isCalendarDate("2024-02-29") && seabass::domain::isCalendarDate("2000-02-29")
+               && seabass::domain::isCalendarDate("2026-12-31") && "leap days and the last day are days");
         for (const char *path : {"", "/", "Contents/a.flac", "/Contents/../a.flac", "/Contents/a/..", "/Contents\\a.flac",
-                                 "/Contents/a.ogg", "/Contents/a", "/Contents/a.flac/b", "/Contents/a.flac.txt"}) {
-            assert(refused([&](auto &t) { t.pathOnStick = path; }));
+                                 "/Contents//a.flac", "/Contents/./a.flac", "/Contents/a.flac/", "//Contents/a.flac"}) {
+            assert(refused([&](auto &t) { t.pathOnStick = path; }, "is not a path from the stick's root"));
         }
+        for (const char *path : {"/Contents/a.ogg", "/Contents/a", "/Contents/a.flac/b", "/Contents/a.flac.txt",
+                                 "/Contents/a.mp4"}) {
+            assert(refused([&](auto &t) { t.pathOnStick = path; }, "no file type known"));
+        }
+        // Texts a row cannot hold and find again: a blank at the end (the
+        // reader takes it off, so the name would never match itself), a
+        // NUL, bytes that are not UTF-8.
+        for (const char *text : {"DJ X ", "DJ X\t", "caf\xc3", "caf\xc3" "A", "\xed\xa0\x80", "\xc0\xaf", "\xf5\x80\x80\x80"}) {
+            for (std::string PdbRowWriter::NewTrack::*field :
+                 {&PdbRowWriter::NewTrack::title, &PdbRowWriter::NewTrack::artist, &PdbRowWriter::NewTrack::album,
+                  &PdbRowWriter::NewTrack::albumArtist, &PdbRowWriter::NewTrack::genre, &PdbRowWriter::NewTrack::label,
+                  &PdbRowWriter::NewTrack::remixer, &PdbRowWriter::NewTrack::composer, &PdbRowWriter::NewTrack::key,
+                  &PdbRowWriter::NewTrack::comment}) {
+                assert(refused([&](auto &t) { t.*field = text; }, "is not UTF-8, or ends in a blank"));
+            }
+        }
+        assert(refused([](auto &t) { t.artist = std::string("a\0b", 3); }, "is not UTF-8, or ends in a blank"));
+        // A title too long for a row is found out after the artist's row
+        // was placed: the artist goes again (counted below).
+        assert(throws<std::invalid_argument>([&] {
+            PdbRowWriter::NewTrack t = good;
+            t.title.clear();
+            for (int i = 0; i < 40000; ++i) {
+                t.title += "\xc3\xa9";
+            }
+            (void)writer.addTrack(t);
+        }));
         // A file a row already names: rekordbox's, in its spelling and in
         // another letter case, and one of this test's.
-        assert(refused([](auto &t) { t.pathOnStick = "/Contents/Seabass Test/T73 Base/T73-B07-click-44k-114bpm.flac"; }));
-        assert(refused([](auto &t) { t.pathOnStick = "/CONTENTS/SEABASS TEST/T73 Base/T73-B07-click-44k-114bpm.FLAC"; }));
-        assert(refused([](auto &t) { t.pathOnStick = "/Contents/An Artist/An Album/01 TAGGED.flac"; }));
-        assert(refused([](auto &t) { t.bpm = -1.0; }) && refused([](auto &t) { t.bpm = 1000.0; }));
-        assert(refused([](auto &t) { t.bpm = std::numeric_limits<double>::quiet_NaN(); }));
-        assert(refused([](auto &t) { t.durationSeconds = -1; }) && refused([](auto &t) { t.durationSeconds = 65536; }));
-        assert(refused([](auto &t) { t.discNumber = -1; }) && refused([](auto &t) { t.discNumber = 65536; }));
-        assert(refused([](auto &t) { t.year = -1; }) && refused([](auto &t) { t.year = 65536; }));
-        assert(refused([](auto &t) { t.sampleDepth = -1; }) && refused([](auto &t) { t.sampleDepth = 65536; }));
-        assert(refused([](auto &t) { t.trackNumber = -1; }) && refused([](auto &t) { t.bitrate = -1; }));
-        assert(refused([](auto &t) { t.sampleRateHz = -1; }));
-        assert(refused([](auto &t) { t.fileSizeBytes = 0x100000000ull; }));
+        assert(refused([](auto &t) { t.pathOnStick = "/Contents/Seabass Test/T73 Base/T73-B07-click-44k-114bpm.flac"; }, "already names"));
+        assert(refused([](auto &t) { t.pathOnStick = "/CONTENTS/SEABASS TEST/T73 Base/T73-B07-click-44k-114bpm.FLAC"; }, "already names"));
+        assert(refused([](auto &t) { t.pathOnStick = "/Contents/An Artist/An Album/01 TAGGED.flac"; }, "already names"));
+        assert(refused([](auto &t) { t.bpm = -1.0; }, "tempo") && refused([](auto &t) { t.bpm = 1000.0; }, "tempo"));
+        assert(refused([](auto &t) { t.bpm = std::numeric_limits<double>::quiet_NaN(); }, "tempo"));
+        assert(refused([](auto &t) { t.durationSeconds = -1; }, "does not fit") && refused([](auto &t) { t.durationSeconds = 65536; }, "does not fit"));
+        assert(refused([](auto &t) { t.discNumber = -1; }, "does not fit") && refused([](auto &t) { t.discNumber = 65536; }, "does not fit"));
+        assert(refused([](auto &t) { t.year = -1; }, "does not fit") && refused([](auto &t) { t.year = 65536; }, "does not fit"));
+        assert(refused([](auto &t) { t.sampleDepth = -1; }, "does not fit") && refused([](auto &t) { t.sampleDepth = 65536; }, "does not fit"));
+        assert(refused([](auto &t) { t.trackNumber = -1; }, "does not fit") && refused([](auto &t) { t.bitrate = -1; }, "does not fit"));
+        assert(refused([](auto &t) { t.sampleRateHz = -1; }, "does not fit"));
+        assert(refused([](auto &t) { t.fileSizeBytes = 0x100000000ull; }, "too large"));
         // An analysis file another row names (rekordbox's, and this
         // test's), and paths that are not under /PIONEER/.
-        assert(refused([](auto &t) { t.analyzePath = "/PIONEER/USBANLZ/P01E/00009ECC/ANLZ0000.DAT"; }));
-        assert(refused([](auto &t) { t.analyzePath = "/PIONEER/USBANLZ/P0AA/0000BEEF/ANLZ0000.DAT"; }));
-        assert(refused([](auto &t) { t.analyzePath = "USBANLZ/P0AC/0000BEEF/ANLZ0000.DAT"; }));
-        assert(refused([](auto &t) { t.artworkPath = "/Contents/cover.jpg"; }));
+        assert(refused([](auto &t) { t.analyzePath = "/PIONEER/USBANLZ/P01E/00009ECC/ANLZ0000.DAT"; }, "already names the analysis file"));
+        // The same file as the stick's filesystem sees it, in another case.
+        assert(refused([](auto &t) { t.analyzePath = "/PIONEER/USBANLZ/p01e/00009ecc/anlz0000.dat"; }, "already names the analysis file"));
+        assert(refused([](auto &t) { t.analyzePath = "/PIONEER/USBANLZ/P0AA/0000BEEF/ANLZ0000.DAT"; }, "already names the analysis file"));
+        assert(refused([](auto &t) { t.analyzePath = "USBANLZ/P0AC/0000BEEF/ANLZ0000.DAT"; }, "under the stick's /PIONEER/"));
+        assert(refused([](auto &t) { t.artworkPath = "/Contents/cover.jpg"; }, "under the stick's /PIONEER/"));
         // Nothing of all that is in the buffer: committing writes a file
         // that reads as before, with no artist made for a refused track.
         (void)writer.commit();
@@ -542,6 +587,40 @@ int main(int argc, char **argv)
         assert(readFile(pdbOf(other)) == pdb && "not a byte of a track that did not go in");
     }
     std::cout << "case 7 (a track row that cannot be placed takes its lookup rows back, and leaves the file alone) OK\n";
+
+    // 7c. A table that holds an id at the top of the range gets no row
+    //     after it (a deleted row's bytes can be anything: here the
+    //     deleted track row of page 52, slot 2, is given 0xFFFFFFFF). And
+    //     a page whose sizes do not add up to its rows gets no row.
+    {
+        const fs::path other = stickAt("wrap");
+        std::string pdb = readFile(pdbOf(other));
+        const size_t group = LenPage * 52 + LenPage;
+        assert(((u16(pdb, group - 4) >> 2) & 1) == 0 && "slot 2 of page 52 is a deleted row");
+        const size_t deleted = LenPage * 52 + 40 + u16(pdb, group - 6 - 2 * 2);
+        assert(u32(pdb, deleted + 72) == 16);
+        for (int i = 0; i < 4; ++i) {
+            pdb[deleted + 72 + i] = '\xff';
+        }
+        std::ofstream(pdbOf(other), std::ios::binary | std::ios::trunc) << pdb;
+        PdbRowWriter writer(pathToUtf8(pdbOf(other)));
+        assert(throws<std::runtime_error>([&] { (void)writer.addTrack(full); }));
+        (void)writer.commit();
+        assert(readFile(pdbOf(other)) == pdb);
+    }
+    {
+        const fs::path other = stickAt("sizes");
+        std::string pdb = readFile(pdbOf(other));
+        pdb[LenPage * 52 + 30] = static_cast<char>(pdb[LenPage * 52 + 30] - 4);  // used_size: four bytes fewer
+        std::ofstream(pdbOf(other), std::ios::binary | std::ios::trunc) << pdb;
+        PdbRowWriter writer(pathToUtf8(pdbOf(other)));
+        PdbRowWriter::NewTrack bare;
+        bare.pathOnStick = "/Contents/bare.flac";
+        bare.title = "bare";
+        bare.date = "2026-11-24";
+        assert(throws<PdbPageFull>([&] { (void)writer.addTrack(bare); }));
+    }
+    std::cout << "case 7c (no id past the top of the range; no row onto a page that does not add up) OK\n";
 
     // 8. exportExt.pdb has no tracks.
     {

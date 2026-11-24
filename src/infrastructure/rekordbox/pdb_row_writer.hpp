@@ -465,16 +465,24 @@ public:
     //     counters empty. It is given the 48 bytes of room rekordbox
     //     leaves after a track row, which is what a later edit of its
     //     comment or path has to grow into.
+    //   - The new row is then read back with the app's own parser, every
+    //     string and every name its ids lead to; one that does not read
+    //     as written is not kept (std::runtime_error, the buffer as it
+    //     was).
     // Refused with std::invalid_argument, the buffer as it was: an empty
-    // title; a date that is not YYYY-MM-DD; a path that does not start at
-    // the stick's root or climbs out of it; a file type with no number
-    // (mp3, m4a, mp4, flac, wav, aif, aiff are known); a tempo outside 0
+    // title; a text that is not UTF-8 or ends in a blank
+    // (domain::isStorableText); a date that is not a day as YYYY-MM-DD; a
+    // path that is not the one plain spelling from the stick's root (no
+    // empty name, "." or ".."); a file type with no number (mp3, m4a,
+    // flac, wav, aif, aiff are known); a tempo outside 0
     // to 1000, a negative number, or one past what its field holds (a
     // file of 4 GiB or more, a length over 65535 s); a file some present
     // row already names, compared as the stick's filesystem compares
     // names; an analysis file another row names; an analysis or artwork
     // path not under /PIONEER/. Throws PdbPageFull, the buffer as it
-    // was, when a row cannot be placed.
+    // was, when a row cannot be placed, or the page it would go to does
+    // not add up; std::runtime_error when an id cannot be given (the
+    // table holds one at the top of the range).
     uint32_t addTrack(const NewTrack &track);
 
     // The ids of the track rows whose file_path is `pathOnStick` as

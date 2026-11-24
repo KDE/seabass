@@ -323,7 +323,8 @@ int main(int argc, char **argv)
             bad.date = date;
             assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
         }
-        for (const char *date : {"2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00"}) {
+        for (const char *date : {"2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00", "2026-02-29", "2026-02-30",
+                                 "2026-04-31", "2100-02-29"}) {
             bad.date = date;
             assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }) && "not a day on a calendar");
         }
@@ -349,13 +350,28 @@ int main(int argc, char **argv)
             assert(refused([](auto &t) { t.analysisDataFilePath = "/PIONEER/USBANLZ/P0AA/0000BEEF/ANLZ0000.DAT"; }));
             assert(refused([](auto &t) { t.analysisDataFilePath = "USBANLZ/P0AA/0000BEEF/ANLZ0000.DAT"; }));
             assert(refused([](auto &t) { t.imagePath = "/Contents/cover.jpg"; }));
+            // The same analysis file as the stick's filesystem sees it.
+            assert(refused([](auto &t) { t.analysisDataFilePath = "/PIONEER/USBANLZ/p01e/00009ecc/anlz0000.dat"; }));
+            // Texts a row cannot hold and find again: a blank at the end,
+            // a NUL, bytes that are not UTF-8.
+            for (const char *text : {"DJ X ", "DJ X\t", "caf\xc3", "caf\xc3" "A", "\xed\xa0\x80", "\xc0\xaf"}) {
+                for (std::string OneLibraryCueWriter::NewTrack::*field :
+                     {&OneLibraryCueWriter::NewTrack::title, &OneLibraryCueWriter::NewTrack::artist,
+                      &OneLibraryCueWriter::NewTrack::album, &OneLibraryCueWriter::NewTrack::albumArtist,
+                      &OneLibraryCueWriter::NewTrack::genre, &OneLibraryCueWriter::NewTrack::label,
+                      &OneLibraryCueWriter::NewTrack::remixer, &OneLibraryCueWriter::NewTrack::composer,
+                      &OneLibraryCueWriter::NewTrack::key, &OneLibraryCueWriter::NewTrack::comment}) {
+                    assert(refused([&](auto &t) { t.*field = text; }));
+                }
+            }
+            assert(refused([](auto &t) { t.artist = std::string("a\0b", 3); }));
         }
         // A file that is not there, and one that is not on this stick.
         bad.filePath = pathToUtf8(stick / "Contents" / "An Artist" / "An Album" / "never copied.flac");
         assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
         bad.filePath = touch(scratch / "beside the stick.flac");
         assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
-        for (const char *name : {"05 Fresh.ogg", "06 Fresh", "07 Fresh.flac.txt"}) {
+        for (const char *name : {"05 Fresh.ogg", "06 Fresh", "07 Fresh.flac.txt", "08 Fresh.mp4"}) {
             bad.filePath = file(stick, name);
             assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
         }
@@ -551,8 +567,14 @@ int main(int argc, char **argv)
         assert(!spoiled.hasTrackAtPath(t.filePath));
         spoiled.finishWriting();
         assert(one(otherDb, "SELECT count(*) || '/' || (SELECT numberOfContents FROM property) FROM content") == "11/11");
+        // With every lookup row it had made: rekordbox's one artist, two
+        // albums and two keys are what is left.
+        assert(one(otherDb, "SELECT (SELECT count(*) FROM artist) || '/' || (SELECT count(*) FROM album) || '/' || "
+                            "(SELECT count(*) FROM genre) || '/' || (SELECT count(*) FROM label) || '/' || "
+                            "(SELECT count(*) FROM key) || '/' || (SELECT count(*) FROM image)")
+               == "1/2/0/0/2/0");
     }
-    std::cout << "case 11 (a row that does not read back as written is removed again) OK\n";
+    std::cout << "case 11 (a row that does not read back as written is removed again, with its lookup rows) OK\n";
 
     fs::remove_all(scratch);
     std::cout << "onelibrary_add_track_test: all cases passed\n";
