@@ -1683,6 +1683,25 @@ TestCase {
                 "Where the beats fall is not compared: this MP3's lead-in could not be read.");
     }
 
+    // The open row draws Engine's side as Engine does, in Engine's
+    // colours; rekordbox's side and the row's small waveform keep
+    // rekordbox's look.
+    function test_theEngineLaneHasEnginesLook() {
+        const o = openOn(t73());
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const row = delegateInView(o.page, b04);
+        clickOn(findChild(row, "rowTitle"));
+        compare(row.expanded, true);
+        const rekordbox = findChild(row, "comparisonRekordbox");
+        const engine = findChild(row, "comparisonEngine");
+        tryVerify(() => rekordbox.byteColumns > 0 && engine.byteColumns > 0, 30000, "both waveforms are drawn");
+        compare(engine.colorScheme, "engine");
+        compare(engine.unplayedOpacity, 1, "at full strength, as the popup draws Engine");
+        verify(rekordbox.colorScheme !== "engine", "rekordbox's lane: " + rekordbox.colorScheme);
+        verify(findChild(row, "rowSourceWaveform").colorScheme !== "engine", "the row's own waveform is rekordbox's");
+    }
+
     // A picture of the rows with their waveforms, at the page's usual width.
     function test_rowWaveformsScreenshot() {
         const o = openOn(t73(), {playbackController: realPlayback});
@@ -1698,6 +1717,27 @@ TestCase {
         waitForRendering(o.page);
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-row-waveforms.png");
+        }
+    }
+
+    // A picture of an open row: rekordbox's lane over Engine's.
+    function test_openRowScreenshot() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const row = delegateInView(o.page, b04);
+        clickOn(findChild(row, "rowTitle"));
+        compare(row.expanded, true);
+        const rekordbox = findChild(row, "comparisonRekordbox");
+        const engine = findChild(row, "comparisonEngine");
+        tryVerify(() => rekordbox.byteColumns > 0 && engine.byteColumns > 0, 30000, "both waveforms are drawn");
+        tryVerify(() => o.c.engineAnalysis(b04).ready === true, 30000);
+        findChild(o.page, "trackList").positionViewAtIndex(o.c.tracks.indexOf(b04), ListView.Beginning);
+        verify(waitForPolish(o.page.Window.window));
+        wait(300);
+        waitForRendering(o.page);
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-open-row.png");
         }
     }
 }
