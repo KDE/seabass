@@ -1785,6 +1785,322 @@ TestCase {
         verify(findChild(row, "rowSourceWaveform").colorScheme !== "engine", "the row's own waveform is rekordbox's");
     }
 
+    // The popup opens in the look of the side it was opened from, and a
+    // box in it switches to the other side's copy of the track at the
+    // same zoom and place (#131).
+    function test_thePopupSwitchesBetweenTheSides() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const open = delegateInView(o.page, b04);
+        clickOn(findChild(open, "rowTitle"));
+        compare(open.expanded, true);
+        const rekordbox = findChild(open, "comparisonRekordbox");
+        const engine = findChild(open, "comparisonEngine");
+        tryVerify(() => rekordbox.opensZoom && engine.opensZoom, 30000, "both lanes can be opened");
+        const list = findChild(o.page, "trackList");
+        list.positionViewAtIndex(o.page.controller.tracks.indexOf(b04), ListView.Beginning);
+        verify(waitForPolish(o.page.Window.window));
+        const popup = findChild(o.page, "waveformZoomPopup");
+        const box = findChild(popup, "zoomSideBox");
+        verify(box !== null, "the popup has a side box");
+
+        clickOn(engine);
+        tryCompare(popup, "opened", true, 10000);
+        compare(realPlayback.currentFormat, "engine");
+        compare(popup.colorScheme, "engine", "opened from Engine's lane: Engine's look");
+        compare(box.visible, true, "both sides of the track: the box is shown");
+        compare(box.currentText, "Engine");
+        tryVerify(() => popup.sides.length === 2 && popup.sides[0].available && popup.sides[1].available,
+                  30000, "both sides have something to show");
+        tryVerify(() => popup.lengthKnown, 10000, "the Engine copy's length");
+        realPlayback.seek(30000);
+        tryVerify(() => Math.abs(realPlayback.position - 30000) < 50, 5000);
+        const span = popup.shownSpanMs;
+
+        box.activated(0);
+        compare(realPlayback.currentFormat, "rekordbox", "rekordbox's copy loaded");
+        compare(realPlayback.currentSourceId, b04);
+        compare(popup.colorScheme, "vivid", "in rekordbox's look");
+        compare(box.currentText, "rekordbox");
+        tryVerify(() => popup.lengthKnown && Math.abs(realPlayback.position - 30000) < 50, 10000,
+                  "at the same place: " + realPlayback.position);
+        verify(Math.abs(popup.shownSpanMs - span) < span * 0.01, "at the same zoom: " + popup.shownSpanMs + " " + span);
+        popup.close();
+        tryCompare(popup, "visible", false);
+
+        clickOn(rekordbox);
+        tryCompare(popup, "opened", true, 10000);
+        compare(popup.colorScheme, "vivid", "opened from rekordbox's lane: rekordbox's look");
+        compare(box.currentText, "rekordbox");
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
+    }
+
+    // The row's own waveform opens the popup on both sides at once,
+    // rekordbox's over Engine's, each in its own look and in step (#131).
+    function test_theRowWaveformOpensBoth() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const withRow = delegateInView(o.page, b04);
+        const view = rowWaveformOf(withRow);
+        tryVerify(() => view.visible && view.opensZoom, 30000, "B04's waveform is drawn");
+        const popup = findChild(o.page, "waveformZoomPopup");
+        const box = findChild(popup, "zoomSideBox");
+        clickOn(view);
+        tryCompare(popup, "opened", true, 10000);
+        compare(realPlayback.currentFormat, "rekordbox", "rekordbox's copy plays");
+        tryCompare(popup, "showingBoth", true, 30000, "both sides, once both are read");
+        compare(box.currentText, "Both");
+        const area = findChild(popup, "zoomArea");
+        const lanes = [];
+        for (let i = 0; i < area.children.length; ++i) {
+            if (area.children[i].objectName === "zoomLane") {
+                lanes.push(area.children[i]);
+            }
+        }
+        lanes.sort((x, y) => x.y - y.y);
+        compare(lanes.length, 2);
+        const tilesOf = (lane) => {
+            const strip = findChild(lane, "waveformStrip");
+            const out = [];
+            for (let i = 0; i < strip.children.length; ++i) {
+                if (strip.children[i].objectName === "zoomTile") {
+                    out.push(strip.children[i]);
+                }
+            }
+            return out;
+        };
+        tryVerify(() => tilesOf(lanes[0]).length > 0 && tilesOf(lanes[1]).length > 0, 10000);
+        compare(tilesOf(lanes[0])[0].colorScheme, "vivid");
+        compare(tilesOf(lanes[1])[0].colorScheme, "engine");
+        tryVerify(() => tilesOf(lanes[0]).some((t) => t.byteColumns > 0)
+                  && tilesOf(lanes[1]).some((t) => t.byteColumns > 0), 10000, "both waveforms drawn");
+        tryVerify(() => tilesOf(lanes[0]).some((t) => t.beatTicks.length > 0)
+                  && tilesOf(lanes[1]).some((t) => t.beatTicks.length > 0), 10000, "both grids drawn");
+
+        // Each lane at its own view's detail: rekordbox's analysis file's
+        // and Engine's made from its audio, 150 columns a second, not the
+        // rows' overview. rekordbox's copy is the one loaded: its lane is
+        // the player's detail, and only Engine's is read for Both.
+        tryVerify(() => popup.hasDetail && popup.sides[1].detailed === true, 30000, "both sides' detail is read");
+        compare(popup.sides[0].detailed, false, "rekordbox's is the player's, not read again");
+        const laneDetail = (lane) => {
+            const tile = tilesOf(lane)[0];
+            return {ms: tile.columnMs, bytes: tile.columnBytes ? tile.columnBytes.byteLength : 0};
+        };
+        tryVerify(() => laneDetail(lanes[0]).bytes === popup.detail.columns.byteLength
+                  && laneDetail(lanes[1]).bytes === popup.sides[1].columns.byteLength, 5000, "the lanes draw it");
+        const both = [laneDetail(lanes[0]), laneDetail(lanes[1])];
+        for (const d of both) {
+            verify(Math.abs(d.ms - 1000 / 150) < 0.01, "150 columns a second: " + d.ms);
+        }
+
+        // Both lanes put the same moment under the playhead line: the
+        // waveforms and grids are drawn on one timeline. (Their bar
+        // numbers differ by one on B04: Engine's own grid starts its bar 1
+        // at 2.222 s, a bar after rekordbox's at 0 s.)
+        const timeUnderLine = (lane) => {
+            const strip = findChild(lane, "waveformStrip");
+            const tile = tilesOf(lane).find((t) => strip.x + t.x <= popup.lineX
+                                            && strip.x + t.x + t.width > popup.lineX);
+            verify(tile !== undefined, "a tile under the line");
+            return tile.viewStartMs + (popup.lineX - strip.x - tile.x) / popup.pxPerMs;
+        };
+        const sameTime = (why) => {
+            const top = timeUnderLine(lanes[0]);
+            const bottom = timeUnderLine(lanes[1]);
+            verify(Math.abs(top - bottom) < 1e-6, why + ": " + top + " and " + bottom);
+            verify(Math.abs(top - popup.centerMs) <= 1 / popup.pxPerMs, why + ": the playhead's "
+                   + popup.centerMs + ", drawn at " + top);
+        };
+        sameTime("opened");
+        popup.zoomBy(2, popup.lineX);
+        sameTime("zoomed");
+        popup.scrollBy(300);
+        sameTime("scrolled");
+        popup.follow();
+        realPlayback.seek(30000);
+        tryVerify(() => Math.abs(realPlayback.position - 30000) < 50, 5000);
+        sameTime("seeked");
+
+        // The single views draw the same detail.
+        box.activated(0);
+        compare(popup.showingBoth, false);
+        tryVerify(() => popup.hasDetail, 10000, "rekordbox's own detail");
+        compare(popup.detail.columns.byteLength, both[0].bytes, "rekordbox: the same columns as in Both");
+        verify(Math.abs(popup.detail.msPerColumn - both[0].ms) < 0.01, "at the same step");
+        box.activated(1);
+        tryCompare(realPlayback, "currentFormat", "engine");
+        tryVerify(() => popup.hasDetail && popup.colorScheme === "engine", 30000, "Engine's own detail");
+        compare(popup.detail.columns.byteLength, both[1].bytes, "Engine: the same columns as in Both");
+        verify(Math.abs(popup.detail.msPerColumn - both[1].ms) < 0.01, "at the same step");
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
+    }
+
+    // Opens the popup on B04's both sides from its row's own waveform,
+    // and waits for Engine's side to be read for it.
+    function openBoth(o) {
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const view = rowWaveformOf(delegateInView(o.page, b04));
+        tryVerify(() => view.visible && view.opensZoom, 30000, "B04's waveform is drawn");
+        const popup = findChild(o.page, "waveformZoomPopup");
+        clickOn(view);
+        tryCompare(popup, "opened", true, 10000);
+        tryVerify(() => popup.showingBoth && popup.sides[1].detailed === true, 30000, "Engine's side is read");
+        return popup;
+    }
+    // Stages B04's copy and saves it, running `during` while the save
+    // writes.
+    function saveWhile(o, during) {
+        o.c.setTicked(b04, true);
+        waitSettled(o.c);
+        verify(o.c.canStage, "something to stage");
+        o.c.stage();
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        const saved = finished(session, () => {
+            session.save();
+            verify(EditSessionRegistry.anyWriting, "the save is writing");
+            during();
+        }, "the copy");
+        compare(saved.error, "", JSON.stringify(saved));
+    }
+
+    // The player going on to another track (the queue's next) while Both
+    // shows B04: the popup follows the player as one view, and no read of
+    // B04 starts for it.
+    function test_bothLetsGoWhenThePlayerMovesOn() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        const popup = openBoth(o);
+        const reads = o.c.zoomDetailReads();
+        const next = o.c.zoomTrack(b01);
+        realPlayback.load(next.format, next.libraryPath, next.sourceId, next.filePath, next.title, next.artist,
+                          next.artworkPath, next.cues, next.fallbackArtworkPath, false);
+        compare(realPlayback.currentSourceId, b01);
+        compare(popup.loadedSide, -1);
+        compare(popup.showingBoth, false, "Both stops with B04 gone from the player");
+        compare(popup.lanes.length, 1, "one lane, the player's");
+        compare(findChild(popup, "zoomSideBox").visible, false);
+        tryVerify(() => popup.hasDetail, 10000, "B01's own detail");
+        compare(findChild(popup, "zoomTitle").text, row(o.c, b01).title);
+        wait(500);
+        compare(o.c.zoomDetailReads(), reads, "no read of B04 starts");
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
+    }
+
+    // Closing the popup stops its read: opened and closed while a save
+    // holds the read back, nothing is read once the save is over.
+    function test_closingStopsTheZoomRead() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const popup = findChild(o.page, "waveformZoomPopup");
+        // At once, so that it is closed before the save is over.
+        popup.enter = null;
+        popup.exit = null;
+        const reads = o.c.zoomDetailReads();
+        saveWhile(o, () => {
+            o.page.openZoom(b04, "both");
+            compare(popup.visible, true);
+            compare(o.c.zoomDetailReads(), reads, "held while the save writes");
+            popup.close();
+            compare(popup.visible, false);
+        });
+        wait(1000);
+        compare(o.c.zoomDetailReads(), reads, "closed: nothing is read once the save is over");
+        compare(o.c.zoomDetail(b04).ready, false);
+        realPlayback.stop();
+    }
+
+    // What was read for Both is read again once a write has ended, while
+    // the popup stays open.
+    function test_bothIsReadAgainAfterAWrite() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        const popup = openBoth(o);
+        const reads = o.c.zoomDetailReads();
+        saveWhile(o, () => {});
+        tryVerify(() => o.c.zoomDetailReads() > reads, 10000, "Engine's side is read again after the save");
+        tryVerify(() => popup.sides[1].detailed === true, 30000);
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
+    }
+
+    // Each lane of Both is on the timeline its own single view draws it
+    // on. B04 is an MP3 with a 25 ms lead-in: rekordbox's waveform and grid
+    // move by it onto the player's timeline, Engine's do not move. Each
+    // lane is drawn from what the page read while the other side is
+    // loaded, and compared with that side's own view.
+    function test_bothLanesKeepEachSidesTimeline() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const open = delegateInView(o.page, b04);
+        clickOn(findChild(open, "rowTitle"));
+        const engine = findChild(open, "comparisonEngine");
+        tryVerify(() => engine.opensZoom, 30000, "Engine's lane can be opened");
+        findChild(o.page, "trackList").positionViewAtIndex(o.c.tracks.indexOf(b04), ListView.Beginning);
+        verify(waitForPolish(o.page.Window.window));
+        const popup = findChild(o.page, "waveformZoomPopup");
+        const box = findChild(popup, "zoomSideBox");
+        const nearestBeat = (ticks, ms) => ticks.reduce(
+            (best, t) => Math.abs(t.timeMs - ms) < Math.abs(best - ms) ? t.timeMs : best, Infinity);
+        const settle = () => {
+            realPlayback.seek(30000);
+            tryVerify(() => popup.lengthKnown && Math.abs(realPlayback.position - 30000) < 50, 10000);
+        };
+
+        // Engine's single view, then Both: rekordbox's lane from the page.
+        clickOn(engine);
+        tryCompare(popup, "opened", true, 10000);
+        compare(realPlayback.currentFormat, "engine");
+        tryVerify(() => popup.hasDetail, 30000, "Engine's own detail");
+        settle();
+        const engineStart = popup.detail.startMs || 0;
+        compare(engineStart, 0, "Engine's own view does not move its waveform");
+        compare(o.c.zoomDetail(b04).ready, false, "one view: the page reads nothing, the player decoded the file");
+        tryVerify(() => popup.ticks.length > 0, 10000);
+        const engineBeat = nearestBeat(popup.ticks, 30000);
+        box.activated(2);
+        tryVerify(() => popup.showingBoth && popup.sides[0].detailed === true, 30000, "rekordbox's detail is read");
+        compare(o.c.zoomDetail(b04).engineRead, false, "Both reads rekordbox's side only: Engine's file is not decoded twice");
+        const shift = popup.sides[0].startMs;
+        verify(shift < -20, "the lead-in moves rekordbox's side: " + shift);
+        compare(popup.lanes[0].startMs, shift, "rekordbox's lane is drawn from the page's read, moved by it");
+        compare(popup.lanes[1].startMs, engineStart, "Engine's lane where its own view draws it");
+        tryVerify(() => popup.lanes[0].ticks.length > 0, 10000);
+        const rekordboxBeatInBoth = nearestBeat(popup.lanes[0].ticks, 30000);
+        compare(nearestBeat(popup.lanes[1].ticks, 30000), engineBeat, "Engine's beats where its own view has them");
+
+        // rekordbox's single view: the same offset and the same beat.
+        box.activated(0);
+        tryCompare(realPlayback, "currentFormat", "rekordbox");
+        tryVerify(() => popup.hasDetail && popup.colorScheme === "vivid", 30000, "rekordbox's own detail");
+        settle();
+        verify(Math.abs(popup.detail.startMs - shift) < 1e-6,
+               "rekordbox's own view moves its waveform as its lane in Both did: " + popup.detail.startMs + " and " + shift);
+        tryVerify(() => popup.ticks.length > 0, 10000);
+        verify(Math.abs(nearestBeat(popup.ticks, 30000) - rekordboxBeatInBoth) < 0.5,
+               "and its beats: " + nearestBeat(popup.ticks, 30000) + " and " + rekordboxBeatInBoth);
+
+        // Both again, rekordbox loaded: Engine's lane now from the page.
+        box.activated(2);
+        tryVerify(() => popup.showingBoth && popup.sides[1].detailed === true, 30000, "Engine's detail is read");
+        compare(popup.lanes[1].startMs, engineStart, "Engine's lane from the page's read is not moved");
+        compare(popup.lanes[0].startMs, shift, "rekordbox's lane, the player's own now, is where it was");
+        compare(nearestBeat(popup.lanes[1].ticks, 30000), engineBeat);
+        popup.close();
+        tryCompare(popup, "visible", false);
+        realPlayback.stop();
+    }
+
     // A picture of the rows with their waveforms, at the page's usual width.
     function test_rowWaveformsScreenshot() {
         const o = openOn(t73(), {playbackController: realPlayback});
@@ -1822,5 +2138,42 @@ TestCase {
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-open-row.png");
         }
+    }
+
+    // Pictures of the popup opened from each side of an open row.
+    function test_popupScreenshots() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const open = delegateInView(o.page, b04);
+        clickOn(findChild(open, "rowTitle"));
+        const rekordbox = findChild(open, "comparisonRekordbox");
+        const engine = findChild(open, "comparisonEngine");
+        tryVerify(() => rekordbox.opensZoom && engine.opensZoom, 30000, "both lanes can be opened");
+        const list = findChild(o.page, "trackList");
+        list.positionViewAtIndex(o.page.controller.tracks.indexOf(b04), ListView.Beginning);
+        verify(waitForPolish(o.page.Window.window));
+        const popup = findChild(o.page, "waveformZoomPopup");
+        const rowView = rowWaveformOf(open);
+        for (const [lane, name] of [[engine, "engine"], [rekordbox, "rekordbox"], [rowView, "both"]]) {
+            clickOn(lane);
+            tryCompare(popup, "opened", true, 10000);
+            tryVerify(() => popup.lengthKnown && popup.hasDetail, 30000, name + "'s detail");
+            if (name === "both") {
+                tryVerify(() => popup.showingBoth && popup.lanes.length === 2 && popup.lanes.every(
+                              (l) => !!l.columns && Math.abs(l.columnMs - 1000 / 150) < 0.01), 30000,
+                          "both sides' detail");
+            }
+            realPlayback.seek(30000);
+            tryVerify(() => Math.abs(realPlayback.position - 30000) < 50, 5000);
+            wait(300);
+            waitForRendering(o.page);
+            if (screenshotDir) {
+                grabImage(testCase).save(screenshotDir + "/BeatGridsWaveformsPage-popup-" + name + ".png");
+            }
+            popup.close();
+            tryCompare(popup, "visible", false);
+        }
+        realPlayback.stop();
     }
 }
