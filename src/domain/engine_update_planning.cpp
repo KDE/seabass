@@ -753,6 +753,17 @@ private:
         return true;
     }
 
+    // The old item of a reused id whose new item rekordbox's path pairs
+    // with something else first (Engine's playlist at that path, or the
+    // group of rekordbox playlists sharing it), so no create is planned
+    // for it (#126): certain and a plain delete is enough to offer the
+    // old item's delete under the plan's own key.
+    bool reusedBeforeThePath(const BaselinePlaylist *b, const BaselinePlaylist &r,
+                             const std::set<std::string> &rekordboxPaths) const
+    {
+        return b && b->path != r.path && certainlyAnother(*b, r) && plainDelete(*b, rekordboxPaths);
+    }
+
     // Whether the record declines `pathKey` as a member of playlist `id`.
     bool declinedMemberOf(std::uint32_t id, const std::string &pathKey) const
     {
@@ -1018,7 +1029,7 @@ private:
         if (base) {
             for (const BaselinePlaylist *p : rest) {
                 const BaselinePlaylist *b = base->findPlaylist(p->id);
-                if (b && b->path != path && countAt(b->path) == 1) {
+                if (b && b->path != path && countAt(b->path) == 1 && !idsReused.count(p->id)) {
                     claimedEnginePaths.insert(b->path);
                 }
             }
@@ -1153,6 +1164,18 @@ private:
             if (folders && !pairedAt.count(path)) {
                 pairedAt[path] = group.front();
             }
+            // The record's item of a member's id, when certainly another,
+            // is the deletes' below, not a member renamed onto the path
+            // (#126).
+            if (base) {
+                for (const BaselinePlaylist *p : group) {
+                    const auto paired = pairedAt.find(path);
+                    if ((paired == pairedAt.end() || paired->second != p)
+                        && reusedBeforeThePath(base->findPlaylist(p->id), *p, rekordboxPaths)) {
+                        idsReused.insert(p->id);
+                    }
+                }
+            }
         }
         // The paired one first among its group, so the others can follow it.
         std::map<std::string, std::vector<std::size_t>> slots;
@@ -1255,6 +1278,12 @@ private:
                 continue;
             }
             if (countAt(r.path) == 1) {
+                // Engine's playlist at the path is this one; the record's
+                // item of the id, when certainly another, is the deletes'
+                // below (#126).
+                if (reusedBeforeThePath(b, r, rekordboxPaths)) {
+                    idsReused.insert(r.id);
+                }
                 claimedEnginePaths.insert(r.path);
                 st.planMembers = true;
                 st.engineNow = r.path;

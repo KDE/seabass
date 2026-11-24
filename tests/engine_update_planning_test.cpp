@@ -1775,6 +1775,72 @@ int main()
                      "(#124) OK\n";
     }
 
+    // #126: the reuse check where rekordbox's new path pairs before it.
+    //   a: Engine already has a playlist at the new path, "T73 New" made on
+    //      the player holding E: it is paired with rekordbox's by path, as
+    //      a playlist the record does not know (C and D added, E only
+    //      Engine's: a conflict), and Engine's "T73 Delete Me" is offered
+    //      for deletion under the plan's own key.
+    //   b: rekordbox spells the new path twice ("T73 New", ids 2 and 3):
+    //      the shared-path conflict as before, and the old playlist's
+    //      delete beside it.
+    {
+        {
+            auto [w, base] = issueWorld(false, 1);
+            w.engine[4].playlists = {{"T73 New", 0}};
+            w.enginePlaylists.push_back({"T73 New", false, 1});
+            const auto p = plan(w, base);
+            for (const auto &k : p.engineOwnKept) {
+                std::cout << "  #126 a: Engine's own " << k.playlistPath << " " << k.header.key << "\n";
+            }
+            if (p.playlistsToDelete.empty()) {
+                std::cerr << "FAIL (a): \"T73 Delete Me\" is not offered for deletion\n";
+            }
+            assert(p.playlistsToDelete.size() == 1 && p.playlistsToDelete[0].path == "T73 Delete Me");
+            assert(p.playlistsToDelete[0].header.key == "reused:2:T73 Delete Me");
+            assert(p.playlistsToDelete[0].header.checkedByDefault);
+            assert(p.playlistsToCreate.empty() && p.playlistsToRename.empty());
+            std::multiset<std::string> edits;
+            for (const auto &m : p.membership) {
+                edits.insert((m.kind == MembershipEdit::Kind::Add ? "+" : "-") + m.playlistPath + ":" + m.pathKey);
+            }
+            assert((edits == std::multiset<std::string>{"+T73 New:music/c.mp3", "+T73 New:music/d.mp3"}));
+            assert(p.conflicts.size() == 1 && p.conflicts[0].header.key == "member:2:music/e.mp3");
+            assert(p.conflicts[0].header.reason == EngineUpdateReason::NoBaselineEngineMember);
+            for (const auto &k : p.engineOwnKept) {
+                assert(k.playlistPath != "T73 Delete Me");
+            }
+            World after = w;
+            apply(after, p);
+            assert(!hasPlaylist(after, "T73 Delete Me"));
+            const auto record = recordAfterSave(base, w, p);
+            assert(keysOfTheFileGrammar(record));
+            assert(recorded(record, 2) && recorded(record, 2)->path == "T73 New");
+            const auto next = plan(after, record);
+            assert(next.playlistsToDelete.empty() && next.playlistsToCreate.empty() && next.playlistsToRename.empty());
+        }
+        {
+            auto [w, base] = issueWorld(false, 1);
+            w.rekordbox[4].playlists = {{"T73 New", 0}};
+            w.rekordboxPlaylists.push_back({"T73 New", false, 3});
+            const auto p = plan(w, base);
+            if (p.playlistsToDelete.empty()) {
+                std::cerr << "FAIL (b): \"T73 Delete Me\" is not offered for deletion\n";
+            }
+            assert(p.playlistsToDelete.size() == 1 && p.playlistsToDelete[0].path == "T73 Delete Me");
+            assert(p.playlistsToDelete[0].header.key == "reused:2:T73 Delete Me");
+            assert(p.playlistsToRename.empty() && p.playlistsToCreate.empty());
+            assert(p.conflicts.size() == 1 && p.conflicts[0].header.reason == EngineUpdateReason::RekordboxPathShared);
+            assert(p.conflicts[0].header.key == "playlist:2");
+            for (const auto &k : p.engineOwnKept) {
+                assert(k.playlistPath != "T73 Delete Me");
+            }
+            const auto record = recordAfterSave(base, w, p);
+            assert(keysOfTheFileGrammar(record));
+        }
+        std::cout << "a reused id whose new path Engine already has, or rekordbox spells twice: the old playlist "
+                     "offered for deletion (#126) OK\n";
+    }
 
     // No baseline: an Engine-only playlist beside a new rekordbox one,
     // holding the same tracks, may be it renamed. One conflict: rename

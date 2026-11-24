@@ -59,6 +59,8 @@
 //           id in a folder rekordbox renamed in the same export; its delete
 //           is staged before the create and the rename, under the path
 //           Engine has then (testReusedInRenamedFolder).
+// reusedpath  Not a hardware step (#126): a reused id whose new path Engine
+//           already has, saved from the page (testReusedAtAPathEngineHas).
 // kindrefused  Not a hardware step (#124): nothing inside a refused folder
 //           is made by a save (testKindChangedRefused).
 //
@@ -3743,6 +3745,75 @@ const d::BaselineTrack *recordedTrack(const d::RekordboxBaseline &record, const 
     return nullptr;
 }
 
+// #126 on the page, saved: the record at 40 with "T73 Delete Me" under the
+// id export 128 gives "T73 Renamed" (as in testReusedId), and Engine
+// already has "T73 Renamed" (made on the player, empty): no create, "T73
+// Delete Me"'s delete under the plan's own key, ticked, and its tracks put
+// into Engine's "T73 Renamed". Saved as listed: Engine and the record
+// without "T73 Delete Me", and the next analysis offers nothing of it.
+// (rekordbox spelling the path twice is rekordbox_export_sync_controller_
+// test's case 13: export.pdb's writer here refuses a name a level has.)
+void testReusedAtAPathEngineHas()
+{
+    const auto stick = makeStick("t73_reused_path", "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
+    std::string error;
+    auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(record && error.empty());
+    std::uint32_t renamedId = 0;
+    {
+        seabass::infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+        for (const auto &node : pdb.playlistTree()) {
+            if (node.name == "T73 Renamed" && node.parentId == 0) {
+                renamedId = node.id;
+            }
+        }
+    }
+    assert(renamedId != 0);
+    for (auto &playlist : record->playlists) {
+        if (playlist.path == "T73 Delete Me") {
+            playlist.id = renamedId;
+        }
+    }
+    assert(seabass::infrastructure::local::writeRekordboxBaseline(stick.root, *record, [](const std::string &) {},
+                                                                    &error));
+    assert(seabass::infrastructure::engine::createEnginePlaylist(pathToUtf8(stick.engine), "T73 Renamed") > 0);
+    const std::string oldKey = "reused:" + std::to_string(renamedId) + ":T73 Delete Me";
+
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    bool deleteListed = false;
+    for (const Row &row : controller.rows()->rows()) {
+        std::cout << "  lists: " << (row.included ? "[x] " : "[ ] ") << row.kind.toStdString() << " " << describe(row)
+                  << " " << row.header.key << "\n";
+        assert(describe(row) != "create playlist T73 Renamed");
+        assert(describe(row).rfind("rename ", 0) != 0);
+        if (row.header.key == oldKey) {
+            deleteListed = row.included && describe(row) == "delete playlist T73 Delete Me (2)";
+        }
+    }
+    assert(deleteListed && "the old playlist's delete, ticked");
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    waitForSave(sessionOf(stick), controller, false);
+
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Delete Me';") == 0);
+    const auto renamed = testing::sqlRows(stick.db, "SELECT (SELECT count(*) FROM PlaylistEntity e WHERE e.listId = "
+                                                    "p.id) FROM Playlist p WHERE p.title = 'T73 Renamed';");
+    assert(renamed.size() == 1 && renamed[0][0] == "5");
+    const auto after = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(after && error.empty());
+    assert(!after->findPlaylistByPath("T73 Delete Me") && "the old playlist is in no record");
+    assert(after->findPlaylist(renamedId) && after->findPlaylist(renamedId)->path == "T73 Renamed");
+    for (const auto &[key, state] : after->declined) {
+        assert(d::parseItemKey(key) && "of the file's grammar");
+    }
+    for (const Row &row : controller.rows()->rows()) {
+        std::cerr << "  then lists: " << describe(row) << " " << row.header.key << "\n";
+    }
+    assert(controller.rows()->rowCount() == 0 && "nothing left after the save");
+    std::cout << "reusedpath: the old playlist offered for deletion where Engine had the new path, saved OK\n";
+}
+
 // #124 on the page, saved: the record at 128 and Engine hold "T73 Old"
 // (B01) under the id rekordbox now gives the new folder "T73 NewF", which
 // holds "T73 NewF/T73 Kid" (B07); Engine's "T73 Old" also holds B02 since
@@ -3825,7 +3896,7 @@ int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|kindrefused\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|reusedpath|kindrefused\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -3869,6 +3940,8 @@ int main(int argc, char **argv)
         testReusedId();
     } else if (which == "reusedrenamed") {
         testReusedInRenamedFolder();
+    } else if (which == "reusedpath") {
+        testReusedAtAPathEngineHas();
     } else if (which == "kindrefused") {
         testKindChangedRefused();
     } else {

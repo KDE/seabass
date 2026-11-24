@@ -391,6 +391,20 @@ What it reuses, and what it must not:
   the record while refused, its members and their order with them (the
   plan lists them as held, `declinedSuppressed`), and Engine's copy is
   accounted for by its refusal, not listed as Engine's own.
+  **Decision (#126, 2026-11-24):** the check also runs where rekordbox's
+  new path pairs first, with Engine's playlist already at that path or
+  with the group of rekordbox playlists spelling it: when the two are
+  certainly two items and the old one's delete is plain, the old one is
+  offered for deletion under its `reused:` key. No create goes with it
+  (Engine has the path, or the group's conflict makes it), so the delete
+  is staged with the other deletes. Engine's playlist at the new path is
+  paired as one the record does not know: what only it holds is a
+  conflict, as for any playlist without a record. A save that stops
+  before that late delete records the old playlist whole under the id,
+  and none of the new one's tracks that landed before it, so the next
+  analysis offers the delete again. Staged late, such a delete shares
+  #112's case: under a folder rename left unticked it names the path
+  after that rename (not fixed here).
   **Decision (#99, 2026-11-21):** the delete and the create are two
   items, ticked apart. The create is `playlist:<id>` as always; the
   delete has a key of the plan's own, `reused:<id>:<old path>`, outside

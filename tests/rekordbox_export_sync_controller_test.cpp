@@ -49,6 +49,9 @@
 //    Engine of a conflict nothing recorded the origin of (OriginUnknown)
 //    sets Engine's, and does not call it Seabass's.
 //
+// 13. #126: a reused id among rekordbox playlists sharing one path: the old
+//     playlist offered for deletion and deleted (testReusedAtASharedPath).
+//
 // argv[1]: tests/fixtures/anonymized_library.
 
 #include <QCoreApplication>
@@ -2132,6 +2135,139 @@ void testEmptyAnswerWithARecord(const fs::path &fixture)
 
 }  // namespace
 
+// 13. #126 on a copy of the fixture's stick: rekordbox spells one path for
+//     several playlists (the shared-path conflict), and the record holds
+//     one of them, one with tracks, as "Reused Shared Old" with a track
+//     none of the group holds, as Engine has it: rekordbox gave that
+//     playlist's id to a member of the group. The page lists the old
+//     playlist's delete under the plan's own key, ticked, beside the
+//     group's conflict; saved alone, Engine and the record lose "Reused
+//     Shared Old", and the next analysis offers nothing of it.
+void testReusedAtASharedPath(const fs::path &fixture)
+{
+    namespace d = seabass::domain;
+    namespace engine = seabass::infrastructure::engine;
+    const auto stick = testing::makeEngineChangeStick(fixture, "export_sync_reused_shared");
+    const std::string oldName = "Reused Shared Old";
+    const std::string enginePath = pathToUtf8(stick.engine);
+    const char *sections[] = {"playlists", "tracksToAdd", "tracksToRemove", "membership", "metadataToEngine",
+                              "cuesToEngine", "restoresToRekordbox"};
+
+    // A record of the stick as it stands: a save with nothing ticked.
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    LibraryEditSession *session = sessionOf(stick);
+    for (const char *section : sections) {
+        controller.setSectionIncluded(QString::fromLatin1(section), false);
+    }
+    controller.stageSelected();
+    saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+    auto baseline = testing::readBaseline(stick);
+    assert(baseline);
+
+    // A shared path, and a recorded member of its group that holds tracks.
+    std::string sharedPath;
+    for (const auto &row : rowsOf(controller)) {
+        if (row.section == Section::Conflicts && row.header.reason == d::EngineUpdateReason::RekordboxPathShared) {
+            for (const auto *c : RekordboxExportSyncListModel::conflictsOf(row)) {
+                for (const auto &edit : c->rekordboxChoice) {
+                    if (const auto *create = std::get_if<d::PlaylistCreate>(&edit)) {
+                        sharedPath = create->path;
+                    } else if (const auto *m = std::get_if<d::MembershipEdit>(&edit)) {
+                        sharedPath = m->playlistPath;
+                    }
+                }
+            }
+        }
+        if (!sharedPath.empty()) {
+            break;
+        }
+    }
+    assert(!sharedPath.empty() && "the precondition: the fixture has rekordbox playlists sharing a path");
+    std::set<std::string> groupMembers;
+    d::BaselinePlaylist *reused = nullptr;
+    for (auto &playlist : baseline->playlists) {
+        if (playlist.path == sharedPath) {
+            groupMembers.insert(playlist.members.begin(), playlist.members.end());
+            if (!playlist.folder && !playlist.members.empty() && !reused) {
+                reused = &playlist;
+            }
+        }
+    }
+    assert(reused && "the precondition: a recorded member of the group holds tracks");
+    // Track keys both catalogs list, by Engine row.
+    seabass::infrastructure::rekordbox::KaitaiRekordboxReader rekordboxReader(pathToUtf8(stick.pioneer));
+    const std::vector<d::Track> rekordbox = rekordboxReader.readAll();
+    engine::LibdjinteropEngineReader engineReader(enginePath);
+    const std::vector<d::Track> engineTracks = seabass::application::ScanLibrary(engineReader).execute();
+    std::map<std::string, std::int64_t> engineIdByKey;
+    for (const auto &[r, e] : d::matchTracks(rekordbox, engineTracks, d::MatchScope::OneStick)) {
+        engineIdByKey[testing::keyOf(stick, *r)] = std::stoll(e->sourceId);
+    }
+    std::string q;
+    for (const auto &entry : engineIdByKey) {
+        if (!groupMembers.count(entry.first)) {
+            q = entry.first;
+            break;
+        }
+    }
+    assert(!q.empty());
+    const std::uint32_t id = reused->id;
+    reused->path = oldName;
+    reused->parentId = 0;
+    reused->members = {q};
+    for (auto it = baseline->declined.begin(); it != baseline->declined.end();) {
+        const auto item = d::parseItemKey(it->first);
+        it = item && item->playlistId == id ? baseline->declined.erase(it) : std::next(it);
+    }
+    testing::plantBaseline(stick, *baseline);
+    assert(engine::createEnginePlaylist(enginePath, oldName) > 0);
+    assert(engine::addToEnginePlaylist(enginePath, oldName, engineIdByKey.at(q)));
+
+    analyze(controller, stick);
+    const std::string oldKey = d::reusedPlaylistItemKey(id, oldName);
+    int del = -1;
+    bool sharedConflict = false;
+    const auto &rows = rowsOf(controller);
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].header.key == oldKey) {
+            del = static_cast<int>(i);
+        }
+        sharedConflict = sharedConflict
+            || (rows[i].section == Section::Conflicts
+                && rows[i].header.reason == d::EngineUpdateReason::RekordboxPathShared);
+        if (rows[i].edit) {
+            if (const auto *rename = std::get_if<d::PlaylistRename>(&*rows[i].edit)) {
+                assert(rename->fromPath != oldName && "never a rename of the old playlist");
+            }
+        }
+    }
+    if (del < 0) {
+        std::cerr << "FAIL: \"" << oldName << "\" is not offered for deletion\n";
+    }
+    assert(del >= 0 && included(controller, del) && "the old playlist's delete, ticked");
+    assert(sharedConflict && "the group's conflict as before");
+    for (const char *section : sections) {
+        controller.setSectionIncluded(QString::fromLatin1(section), false);
+    }
+    controller.setIncluded(del, true);
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    const QVariantMap saved =
+        saveAndWait(session, controller, [](LibraryEditSession *s, RekordboxExportSyncController &) { s->save(); });
+    assert(saved.value("error").toString().isEmpty());
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = '" + oldName + "';") == 0);
+    const auto after = testing::readBaseline(stick);
+    assert(after && !after->findPlaylistByPath(oldName));
+    for (const auto &[key, state] : after->declined) {
+        assert(d::parseItemKey(key));
+    }
+    for (const auto &row : rowsOf(controller)) {
+        assert(row.header.key != oldKey);
+    }
+    std::cout << "case 13 (#126: a reused id in a group sharing a path: the old playlist offered and deleted) OK\n";
+}
+
 int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
@@ -2168,6 +2304,7 @@ int main(int argc, char **argv)
     testReusedPlaylistId(fixture, ReusedSave::CancelAfterDeleteMemberUnticked);
     testReusedPlaylistId(fixture, ReusedSave::CancelBeforeBothMemberUnticked);
     testReusedPlaylistId(fixture, ReusedSave::CancelBeforeBothCreateUnticked);
+    testReusedAtASharedPath(fixture);
     std::cout << "rekordbox_export_sync_controller_test: all cases OK\n";
     return 0;
 }

@@ -19,6 +19,9 @@
 //    the save stopped before the new one's create landed. The record
 //    holds no playlist of the id, never "Old" again, whether or not the
 //    old one's delete landed.
+// 6. #126: the same id with no create (Engine had the new path), the
+//    delete staged late and not reached, a member add before it landed:
+//    the record keeps the old playlist whole, nothing of the new one's.
 
 #include <QCoreApplication>
 
@@ -315,6 +318,55 @@ int main(int argc, char **argv)
         }
     }
     std::cout << "case 5 (#99: a stopped save never records the old playlist under a reused id) OK\n";
+
+    // 6. #126: the record says playlist 2 is "Old" holding k1; rekordbox
+    //    gave id 2 to "New", holding k2, a path Engine already had, so
+    //    there is no create: the page put k2 into Engine's "New" (lands)
+    //    and staged "Old"'s delete with the late deletes (the save never
+    //    reaches it). The record keeps "Old" whole under 2, k1 alone, so
+    //    the next analysis finds the reuse again and offers the delete;
+    //    k2's add, which landed, cannot be recorded under 2 while it holds
+    //    "Old".
+    {
+        const auto stick = testing::makeEngineChangeStick(fixture, "record_reused_late_delete");
+        testing::levelImportCounter(stick);
+        const auto tracks = testing::rekordboxTracks(stick, 2);
+        const std::string k1 = testing::keyOf(stick, tracks[0]);
+        const std::string k2 = testing::keyOf(stick, tracks[1]);
+        domain::RekordboxBaseline previous;
+        previous.pdbSequence = 100;
+        previous.tracks = {testing::baselineRow(stick, tracks[0], 1, ValueOrigin::Rekordbox, 4000.0),
+                           testing::baselineRow(stick, tracks[1], 1, ValueOrigin::Rekordbox, 4000.0)};
+        previous.playlists = {domain::BaselinePlaylist{2, 0, false, "Old", {k1}}};
+        testing::plantBaseline(stick, previous);
+
+        domain::RekordboxBaseline next = previous;
+        next.playlists = {domain::BaselinePlaylist{2, 0, false, "New", {k2}}};
+        const std::string reused = domain::reusedPlaylistItemKey(2, "Old");
+        const QString failId = QStringLiteral("rekordbox-export-sync:fail");
+        const QString stopId = QStringLiteral("rekordbox-export-sync:stop");
+        const RecordRekordboxBaselineChange::AppliedBy appliedBy = {
+            {SyncOntoEngineId.toStdString(), {"member:2:" + k2}}, {failId.toStdString(), {reused}}};
+        const SaveLoopResult saved = testing::saveChanges(
+            {owned(testing::syncOntoEngine(stick)), std::make_shared<CancellingChange>(stopId),
+             std::make_shared<testing::FailingChange>(failId), record(stick, next, appliedBy, {reused})},
+            stick.pioneerPath(), stick.enginePath());
+        assert(saved.cancelled && saved.failedId.isEmpty());
+        assert((saved.appliedIds == QStringList{SyncOntoEngineId, stopId}) && "partial: the delete did not land");
+        const auto recorded = testing::readBaseline(stick);
+        assert(recorded && recorded->pdbSequence == testing::FixtureSequence);
+        const auto *two = recorded->findPlaylist(2);
+        if (two) {
+            std::cout << "  #126 stopped: the record holds 2 as \"" << two->path << "\" with " << two->members.size()
+                      << " member(s)\n";
+        }
+        assert(two && two->path == "Old");
+        assert((two->members == std::vector<std::string>{k1}) && "the old playlist whole, nothing of New's");
+        for (const auto &[key, state] : recorded->declined) {
+            assert(domain::parseItemKey(key));
+        }
+        std::cout << "case 6 (#126: a stopped save before a late reused delete keeps the old playlist whole) OK\n";
+    }
 
     std::cout << "record_rekordbox_baseline_change_test: all passed\n";
     return 0;

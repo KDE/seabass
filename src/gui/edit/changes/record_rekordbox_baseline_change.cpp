@@ -119,9 +119,15 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
                 continue;
             }
             const std::string createKey = domain::playlistItemKey(reused->id);
-            // The page stages the old playlist's delete directly before the
-            // new one's create (stageSelected), so a delete staged and not
-            // landed means the create did not land either.
+            // The page stages the old playlist's delete before the new
+            // one's create (stageSelected), so a delete staged and not
+            // landed means the create did not land either. Where there is
+            // no create (#126: Engine had the new path already, or the
+            // rekordbox playlists sharing it are a conflict), the delete
+            // is staged with the other deletes, late: what landed before
+            // it under the id (tracks put into Engine's playlist at the
+            // new path) cannot be recorded under the id while it holds
+            // the old playlist, and is put back too.
             const bool deleteStaged = landed.count(reusedKey) || notLanded.count(reusedKey);
             const bool deleteLanded = landed.count(reusedKey) > 0;
             const domain::BaselinePlaylist *old = previous ? previous->findPlaylist(reused->id) : nullptr;
@@ -137,6 +143,11 @@ void RecordRekordboxBaselineChange::beforeSave(SaveContext &ctx)
                 keys.insert(domain::orderItemKey(reused->id));
                 for (const auto &member : old->members) {
                     keys.insert(domain::memberItemKey(reused->id, member));
+                }
+                if (const domain::BaselinePlaylist *now = next.findPlaylist(reused->id)) {
+                    for (const auto &member : now->members) {
+                        keys.insert(domain::memberItemKey(reused->id, member));
+                    }
                 }
                 const auto underTheId = [&](const std::string &declinedKey) {
                     const auto item = domain::parseItemKey(declinedKey);
