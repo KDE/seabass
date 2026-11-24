@@ -15,7 +15,9 @@
 
 #include "application/ports/analysis_writer.hpp"
 #include "application/use_cases/copy_beat_grids.hpp"
+#include "domain/track_analysis.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
+#include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/anlz_source_for_root.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
@@ -130,6 +132,68 @@ inline std::string rekordboxAnalysisDigest(const application::RekordboxAnalysis 
     char out[40];
     std::snprintf(out, sizeof out, "%016zx-%zx", std::hash<std::string_view>{}(bytes), bytes.size());
     return out;
+}
+
+// Both sides of a Sync after Rekordbox Export analysis conflict (#136) as
+// one stored value: the record keeps it with an answer, and the conflict
+// is asked again once it differs. So unlike the digest above it is stable
+// across builds and machines: a SHA-256, in hex, over an explicit,
+// big-endian layout of exactly the part compared, nothing else (no key,
+// no tempo).
+//
+//   "seabass analysis state 1\n", then "grid\n" or "waveform\n"
+//   rekordbox's part, then Engine's, each:
+//     grid      u64 beat count, then per beat: f64 time in ms (IEEE 754
+//               bits), i32 beat in the bar
+//     waveform  rekordbox: u8 3 (three-band preview) or 6 (colour), or 0
+//               for none, u64 byte count, the preview's bytes;
+//               Engine: u64 column count, then per column f64 low, mid,
+//               high
+//   grid only: u8 1 when Engine's grid is locked on the player, else 0,
+//   so a lock set or taken off since is a change, asked again.
+inline std::string analysisConflictState(bool grid, const application::RekordboxAnalysis &rekordbox,
+                                         const domain::TrackAnalysis &engine, bool engineLocked)
+{
+    std::string bytes = std::string("seabass analysis state 1\n") + (grid ? "grid\n" : "waveform\n");
+    const auto u64 = [&bytes](std::uint64_t v) {
+        for (int shift = 56; shift >= 0; shift -= 8) {
+            bytes += static_cast<char>((v >> shift) & 0xff);
+        }
+    };
+    const auto i32 = [&bytes](std::int32_t v) {
+        const auto u = static_cast<std::uint32_t>(v);
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            bytes += static_cast<char>((u >> shift) & 0xff);
+        }
+    };
+    const auto f64 = [&u64](double v) { u64(std::bit_cast<std::uint64_t>(v)); };
+    const auto beats = [&](const std::vector<domain::Beat> &list) {
+        u64(list.size());
+        for (const domain::Beat &beat : list) {
+            f64(beat.timeMs);
+            i32(beat.beatInBar);
+        }
+    };
+    if (grid) {
+        beats(rekordbox.beats);
+        beats(engine.beats);
+        bytes += static_cast<char>(engineLocked ? 1 : 0);
+    } else {
+        const bool threeBand = rekordbox.threeBandPreview && !rekordbox.threeBandPreview->empty();
+        const std::optional<std::string> &preview = threeBand ? rekordbox.threeBandPreview : rekordbox.colourPreview;
+        bytes += static_cast<char>(threeBand ? 3 : (preview && !preview->empty() ? 6 : 0));
+        u64(preview ? preview->size() : 0);
+        if (preview) {
+            bytes += *preview;
+        }
+        u64(engine.waveform.size());
+        for (const domain::WaveformColumn &c : engine.waveform) {
+            f64(c.low);
+            f64(c.mid);
+            f64(c.high);
+        }
+    }
+    return hashing::toHex(hashing::Sha256::of(std::string_view(bytes)));
 }
 
 // The same from the analysis file a row names (`analyzePath`, as

@@ -78,6 +78,7 @@
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
+#include "infrastructure/local/rekordbox_analysis_source.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
 
@@ -1602,6 +1603,207 @@ int main(int argc, char **argv)
         writer2.writeHotCues(std::to_string(unmarkedId), {hot});
         check(mark2(unmarkedId) == "2", "2.18: writeHotCues leaves thirdPartySourceId 2: " + mark2(unmarkedId));
         std::cout << "case 12 (writeHotCues takes the mark off) done\n";
+    }
+
+    // 13. differingIsConflict, a sync's rule (#136). Both sides hold a part
+    // and they differ: DiffersFromEngine, nothing written, grid and
+    // waveform each on their own. An empty side never wins: rekordbox
+    // without analysis leaves Engine's byte for byte, Engine without a
+    // waveform or analysis gets rekordbox's. Equal grids, within half a
+    // sample, are AlreadySame. The ledger's grid is Seabass's and is
+    // replaced, unless locked since. The answer's options write over it.
+    {
+        const Copy copy = freshCopy("differs");
+        const TrackData record = TrackData::from_blob(perf(copy.mdb, kAnalysed, "trackData"));
+        const double seconds = static_cast<double>(record.samples) / record.sample_rate;
+        RekordboxAnalysis analysis;
+        analysis.beats = constantGrid(37.0, 60000.0 / 121.0, seconds * 1000.0);
+        analysis.threeBandPreview = synthetic(1200, 3, 31);
+        analysis.scrollEntries = static_cast<std::uint32_t>(std::ceil(seconds * 150.0));
+        const std::string id = std::to_string(kAnalysed);
+        const auto perfBefore = performanceRows(copy.mdb);
+        const auto tracksBefore = trackRows(copy.mdb);
+        const auto filesBefore = overviewFiles(copy);
+        auto writer = unshiftedWriter(pathToUtf8(copy.root));
+
+        AnalysisImportOptions conflict;
+        conflict.differingIsConflict = true;
+        for (const bool preview : {true, false}) {
+            AnalysisImportOptions o = conflict;
+            o.previewOnly = preview;
+            const auto r = writer.importAnalysis(id, analysis, o);
+            check(r.grid.outcome == Outcome::DiffersFromEngine, "13. the player's grid and rekordbox's differ");
+            check(r.waveform == Waveform::DiffersFromEngine, "13. the player's waveform and rekordbox's differ");
+            check(!r.completedRow && r.overviewFileRelativePath.empty(), "13. nothing completed, no file named");
+        }
+        AnalysisImportOptions gridOnly = conflict;
+        gridOnly.waveforms = false;
+        const auto g = writer.importAnalysis(id, analysis, gridOnly);
+        check(g.grid.outcome == Outcome::DiffersFromEngine && g.waveform == Waveform::NotRequested,
+              "13. the grid alone differs");
+        AnalysisImportOptions waveformOnly = conflict;
+        waveformOnly.grids = false;
+        const auto w = writer.importAnalysis(id, analysis, waveformOnly);
+        check(w.grid.outcome == Outcome::NotRequested && w.waveform == Waveform::DiffersFromEngine,
+              "13. the waveform alone differs");
+        // A grid locked on the player differs too: never RowLocked unsaid.
+        exec(copy.mdb, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = " + id);
+        check(writer.importAnalysis(id, analysis, gridOnly).grid.outcome == Outcome::DiffersFromEngine,
+              "13. a locked grid that differs is a difference");
+        exec(copy.mdb, "UPDATE Track SET isBeatGridLocked = 0 WHERE id = " + id);
+        // rekordbox empty: Engine's analysis is never taken away.
+        const auto none = writer.importAnalysis(id, RekordboxAnalysis{}, conflict);
+        check(none.grid.outcome == Outcome::NoSourceGrid && none.waveform == Waveform::NoSourceWaveform,
+              "13. rekordbox without analysis is no side");
+        check(performanceRows(copy.mdb) == perfBefore && trackRows(copy.mdb) == tracksBefore
+                  && overviewFiles(copy) == filesBefore,
+              "13. after all of it, every row and file byte for byte as it was");
+
+        // Engine empty: no overview on an analysed row gets rekordbox's.
+        exec(copy.mdb, "UPDATE PerformanceData SET overviewWaveFormData = NULL WHERE trackId = "
+                           + std::to_string(kAnalysedToo));
+        const auto filled = writer.importAnalysis(std::to_string(kAnalysedToo), analysis, waveformOnly);
+        check(filled.waveform == Waveform::Written
+                  && !perf(copy.mdb, kAnalysedToo, "overviewWaveFormData").empty(),
+              "13. Engine without a waveform gets rekordbox's, no conflict");
+        // Engine empty: a row the player has not analysed is completed.
+        AnalysisImportOptions complete = conflict;
+        complete.fileSampleRateHz = 48000.0;
+        RekordboxAnalysis whole;
+        whole.beats = constantGrid(120.0, 480.0, 200000.0);
+        whole.threeBandPreview = synthetic(1200, 3, 32);
+        whole.scrollEntries = 30000;
+        const auto completed = writer.importAnalysis(std::to_string(kUnanalysed), whole, complete);
+        check(completed.completedRow && completed.grid.outcome == Outcome::Written,
+              "13. a row the player has not analysed takes rekordbox's, no conflict");
+
+        // The answer: rekordbox's over the player's, both parts.
+        AnalysisImportOptions answer = conflict;
+        answer.overwriteEngineEdits = true;
+        answer.overwritePlayerWaveforms = true;
+        const auto answered = writer.importAnalysis(id, analysis, answer);
+        check(answered.grid.outcome == Outcome::Written && answered.waveform == Waveform::Written,
+              "13. answered with rekordbox's, both parts written");
+
+        // Equal within half a sample: no difference, without the ledger.
+        const auto shifted = [&](double ms) {
+            RekordboxAnalysis moved = analysis;
+            for (auto &beat : moved.beats) {
+                beat.timeMs += ms;
+            }
+            return moved;
+        };
+        const double halfSampleMs = 500.0 / record.sample_rate;
+        check(writer.importAnalysis(id, shifted(halfSampleMs * 0.5), gridOnly).grid.outcome == Outcome::AlreadySame,
+              "13. a grid within half a sample is the same, not a difference");
+        check(writer.importAnalysis(id, shifted(5.0), gridOnly).grid.outcome == Outcome::DiffersFromEngine,
+              "13. 5 ms off, with no ledger to say it is Seabass's, differs");
+        // The ledger's grid is Seabass's: rekordbox's correction goes over.
+        AnalysisImportOptions ledger = gridOnly;
+        ledger.ownGridFingerprint = answered.grid.gridFingerprint;
+        exec(copy.mdb, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = " + id);
+        check(writer.importAnalysis(id, shifted(5.0), ledger).grid.outcome == Outcome::DiffersFromEngine,
+              "13. the ledger's grid, locked on the player since, differs");
+        exec(copy.mdb, "UPDATE Track SET isBeatGridLocked = 0 WHERE id = " + id);
+        check(writer.importAnalysis(id, shifted(5.0), ledger).grid.outcome == Outcome::Written,
+              "13. the ledger's grid is Seabass's, replaced without a conflict");
+        // An adjusted grid set but empty is no grid, whatever the default
+        // one holds: rekordbox's goes over it, no conflict, and it is no
+        // edit on the player either.
+        {
+            BeatData emptied = BeatData::from_blob(perf(copy.mdb, kAnalysedToo, "beatData"));
+            check(emptied.default_beat_grid.size() >= 2, "13. the row has a default grid of its own");
+            emptied.is_beatgrid_set = 1;
+            emptied.adjusted_beat_grid.clear();
+            const auto blob = emptied.to_blob();
+            std::string hex;
+            char two[3];
+            for (const std::byte b : blob) {
+                std::snprintf(two, sizeof two, "%02X", static_cast<unsigned>(b));
+                hex += two;
+            }
+            exec(copy.mdb, "UPDATE PerformanceData SET beatData = X'" + hex + "' WHERE trackId = "
+                               + std::to_string(kAnalysedToo));
+            exec(copy.mdb, "UPDATE Track SET isAnalyzed = 1, isBeatGridLocked = 0 WHERE id = "
+                               + std::to_string(kAnalysedToo));
+            const TrackData tooRecord = TrackData::from_blob(perf(copy.mdb, kAnalysedToo, "trackData"));
+            RekordboxAnalysis tooGrid;
+            tooGrid.beats = constantGrid(52.0, 60000.0 / 127.0,
+                                         static_cast<double>(tooRecord.samples) / tooRecord.sample_rate * 1000.0);
+            const auto overEmpty = writer.importAnalysis(std::to_string(kAnalysedToo), tooGrid, gridOnly);
+            check(overEmpty.grid.outcome == Outcome::Written,
+                  "13. an adjusted grid set but empty is empty: rekordbox's goes over it");
+        }
+        std::cout << "case 13 (differingIsConflict) done\n";
+    }
+
+    // 13b. Equal grids on an MP3 with a lead-in: compared on Engine's
+    // timeline, through the same shift the write takes.
+    {
+        const Copy copy = freshCopy("differs-shifted");
+        const auto leadIn =
+            infrastructure::audio::readMp3LeadIn(pathToUtf8(g_fixtures / "mp3-lead-in" / "lame-cbr-44100.mp3"));
+        check(leadIn.has_value(), "13b. the LAME fixture's lead-in reads");
+        LibdjinteropEngineCueWriter shifted(pathToUtf8(copy.root));
+        shifted.setLeadInSource([&](const std::string &) { return leadIn; });
+        const TrackData record = TrackData::from_blob(perf(copy.mdb, kAnalysed, "trackData"));
+        const double seconds = static_cast<double>(record.samples) / record.sample_rate;
+        RekordboxAnalysis analysis;
+        analysis.beats = constantGrid(137.0, 60000.0 / 121.0, seconds * 1000.0);
+        const std::string id = std::to_string(kAnalysed);
+        AnalysisImportOptions gridOnly;
+        gridOnly.waveforms = false;
+        gridOnly.differingIsConflict = true;
+        AnalysisImportOptions answer = gridOnly;
+        answer.overwriteEngineEdits = true;
+        check(shifted.importAnalysis(id, analysis, answer).grid.outcome == Outcome::Written,
+              "13b. rekordbox's grid answered in, moved by the lead-in");
+        check(shifted.importAnalysis(id, analysis, gridOnly).grid.outcome == Outcome::AlreadySame,
+              "13b. the same grid through the same shift is the same, not a difference");
+        RekordboxAnalysis nudged = analysis;
+        for (auto &beat : nudged.beats) {
+            beat.timeMs += 0.25 * 1000.0 / record.sample_rate;
+        }
+        check(shifted.importAnalysis(id, nudged, gridOnly).grid.outcome == Outcome::AlreadySame,
+              "13b. a quarter of a sample off is the same");
+        auto unshifted = unshiftedWriter(pathToUtf8(copy.root));
+        check(unshifted.importAnalysis(id, analysis, gridOnly).grid.outcome == Outcome::DiffersFromEngine,
+              "13b. read without the lead-in, the same beats are another moment: a difference");
+        std::cout << "case 13b (equality through the MP3 lead-in) done\n";
+    }
+
+    // 13c. The state an answer is recorded with is the same bytes on every
+    // build and machine: pinned for a fixed analysis.
+    {
+        RekordboxAnalysis rekordbox;
+        rekordbox.beats = {{100.0, 1}, {600.5, 2}, {1101.0, 3}};
+        rekordbox.threeBandPreview = std::string("\x01\x02\x03\x04\x05\x06", 6);
+        rekordbox.key = 5;
+        rekordbox.bpm = 120.0;
+        domain::TrackAnalysis engine;
+        engine.beats = {{98.25, 1}, {598.75, 2}};
+        engine.waveform = {{0.5, 0.25, 0.125}, {1.0, 0.0, 0.75}};
+        const std::string gridState = infrastructure::local::analysisConflictState(true, rekordbox, engine, false);
+        const std::string lockedState = infrastructure::local::analysisConflictState(true, rekordbox, engine, true);
+        const std::string waveformState =
+            infrastructure::local::analysisConflictState(false, rekordbox, engine, false);
+        std::cout << "13c. grid state " << gridState << ", locked " << lockedState << ", waveform state "
+                  << waveformState << "\n";
+        // Computed apart from this code, from the layout the header gives.
+        check(gridState == "031aa4c03812e39af660576b2cee0beea0ab90737188735034a5d2703f5ea6d7",
+              "13c. the grid state is the pinned value");
+        check(lockedState == "756c6ab389ff2c57e46000040e6dd212524a5c979fb260f7e72ab4e293d804ee",
+              "13c. the grid state with the lock is the pinned value: a lock is a change");
+        check(waveformState == "cc4b9fc6375e58f2a17853f812583336252bc2b43f80c0a02c080780a61b458d",
+              "13c. the waveform state is the pinned value");
+        check(infrastructure::local::analysisConflictState(false, rekordbox, engine, true) == waveformState,
+              "13c. the lock is no part of the waveform's state");
+        RekordboxAnalysis noKey = rekordbox;
+        noKey.key.reset();
+        noKey.bpm = 99.0;
+        check(infrastructure::local::analysisConflictState(true, noKey, engine, false) == gridState,
+              "13c. key and tempo are no part of it");
+        std::cout << "case 13c (stable state) done\n";
     }
 
     if (failures == 0) {

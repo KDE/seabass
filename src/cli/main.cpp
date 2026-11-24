@@ -1225,6 +1225,11 @@ std::string describeEngineUpdateEdit(const seabass::domain::EngineUpdateEdit &ed
             return std::string("cues onto ") + (toEngine ? catalogDisplayName("engine") : "rekordbox") + " for "
                 + trackLine(e.plan.match.trackA, root) + ": " + describeCues(e.plan.cuesToApply);
         }
+        std::string operator()(const AnalysisEdit &e) const
+        {
+            return std::string("rekordbox's ") + (e.part == AnalysisEdit::Part::Grid ? "beat grid" : "waveform")
+                + " onto " + catalogDisplayName("engine") + " for " + trackLine(e.rekordbox, root);
+        }
     };
     return std::visit(Describe{stickRoot}, edit);
 }

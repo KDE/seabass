@@ -840,6 +840,115 @@ int main(int argc, char **argv)
               "12c. N2's overview column and file byte for byte the player's");
     }
 
+    // 12d. A row whose flag is down over the player's waveform, completed
+    // with rekordbox's analysis because the option says to write over it
+    // (Beat Grids & Waveforms' "Also replace waveforms the player drew", a
+    // Sync after Rekordbox Export answer): the player's row is kept first,
+    // and Restore Engine's Analysis gives back exactly what it held, the
+    // overview column and file byte for byte, its flag down again.
+    {
+        const Stick stick = freshStick("players-waveform-completed");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 0 WHERE id = 15");
+        const fs::path file = stick.library / pathFromUtf8(overviewPath(15));
+        fs::create_directories(file.parent_path());
+        std::ofstream(file, std::ios::binary) << synthetic(2048, 41);
+        const EngineAnalysisColumns before = snapshot(stick, 15);
+        check(!before.overviewWaveFormData.isNull() && before.overviewFile && !before.overviewFile->empty(),
+              "12d. N2 holds the player's overview, column and file, with its flag down");
+        AnalysisImportOptions complete = keyed("k15");
+        complete.fileSampleRateHz = 48000.0;
+        complete.fileSampleCount = 48000ull * 240;
+        const auto r = writer.importAnalysis("15", analysisOf(240.0, 120.0, 8), complete);
+        check(r.completedRow && r.waveform == Waveform::Written, "12d. the row completed with rekordbox's analysis");
+        check(r.keptEngineAnalysis, "12d. the player's row kept first");
+        check(snapshot(stick, 15).overviewWaveFormData != before.overviewWaveFormData, "12d. the overview replaced");
+        const auto restored = writer.restoreEngineAnalysis("15", "k15", {});
+        check(restored.outcome == application::EngineAnalysisRestoreResult::Outcome::Restored,
+              "12d. Restore Engine's Analysis puts it back: outcome " + std::to_string(int(restored.outcome)));
+        const EngineAnalysisColumns after = snapshot(stick, 15);
+        check(after.overviewWaveFormData == before.overviewWaveFormData && after.overviewFile == before.overviewFile,
+              "12d. the player's overview, column and file, byte for byte");
+        check(after == before, "12d. and every column of the row as it was, the flag down");
+    }
+
+    // 12e. 12c's row (the CLI's --unanalysed fill, then the player broke
+    // off its own analysis, its waveform there with the flag down), now
+    // completed over that waveform, the ledger's word on the grid handed
+    // in: the waveform is the player's whatever the ledger says of the
+    // grid, so the row is kept first and Restore gives it back exactly.
+    {
+        const Stick stick = freshStick("players-waveform-fill-completed");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 0 WHERE id = 15");
+        application::BeatGridCopyPlan plan;
+        application::BeatGridCopyItem item;
+        item.rekordboxTrackId = "r15";
+        item.engineTrackId = "15";
+        item.ledgerKey = "k15";
+        plan.items.push_back(item);
+        const RekordboxAnalysis n2 = analysisOf(240.0, 120.0, 7);
+        application::BeatGridCopyOptions fill;
+        fill.unanalysed = application::UnanalysedRowGrid::Fill;
+        const auto filled = application::copyBeatGrids(
+            plan, [&](const application::BeatGridCopyItem &) { return n2.beats; }, writer, {}, fill,
+            [](const application::BeatGridCopyItem &) {
+                return application::BeatGridFileFacts{48000.0, 240000.0};
+            });
+        check(filled.written == 1 && filled.ledgerEntries.contains("k15"), "12e. the grid filled and recorded");
+        const EngineAnalysisColumns afterFill = snapshot(stick, 15);
+        check(!afterFill.overviewWaveFormData.isNull(), "12e. the player's overview there, the flag down");
+        AnalysisImportOptions complete = keyed("k15");
+        complete.ownGridFingerprint = filled.ledgerEntries.at("k15");
+        complete.fileSampleRateHz = 48000.0;
+        complete.fileSampleCount = 48000ull * 240;
+        const auto r = writer.importAnalysis("15", analysisOf(240.0, 121.0, 9), complete);
+        check(r.completedRow && r.keptEngineAnalysis, "12e. completed, the player's row kept first");
+        const auto restored = writer.restoreEngineAnalysis("15", "k15", {});
+        check(restored.outcome == application::EngineAnalysisRestoreResult::Outcome::Restored,
+              "12e. restored: outcome " + std::to_string(int(restored.outcome)));
+        check(snapshot(stick, 15) == afterFill, "12e. the row as the player left it, its waveform byte for byte");
+    }
+
+    // 12f. What was kept of a row whose flag is down over the player's
+    // waveform cannot be read: a completion over it is refused, in a
+    // preview as in the write, with the row as it was. Let the Player
+    // Analyse Again clears the damaged entry (as the page's tip says) even
+    // though the row is not analysed; the completion then keeps the row.
+    {
+        const Stick stick = freshStick("players-waveform-damaged-kept");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 0 WHERE id = 15");
+        const fs::path kept = infrastructure::local::keptEngineAnalysisFile(stick.root, "k15");
+        fs::create_directories(kept.parent_path());
+        std::ofstream(kept, std::ios::binary) << "seabass-engine-analysis\t3\ndamaged";
+        const EngineAnalysisColumns before = snapshot(stick, 15);
+        AnalysisImportOptions complete = keyed("k15");
+        complete.fileSampleRateHz = 48000.0;
+        complete.fileSampleCount = 48000ull * 240;
+        AnalysisImportOptions preview = complete;
+        preview.previewOnly = true;
+        const auto previewed = writer.importAnalysis("15", analysisOf(240.0, 120.0, 10), preview);
+        check(previewed.waveform == Waveform::CannotKeepEngines && !previewed.completedRow,
+              "12f. a preview refuses the completion: waveform " + std::to_string(int(previewed.waveform)));
+        const auto refused = writer.importAnalysis("15", analysisOf(240.0, 120.0, 10), complete);
+        check(refused.waveform == Waveform::CannotKeepEngines && !refused.completedRow,
+              "12f. and the write: waveform " + std::to_string(int(refused.waveform)));
+        check(snapshot(stick, 15) == before, "12f. the row as it was");
+        const auto cleared = writer.letPlayerAnalyseAgain("15", "k15", false);
+        check(cleared.outcome == application::LetPlayerAnalyseResult::Outcome::NotAnalysed
+                  && cleared.clearedDamagedEntry,
+              "12f. Let the Player Analyse Again clears the damaged entry of a row whose flag is down");
+        check(store.find("k15").status == application::KeptEngineAnalysisLookup::Status::None,
+              "12f. nothing kept any more");
+        const auto completed = writer.importAnalysis("15", analysisOf(240.0, 120.0, 10), complete);
+        check(completed.completedRow && completed.keptEngineAnalysis,
+              "12f. then completed, the player's row kept first");
+    }
+
     // 13. Marked analysed with nothing stored: the flag up, and no beat
     //     data, overview or analysis record (NULL or an empty blob) and no
     //     overview file; cues there. Engine DJ 5.1 left 30 such rows on two

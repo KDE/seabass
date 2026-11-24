@@ -2468,6 +2468,11 @@ EngineUpdateProposal EngineUpdatePlanner::plan(const EngineUpdateInput &input)
     return Planner(input).run();
 }
 
+std::string analysisItemKey(AnalysisEdit::Part part, const std::string &pathKey)
+{
+    return std::string(part == AnalysisEdit::Part::Grid ? "analysis:grid:" : "analysis:waveform:") + pathKey;
+}
+
 std::string engineUpdateStateHash(std::string_view canonicalState)
 {
     std::uint64_t hash = 14695981039346656037ULL;

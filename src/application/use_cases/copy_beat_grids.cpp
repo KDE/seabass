@@ -142,6 +142,9 @@ void countGrid(BeatGridCopyResult &result, const BeatGridWriteResult &grid, cons
     case Outcome::RowUnreadable:
         ++result.rowUnreadable;
         break;
+    case Outcome::DiffersFromEngine:
+        ++result.differsFromEngine;
+        break;
     }
 }
 
@@ -178,6 +181,9 @@ void countWaveform(WaveformCopyCounts &counts, AnalysisImportResult::Waveform wa
         break;
     case Waveform::PlayersWaveform:
         ++counts.playersWaveform;
+        break;
+    case Waveform::DiffersFromEngine:
+        ++counts.differsFromEngine;
         break;
     }
 }
@@ -266,6 +272,8 @@ AnalysisImportOptions analysisImportOptionsFor(const BeatGridCopyItem &item,
     write.waveforms = options.waveforms;
     write.overwriteEngineEdits = options.overwriteEngineEdits;
     write.overwritePlayerWaveforms = options.overwritePlayerWaveforms;
+    write.differingIsConflict = options.differingIsConflict;
+    write.respectLock = options.respectLock;
     write.previewOnly = options.previewOnly;
     write.skipOverviewFile = options.skipOverviewFile;
     write.zeroLoudness = options.zeroLoudness;

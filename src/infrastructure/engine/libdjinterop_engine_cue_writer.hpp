@@ -367,6 +367,9 @@ private:
         // The ledger's fingerprint of the grid Seabass last wrote to the
         // row (AnalysisImportOptions::ownGridFingerprint).
         std::optional<std::string> ledgerGrid;
+        // The waveform replaced is the player's (holdsPlayersWaveform()):
+        // kept whatever the ledger says of the grid.
+        bool playersWaveform = false;
     };
     enum class Keep {
         // Nothing new kept (nothing to keep, or kept already).

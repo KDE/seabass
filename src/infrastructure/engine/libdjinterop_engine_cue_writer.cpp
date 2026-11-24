@@ -685,6 +685,39 @@ AnalysedGridPlan planAnalysedGrid(const BeatDataBlob &existing, bool locked, con
     return plan;
 }
 
+// The grid the player plays: the adjusted one once set, else its own
+// analysis. Fewer than two markers is no grid: an adjusted grid set but
+// empty is empty, whatever the default one holds.
+const std::vector<GridMarkerBlob> &playedGrid(const BeatDataBlob &existing)
+{
+    return existing.is_beatgrid_set == 1 ? existing.adjusted_beat_grid : existing.default_beat_grid;
+}
+
+bool emptyGrid(const BeatDataBlob &existing)
+{
+    return playedGrid(existing).size() < 2;
+}
+
+// Under differingIsConflict (#136): the row the player analysed holds a
+// grid of Engine's own that is not `grid`. An empty one (emptyGrid) never
+// differs. Equal within half a sample (sameGrid) does not differ. The
+// ledger's grid is Seabass's earlier copy of rekordbox's, not Engine's
+// own, unless the DJ locked it since: a lock is the DJ's word on the grid
+// as it is.
+bool gridDiffersFromEngines(const BeatDataBlob &existing, bool locked, const std::vector<GridMarkerBlob> &grid,
+                            const std::optional<std::string> &ownGridFingerprint)
+{
+    if (emptyGrid(existing)) {
+        return false;
+    }
+    const auto &played = playedGrid(existing);
+    if (sameGrid(played, grid)) {
+        return false;
+    }
+    const bool ours = ownGridFingerprint && *ownGridFingerprint == gridFingerprint(existing);
+    return !ours || locked;
+}
+
 
 using TrackDataBlob = djinterop::engine::v3::track_data_blob;
 using OverviewBlob = djinterop::engine::v3::overview_waveform_data_blob;
@@ -1380,6 +1413,9 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     result.analysedNothingStored = flags.analysedNothingStored;
     result.grid.analysedNothingStored = flags.analysedNothingStored;
     const bool locked = flags.locked;
+    result.rowLocked = locked;
+    // respectLock: the lock stays even where the edits may be written over.
+    const bool overwriteEdits = options.overwriteEngineEdits && !(options.respectLock && locked);
     const std::filesystem::path fileRoot = pathFromUtf8(overviewFileRoot());
 
     if (flags.analysed) {
@@ -1389,10 +1425,18 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 result.grid.outcome = Outcome::NoSourceGrid;
             } else {
                 const auto [grid, barBreaks] = convertedGrid(beats, existing->sample_rate, existing->samples);
-                AnalysedGridPlan plan = planAnalysedGrid(*existing, locked, grid, barBreaks, options.overwriteEngineEdits,
-                                                         options.ownGridFingerprint);
-                result.grid = plan.result;
-                gridWrite = std::move(plan.write);
+                if (options.differingIsConflict && !overwriteEdits && !options.overwriteEngineEdits
+                    && gridDiffersFromEngines(*existing, locked, grid, options.ownGridFingerprint)) {
+                    result.grid.outcome = Outcome::DiffersFromEngine;
+                } else {
+                    // An empty grid on Engine's side never wins (#136): it is
+                    // no edit of the DJ's to keep, only a lock is.
+                    const bool overEmpty = options.differingIsConflict && emptyGrid(*existing) && !locked;
+                    AnalysedGridPlan plan = planAnalysedGrid(*existing, locked, grid, barBreaks,
+                                                             overwriteEdits || overEmpty, options.ownGridFingerprint);
+                    result.grid = plan.result;
+                    gridWrite = std::move(plan.write);
+                }
             }
         }
 
@@ -1438,7 +1482,8 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                     overviewWrite.reset();
                     fileWrite.reset();
                     result.overviewFileRelativePath.clear();
-                    result.waveform = Waveform::PlayersWaveform;
+                    result.waveform =
+                        options.differingIsConflict ? Waveform::DiffersFromEngine : Waveform::PlayersWaveform;
                 }
             }
         }
@@ -1543,20 +1588,29 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     // it would replace that waveform, so unless asked to the row is not
     // completed, and the grid, which goes only with a completion, waits
     // for the player with it.
+    // Under differingIsConflict that waveform and rekordbox's differ only
+    // where an answer can take rekordbox's: by completing the row, so with
+    // both parts asked, a grid in rekordbox and no lock. Without the row's
+    // length yet, it stays NoSampleCount, asked again with the file's.
     if (options.waveforms && hasPreview && !options.overwritePlayerWaveforms
         && holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint)) {
-        result.waveform = Waveform::PlayersWaveform;
+        const bool completable = options.grids && hasGrid && !(locked && !overwriteEdits);
+        if (!options.differingIsConflict || !completable) {
+            result.waveform = Waveform::PlayersWaveform;
+        } else if (sampleCount > 0) {
+            result.waveform = Waveform::DiffersFromEngine;
+        }
     }
     if (result.waveform != Waveform::NoSampleCount) {
         result.noSampleCountReason.clear();
     }
     if (!options.grids || !options.waveforms || !hasGrid || !hasPreview || sampleCount == 0
-        || result.waveform == Waveform::PlayersWaveform) {
+        || result.waveform == Waveform::PlayersWaveform || result.waveform == Waveform::DiffersFromEngine) {
         return result;
     }
     // A lock is the user's word whether or not the player has analysed
     // the row.
-    if (locked && !options.overwriteEngineEdits) {
+    if (locked && !overwriteEdits) {
         result.grid.outcome = Outcome::RowLocked;
         return result;
     }
@@ -1618,10 +1672,6 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     result.grid = {Outcome::Written, static_cast<int>(grid.size()), barBreaks, gridFingerprint(beatData)};
     result.waveform = Waveform::Written;
     result.completedRow = true;
-    if (options.previewOnly) {
-        return result;
-    }
-    beforeWrite();
     const auto apply = [&](EngineAnalysisColumns &after) {
         after.trackData = EngineSqlValue::ofBlob(textOf(record.to_blob()));
         after.overviewWaveFormData = EngineSqlValue::ofBlob(textOf(overviewData.to_blob()));
@@ -1639,7 +1689,27 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         }
         after.isAnalyzed = EngineSqlValue::ofInteger(1);
     };
-    keepBeforeWrite(id, options.keepKey, KeepFacts{}, now, apply, false);
+    // A completion over the waveform the player drew (asked for: an answer,
+    // or "Also replace waveforms the player drew") keeps the player's row
+    // first, every column and the overview file, so Restore Engine's
+    // Analysis brings it back. What cannot be kept is not replaced, in a
+    // preview as in the write.
+    const bool overPlayers = holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint);
+    const KeepFacts keep{overPlayers, overPlayers, options.ownGridFingerprint, overPlayers};
+    if (overPlayers
+        && ((m_keptStore && options.keepKey.empty())
+            || keepBeforeWrite(id, options.keepKey, keep, now, apply, true) == Keep::Refused)) {
+        result.grid = {Outcome::CannotKeepEngines};
+        result.waveform = Waveform::CannotKeepEngines;
+        result.completedRow = false;
+        result.overviewFileRelativePath.clear();
+        return result;
+    }
+    if (options.previewOnly) {
+        return result;
+    }
+    beforeWrite();
+    result.keptEngineAnalysis = keepBeforeWrite(id, options.keepKey, keep, now, apply, false) == Keep::Kept;
     // The file first, then every column and the analysed flag in one
     // transaction: until the flag is up the player takes the row for one
     // it is still to analyse, so a failure anywhere leaves a row that
@@ -1914,8 +1984,12 @@ LibdjinteropEngineCueWriter::Keep LibdjinteropEngineCueWriter::keepBeforeWrite(
             // completed (both grids the ledger's, so the waveform is
             // Seabass's too: the player's analysis writes its own grid);
             // or a write of only the grid, when the grid is the ledger's.
-            const bool completedBySeabass =
-                ledgersGrid && sameGrid(existing->default_beat_grid, existing->adjusted_beat_grid);
+            // Never when the waveform replaced is the player's
+            // (facts.playersWaveform): a row whose flag is down over it
+            // holds the player's waveform whatever the ledger says of its
+            // grid (a fill, then an analysis the player broke off).
+            const bool completedBySeabass = !facts.playersWaveform && ledgersGrid
+                && sameGrid(existing->default_beat_grid, existing->adjusted_beat_grid);
             const bool onlySeabassGrid = ledgersGrid && !facts.replacesWaveform;
             if (!facts.playerAnalysed || completedBySeabass || onlySeabassGrid || previewOnly) {
                 return Keep::Nothing;
@@ -2171,8 +2245,22 @@ LetPlayerAnalyseResult LibdjinteropEngineCueWriter::letPlayerAnalyseAgain(const 
     }
     const std::int64_t id = track->id();
     const RowNow now = readRowNow(id, false);
+    // A kept entry that cannot be read can never be put back; it would
+    // only stand in the way of keeping the player's analysis. Cleared here
+    // whether or not the row is analysed: on a row whose flag is down over
+    // the player's waveform it is what keeps a completion from keeping it.
+    const auto dropDamaged = [&]() {
+        if (m_keptStore && !keepKey.empty()
+            && m_keptStore->find(keepKey).status == application::KeptEngineAnalysisLookup::Status::Damaged) {
+            result.clearedDamagedEntry = true;
+            if (!previewOnly) {
+                m_keptStore->drop(keepKey);
+            }
+        }
+    };
     if (!flagOf(now.columns.isAnalyzed).value_or(false)) {
         result.outcome = Outcome::NotAnalysed;
+        dropDamaged();
         return result;
     }
     result.outcome = Outcome::Marked;
@@ -2184,12 +2272,7 @@ LetPlayerAnalyseResult LibdjinteropEngineCueWriter::letPlayerAnalyseAgain(const 
     if (markForDeviceAnalysis(databaseFile(), {id}, &error) != 1) {
         throw std::runtime_error("could not mark the track for the player's analysis: " + error);
     }
-    // A kept entry that cannot be read can never be put back; it would
-    // only stand in the way of keeping the player's next analysis.
-    if (m_keptStore && !keepKey.empty()
-        && m_keptStore->find(keepKey).status == application::KeptEngineAnalysisLookup::Status::Damaged) {
-        m_keptStore->drop(keepKey);
-    }
+    dropDamaged();
     return result;
 }
 

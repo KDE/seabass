@@ -23,6 +23,7 @@ namespace seabass::gui
 namespace
 {
 
+using domain::AnalysisEdit;
 using domain::CueEdit;
 using domain::EngineUpdateEdit;
 using domain::MembershipEdit;
@@ -128,6 +129,9 @@ std::optional<Track> trackOfChoice(const std::vector<EngineUpdateEdit> &choice)
         }
         if (const auto *cues = std::get_if<CueEdit>(&edit)) {
             return cues->plan.match.trackA;
+        }
+        if (const auto *analysis = std::get_if<AnalysisEdit>(&edit)) {
+            return analysis->rekordbox;
         }
     }
     return std::nullopt;
@@ -668,6 +672,15 @@ RekordboxExportSyncListModel::Row RekordboxExportSyncListModel::rowForEdit(const
             row.kind = QStringLiteral("cues");
             track(e.plan.match.trackA, &e.plan.match.trackB);
             row.detail = SyncPlanListModel::cueSummary(e.plan);
+        }
+        void operator()(const AnalysisEdit &e)
+        {
+            // Only an answer: rekordbox's part over Engine's own.
+            row.section = Section::MetadataToEngine;
+            row.kind = QStringLiteral("analysis");
+            track(e.rekordbox, &e.engine);
+            row.detail = e.part == AnalysisEdit::Part::Grid ? QStringLiteral("beat grid: rekordbox's")
+                                                            : QStringLiteral("waveform: rekordbox's");
         }
     };
     std::visit(Fill{row, root}, edit);
@@ -1275,6 +1288,13 @@ QStringList RekordboxExportSyncListModel::editLines(const EngineUpdateEdit &edit
         }
     } else if (const auto *e = std::get_if<CueEdit>(&edit)) {
         lines << cueEditLines(*e);
+    } else if (const auto *e = std::get_if<AnalysisEdit>(&edit)) {
+        const bool grid = e->part == AnalysisEdit::Part::Grid;
+        lines << (grid ? QStringLiteral("Puts rekordbox's beat grid on Engine in place of Engine's own")
+                       : QStringLiteral("Puts rekordbox's waveform on Engine in place of Engine's own"));
+        lines << QStringLiteral("Engine's own analysis is kept on the stick first, and can be restored in Beat "
+                                "Grids & Waveforms");
+        lines << QStringLiteral("File: ") + pathOnStick(e->engine, m_stickRoot);
     }
     return lines;
 }

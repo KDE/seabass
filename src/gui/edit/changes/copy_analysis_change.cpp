@@ -94,6 +94,8 @@ QString gridWords(application::BeatGridWriteResult::Outcome outcome)
         return QStringLiteral("Engine's analysis cannot be kept");
     case Outcome::RowUnreadable:
         return QStringLiteral("analysed or not cannot be read");
+    case Outcome::DiffersFromEngine:
+        return QStringLiteral("Engine's own differs from rekordbox's");
     }
     return QStringLiteral("unknown");
 }
@@ -122,6 +124,8 @@ QString waveformWords(application::AnalysisImportResult::Waveform waveform)
         return QStringLiteral("analysed or not cannot be read");
     case Waveform::PlayersWaveform:
         return QStringLiteral("drawn by the player");
+    case Waveform::DiffersFromEngine:
+        return QStringLiteral("Engine's own differs from rekordbox's");
     }
     return QStringLiteral("unknown");
 }
@@ -319,6 +323,7 @@ AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResul
     row.keptEngineAnalysis = result.keptEngineAnalysis;
     row.gridSetOnPlayer = result.grid.outcome == Outcome::RowLocked || result.grid.outcome == Outcome::RowEditedOnEngine;
     row.cannotKeep = result.grid.outcome == Outcome::CannotKeepEngines || result.waveform == Waveform::CannotKeepEngines;
+    row.differs = result.grid.outcome == Outcome::DiffersFromEngine || result.waveform == Waveform::DiffersFromEngine;
     // One track, one bucket: a row the player has not analysed whose grid
     // is locked is left alone for the lock (the DJ's word), not counted
     // again as left for the player.
@@ -343,7 +348,7 @@ AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResul
             row.leftForPlayerBecause = waveformWords(result.waveform);
         }
     }
-    if (row.grid || row.waveform || row.gridSetOnPlayer || row.leftForPlayer || row.cannotKeep) {
+    if (row.grid || row.waveform || row.gridSetOnPlayer || row.leftForPlayer || row.cannotKeep || row.differs) {
         return row;
     }
     if (result.grid.outcome == Outcome::RowUnreadable || result.waveform == Waveform::RowUnreadable) {
@@ -382,6 +387,7 @@ void AnalysisNoteCounts::add(const AnalysisSaveTally::Row &row)
     noAnalysis += row.noRekordboxAnalysis ? 1 : 0;
     same += row.alreadySame ? 1 : 0;
     cannotKeep += row.cannotKeep && !row.grid && !row.waveform ? 1 : 0;
+    differs += row.differs ? 1 : 0;
     if (!row.otherReason.isEmpty()) {
         ++other[row.otherReason];
     }
@@ -591,6 +597,24 @@ SyncAnalysisChange::SyncAnalysisChange(QString owner, QString rekordboxPath, QSt
     m_options.overwritePlayerWaveforms = false;
     m_options.skipOverviewFile = false;
     m_options.zeroLoudness = false;
+    // differingIsConflict stays as the workflow asks: Sync after Rekordbox
+    // Export sets it (#136), Sync Cue Points does not, its rows being the
+    // user's own choice of what to copy.
+}
+
+void SyncAnalysisChange::answerWithRekordboxs(bool lockedWhenAsked)
+{
+    // The user's answer for this track: rekordbox's part over Engine's own,
+    // moved or drawn by the player, and locked only if it was locked when
+    // the user was asked: a lock set on the player since is the DJ's newer
+    // word, left as it is and said so in the note. Engine's own analysis
+    // is kept on the stick first, as for every write over it.
+    m_options.overwriteEngineEdits = m_options.grids;
+    m_options.respectLock = !lockedWhenAsked;
+    m_options.overwritePlayerWaveforms = m_options.waveforms;
+    m_options.differingIsConflict = false;
+    m_answer = true;
+    m_countsAsUnit = true;
 }
 
 QString SyncAnalysisChange::idFor(const QString &owner, const std::string &rekordboxTrackId)
@@ -600,7 +624,15 @@ QString SyncAnalysisChange::idFor(const QString &owner, const std::string &rekor
 
 QString SyncAnalysisChange::id() const
 {
-    return m_carrierId.isEmpty() ? idFor(m_owner, m_track.rekordbox.sourceId) : m_carrierId;
+    if (!m_carrierId.isEmpty()) {
+        return m_carrierId;
+    }
+    // An answer is a change of its own beside the track's rider, per part.
+    if (m_answer) {
+        return idFor(m_owner, m_track.rekordbox.sourceId) + QStringLiteral(":answer:")
+            + (m_options.grids ? QStringLiteral("grid") : QString()) + (m_options.waveforms ? QStringLiteral("waveform") : QString());
+    }
+    return idFor(m_owner, m_track.rekordbox.sourceId);
 }
 
 QString SyncAnalysisChange::subject() const
@@ -628,7 +660,7 @@ QString SyncAnalysisChange::verb() const
 {
     // A row of Sync Cue Points: a track that gets its analysis is a synced
     // track, said as that page's cue rows say theirs.
-    if (m_countsAsUnit && m_carrierId.isEmpty()) {
+    if (m_countsAsUnit && m_carrierId.isEmpty() && !m_answer) {
         return QStringLiteral("synchronised");
     }
     return QStringLiteral("given rekordbox's analysis");
@@ -851,6 +883,13 @@ QString analysisSummaryNote(const AnalysisNoteCounts &c)
         }
         alone << text;
     }
+    if (c.differs > 0) {
+        alone << counted(c.differs,
+                         QStringLiteral("one track whose beat grid or waveform on Engine differs from rekordbox's, "
+                                        "a conflict for you to answer"),
+                         QStringLiteral("tracks whose beat grid or waveform on Engine differs from rekordbox's, "
+                                        "conflicts for you to answer"));
+    }
     if (c.noAnalysis > 0) {
         alone << counted(c.noAnalysis, QStringLiteral("one track rekordbox has no analysis of"),
                          QStringLiteral("tracks rekordbox has no analysis of"));
@@ -962,7 +1001,9 @@ ChangeOutcome EngineAnalysisChange::apply(SaveContext &ctx)
     } else {
         using Outcome = application::LetPlayerAnalyseResult::Outcome;
         const auto result = writer.letPlayerAnalyseAgain(m_item.engineTrackId, m_item.ledgerKey, false);
-        done = result.outcome == Outcome::Marked;
+        // A row whose flag is down: clearing what could not be read of it
+        // is the work, and it is done.
+        done = result.outcome == Outcome::Marked || result.clearedDamagedEntry;
         why = result.outcome == Outcome::NotAnalysed ? "the row is not analysed" : "the Engine library is too old";
     }
     const std::string what = m_kind == Kind::Restore ? "restored Engine's analysis of" : "marked for the player's analysis";
