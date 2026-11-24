@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "media_controller.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "library_access.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -305,12 +306,14 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
     for (const application::DetectedStick &stick : sticks) {
         incoming.insert(rowKey(stick));
     }
+    bool sticksChanged = false;
     for (int row = static_cast<int>(m_sticks.size()) - 1; row >= 0; --row) {
         if (incoming.count(rowKey(m_sticks[static_cast<size_t>(row)])) == 0) {
             beginRemoveRows(QModelIndex(), row, row);
             m_sticks.erase(m_sticks.begin() + row);
             m_readOnly.erase(m_readOnly.begin() + row);
             endRemoveRows();
+            sticksChanged = true;
         }
     }
 
@@ -341,6 +344,7 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
                 *existing = stick;
                 m_readOnly[static_cast<size_t>(row)] = nowReadOnly;
                 emit dataChanged(index(row), index(row));
+                sticksChanged = true;
             }
             after = row;
             continue;
@@ -350,7 +354,15 @@ void DetectedStickListModel::setSticks(std::vector<application::DetectedStick> s
         m_sticks.insert(m_sticks.begin() + row, stick);
         m_readOnly.insert(m_readOnly.begin() + row, readOnlyFor(stick));
         endInsertRows();
+        sticksChanged = true;
         after = row;
+    }
+
+    if (sticksChanged) {
+        // A stick gone, come or remounted: no read copy of its databases
+        // is kept past it, and any a crashed Seabass left go too (#110).
+        infrastructure::StickReadSnapshots::instance().forget();
+        infrastructure::removeStaleReadCopies();
     }
 
     // Insertions and removals tell a view its rows changed; they do not

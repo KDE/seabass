@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_playlists.hpp"
+#include "infrastructure/database_read_copy.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -69,9 +70,15 @@ std::optional<djinterop::playlist> playlistAtPath(djinterop::database &db, const
 std::vector<DanglingPlaylistEntries> danglingPlaylistEntries(const std::string &engineLibraryPath)
 {
     std::vector<DanglingPlaylistEntries> out;
-    const std::string db = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    // From a copy when a read would write beside m.db (#110).
+    std::optional<StickDatabaseRead> read;
+    try {
+        read.emplace(StickDatabaseRead::engine(engineLibraryPath));
+    } catch (const std::exception &) {
+        return out;  // as a database that does not open
+    }
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(db.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(read->pathUtf8().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         sqlite3_close(handle);
         return out;
     }
@@ -121,7 +128,8 @@ bool addToEnginePlaylist(const std::string &engineLibraryPath, const std::string
 bool enginePlaylistExists(const std::string &engineLibraryPath, const std::string &playlistPath)
 {
     try {
-        auto db = djinterop::engine::load_database(engineLibraryPath);
+        const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+        auto db = djinterop::engine::load_database(read.rootUtf8());
         return playlistAtPath(db, playlistPath).has_value();
     } catch (const std::exception &) {
         return false;
@@ -208,9 +216,12 @@ std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::st
 }
 
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
-                                                const std::string &filePath)
+                                                const std::string &filePath, ReadFor purpose)
 {
-    auto db = djinterop::engine::load_database(databaseRoot);
+    // Live for a save, else from the shared read copy when a read would
+    // write beside m.db (#110).
+    const StickDatabaseRead read = StickDatabaseRead::engine(databaseRoot, StickDatabaseRead::IfNoCopy::Make, purpose);
+    auto db = djinterop::engine::load_database(read.rootUtf8());
     std::vector<std::int64_t> ids;
     for (const auto &t : tracksForFile(db, filePath, realLibraryPath)) {
         ids.push_back(t.id());
@@ -288,9 +299,12 @@ void countSpelled(const djinterop::playlist &pl, const std::string &prefix, cons
 
 }  // namespace
 
-int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::string &playlistPath)
+int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::string &playlistPath, ReadFor purpose)
 {
-    auto db = djinterop::engine::load_database(engineLibraryPath);
+    // Live for a save, else from the shared read copy when a read would
+    // write beside m.db (#110).
+    const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath, StickDatabaseRead::IfNoCopy::Make, purpose);
+    auto db = djinterop::engine::load_database(read.rootUtf8());
     int count = 0;
     for (const auto &root : db.root_playlists()) {
         countSpelled(root, "", playlistPath, count);
@@ -316,7 +330,9 @@ void collectPlaylists(const djinterop::playlist &pl, const std::string &prefix,
 
 std::vector<domain::EnginePlaylistInfo> listEnginePlaylists(const std::string &engineLibraryPath)
 {
-    auto db = djinterop::engine::load_database(engineLibraryPath);
+    // From a copy when a read would write beside m.db (#110).
+    const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+    auto db = djinterop::engine::load_database(read.rootUtf8());
     std::vector<domain::EnginePlaylistInfo> out;
     for (const auto &root : db.root_playlists()) {
         collectPlaylists(root, "", out);
@@ -1326,8 +1342,10 @@ std::vector<UnresolvedPlaylistEntries> unresolvedPlaylistEntries(const std::stri
         return perList;  // no Engine 2.x or 3.x library: none to resolve
     }
     // Read only, unlike the repair: a browsed backup is a read-only file.
+    // From a copy when a read would write beside m.db (#110).
+    const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(file.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(read.pathUtf8().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         const std::string why = handle ? sqlite3_errmsg(handle) : "out of memory";
         sqlite3_close(handle);
         throw std::runtime_error("engine: could not open " + file + ": " + why);

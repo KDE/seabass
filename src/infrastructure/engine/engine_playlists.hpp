@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "infrastructure/database_read_copy.hpp"
 #include "domain/engine_update_planning.hpp"
 
 namespace seabass::infrastructure::engine
@@ -106,8 +107,12 @@ bool enginePlaylistExists(const std::string &engineLibraryPath, const std::strin
 // path are left out. Throws when the database cannot be read.
 std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::string &databaseRoot);
 
+// Read live by default (ReadFor::Writing): a save looks up the rows it is
+// writing. A look that only reads the stick passes ReadFor::Reading and
+// reads its shared read copy (#110).
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,
-                                                const std::string &filePath);
+                                                const std::string &filePath,
+                                                ReadFor purpose = ReadFor::Writing);
 
 // Points every Track row for `filePath` at `newFilePath` instead (#103),
 // both absolute on the stick, in the library at `databaseRoot` by the
@@ -123,7 +128,9 @@ int setEngineTrackPath(const std::string &databaseRoot, const std::string &realL
 // How many playlists (or folders) spell `playlistPath` ("Folder/List"):
 // more than one when two share a name in one folder, or a name holds a
 // "/" that reads as a folder. Only exactly one can be edited by path.
-int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::string &playlistPath);
+// Read live by default, as engineTrackIdsForFile() is.
+int enginePlaylistCountAtPath(const std::string &engineLibraryPath, const std::string &playlistPath,
+                              ReadFor purpose = ReadFor::Writing);
 
 // Every playlist and folder in the library, depth first in Engine's
 // order, each with its path as the Engine reader spells it, whether it

@@ -17,6 +17,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <set>
 
 #include "domain/audio_levels.hpp"
 #include "domain/beat_grid.hpp"
@@ -500,6 +501,15 @@ private:
     // is comfortably more than a scrollable list ever has on screen or
     // recently scrolled past at once.
     mutable QCache<QString, CachedAnalysis> m_analysisCache{300};
+
+    // The read copy of an Engine Library's m.db made off the GUI thread
+    // for the rows that wait on it (#110; see cachedAnalysis()), once per
+    // library at a time. A library whose copy could not be made is not
+    // tried again until the next write ends, so its rows do not ask in a
+    // loop; they stay empty, as during a write.
+    void prepareReadCopy(const QString &engineLibraryPath) const;
+    mutable std::set<QString> m_readCopiesPreparing;
+    mutable std::set<QString> m_readCopiesFailed;
 
     // Every track's analysis-file path on a stick, from one pass over its
     // export.pdb, for as long as that export.pdb is unchanged. Without it

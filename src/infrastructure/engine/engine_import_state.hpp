@@ -10,6 +10,8 @@
 #include <optional>
 #include <string>
 
+#include "infrastructure/database_read_copy.hpp"
+
 namespace seabass::infrastructure::engine
 {
 
@@ -49,8 +51,11 @@ struct RekordboxImportState
     }
 };
 
+// From the shared read copy of a WAL-mode m.db (#110); a save reading
+// what it has written passes ReadFor::Writing for the live file.
 RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPath,
-                                               const std::string &pioneerPath);
+                                               const std::string &pioneerPath,
+                                               ReadFor purpose = ReadFor::Reading);
 
 // Track.pdbImportKey of every row of the library, by the row's id as the
 // Engine reader spells Track::sourceId. Not 0 when a player's rekordbox

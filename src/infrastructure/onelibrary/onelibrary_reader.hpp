@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 
+#include "infrastructure/database_read_copy.hpp"
 #include "application/ports/library_reader.hpp"
 
 namespace seabass::infrastructure::onelibrary
@@ -51,7 +52,10 @@ public:
     // OneLibraryCueWriter takes. Throws if exportLibrary.db doesn't exist
     // for this stick -- callers should check OneLibraryCueWriter::
     // existsFor() first, same convention as the writer.
-    explicit OneLibraryReader(std::string pioneerRoot);
+    // `purpose`: ReadFor::Reading reads exportLibrary.db from the shared
+    // read copy (#110); a save reading the rows it is writing passes
+    // ReadFor::Writing and reads the live file.
+    explicit OneLibraryReader(std::string pioneerRoot, ReadFor purpose = ReadFor::Reading);
 
     // readTracks() + fillCues(). No audio file is stat'd for its size
     // (application::fillFileSizes) and no artwork file for its existence;
@@ -76,6 +80,7 @@ private:
                       const std::string &label);
 
     std::string m_pioneerRoot;
+    ReadFor m_purpose = ReadFor::Reading;
 };
 
 }  // namespace seabass::infrastructure::onelibrary

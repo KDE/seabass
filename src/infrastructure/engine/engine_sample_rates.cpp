@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_sample_rates.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
@@ -105,9 +106,12 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
         // The library directory, not Database2: libdjinterop appends
         // that itself, and handed the inner path it opens something that
         // answers every read with "SQL logic error".
-        auto db = djinterop::engine::load_database(engineLibraryPath);
+        // Both reads from the shared read copy when one of the stick's own
+        // would write beside m.db (#110); the audio files from the stick.
+        const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+        auto db = djinterop::engine::load_database(read.rootUtf8());
         const auto tracks = db.tracks();
-        const std::set<std::int64_t> notAnalysed = rowsWithoutTrackData(engineLibraryPath);
+        const std::set<std::int64_t> notAnalysed = rowsWithoutTrackData(read.rootUtf8());
         progress.start("Checking sample rates", tracks.size());
         for (djinterop::track track : tracks) {
             cancel.throwIfCancelled();

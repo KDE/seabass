@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/beat_grids_controller.hpp"
+#include "infrastructure/database_read_copy.hpp"
 
 #include <QCryptographicHash>
 #include <QTimer>
@@ -410,7 +411,13 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
     const BeatGridLibrary &library = *in.library;
     std::string ledgerError;
     const auto ledger = infrastructure::local::readBeatGridLedger(pathFromUtf8(library.stickRoot), &ledgerError);
-    infrastructure::engine::LibdjinteropEngineCueWriter writer(library.enginePath.toStdString());
+    // The preview reads m.db from a copy when a read of the stick's own
+    // would write beside it (#110); the audio and overview files it looks
+    // at are the stick's own.
+    const infrastructure::StickDatabaseRead read = infrastructure::StickDatabaseRead::engine(library.enginePath.toStdString());
+    infrastructure::engine::LibdjinteropEngineCueWriter writer(read.rootUtf8());
+    writer.setAudioRoot(library.enginePath.toStdString());
+    writer.setOverviewFileRoot(library.enginePath.toStdString());
     // Read only: a preview finds what is kept and never writes it.
     infrastructure::local::StickKeptEngineAnalysisStore kept(pathFromUtf8(library.stickRoot));
     writer.setKeptAnalysisStore(&kept);

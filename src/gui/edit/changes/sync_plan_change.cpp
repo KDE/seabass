@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <type_traits>
 #include <memory>
 #include <string>
 
@@ -89,7 +90,17 @@ struct SyncFormatWriter
 template <class Reader>
 struct RowsAsNow
 {
-    explicit RowsAsNow(const std::string &catalogPath) : reader(catalogPath), rows(reader.readTracks()) {}
+    // The live catalog, never a read copy: a save checking what it writes
+    // (#110). A rekordbox reader reads export.pdb itself.
+    explicit RowsAsNow(const std::string &catalogPath) : reader(makeReader(catalogPath)), rows(reader.readTracks()) {}
+    static Reader makeReader(const std::string &catalogPath)
+    {
+        if constexpr (std::is_same_v<Reader, infrastructure::onelibrary::OneLibraryReader>) {
+            return Reader(catalogPath, infrastructure::ReadFor::Writing);
+        } else {
+            return Reader(catalogPath);
+        }
+    }
     std::optional<std::vector<domain::CuePoint>> cuesOf(const std::string &sourceId)
     {
         for (const domain::Track &row : rows) {

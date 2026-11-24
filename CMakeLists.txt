@@ -591,6 +591,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/kept_engine_analysis_file.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/work_counters.cpp
+    src/infrastructure/sqlite_settle_copy.cpp
     src/infrastructure/utc_timestamp.cpp
     src/infrastructure/anonymization_byte_sweep.cpp
     src/infrastructure/anonymization_verifier.cpp
@@ -774,6 +775,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/stick_backup/restore_path_sanitizer.cpp
     src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/work_counters.cpp
+    src/infrastructure/sqlite_settle_copy.cpp
     src/infrastructure/engine/engine_analysis_state.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     # The read copies it makes are named after their process
@@ -2856,6 +2858,18 @@ target_link_libraries(database_read_copy_test PRIVATE seabass_core_testing)
 target_include_directories(database_read_copy_test PRIVATE src tests)
 add_test(NAME database_read_copy_test COMMAND database_read_copy_test)
 
+# Reading a stick changes no file on it (#110): a scan, the cue reads and
+# a sync analysis on a copy of the anonymized fixture leave every file's
+# bytes and modification time alone, the -wal and -shm of OneLibrary and
+# of an Engine m.db in WAL mode included.
+add_executable(stick_read_leaves_stick_alone_test tests/stick_read_leaves_stick_alone_test.cpp
+    tests/stick_read_wal_switch.cpp)
+target_link_libraries(stick_read_leaves_stick_alone_test PRIVATE seabass_core SQLite::SQLite3)
+target_include_directories(stick_read_leaves_stick_alone_test PRIVATE src tests)
+add_test(NAME stick_read_leaves_stick_alone_test COMMAND stick_read_leaves_stick_alone_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+set_tests_properties(stick_read_leaves_stick_alone_test PROPERTIES LABELS "integration")
+
 # The store's refusals: a record whose manifest is missing or damaged, an
 # archive gone or replaced by a directory, writes the filesystem refuses.
 add_executable(filesystem_backup_store_error_paths_test tests/filesystem_backup_store_error_paths_test.cpp)
@@ -4153,6 +4167,17 @@ if(TARGET seabass_edit)
     add_test(NAME engine_playlist_changes_test COMMAND engine_playlist_changes_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(engine_playlist_changes_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    # A save's own reads of the library it writes see what it wrote, with
+    # m.db in WAL mode and a read copy made before (#110), in place and
+    # through a scratch copy.
+    add_executable(engine_save_reads_live_test tests/engine_save_reads_live_test.cpp)
+    target_include_directories(engine_save_reads_live_test PRIVATE src tests)
+    target_link_libraries(engine_save_reads_live_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME engine_save_reads_live_test COMMAND engine_save_reads_live_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(engine_save_reads_live_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     add_executable(engine_membership_change_test tests/engine_membership_change_test.cpp)

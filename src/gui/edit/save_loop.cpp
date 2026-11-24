@@ -73,9 +73,11 @@ QString keepImportLevel(SaveContext &ctx, bool wanted)
     const std::string enginePath = ctx.enginePath().toStdString();
     const FormatWriteSession *rekordbox = existingFormatWriteSession(ctx, "rekordbox", rekordboxPath);
     const FormatWriteSession *engine = existingFormatWriteSession(ctx, "engine", enginePath);
+    // Live: what this save has written (#110).
     const auto after = infrastructure::engine::readRekordboxImportState(engine ? engine->writeRoot() : enginePath,
                                                                          rekordbox ? rekordbox->writeRoot()
-                                                                                   : rekordboxPath);
+                                                                                   : rekordboxPath,
+                                                                         infrastructure::ReadFor::Writing);
     if (!after.hasEngineLibrary || !after.hasRekordboxLibrary || !after.error.empty() || importLevel(after)) {
         return {};
     }
@@ -113,7 +115,8 @@ QString keepImportLevel(SaveContext &ctx, bool wanted)
 QString settleImportLevel(SaveContext &ctx)
 {
     const auto now = infrastructure::engine::readRekordboxImportState(ctx.enginePath().toStdString(),
-                                                                       ctx.rekordboxPath().toStdString());
+                                                                       ctx.rekordboxPath().toStdString(),
+                                                                       infrastructure::ReadFor::Writing);
     if (!now.hasEngineLibrary || !now.hasRekordboxLibrary || !now.error.empty() || importLevel(now)) {
         return {};
     }

@@ -202,7 +202,9 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
     if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))) {
         int count = 0;
         try {
-            count = infrastructure::engine::enginePlaylistCountAtPath(engine, playlist);
+            // Only a look at the stick, not a save's: its read copy (#110).
+            count = infrastructure::engine::enginePlaylistCountAtPath(engine, playlist,
+                                                                      infrastructure::ReadFor::Reading);
         } catch (const std::exception &) {
         }
         note("engine", count);
@@ -218,7 +220,9 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
                 } else if (library == QLatin1String("onelibrary")) {
                     has = !infrastructure::onelibrary::OneLibraryCueWriter(pioneer).contentIdsForFile(filePath).empty();
                 } else if (library == QLatin1String("engine")) {
-                    has = !infrastructure::engine::engineTrackIdsForFile(engine, engine, filePath).empty();
+                    has = !infrastructure::engine::engineTrackIdsForFile(engine, engine, filePath,
+                                                                         infrastructure::ReadFor::Reading)
+                               .empty();
                 }
             } catch (const std::exception &) {
                 // No row (OneLibraryRowMissing) or a library that will not

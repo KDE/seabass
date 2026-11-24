@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_import_state.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
 #include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 
 namespace seabass::infrastructure::engine
@@ -50,7 +52,8 @@ std::optional<std::uint64_t> librarySequenceOf(const std::string &pioneerPath)
 
 }  // namespace
 
-RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPath, const std::string &pioneerPath)
+RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPath, const std::string &pioneerPath,
+                                               ReadFor purpose)
 {
     RekordboxImportState state;
     std::error_code ec;
@@ -61,10 +64,18 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
     if (!state.hasEngineLibrary) {
         return state;
     }
-    // A journal left by a pulled stick would fail the read-only open
-    // below with "readonly"; see engine_pending_journals.hpp (#48). A
-    // database another connection is writing is left to the read below,
-    // which, read-only, cannot roll anything back.
+    // A journal a pulled stick left is rolled back on the stick first,
+    // a copy kept; see engine_pending_journals.hpp (#48). One that is live
+    // (another connection is writing) is left alone there.
+    //
+    // The read below is of a read copy whenever m.db has anything beside
+    // it (#110), a -journal included, and the asymmetry is on purpose: a
+    // writer that holds the lock with no journal yet (case 5 of
+    // engine_import_state_test) is read on the stick itself, where the
+    // read meets the lock and reports an error; a writer whose journal is
+    // live is read from a copy that rolls that journal back in itself, so
+    // the read answers with what was last committed, the counter as it
+    // stood before that write.
     try {
         recoverEnginePendingJournals(engineLibraryPath);
     } catch (const std::exception &e) {
@@ -72,9 +83,16 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
         return state;
     }
 
+    // From a copy when a read would write beside m.db (#110).
+    std::optional<StickDatabaseRead> read;
+    try {
+        read.emplace(StickDatabaseRead::engine(engineLibraryPath, StickDatabaseRead::IfNoCopy::Make, purpose));
+    } catch (const std::exception &e) {
+        state.error = std::string("could not read the Engine database: ") + e.what();
+        return state;
+    }
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(pathToUtf8(engineDatabase(engineLibraryPath)).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr)
-        != SQLITE_OK) {
+    if (sqlite3_open_v2(read->pathUtf8().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         state.error = "could not open the Engine database";
         if (handle != nullptr) {
             sqlite3_close(handle);
@@ -121,13 +139,15 @@ RekordboxImportState readRekordboxImportState(const std::string &engineLibraryPa
 std::map<std::string, std::int64_t> readEnginePdbImportKeys(const std::string &engineLibraryPath)
 {
     const std::string database = pathToUtf8(engineDatabase(engineLibraryPath));
+    // From a copy when a read would write beside m.db (#110).
+    const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
     sqlite3 *handle = nullptr;
     const auto fail = [&handle, &database](const std::string &what) {
         const std::string why = handle != nullptr ? sqlite3_errmsg(handle) : "out of memory";
         sqlite3_close(handle);
         throw std::runtime_error("could not read pdbImportKey from " + database + ": " + what + ": " + why);
     };
-    if (sqlite3_open_v2(database.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(read.pathUtf8().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         fail("open");
     }
     std::map<std::string, std::int64_t> keys;

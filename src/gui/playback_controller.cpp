@@ -15,8 +15,10 @@
 #include <QAudioOutput>
 #include <QMediaPlayer>
 #endif
+#include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
+#include <QThreadPool>
 #include <QUrl>
 #include <QVariantMap>
 
@@ -366,8 +368,23 @@ void PlaybackController::readLoadedAnalysis()
     m_drawnBeats.clear();
     const auto index = m_currentFormat == QLatin1String("rekordbox") ? anlzIndexFor(m_currentLibraryPath) : nullptr;
     // Not const: its detail is moved out below.
-    domain::TrackAnalysis analysis
-        = readAnalysis(m_currentFormat, m_currentLibraryPath, m_currentSourceId, index.get(), MaximumKeptDetailColumns);
+    domain::TrackAnalysis analysis;
+    if (m_currentFormat == QLatin1String("engine")) {
+        // As a row's (cachedAnalysis()): no database copied on this
+        // thread (#110). Without a read copy ready the analysis waits for
+        // it, as it waits for a write, and is read when it is made.
+        std::optional<domain::TrackAnalysis> ready = infrastructure::engine::readTrackAnalysisIfReady(
+            m_currentLibraryPath.toStdString(), m_currentSourceId.toStdString(), MaximumKeptDetailColumns);
+        if (!ready) {
+            m_analysisPending = true;
+            prepareReadCopy(m_currentLibraryPath);
+            return;
+        }
+        analysis = std::move(*ready);
+    } else {
+        analysis = readAnalysis(m_currentFormat, m_currentLibraryPath, m_currentSourceId, index.get(),
+                                MaximumKeptDetailColumns);
+    }
     m_waveform = toVariantList(analysis.waveform);
     // Kept for the popup only where it is overview-sized (Engine 2.x
     // and 3.x, about a thousand entries); a 1.x high-resolution
@@ -476,14 +493,64 @@ PlaybackController::CachedAnalysis PlaybackController::cachedAnalysis(const QStr
         return {};
     }
     const auto index = format == QLatin1String("rekordbox") ? anlzIndexFor(libraryPath) : nullptr;
-    domain::TrackAnalysis analysis = readAnalysis(format, libraryPath, sourceId, index.get());
+    domain::TrackAnalysis analysis;
+    if (format == QLatin1String("engine")) {
+        // A row never copies a database on this thread (#110): an m.db
+        // read from a copy waits for the copy, made off this thread once
+        // for the library, and the row shows nothing until then, as it
+        // does during a write. analysisRevision asks again when it is.
+        std::optional<domain::TrackAnalysis> ready = infrastructure::engine::readTrackAnalysisIfReady(
+            libraryPath.toStdString(), sourceId.toStdString());
+        if (!ready) {
+            prepareReadCopy(libraryPath);
+            return {};
+        }
+        analysis = std::move(*ready);
+    } else {
+        analysis = readAnalysis(format, libraryPath, sourceId, index.get());
+    }
     CachedAnalysis read{toVariantList(analysis.waveform), std::move(analysis.beats), analysis.beatRateRecorded};
     m_analysisCache.insert(key, new CachedAnalysis(read));
     return read;
 }
 
+void PlaybackController::prepareReadCopy(const QString &engineLibraryPath) const
+{
+    if (m_readCopiesFailed.count(engineLibraryPath) > 0 || !m_readCopiesPreparing.insert(engineLibraryPath).second) {
+        return;
+    }
+    const QPointer<PlaybackController> self(const_cast<PlaybackController *>(this));
+    QThreadPool::globalInstance()->start([self, engineLibraryPath]() {
+        const bool made = infrastructure::engine::prepareReadCopy(engineLibraryPath.toStdString());
+        QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [self, engineLibraryPath, made]() {
+                if (!self) {
+                    return;
+                }
+                self->m_readCopiesPreparing.erase(engineLibraryPath);
+                if (!made) {
+                    self->m_readCopiesFailed.insert(engineLibraryPath);
+                    return;
+                }
+                self->forgetAnalyses();  // the rows that waited ask again
+                // And the loaded track, when its analysis waited too.
+                if (self->m_analysisPending && !self->m_libraryBusy && self->m_hasTrack
+                    && self->m_currentLibraryPath == engineLibraryPath) {
+                    self->m_analysisPending = false;
+                    self->readLoadedAnalysis();
+                    emit self->loadedAnalysisChanged();
+                }
+            },
+            Qt::QueuedConnection);
+    });
+}
+
 void PlaybackController::forgetAnalyses()
 {
+    // A library whose read copy could not be made is tried again: the
+    // rows ask anew after a stick change or a write, which call this.
+    m_readCopiesFailed.clear();
     m_analysisCache.clear();
     ++m_analysisRevision;
     emit analysisRevisionChanged();

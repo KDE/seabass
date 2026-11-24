@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
@@ -65,7 +66,11 @@ std::string playlistPath(int64_t id, const std::unordered_map<int64_t, PlaylistI
 
 }  // namespace
 
-OneLibraryReader::OneLibraryReader(std::string pioneerRoot) : m_pioneerRoot(std::move(pioneerRoot)) {}
+OneLibraryReader::OneLibraryReader(std::string pioneerRoot, ReadFor purpose)
+    : m_pioneerRoot(std::move(pioneerRoot))
+    , m_purpose(purpose)
+{
+}
 
 std::optional<size_t> OneLibraryReader::countTracks()
 {
@@ -73,8 +78,9 @@ std::optional<size_t> OneLibraryReader::countTracks()
         return std::nullopt;
     }
     try {
+        const StickDatabaseRead read = oneLibraryDatabaseRead(m_pioneerRoot, m_purpose);
         SqlCipherLibrary lib;
-        SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(m_pioneerRoot), /*readOnly=*/true);
+        SqlCipherDb db(lib, read.pathUtf8(), /*readOnly=*/true);
         db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
         SqlCipherStatement count(db, "SELECT count(*) FROM content");
         if (count.step()) {
@@ -189,7 +195,11 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
         std::cerr << "onelibrary: rolled back an unfinished save in " << dbPath << "; a copy of how it was is in "
                   << pathToUtf8(recovery.keptCopy) << "\n";
     }
-    SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
+    // From a copy (#110): a read-only open of the stick's own WAL-mode
+    // database writes its -shm. The copy is taken after the recovery
+    // above, so it holds what the stick holds now.
+    const StickDatabaseRead read = oneLibraryDatabaseRead(m_pioneerRoot, m_purpose);
+    SqlCipherDb db(lib, read.pathUtf8(), /*readOnly=*/true);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
 
     // Playlist tree, built once up front -- same shape as every other

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
+#include "infrastructure/database_read_copy.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -75,10 +76,12 @@ std::vector<domain::Beat> beatGridOf(const djinterop::track &track)
 std::vector<domain::Beat> readBeatGrid(const std::string &engineLibraryPath, const std::string &trackSourceId)
 {
     try {
-        if (!djinterop::engine::database_exists(engineLibraryPath)) {
+        // From a copy when a read would write beside m.db (#110).
+        const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+        if (!djinterop::engine::database_exists(read.rootUtf8())) {
             return {};
         }
-        auto db = djinterop::engine::load_database(engineLibraryPath);
+        auto db = djinterop::engine::load_database(read.rootUtf8());
         std::optional<djinterop::track> track = db.track_by_id(std::stoll(trackSourceId));
         return track ? beatGridOf(*track) : std::vector<domain::Beat>{};
     } catch (const std::exception &) {
