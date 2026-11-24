@@ -1279,18 +1279,21 @@ void RekordboxExportSyncController::stageSelected()
 
     // The plan's staging order: create playlists, add tracks, renames,
     // memberships, metadata, cues to Engine, playlist deletes, track
-    // removals, restores to rekordbox, record baseline. But for an id
-    // rekordbox reused (#99): the old playlist's delete directly before
-    // the new one's create, when both are ticked. A save that stops
-    // between them then leaves what the record can say: the old playlist
-    // gone and the new one not yet made (nothing under the id), never the
-    // new one made and the old one left (which the record cannot hold
-    // under the id together with the new one). The reuse rule made sure
-    // nothing else needs the old order: the paths differ, rekordbox has
-    // nothing at the old one, Engine has exactly one item there and, for
-    // a folder, nothing inside it. Staged before this save's renames, the
-    // delete names the old playlist where Engine has it now: the path the
-    // reused key records, not the planner's path after the renames.
+    // removals, restores to rekordbox, record baseline. But a rename a
+    // create depends on goes before that create (#127, below), and for an id
+    // rekordbox reused (#99): the old playlist's delete before the new
+    // one's create, when both are ticked; every such delete first, before
+    // any create or rename. A save that stops between them then leaves
+    // what the record can say: the old playlist gone and the new one not
+    // yet made (nothing under the id), never the new one made and the old
+    // one left (which the record cannot hold under the id together with
+    // the new one). The reuse rule made sure nothing else needs the old
+    // order: the paths differ, rekordbox has nothing at the old one,
+    // Engine has exactly one item there and, for a folder, nothing inside
+    // it. Staged before every rename of this save (also one a create
+    // pulls ahead, #127), the delete names the old playlist where Engine
+    // has it now: the path the reused key records, not the planner's path
+    // after the renames.
     std::map<std::uint32_t, std::size_t> reusedDeleteOf;
     for (std::size_t i : deletes) {
         if (const auto reused = domain::parseReusedPlaylistItemKey(rows[i].header.key)) {
@@ -1298,15 +1301,45 @@ void RekordboxExportSyncController::stageSelected()
         }
     }
     std::set<std::size_t> deletedEarly;
+    // A create inside a folder rekordbox renamed in the same export needs
+    // the folder at its new name (#127): it depends on the rename's key,
+    // and the renames up to that one are staged before it, in their own
+    // order (each one's from-path assumes the renames before it). A
+    // rename's own dependencies are creates of folders above its new path,
+    // shallower than the create that pulls it, so already staged.
+    std::size_t renamesStaged = 0;
+    const auto stageRename = [&](std::size_t i) {
+        const auto e = std::get<PlaylistRename>(*rows[i].edit);
+        planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
+                               return std::make_unique<RenameEnginePlaylistChange>(enginePath, e.fromPath, e.toPath,
+                                                                                   hint);
+                           }});
+    };
+    const auto stageRenamesNeededBy = [&](std::size_t create) {
+        const auto &deps = rows[create].header.dependsOn;
+        std::size_t upTo = renamesStaged;
+        for (std::size_t r = renamesStaged; r < renames.size(); ++r) {
+            if (std::find(deps.begin(), deps.end(), rows[renames[r]].header.key) != deps.end()) {
+                upTo = r + 1;
+            }
+        }
+        for (; renamesStaged < upTo; ++renamesStaged) {
+            stageRename(renames[renamesStaged]);
+        }
+    };
     for (std::size_t i : creates) {
         const auto e = std::get<PlaylistCreate>(*rows[i].edit);
-        if (const auto d = reusedDeleteOf.find(e.pdbId); d != reusedDeleteOf.end()) {
+        if (const auto d = reusedDeleteOf.find(e.pdbId); d != reusedDeleteOf.end() && !deletedEarly.count(d->second)) {
             const std::string oldPath = domain::parseReusedPlaylistItemKey(rows[d->second].header.key)->recordedPath;
             planned.push_back({{d->second}, true, [enginePath, oldPath](int hint) -> std::unique_ptr<PendingChange> {
                                    return deleteEnginePlaylistChange(enginePath, oldPath, hint);
                                }});
             deletedEarly.insert(d->second);
         }
+    }
+    for (std::size_t i : creates) {
+        const auto e = std::get<PlaylistCreate>(*rows[i].edit);
+        stageRenamesNeededBy(i);
         planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
                                return std::make_unique<CreateEnginePlaylistChange>(enginePath, e.path, hint);
                            }});
@@ -1318,12 +1351,8 @@ void RekordboxExportSyncController::stageSelected()
                                return std::make_unique<AddEngineTrackChange>(enginePath, e.rekordbox, probe, hint);
                            }});
     }
-    for (std::size_t i : renames) {
-        const auto e = std::get<PlaylistRename>(*rows[i].edit);
-        planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
-                               return std::make_unique<RenameEnginePlaylistChange>(enginePath, e.fromPath, e.toPath,
-                                                                                   hint);
-                           }});
+    for (; renamesStaged < renames.size(); ++renamesStaged) {
+        stageRename(renames[renamesStaged]);
     }
     {
         // One change per playlist with every ticked edit for it: removes
