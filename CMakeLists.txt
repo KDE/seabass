@@ -1267,6 +1267,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/record_rekordbox_baseline_change.cpp
         src/gui/edit/changes/add_engine_track_change.hpp
         src/gui/edit/changes/add_engine_track_change.cpp
+        src/gui/edit/changes/import_track_change.cpp
         src/gui/edit/changes/remove_engine_track_change.hpp
         src/gui/edit/changes/remove_engine_track_change.cpp
         src/gui/edit/changes/engine_playlist_changes.hpp
@@ -4367,6 +4368,14 @@ if(TARGET seabass_edit)
     add_test(NAME artwork_repair_left_rows_test COMMAND artwork_repair_left_rows_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(artwork_repair_left_rows_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    add_executable(import_track_change_test tests/import_track_change_test.cpp)
+    target_include_directories(import_track_change_test PRIVATE src tests)
+    target_link_libraries(import_track_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME import_track_change_test COMMAND import_track_change_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(import_track_change_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     add_executable(remove_engine_track_change_test tests/remove_engine_track_change_test.cpp)
