@@ -123,6 +123,11 @@ protected:
     // as onStagedChangeApplied(), for that path.
     virtual void onStagedCleared() {}
 
+    // Changes the feature staged outside the plan rows (Sync Cue Points'
+    // cue offset repairs): a "Staged ... Press Save" line stays while any
+    // is left.
+    virtual int otherStagedCount() const { return 0; }
+
     // --- what the base supplies --------------------------------------
 
     // Runs a scan under docs/async-requests.md: busy while it is

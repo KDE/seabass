@@ -164,6 +164,16 @@ std::string describePadDifference(const std::vector<CuePoint> &a, const std::vec
 // A cue position the way reasons spell it: m:ss.mmm.
 std::string formatCuePosition(double positionMs);
 
+// Whether a catalog still holds the cues a plan read from it: the same
+// cues, each its kind, pad and shape, at positions (and loop ends)
+// within `withinMs`; colours and labels aside. With `positions` false only
+// the cues themselves are compared, for a row whose positions were read
+// at a rate the catalog does not record (Track::cueRateUnverified). A
+// write that finds otherwise writes nothing: something has written the
+// row since it was read, and what it would put back is out of date.
+bool sameCuesAsRead(const std::vector<CuePoint> &asRead, const std::vector<CuePoint> &now, double withinMs,
+                    bool positions = true);
+
 // "rekordbox", "Engine", "OneLibrary": a Track::format the way reasons
 // name it.
 std::string catalogDisplayName(const std::string &format);

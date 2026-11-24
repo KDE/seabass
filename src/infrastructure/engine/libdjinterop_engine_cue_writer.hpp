@@ -106,6 +106,12 @@ public:
     // throws, saying so. Engine 1.x has no such column.
     void writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues) override;
 
+    // The row's cues as they are now, on Engine's own timeline (nothing
+    // added), at the rate a write would use: the row's, else 44.1 kHz.
+    // What a write checks the cues it read against before it writes over
+    // them. Nothing when the row is not there.
+    std::optional<std::vector<domain::CuePoint>> storedCues(const std::string &trackSourceId);
+
     // The complete set of the row's cues as Engine's own stored positions:
     // nothing taken off, and the mark left exactly as it is. For a caller
     // putting back positions it holds as Engine stored them (Restore

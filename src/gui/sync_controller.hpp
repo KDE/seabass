@@ -22,6 +22,8 @@
 #include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/copy_beat_grids.hpp"
 #include "gui/qt_progress_reporter.hpp"
+#include "domain/cue_offset_repair.hpp"
+#include "gui/cue_offset_list_model.hpp"
 #include "gui/staged_cue_edit_controller.hpp"
 #include "gui/sync_plan_list_model.hpp"
 
@@ -69,6 +71,10 @@ struct SyncTaskResult
     // whole preview failed: unsure, said on the page, never "in step".
     int analysisUnchecked = 0;
     bool analysisCheckFailed = false;
+    // Matched tracks whose cues are a few milliseconds off on
+    // one side (#121, domain::findCueOffsets): rekordbox and Engine rows
+    // only, MP3s whose lead-in was read, with the stick's log as evidence.
+    std::vector<domain::CueOffsetFinding> cueOffsets;
 };
 
 // Wraps SyncLibraries for QML: two-phase, non-destructive sync across
@@ -141,6 +147,14 @@ class SyncController : public StagedCueEditController
     // "... could not be checked." when it failed as a whole; empty when
     // every track was checked. Never shown as "nothing to sync".
     Q_PROPERTY(QString analysisUncheckedText READ analysisUncheckedText NOTIFY analysisChanged)
+    // "Cues a few milliseconds off" (#121): matched tracks whose
+    // cues sit a few tens of milliseconds off on one side, a section of
+    // their own below the list. A row whose side is known is moved by
+    // "Move All Known" or its own button; one nothing explains is listed
+    // with both positions and moved only by the DJ's pick of a side.
+    Q_PROPERTY(seabass::gui::CueOffsetListModel *cueOffsets READ cueOffsetsModel CONSTANT)
+    Q_PROPERTY(int cueOffsetKnownCount READ cueOffsetKnownCount NOTIFY cueOffsetsChanged)
+    Q_PROPERTY(int cueOffsetStagedCount READ cueOffsetStagedCount NOTIFY cueOffsetsChanged)
 
 public:
     explicit SyncController(QObject *parent = nullptr);
@@ -162,6 +176,20 @@ public:
     bool importMarkStaged() const { return m_importMarkStaged; }
     int analysisOnlyCount() const { return m_model.analysisOnlyCount(); }
     QString analysisUncheckedText() const;
+    CueOffsetListModel *cueOffsetsModel() { return &m_cueOffsets; }
+    int cueOffsetKnownCount() const { return m_cueOffsets.knownUnstagedCount(); }
+    int cueOffsetStagedCount() const { return m_cueOffsets.stagedCount(); }
+
+    // Stages moving the off cues of cueOffsets' row `row` on `side`
+    // ("engine" or "rekordbox"); an empty side takes the row's own, and a
+    // row whose side is unknown is then left alone (unsure: the DJ picks).
+    // Staging the other side replaces what was staged. Save writes it,
+    // backed up first.
+    Q_INVOKABLE bool stageCueOffset(int row, const QString &side = QString());
+    Q_INVOKABLE void unstageCueOffset(int row);
+    // Every row whose side is known and is not staged yet; never an
+    // unknown one. Returns how many were staged.
+    Q_INVOKABLE int stageKnownCueOffsets();
 
     // Phase 1: read-only. rekordboxPath/enginePath are the stick's
     // DetectedStick.rekordboxPath / .enginePath (either may be empty if
@@ -232,10 +260,12 @@ signals:
     void cuesLeftOutNoticed(const QVariantList &tracks);
     void importStateChanged();
     void syncedChanged();
+    void cueOffsetsChanged();
 
 protected:
     StagedPlanModel *stagedPlanModel() override { return &m_model; }
     // After an undo what a running analysis read is out of date: restart.
+    int otherStagedCount() const override { return static_cast<int>(m_cueOffsetChangeIds.size()); }
     void reanalyzeAfterUndo() override { startAnalysis(m_rekordboxPath, m_enginePath, m_currentPlaylistName, true); }
     void startAnalysis(const QString &rekordboxPath, const QString &enginePath, const QString &playlistName,
                        bool restart);
@@ -247,7 +277,8 @@ private:
     // rekordbox's analysis for the Engine row (Preferences, see
     // SyncPlanChange::setAnalysisRider()). `staging`: Preferences' analysis
     // switches, read once by a caller staging many; null reads them here.
-    bool stagePlan(int index, const SyncAnalysisStaging *staging = nullptr);
+    // `staged`, when given, says whether the change was staged.
+    bool stagePlan(int index, const SyncAnalysisStaging *staging = nullptr, bool *staged = nullptr);
     bool wouldStage(int planIndex, bool matchingSearchOnly) const;
     // Stages the analysis-only plan at `index` (SyncPlanListModel::
     // isAnalysisOnly) as a SyncAnalysisChange of its own, counted as one
@@ -268,8 +299,20 @@ private:
     void onImportSessionChangeApplied(const QString &changeId);
     void onImportSessionChangesDiscarded();
     void rereadImportState();
+    void onCueOffsetChangeApplied(const QString &changeId);
+    void onSaveFinished(const QVariantMap &summary);
+    // A move of cues a few milliseconds off is staged for either track.
+    bool cueOffsetStagedFor(const domain::SyncMatch &pair) const;
+    // A sync is staged whose pair shares a track with the finding's.
+    bool syncStagedFor(const domain::CueOffsetFinding &finding);
 
     SyncPlanListModel m_model;
+    CueOffsetListModel m_cueOffsets;
+    // Row key (CueOffsetListModel::keyOf) -> the ids of its staged
+    // changes, one a side it moves.
+    std::map<QString, std::vector<QString>> m_cueOffsetChangeIds;
+    // Row key -> what its staged changes move: "known", or the pick.
+    std::map<QString, QString> m_cueOffsetStagedSides;
     QString m_rekordboxPath;
     QString m_enginePath;
     // The playlistName analyze() was last called with -- so the automatic

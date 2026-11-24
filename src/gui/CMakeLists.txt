@@ -276,6 +276,8 @@ set(SEABASS_GUI_SOURCES
     staged_cue_edit_controller.cpp
     sync_plan_list_model.hpp
     sync_plan_list_model.cpp
+    cue_offset_list_model.hpp
+    cue_offset_list_model.cpp
     sync_controller.hpp
     sync_controller.cpp
     rekordbox_export_sync_list_model.hpp
