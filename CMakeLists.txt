@@ -571,6 +571,7 @@ add_library(seabass_core STATIC
     src/infrastructure/rekordbox/anlz_path_index.cpp
     src/infrastructure/rekordbox/cue_list_check.cpp
     src/infrastructure/rekordbox/legacy_memory_list_audit.cpp
+    src/infrastructure/rekordbox/pdb_row_encoding.cpp
     src/infrastructure/rekordbox/pdb_row_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cleanup_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
@@ -798,6 +799,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/rekordbox/cue_list_check.cpp
     src/infrastructure/rekordbox/legacy_memory_list_audit.cpp
     src/infrastructure/rekordbox/pdb_lookup.cpp
+    src/infrastructure/rekordbox/pdb_row_encoding.cpp
     src/infrastructure/rekordbox/pdb_row_writer.cpp
     src/infrastructure/rekordbox/rekordbox_cue_writer.cpp
     src/infrastructure/stick_backup/archive_compactor.cpp
@@ -5241,6 +5243,11 @@ if(NOT WIN32)
     target_link_libraries(onelibrary_playlist_tree_test PRIVATE ${CMAKE_DL_LIBS})
 endif()
 add_test(NAME onelibrary_playlist_tree_test COMMAND onelibrary_playlist_tree_test ${CMAKE_SOURCE_DIR}/tests/fixtures/onelibrary_playlist_tree)
+
+add_executable(pdb_row_encoding_test tests/pdb_row_encoding_test.cpp)
+target_link_libraries(pdb_row_encoding_test PRIVATE seabass_core_testing)
+target_include_directories(pdb_row_encoding_test PRIVATE src tests)
+add_test(NAME pdb_row_encoding_test COMMAND pdb_row_encoding_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
 
 add_executable(onelibrary_add_track_test tests/onelibrary_add_track_test.cpp)
 target_link_libraries(onelibrary_add_track_test PRIVATE seabass_core_testing ZLIB::ZLIB)

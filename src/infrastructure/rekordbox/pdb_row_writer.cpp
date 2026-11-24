@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
+#include "infrastructure/rekordbox/pdb_row_encoding.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
@@ -650,76 +651,6 @@ std::string playlistEntryRowBytes(uint32_t entryIndex, uint32_t trackId, uint32_
     return row;
 }
 
-// UTF-8 to UTF-16 code units; a malformed byte becomes U+FFFD.
-std::u16string utf16Of(const std::string &utf8)
-{
-    std::u16string out;
-    for (size_t i = 0; i < utf8.size();) {
-        const auto c = static_cast<unsigned char>(utf8[i]);
-        uint32_t cp = 0xFFFD;
-        size_t len = 1;
-        if (c < 0x80) {
-            cp = c;
-        } else if ((c >> 5) == 0x6 && i + 1 < utf8.size()) {
-            cp = ((c & 0x1Fu) << 6) | (static_cast<unsigned char>(utf8[i + 1]) & 0x3Fu);
-            len = 2;
-        } else if ((c >> 4) == 0xE && i + 2 < utf8.size()) {
-            cp = ((c & 0x0Fu) << 12) | ((static_cast<unsigned char>(utf8[i + 1]) & 0x3Fu) << 6)
-                 | (static_cast<unsigned char>(utf8[i + 2]) & 0x3Fu);
-            len = 3;
-        } else if ((c >> 3) == 0x1E && i + 3 < utf8.size()) {
-            cp = ((c & 0x07u) << 18) | ((static_cast<unsigned char>(utf8[i + 1]) & 0x3Fu) << 12)
-                 | ((static_cast<unsigned char>(utf8[i + 2]) & 0x3Fu) << 6) | (static_cast<unsigned char>(utf8[i + 3]) & 0x3Fu);
-            len = 4;
-        }
-        if (cp >= 0x10000) {
-            cp -= 0x10000;
-            out.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
-            out.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
-        } else {
-            out.push_back(static_cast<char16_t>(cp));
-        }
-        i += len;
-    }
-    return out;
-}
-
-// A DeviceSQL string as rekordbox writes it: plain ASCII up to 126 bytes
-// as a short string (one byte: (length + 1) * 2 + 1), longer ASCII as a
-// long one (0x40, a 16-bit total length, a zero byte), anything else as
-// UTF-16LE (0x90, the same header). "Q1" and a 137-character Unicode
-// playlist name in #62's reference export are byte for byte this.
-std::string encodeDeviceSqlString(const std::string &text)
-{
-    std::string out;
-    if (isPlainAscii(text) && text.size() <= 126) {
-        out.push_back(static_cast<char>(((text.size() + 1) << 1) | 1));
-        out += text;
-        return out;
-    }
-    std::string body;
-    char kind = 0x40;
-    if (isPlainAscii(text)) {
-        body = text;
-    } else {
-        kind = static_cast<char>(0x90);
-        for (const char16_t unit : utf16Of(text)) {
-            body.push_back(static_cast<char>(unit & 0xFF));
-            body.push_back(static_cast<char>(unit >> 8));
-        }
-    }
-    const size_t total = 4 + body.size();
-    if (total > 0xFFFF) {
-        throw std::invalid_argument("a name that long does not fit a DeviceSQL string");
-    }
-    out.push_back(kind);
-    out.push_back(static_cast<char>(total & 0xFF));
-    out.push_back(static_cast<char>(total >> 8));
-    out.push_back('\0');
-    out += body;
-    return out;
-}
-
 // One present playlist_tree row, its fields and its encoded name as they
 // are on the page, and where it is.
 struct TreeRow
@@ -1260,7 +1191,7 @@ namespace
 {
 
 // UTF-8 to UTF-16 code units, nullopt for bytes that are not valid UTF-8.
-// Strict, unlike utf16Of() above, which a name of Seabass's own making
+// Strict, unlike encodeDeviceSqlString()'s own conversion, which a name of Seabass's own making
 // goes through: a comment is the DJ's text (an overlong form, a surrogate, a truncated sequence): refused rather
 // than guessed at, see docs/write-path-rules.md.
 std::optional<std::u16string> strictUtf16Of(const std::string &utf8)
