@@ -1121,8 +1121,14 @@ TestCase {
         };
         // Above the quiet bars, right of the line: ground all along, where
         // a beat would have had a line every 500 ms.
+        // The hot cue at 1:04 is drawn there too: its marker is no line of
+        // the grid, so its few pixels are left out.
+        const cueX = popup.lineX + (64000 - popup.centerMs) * popup.pxPerMs;
         const ground = pixelAt(popup.lineX + 20, 10);
         for (let x = popup.lineX + 20; x < a.width - 20; x += 3) {
+            if (Math.abs(x - cueX) <= Theme.scaled(10)) {
+                continue;
+            }
             const c = pixelAt(x, 10);
             const d = Math.abs(c.r - ground.r) + Math.abs(c.g - ground.g) + Math.abs(c.b - ground.b);
             verify(d < 0.01, "no line at " + x + ": " + d);
@@ -1907,6 +1913,22 @@ TestCase {
         compare(popup.showingBoth, false, "Both needs both sides");
         compare(box.currentIndex, 0);
         compare(lanesOf(popup).length, 1, "one lane");
+    }
+
+    // The popup's own margins are Theme's tight spacing, so the waveform
+    // has the width (#132).
+    function test_theMarginsAreTight() {
+        const popup = openLoaded(makeFakePlayer({position: 60000}));
+        for (const side of ["leftPadding", "rightPadding", "topPadding", "bottomPadding"]) {
+            compare(popup[side], Theme.tightSpacing, side);
+        }
+        const a = area(popup);
+        compare(a.width, popup.availableWidth, "the waveform is as wide as the popup allows");
+        compare(a.mapToItem(popup.contentItem, 0, 0).x, 0);
+        if (screenshotDir && screenshotDir.length > 0) {
+            waitForTiles(popup);
+            grabImage(testCase).save(screenshotDir + "/waveform-zoom-popup-margins.png");
+        }
     }
 
     // Both: rekordbox's and Engine's stacked, each in its own look, on one

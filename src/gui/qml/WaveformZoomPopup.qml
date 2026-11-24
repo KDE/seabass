@@ -45,6 +45,9 @@ SeabassDialog {
     readonly property string trackArtist: root.controller && root.controller.artist ? root.controller.artist : ""
     parent: Overlay.overlay
     width: parent ? Math.round(parent.width * 0.92) : 1000
+    // Tight around what it holds, so the waveform has the room: Theme's
+    // tight spacing, not the dialog's card padding.
+    padding: Theme.tightSpacing
     // As tall as what it holds, also when that grows while it is open
     // (both sides, stacked): the dialog does not follow on its own.
     contentHeight: popupBody.implicitHeight
