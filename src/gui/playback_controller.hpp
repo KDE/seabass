@@ -289,6 +289,12 @@ public:
     // What the details pane draws, so a cue sits on the beat it marks.
     Q_INVOKABLE QVariantList cuesOnGridTimeline(const QString &format, const QString &filePath,
                                                 const QVariantList &cues) const;
+    // The other way: a position picked on that view (a click on the
+    // details pane's waveform) put on the timeline the cues are held on
+    // and a cue writer takes, rekordbox's, so the cue written sits where
+    // the click was (#123). Unchanged for anything but an Engine MP3.
+    Q_INVOKABLE double positionOnCueTimeline(const QString &format, const QString &filePath,
+                                             double positionMs) const;
 
     // The list the player walks: next(), previous(), and on to the next
     // track by itself when one ends. It is a track list model -- any
