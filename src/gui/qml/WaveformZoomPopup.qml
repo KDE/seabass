@@ -384,6 +384,7 @@ SeabassDialog {
             return [];
         }
         root.controller.trackSerial;
+        root.controller.analysisPending;   // read after a write
         return root.controller.beatTicksAt(root.durationMs, root.durationMs * root.pxPerMs);
     }
     // The marks a tile from `fromMs` to `toMs` draws: its own, and those a

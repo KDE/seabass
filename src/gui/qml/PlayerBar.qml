@@ -366,6 +366,7 @@ Frame {
             property string errorMessage: root.controller.errorMessage || ""
             property var beats: {
                 root.controller.trackSerial;
+                root.controller.analysisPending;   // read after a write
                 return root.controller.beatTicksAt(root.controller.duration, playerWaveform.width);
             }
             function freeze() {

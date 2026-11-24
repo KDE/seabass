@@ -253,6 +253,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         dropQueue();
     }
     m_advanceWhenLibraryFree = false;
+    m_analysisPending = false;
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
@@ -303,43 +304,31 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         // No length will come: that is this track's answer.
         markDurationKnown();
     } else {
-        // No library path, no analysis to read: a stored backup row plays
-        // a file no catalog row stands behind, and an empty path would
-        // resolve against the working directory.
-        const auto index = format == QLatin1String("rekordbox") && !libraryPath.isEmpty()
-            ? anlzIndexFor(libraryPath) : nullptr;
-        // Not const: its detail is moved out below.
-        domain::TrackAnalysis analysis = libraryPath.isEmpty()
-            ? domain::TrackAnalysis{} : readAnalysis(format, libraryPath, sourceId, index.get(), MaximumKeptDetailColumns);
-        m_waveform = toVariantList(analysis.waveform);
-        // Kept for the popup only where it is overview-sized (Engine 2.x
-        // and 3.x, about a thousand entries); a 1.x high-resolution
-        // waveform (ten megabytes for an hour) is read again off the GUI
-        // thread if the popup asks.
-        // Built by the read only when it is that small: a larger one is not
-        // built here at all.
-        m_loadedDetailKept = !analysis.detail.columns.empty();
-        m_loadedDetail = std::move(analysis.detail);
         // An MP3 is played on Engine's timeline; the cues and a rekordbox
-        // grid are not on it (#50).
+        // grid are not on it (#50). Out of the audio file: no library.
         const auto shift = infrastructure::audio::playbackShiftFor(
             filePath.toStdString(), format == QLatin1String("rekordbox")
                 ? infrastructure::audio::GridTimeline::Rekordbox : infrastructure::audio::GridTimeline::Engine);
         m_cueShiftMs = shift.cuesMs;
         m_beatShiftMs = shift.beatsMs;
         m_cues = shiftedCues(cues, m_cueShiftMs);
-        const std::vector<domain::Beat> &beats = analysis.beats;
-        m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
-        m_beatNumbers.reserve(static_cast<qsizetype>(beats.size()));
-        for (const domain::Beat &beat : beats) {
-            m_beatTimesMs.append(beat.timeMs + shift.beatsMs);
-            m_beatNumbers.append(beat.beatInBar);
+        // No library path, no analysis to read: a stored backup row plays
+        // a file no catalog row stands behind, and an empty path would
+        // resolve against the working directory.
+        // Not while a library is being written, the rule cachedAnalysis()
+        // keeps: Engine's analysis is read through libdjinterop, which
+        // opens m.db, and a save's writer that meets this read's lock
+        // fails at once with "database is locked" and rolls the save back
+        // (export.pdb, read for a rekordbox track, is being rewritten
+        // too). The audio plays now; the analysis is read when the write
+        // ends.
+        if (!libraryPath.isEmpty()) {
+            if (m_libraryBusy) {
+                m_analysisPending = true;
+            } else {
+                readLoadedAnalysis();
+            }
         }
-        m_drawnBeats.reserve(beats.size());
-        for (const domain::Beat &beat : beats) {
-            m_drawnBeats.push_back({beat.timeMs + shift.beatsMs, beat.beatInBar});
-        }
-        m_drawnBeatsRateRecorded = analysis.beatRateRecorded;
         const QUrl source = QUrl::fromLocalFile(filePath);
         const bool sameFile = player()->source() == source;
         player()->setSource(source);
@@ -363,9 +352,41 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         }
     }
 
+    emit loadedAnalysisChanged();
     emit trackChanged();
     emit cuesChanged();
     emit queueChanged();
+}
+
+void PlaybackController::readLoadedAnalysis()
+{
+    m_waveform.clear();
+    m_beatTimesMs.clear();
+    m_beatNumbers.clear();
+    m_drawnBeats.clear();
+    const auto index = m_currentFormat == QLatin1String("rekordbox") ? anlzIndexFor(m_currentLibraryPath) : nullptr;
+    // Not const: its detail is moved out below.
+    domain::TrackAnalysis analysis
+        = readAnalysis(m_currentFormat, m_currentLibraryPath, m_currentSourceId, index.get(), MaximumKeptDetailColumns);
+    m_waveform = toVariantList(analysis.waveform);
+    // Kept for the popup only where it is overview-sized (Engine 2.x
+    // and 3.x, about a thousand entries); a 1.x high-resolution
+    // waveform (ten megabytes for an hour) is read again off the GUI
+    // thread if the popup asks.
+    // Built by the read only when it is that small: a larger one is not
+    // built here at all.
+    m_loadedDetailKept = !analysis.detail.columns.empty();
+    m_loadedDetail = std::move(analysis.detail);
+    const std::vector<domain::Beat> &beats = analysis.beats;
+    m_beatTimesMs.reserve(static_cast<qsizetype>(beats.size()));
+    m_beatNumbers.reserve(static_cast<qsizetype>(beats.size()));
+    m_drawnBeats.reserve(beats.size());
+    for (const domain::Beat &beat : beats) {
+        m_beatTimesMs.append(beat.timeMs + m_beatShiftMs);
+        m_beatNumbers.append(beat.beatInBar);
+        m_drawnBeats.push_back({beat.timeMs + m_beatShiftMs, beat.beatInBar});
+    }
+    m_drawnBeatsRateRecorded = analysis.beatRateRecorded;
 }
 
 void PlaybackController::loadFile(const QString &format, const QString &libraryPath, const QString &filePath,
@@ -378,6 +399,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     setErrorMessage({});
     dropQueue();
     m_advanceWhenLibraryFree = false;
+    m_analysisPending = false;
     m_waveform.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
@@ -410,6 +432,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
         m_player->play();
     }
 
+    emit loadedAnalysisChanged();
     emit trackChanged();
     emit cuesChanged();
     emit queueChanged();
@@ -806,6 +829,16 @@ void PlaybackController::setLibraryBusy(bool busy)
         // again rather than hand that back.
         m_loadedDetailKept = false;
         m_loadedDetail = {};
+        // A track loaded during the write: its analysis now, for the
+        // player bar and the popup's overview below. Before the popup's
+        // read, which hands that overview over where the audio fails.
+        if (m_analysisPending) {
+            m_analysisPending = false;
+            if (m_hasTrack) {
+                readLoadedAnalysis();
+            }
+            emit loadedAnalysisChanged();
+        }
         if (m_detailWanted) {
             requestDetailWaveform();
         }
@@ -993,6 +1026,7 @@ void PlaybackController::stop()
         m_player->setSource(QUrl());
     }
     m_hasTrack = false;
+    m_analysisPending = false;
     m_currentFormat.clear();
     m_currentSourceId.clear();
     m_currentFilePath.clear();
@@ -1005,6 +1039,7 @@ void PlaybackController::stop()
     m_cues.clear();
     m_cueShiftMs = 0.0;
     m_beatShiftMs = 0.0;
+    emit loadedAnalysisChanged();
     emit trackChanged();
     markDurationKnown();
     emit cuesChanged();

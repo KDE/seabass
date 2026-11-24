@@ -57,7 +57,9 @@ class PlaybackController : public QObject
     // Engine row's rekordbox sibling's cover (see TrackListModel's
     // fallbackArtworkPath role). Empty when there is none.
     Q_PROPERTY(QString fallbackArtworkPath READ fallbackArtworkPath NOTIFY trackChanged)
-    Q_PROPERTY(QVariantList waveform READ waveform NOTIFY trackChanged)
+    // waveform, beatTimesMs and beatNumbers come with the track, or after
+    // it when it was loaded during a write (see analysisPending).
+    Q_PROPERTY(QVariantList waveform READ waveform NOTIFY loadedAnalysisChanged)
     // Its own signal, not trackChanged: the cues of the loaded track can
     // arrive after it (see takeCues()), and that is not a new track.
     Q_PROPERTY(QVariantList cues READ cues NOTIFY cuesChanged)
@@ -67,8 +69,14 @@ class PlaybackController : public QObject
     // track with no grid. This is what a display keeps time by -- it is
     // what the DJ's own decks keep time by. The live levels below say how
     // loud the music is, not when the beat is.
-    Q_PROPERTY(QList<qreal> beatTimesMs READ beatTimesMs NOTIFY trackChanged)
-    Q_PROPERTY(QList<int> beatNumbers READ beatNumbers NOTIFY trackChanged)
+    Q_PROPERTY(QList<qreal> beatTimesMs READ beatTimesMs NOTIFY loadedAnalysisChanged)
+    Q_PROPERTY(QList<int> beatNumbers READ beatNumbers NOTIFY loadedAnalysisChanged)
+    // True while the loaded track's analysis (waveform, beats, the grid
+    // beatTicksAt() draws) waits for a write to end: load() during
+    // libraryBusy plays the audio but opens no library, and the analysis
+    // is read when libraryBusy goes false. A binding on beatTicksAt()
+    // reads this too, so the grid is laid out again then.
+    Q_PROPERTY(bool analysisPending READ analysisPending NOTIFY loadedAnalysisChanged)
     // Goes up by one whenever the loaded track changes (load, loadFile,
     // stop): what a binding on beatTicksAt() depends on to lay out the
     // new track's grid, without reading a list of every beat to notice.
@@ -164,6 +172,7 @@ public:
     bool liveLevels() const { return m_buffersArrive; }
     bool libraryBusy() const { return m_libraryBusy; }
     int analysisRevision() const { return m_analysisRevision; }
+    bool analysisPending() const { return m_analysisPending; }
     void setLibraryBusy(bool busy);
     bool desktopMediaControls() const { return m_desktopMediaControls; }
     void setDesktopMediaControls(bool enabled);
@@ -249,7 +258,8 @@ public:
     // The same for the loaded track's grid, on the timeline the player
     // plays on; nothing for an Engine row that records no sample rate
     // (the player keeps time by that grid, but nothing draws it as fact).
-    // Bind with trackSerial so a new track is laid out again.
+    // Bind with trackSerial and analysisPending so a new track, and one
+    // whose analysis came after a write, is laid out again.
     Q_INVOKABLE QVariantList beatTicksAt(double durationMs, double widthPx) const;
     // Asks for the loaded track's detailWaveform, read off the GUI thread
     // (AsyncRequest), never while a library is being written (asked again
@@ -333,6 +343,7 @@ signals:
     void queueChanged();
     void libraryBusyChanged();
     void analysisRevisionChanged();
+    void loadedAnalysisChanged();
     void liveLevelsChanged();
     // The position jumped -- a seek, a skip -- rather than played on.
     void seeked(qint64 positionMs);
@@ -392,6 +403,9 @@ private:
     bool m_desktopMediaControls = false;
     bool m_libraryBusy = false;
     int m_analysisRevision = 0;
+    // load() ran while m_libraryBusy: the loaded track's analysis is read
+    // when the write ends (setLibraryBusy(false)).
+    bool m_analysisPending = false;
     bool m_advanceWhenLibraryFree = false;
     bool m_buffersArrive = false;
     QObject *m_mpris = nullptr;
@@ -417,6 +431,9 @@ private:
     static constexpr size_t MaximumKeptDetailColumns = 4096;
     int m_durationSerial = -1;
     void markDurationKnown();
+    // Reads the loaded track's analysis (waveform, beats, the detail kept
+    // for the popup) into the m_ members, on the playback timeline.
+    void readLoadedAnalysis();
     // `columns` as detailWaveform hands them over: three bytes a column.
     void setDetailWaveform(const QByteArray &columns, double msPerColumn, int serial);
     void dropDetailWaveform();
