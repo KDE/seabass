@@ -26,7 +26,8 @@ namespace seabass::domain
 // relatives (half, two thirds, three quarters, four thirds, three halves,
 // double) are then each tried as the beat: the one at which the whole
 // track folds sharpest is it, with a wide preference around 128 BPM to
-// decide between a tempo and its double. Tempos from 60 to 200 BPM.
+// decide between a tempo and its double. A relative outside the tempo
+// range (TempoRange below) counts as its double or half inside it.
 //
 // The place of the beat: the onset function folded onto one beat over the
 // whole track has most of its weight there (the weight within 30 ms, not
@@ -51,9 +52,28 @@ namespace seabass::domain
 //
 // What it does not do yet: say which beat starts the bar (beatInBar is
 // 0), or refine the beat on the samples of the transient.
+// The tempos an analysis may give out, like the "BPM range" of rekordbox
+// and of every DJ program: whether a track is at 87 or at 174 BPM is not
+// in the audio (the studies say so, and so do our own numbers: see "What
+// the literature says" in docs/track-analysis-plan.md), it is in what the
+// DJ plays. A tempo found outside the range is given out as its double or
+// its half inside it. A range of one octave (88 to 175) settles every
+// such choice; a wider one leaves those inside it to the analyser. The
+// default is rekordbox's own, with which its reference grids were made.
+//
+// A range narrower than an octave has no place for some tempos, so it is
+// widened at the top to one; rekordbox's own "88-175" is a hair under.
+struct TempoRange
+{
+    double lowBpm = 70.0;
+    double highBpm = 180.0;
+};
+
 class SeabassGridAnalyser : public GridAnalyser
 {
 public:
+    explicit SeabassGridAnalyser(TempoRange range = {});
+
     // A followed grid is given out this much earlier than the place the
     // onsets peak at. Calibration against rekordbox, whose own two ways of
     // analysing differ by as much: measured against the start of the hit
@@ -78,6 +98,12 @@ public:
 
     std::string name() const override { return "seabass"; }
     GridAnalysis analyse(PcmSource &source) override;
+
+    // The range in use: the one given, made valid.
+    TempoRange tempoRange() const { return m_range; }
+
+private:
+    TempoRange m_range;
 };
 
 }  // namespace seabass::domain

@@ -448,6 +448,50 @@ This! Accurate Beat Tracking Without DBN Postprocessing", ISMIR 2024,
 arXiv 2407.21658. Ahn, Hwang and Jung, "The SMC Blind Spot", arXiv
 2605.12287, 2026.
 
+## The tempo range
+
+The analyser takes a tempo range (`TempoRange` in
+`domain/seabass_grid_analyser.hpp`; `--tempo-range LOW-HIGH` in the
+benchmark), as rekordbox does with its "BPM range". A tempo found
+outside it is given out as its double or half inside it. The default is
+rekordbox's default, 70 to 180, with which every reference grid here was
+made. The setting has no place in the app yet: the analyser is not
+wired into it. When it is, the ranges to offer are rekordbox's: 45-90,
+58-115, 68-135, 70-180, 78-155, 88-175, 98-195.
+
+- A range narrower than an octave is widened at the top to one
+  (rekordbox's own are a hair under: 88 to 175), and both ends have half
+  a percent of room, so that a track at 70.00 BPM is at 70 in a range
+  from 70.
+- Where the range has room for a tempo and its double, the one nearer
+  128 BPM is preferred, as before. Not the one nearer the middle of the
+  range: with the preference around 112 BPM (the middle of 70 to 180),
+  29 tracks of the tuning half of the collection came out at another
+  tempo than rekordbox's for 7, and 40 of the 110 of varied music for 29.
+- In a range of one octave nothing is preferred. On real music that is
+  a draw at 88 to 175 (below); in a range far from 128, such as 45 to
+  90, a preference for 128 would take 90 over 60 on nearness alone.
+
+What a range of one octave is worth, measured by running both sets with
+88 to 175 and counting a tempo as right when it is rekordbox's brought
+into the same range by octaves. That is what rekordbox would presumably
+give with that setting; it was not run with it.
+
+| | 70 to 180 (default) | 88 to 175 |
+|---|---|---|
+| Tuning half of the collection, 751 tracks: tempo right | 744 | 749 |
+| Varied music, 110 tracks: tempo right | 81 | 91 |
+
+With 128 preferred inside 88 to 175 as well: 747 and 93, two fewer and
+two more.
+
+A weakness seen while writing the tests, not yet measured on music:
+every band counts alike in the onset function, however quiet, so a kick
+that lives in one band with a faint figure every beat and a half in
+three others comes out at two thirds of its tempo. Real kicks are in
+every band, and of 751 collection tracks one comes out at two thirds;
+of the 110 varied ones, four.
+
 ## Phase 3, in order
 
 1. Done: who is right on the tracks half a beat apart (above). The

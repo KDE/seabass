@@ -8,6 +8,7 @@
 // through a breakdown and after a drumless intro; and what it says of
 // audio that has no beat.
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -315,7 +316,9 @@ void slowAndSparse()
             truth.push_back({at * 1000.0, k % 4 + 1});
         }
         InMemoryPcmSource source(audio, rate);
-        SeabassGridAnalyser analyser;
+        // 62 BPM is under the default range, which would give it out as
+        // 124; in a range that holds it, it is 62.
+        SeabassGridAnalyser analyser(bpm < 70.0 ? TempoRange{58.0, 115.0} : TempoRange{});
         const GridAnalysis analysis = analyser.analyse(source);
         const std::string name = "a kick alone at " + std::to_string(static_cast<int>(bpm)) + " BPM";
         check(!analysis.beats.empty(), name + ": a grid");
@@ -323,6 +326,111 @@ void slowAndSparse()
         check(c.tempo == TempoRelation::Same, name + ": its tempo");
         within(c.offset.medianMs, -15.0, 15.0, name + ": on the kick");
     }
+}
+
+// The tempo range decides between a tempo and its double: drum and bass,
+// a kick and a snare taking turns 345 ms apart, is at 174 BPM in a range
+// that holds 174 and at 87 in one that does not, and the same audio never
+// comes out at a tempo outside the range it was given.
+void tempoRanges()
+{
+    const int rate = 44100;
+    const double period = 60.0 / 174.0;
+    const int count = 260;
+    std::vector<float> audio(static_cast<std::size_t>((count * period + 1.0) * rate), 0.0f);
+    std::vector<Beat> truth;
+    for (int k = 0; k < count; ++k) {
+        const double beat = 0.3 + k * period;
+        truth.push_back({beat * 1000.0, k % 4 + 1});
+        if (k % 2 == 0) {
+            addKick(audio, rate, beat);
+        } else {
+            addNote(audio, rate, beat, 220.0, 0.4, 0.002, 0.05);
+            addNote(audio, rate, beat, 2500.0, 0.2, 0.001, 0.03);
+        }
+    }
+    struct Case
+    {
+        TempoRange range;
+        TempoRelation expected;
+        const char *what;
+    };
+    const std::array<Case, 6> cases{{
+        {{88.0, 175.0}, TempoRelation::Same, "88 to 175: 174"},
+        {{98.0, 195.0}, TempoRelation::Same, "98 to 195: 174"},
+        {{58.0, 115.0}, TempoRelation::Half, "58 to 115: 87"},
+        {{45.0, 90.0}, TempoRelation::Half, "45 to 90: 87"},
+        // Narrower than an octave: widened at the top, to 150 to 300.
+        {{150.0, 160.0}, TempoRelation::Same, "150 to 160, widened: 174"},
+        // No range at all: the default one, in which both 87 and 174 lie
+        // and the answer is one of the two.
+        {{0.0, -1.0}, TempoRelation::Unknown, "no range: the default"},
+    }};
+    for (const Case &c : cases) {
+        InMemoryPcmSource source(audio, rate);
+        SeabassGridAnalyser analyser(c.range);
+        const GridAnalysis analysis = analyser.analyse(source);
+        const BeatGridComparison compared = compareBeatGrids(analysis.beats, truth);
+        if (c.expected == TempoRelation::Unknown) {
+            check(analyser.tempoRange().lowBpm == 70.0 && analyser.tempoRange().highBpm == 180.0, c.what);
+            check(compared.tempo == TempoRelation::Same || compared.tempo == TempoRelation::Half,
+                  std::string(c.what) + ": 87 or 174");
+        } else {
+            check(compared.tempo == c.expected,
+                  std::string("tempo range ") + c.what + ", was " + tempoRelationName(compared.tempo));
+        }
+    }
+    // In a range of one octave no tempo is preferred for being near 128:
+    // a low thud every second and a high tick every two thirds of one,
+    // with the thud a little the stronger in the fold, is at 60 BPM in a
+    // range of 45 to 90, where 90 would win on nearness to 128 alone.
+    {
+        std::vector<float> slow(static_cast<std::size_t>(rate) * 120, 0.0f);
+        std::vector<Beat> thuds;
+        int k = 0;
+        for (double at = 0.4; at < 118.0; at += 1.0, ++k) {
+            addNote(slow, rate, at, 50.0, 0.5, 0.004, 0.09);
+            addNote(slow, rate, at, 100.0, 0.5, 0.004, 0.09);
+            thuds.push_back({at * 1000.0, k % 4 + 1});
+        }
+        for (double at = 0.4; at < 118.0; at += 2.0 / 3.0) {
+            addNote(slow, rate, at, 800.0, 0.3, 0.002, 0.03);
+            addNote(slow, rate, at, 3000.0, 0.3, 0.001, 0.02);
+        }
+        InMemoryPcmSource source(slow, rate);
+        SeabassGridAnalyser analyser(TempoRange{45.0, 90.0});
+        const BeatGridComparison compared = compareBeatGrids(analyser.analyse(source).beats, thuds);
+        check(compared.tempo == TempoRelation::Same,
+              std::string("45 to 90, a thud at 60 and a tick at 90: 60, was ") + tempoRelationName(compared.tempo));
+    }
+
+    // A range none of the rhythm's own levels lies in: the tempo is
+    // brought into it by octaves all the same. A kick at 124 BPM in a
+    // range of 30 to 60 has a beat on every third or every fourth kick
+    // (41 or 31 BPM; the kicks alone do not say which), not on every
+    // second (62).
+    {
+        std::vector<float> house(static_cast<std::size_t>(rate) * 120, 0.0f);
+        for (double at = 0.3; at < 118.0; at += 60.0 / 124.0) {
+            addKick(house, rate, at);
+        }
+        InMemoryPcmSource source(house, rate);
+        SeabassGridAnalyser analyser(TempoRange{30.0, 60.0});
+        const GridAnalysis analysis = analyser.analyse(source);
+        check(analysis.beats.size() > 40, "30 to 60, a kick at 124: a grid");
+        if (analysis.beats.size() > 40) {
+            const double gap = (analysis.beats.back().timeMs - analysis.beats.front().timeMs)
+                / static_cast<double>(analysis.beats.size() - 1);
+            within(gap, 1000.0, 2000.0, "30 to 60, a kick at 124: a tempo in the range");
+            const double kicks = gap / (60000.0 / 124.0);
+            within(kicks - std::round(kicks), -0.01, 0.01, "30 to 60, a kick at 124: a whole number of kicks to the beat");
+        }
+    }
+
+    const TempoRange widened = SeabassGridAnalyser(TempoRange{150.0, 160.0}).tempoRange();
+    check(widened.lowBpm == 150.0 && widened.highBpm == 300.0, "a range under an octave is widened at the top");
+    const TempoRange clamped = SeabassGridAnalyser(TempoRange{5.0, 1000.0}).tempoRange();
+    check(clamped.lowBpm == 30.0 && clamped.highBpm == 300.0, "a range is kept between 30 and 300 BPM");
 }
 
 // Tones and hum: a level, held. No onsets, no grid; also where the tone is
@@ -412,6 +520,7 @@ int main()
 {
     bassBetweenTheBeats();
     slowAndSparse();
+    tempoRanges();
     heldTones();
     noiseIsUnsure();
     sectionsThatAnswer();

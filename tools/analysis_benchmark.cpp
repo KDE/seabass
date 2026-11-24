@@ -40,6 +40,9 @@
 // well: qm-raw, mixxx-constant and mixxx-constant-unrounded for the grid,
 // qm-key for the key, which synth mode scores against the preset's key.
 // --analyser picks some of them; the default is all, the oracle included.
+// --tempo-range LOW-HIGH (in BPM, in the synth and the audio mode) is
+// the range Seabass's own analyser gives its tempos in, rekordbox's
+// "BPM range": the default is rekordbox's default, 70-180.
 //
 //   analysis_benchmark audio <stick root> --analyser NAME[,NAME]|all [--audio-root DIR] [--limit N]
 //                      [--half tuning|heldback|all] [--tsv out.tsv] [--jobs N] [--scratch DIR]
@@ -153,11 +156,11 @@ int usage()
     std::fprintf(stderr,
                  "usage: analysis_benchmark libraries <stick root> [--tsv out.tsv] [--audio-root DIR] [--scratch DIR]\n"
                  "       analysis_benchmark synth [--preset NAME|all] [--analyser NAME[,NAME]|all] [--shift-ms X] [--check]\n"
-                 "                          [--beats DIR]\n"
+                 "                          [--beats DIR] [--tempo-range LOW-HIGH]\n"
 #ifdef SEABASS_ANALYSIS_AUDIO
                  "       analysis_benchmark audio <stick root|track list.tsv> --analyser NAME[,NAME]|all [--audio-root DIR]\n"
                  "                          [--limit N] [--half tuning|heldback|all] [--tsv out.tsv] [--jobs N]\n"
-                 "                          [--scratch DIR] [--beats DIR]\n"
+                 "                          [--scratch DIR] [--beats DIR] [--tempo-range LOW-HIGH]\n"
 #endif
                  );
     return 2;
@@ -661,12 +664,37 @@ std::optional<std::vector<std::string>> parseAnalyserList(const std::string &lis
     return names;
 }
 
+// The tempo range Seabass's own analyser is run with (--tempo-range).
+domain::TempoRange seabassTempoRange;
+
+// "88-175" as a range. False for anything else.
+bool parseTempoRange(const std::string &text, domain::TempoRange &range)
+{
+    const std::size_t dash = text.find('-');
+    if (dash == std::string::npos || dash == 0) {
+        return false;
+    }
+    char *end = nullptr;
+    const std::string low = text.substr(0, dash);
+    const std::string high = text.substr(dash + 1);
+    const double lowBpm = std::strtod(low.c_str(), &end);
+    if (end == low.c_str() || *end != '\0') {
+        return false;
+    }
+    const double highBpm = std::strtod(high.c_str(), &end);
+    if (end == high.c_str() || *end != '\0' || !(lowBpm > 0.0) || !(highBpm > lowBpm) || !std::isfinite(highBpm)) {
+        return false;
+    }
+    range = domain::TempoRange{lowBpm, highBpm};
+    return true;
+}
+
 // A grid analyser by its name: Seabass's own, or one of the baseline's
 // where the build has them. Null for a name that is neither.
 std::unique_ptr<domain::GridAnalyser> makeGridAnalyser(const std::string &name)
 {
     if (name == "seabass") {
-        return std::make_unique<domain::SeabassGridAnalyser>();
+        return std::make_unique<domain::SeabassGridAnalyser>(seabassTempoRange);
     }
 #ifdef SEABASS_ANALYSIS_BASELINE
     return baseline::makeBaselineGridAnalyser(name);
@@ -782,6 +810,10 @@ int synthMode(int argc, char **argv)
             }
         } else if (arg == "--analyser" && i + 1 < argc) {
             analyserList = argv[++i];
+        } else if (arg == "--tempo-range" && i + 1 < argc) {
+            if (!parseTempoRange(argv[++i], seabassTempoRange)) {
+                return usage();
+            }
         } else if (arg == "--preset" && i + 1 < argc) {
             preset = argv[++i];
         } else if (arg == "--shift-ms" && i + 1 < argc) {
@@ -1231,6 +1263,10 @@ int audioMode(int argc, char **argv)
             analyserList = value;
         } else if (arg == "--audio-root") {
             audioRoot = pathFromUtf8(value);
+        } else if (arg == "--tempo-range") {
+            if (!parseTempoRange(value, seabassTempoRange)) {
+                return usage();
+            }
         } else if (arg == "--scratch") {
             scratchParent = pathFromUtf8(value);
         } else if (arg == "--beats") {

@@ -383,11 +383,39 @@ Onsets onsetFunction(std::vector<float> samples, int sampleRate)
 
 // ------------------------------------------------------------- the limits
 
-// The tempos looked for, as beat periods in ms: 200 BPM to 60 BPM. (The
-// preference below leaves little chance above 180: with folds alike, the
-// half of such a tempo wins.)
+// The lags at which a rhythm is looked for, in ms: 200 BPM to 60 BPM.
+// That finds a level of the rhythm; which of its relatives is the beat is
+// chosen after, inside the tempo range.
 constexpr std::size_t ShortestPeriodMs = 300;
 constexpr std::size_t LongestPeriodMs = 1000;
+
+// A tempo range as beat periods in ms.
+struct Periods
+{
+    double shortest = 0.0;
+    double longest = 0.0;
+    // Whether the range has room for a tempo and its double. Where it
+    // has, the relative nearer 128 BPM is preferred; in a range of one
+    // octave nothing is, or drum and bass at 174 in a range of 88 to 175
+    // would stand behind two thirds of itself for being further from 128.
+    //
+    // 128 and not the middle of the range: with the preference around
+    // the middle of 70 to 180 (112 BPM), 29 tracks of the tuning half of
+    // the collection came out at another tempo than rekordbox's for 7,
+    // and 40 of 110 of varied music for 29. Between 75 and 150 rekordbox
+    // takes 150 more often than not.
+    bool prefersNear128 = false;
+};
+
+Periods periodsOf(const TempoRange &range)
+{
+    // Half a percent of room at both ends: a track at 70 BPM measures
+    // 70.00 or 69.99, and is at 70 in a range from 70.
+    constexpr double Room = 0.005;
+    constexpr double MoreThanAnOctave = 2.05;
+    return {60000.0 / range.highBpm * (1.0 - Room), 60000.0 / range.lowBpm * (1.0 + Room),
+            range.highBpm > MoreThanAnOctave * range.lowBpm};
+}
 
 // ------------------------------------------------------------------- folds
 
@@ -546,10 +574,11 @@ double sharpened(const std::vector<double> &ac, double period, double floor)
 
 // The beat period in ms, or nothing when the onset function repeats at no
 // lag and none of its multiples.
-std::optional<double> beatPeriod(const std::vector<double> &onsets)
+std::optional<double> beatPeriod(const std::vector<double> &onsets, const Periods &allowed)
 {
     constexpr std::size_t FarthestBeats = 64;
-    const std::vector<double> ac = autocorrelation(onsets, FarthestBeats * (LongestPeriodMs + 100));
+    const std::size_t longest = std::max(LongestPeriodMs, static_cast<std::size_t>(std::ceil(allowed.longest)));
+    const std::vector<double> ac = autocorrelation(onsets, FarthestBeats * (longest + 100));
     // A lag is a period when the function repeats there and at twice,
     // three and four times it, the further ones counting less.
     constexpr std::array<double, 4> MultipleWeights{1.0, 0.5, 0.33, 0.25};
@@ -585,7 +614,10 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets)
     // the scoring above takes for 127. So the lag's relatives are tried:
     // the whole track folded at each, and the one that puts the most of
     // the track's onsets into one moment of its fold is the beat, a wide
-    // preference around 128 BPM deciding between a period and its double.
+    // preference around 128 BPM deciding between a period and its double
+    // where the tempo range has room for both (in a range of one octave
+    // it has not, and nothing is preferred). A relative outside the range
+    // is tried as its double or half inside it.
     //
     // That choice is not fair to the faster tempo: where strong and weak
     // beats take turns (a kick, then a snare), the fold at the double
@@ -601,8 +633,14 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets)
     double chosen = base;
     double chosenScore = -1.0;
     for (const double relative : Relatives) {
-        const double about = base * relative;
-        if (about < static_cast<double>(ShortestPeriodMs) || about > static_cast<double>(LongestPeriodMs)) {
+        double about = base * relative;
+        while (about > allowed.longest) {
+            about /= 2.0;
+        }
+        while (about < allowed.shortest) {
+            about *= 2.0;
+        }
+        if (about > allowed.longest) {
             continue;
         }
         // The repeat nearest that period, within a few milliseconds.
@@ -612,7 +650,8 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets)
         const auto beats = static_cast<std::size_t>(static_cast<double>(onsets.size() - 1) / period);
         std::size_t used = 0;
         const std::vector<double> profile = smoothed(fold(onsets, 0.0, period, beats, used));
-        const double score = profile[indexOfMax(profile, 0, profile.size() - 1)] * preference(period, 128.0, 1.0);
+        const double score = profile[indexOfMax(profile, 0, profile.size() - 1)]
+            * (allowed.prefersNear128 ? preference(period, 128.0, 1.0) : 1.0);
         if (score > chosenScore) {
             chosenScore = score;
             chosen = period;
@@ -1191,6 +1230,20 @@ void setOnOnsets(std::vector<double> &beats, const std::vector<double> &onsets)
 
 }  // namespace
 
+SeabassGridAnalyser::SeabassGridAnalyser(TempoRange range)
+{
+    // From 30 BPM, to 300; at least an octave. What is no range at all
+    // is the default one.
+    constexpr double Lowest = 30.0;
+    constexpr double Highest = 300.0;
+    if (!(range.lowBpm > 0.0) || !(range.highBpm > range.lowBpm) || !std::isfinite(range.highBpm)) {
+        range = TempoRange{};
+    }
+    range.lowBpm = std::clamp(range.lowBpm, Lowest, Highest / 2.0);
+    range.highBpm = std::clamp(range.highBpm, 2.0 * range.lowBpm, Highest);
+    m_range = range;
+}
+
 GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
 {
     GridAnalysis analysis;
@@ -1207,16 +1260,17 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
 
     const Onsets both = onsetFunction(std::move(samples), rate);
     const std::vector<double> &onsets = both.forBeat;
+    const Periods allowed = periodsOf(m_range);
     // Under four beats of the slowest tempo there is nothing to repeat.
-    if (onsets.size() < 4 * LongestPeriodMs) {
+    if (static_cast<double>(onsets.size()) < 4.0 * std::max(static_cast<double>(LongestPeriodMs), allowed.longest)) {
         return analysis;
     }
-    const std::optional<double> coarse = beatPeriod(both.forTempo);
+    const std::optional<double> coarse = beatPeriod(both.forTempo, allowed);
     if (!coarse) {
         return analysis;
     }
     double period = *coarse;
-    if (!(period >= static_cast<double>(ShortestPeriodMs) * 0.9 && period <= static_cast<double>(LongestPeriodMs) * 1.1)) {
+    if (!(period >= allowed.shortest * 0.9 && period <= allowed.longest * 1.1)) {
         return analysis;
     }
     double phase = wholeTrackPhase(onsets, period);

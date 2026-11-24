@@ -1182,6 +1182,12 @@ have run a laptop with 32 GB out of memory. In place of a stick the
 first argument may be a track list, one track a line: row id, audio
 file, rekordbox analysis file, key, tempo.
 
+`--tempo-range LOW-HIGH` (BPM), in the `synth` and the `audio` mode, is
+the range Seabass's own analyser gives its tempos in; the default is
+70-180, which is rekordbox's default and the range the reference grids
+were analysed with. Run a collection with another range only to see what
+the range does: its rekordbox grids were not made with it.
+
 `--beats DIR`, in the `synth` and the `audio` mode, writes every grid
 that was compared as `<track>.<analyser>.tsv` and the grid it was
 compared against as `<track>.reference.tsv`, one beat a line (ms and the
