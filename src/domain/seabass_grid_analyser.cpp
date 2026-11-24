@@ -572,6 +572,55 @@ double sharpened(const std::vector<double> &ac, double period, double floor)
     return period;
 }
 
+// How sharply the track folds at `period` when every 8 s of it may fold at
+// a period of its own, up to 5 percent off: the mean of those folds'
+// peaks. This is what the tempo's candidates are compared by, and not the
+// fold of the whole track: a drummer whose tempo wanders by a few percent
+// smears that at every period alike, and then the preference for 128 BPM
+// decides alone. On 368 CD tracks of rock and pop the whole-track fold had
+// 114 at another tempo than rekordbox's, most of them at four thirds or
+// two thirds of it and every one of those on a track whose tempo wanders
+// by over a percent; window by window it is 86.
+//
+// One half of each window says where the beat is and the other how much
+// is there, and the other way round. The highest point of a fold of few
+// beats is partly chance, more so the fewer the beats, which a plain
+// window peak turns into a liking for slow tempos (it took seven of those
+// 368 tracks from the right tempo to half of it); chance does not come
+// back in the other half. Not all of it is gone: the best of the eleven
+// periods tried is still a best of eleven.
+double localPeak(const std::vector<double> &onsets, double period)
+{
+    // A track shorter than a window is one window, as long as it is.
+    const std::size_t WindowMs = std::min<std::size_t>(8000, onsets.size() - 1);
+    constexpr std::size_t HopMs = 4000;
+    double sum = 0.0;
+    std::size_t count = 0;
+    for (std::size_t start = 0; start + WindowMs < onsets.size(); start += HopMs) {
+        double best = 0.0;
+        for (int k = -5; k <= 5; ++k) {
+            const double local = period * (1.0 + 0.01 * k);
+            const auto beats = static_cast<std::size_t>(static_cast<double>(WindowMs) / local);
+            const std::size_t first = beats / 2;
+            if (first < 2) {
+                continue;
+            }
+            std::size_t usedA = 0;
+            std::size_t usedB = 0;
+            const std::vector<double> a = smoothed(fold(onsets, static_cast<double>(start), local, first, usedA));
+            const std::vector<double> b = smoothed(
+                fold(onsets, static_cast<double>(start) + static_cast<double>(first) * local, local, beats - first, usedB));
+            if (usedA == 0 || usedB == 0 || a.size() != b.size()) {
+                continue;
+            }
+            best = std::max(best, 0.5 * (b[indexOfMax(a, 0, a.size() - 1)] + a[indexOfMax(b, 0, b.size() - 1)]));
+        }
+        sum += best;
+        ++count;
+    }
+    return count > 0 ? sum / static_cast<double>(count) : 0.0;
+}
+
 // The beat period in ms, or nothing when the onset function repeats at no
 // lag and none of its multiples.
 std::optional<double> beatPeriod(const std::vector<double> &onsets, const Periods &allowed)
@@ -612,8 +661,9 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets, const Period
     // That lag is a level of the rhythm, not always the beat: a dotted
     // rhythm at 95 BPM repeats well at three quarters of its beat, which
     // the scoring above takes for 127. So the lag's relatives are tried:
-    // the whole track folded at each, and the one that puts the most of
-    // the track's onsets into one moment of its fold is the beat, a wide
+    // the track folded at each, window by window (localPeak above), and
+    // the one that puts the most of the onsets into one moment of its
+    // folds is the beat, a wide
     // preference around 128 BPM deciding between a period and its double
     // where the tempo range has room for both (in a range of one octave
     // it has not, and nothing is preferred). A relative outside the range
@@ -632,6 +682,8 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets, const Period
     constexpr std::array<double, 7> Relatives{0.5, 2.0 / 3.0, 0.75, 1.0, 4.0 / 3.0, 1.5, 2.0};
     double chosen = base;
     double chosenScore = -1.0;
+    std::array<double, Relatives.size()> tried{};
+    std::size_t triedCount = 0;
     for (const double relative : Relatives) {
         double about = base * relative;
         while (about > allowed.longest) {
@@ -643,15 +695,18 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets, const Period
         if (about > allowed.longest) {
             continue;
         }
+        // Half, whole and double come to the same period inside a range
+        // of under two octaves: once is enough.
+        if (std::any_of(tried.begin(), tried.begin() + static_cast<std::ptrdiff_t>(triedCount),
+                        [about](double before) { return std::abs(before - about) < 0.5; })) {
+            continue;
+        }
+        tried[triedCount++] = about;
         // The repeat nearest that period, within a few milliseconds.
         constexpr std::size_t Near = 6;
         const auto middle = static_cast<std::size_t>(std::llround(about));
         const double period = sharpened(ac, parabolaPeak(ac, indexOfMax(ac, middle - Near, middle + Near)), floor);
-        const auto beats = static_cast<std::size_t>(static_cast<double>(onsets.size() - 1) / period);
-        std::size_t used = 0;
-        const std::vector<double> profile = smoothed(fold(onsets, 0.0, period, beats, used));
-        const double score = profile[indexOfMax(profile, 0, profile.size() - 1)]
-            * (allowed.prefersNear128 ? preference(period, 128.0, 1.0) : 1.0);
+        const double score = localPeak(onsets, period) * (allowed.prefersNear128 ? preference(period, 128.0, 1.0) : 1.0);
         if (score > chosenScore) {
             chosenScore = score;
             chosen = period;
@@ -1175,13 +1230,184 @@ std::vector<double> followWindows(const std::vector<double> &onsets, const Tempo
     return distinct;
 }
 
+// The beats as the one path through the track that scores best (Ellis,
+// "Beat Tracking by Dynamic Programming", 2007): a beat scores what the
+// onset function has at its place, and the step from one beat to the next
+// costs by the square of how far (in log) it is from the period the tempo
+// curve has there. This follows a drummer, whose every beat is a little
+// off where the last ones said it would be, as the window follower does
+// not. `sureShare` is the share of the path's beats that had something to
+// go by, measured against the path's own stronger beats: it says how much
+// of the track has a beat to be on, not whether the track has a rhythm.
+// Nothing comes back where the path has under eight beats or under four
+// sure ones.
+//
+// It is for a tempo that wanders and not for one that holds (see where it
+// is called): given a track from a drum machine, the path leaves the beat
+// for whatever is loudest, and where a section has its bass or its chords
+// between the beats it sits there for the length of the section.
+std::vector<double> trackBeats(const std::vector<double> &onsets, const TempoCurve &curve, double &sureShare)
+{
+    sureShare = 0.0;
+    // How much a step off the curve's period costs. 100 is Ellis's; 400
+    // and 1000 follow the varied music no better and no worse.
+    constexpr double Tightness = 100.0;
+    constexpr std::size_t Hop = 2;
+    // The onset function is taken over 15 ms either side: over 8 a tick
+    // between the beats outweighs a kick, whose bands rise one after the
+    // other, and over 30 the beats land too far from their hits.
+    constexpr std::ptrdiff_t Smooth = 15;
+    const std::size_t n = onsets.size() / Hop;
+    if (n < 16) {
+        return {};
+    }
+    // The onset function a little broader, so that a beat a few ms off a
+    // hit still has most of it, and every second value of that.
+    std::vector<double> sums(onsets.size() + 1, 0.0);
+    for (std::size_t i = 0; i < onsets.size(); ++i) {
+        sums[i + 1] = sums[i] + onsets[i];
+    }
+    std::vector<double> local(n);
+    double mean = 0.0;
+    for (std::size_t t = 0; t < n; ++t) {
+        const auto centre = static_cast<std::ptrdiff_t>(t * Hop);
+        const auto from = static_cast<std::size_t>(std::max<std::ptrdiff_t>(0, centre - Smooth));
+        const auto to = static_cast<std::size_t>(
+            std::min<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(onsets.size()), centre + Smooth + 1));
+        local[t] = (sums[to] - sums[from]) / static_cast<double>(to - from);
+        mean += local[t];
+    }
+    mean /= static_cast<double>(n);
+    double variance = 0.0;
+    for (const double value : local) {
+        variance += (value - mean) * (value - mean);
+    }
+    const double deviation = std::sqrt(variance / static_cast<double>(n));
+    if (!(deviation > 0.0)) {
+        return {};
+    }
+    for (double &value : local) {
+        value /= deviation;
+    }
+    std::vector<double> logOf(4096);
+    for (std::size_t k = 1; k < logOf.size(); ++k) {
+        logOf[k] = std::log(static_cast<double>(k));
+    }
+    std::vector<double> score(n, 0.0);
+    std::vector<std::int32_t> before(n, -1);
+    for (std::size_t t = 0; t < n; ++t) {
+        const double period = curve.at(static_cast<double>(t * Hop)) / static_cast<double>(Hop);
+        const double logPeriod = std::log(period);
+        const auto farthest = std::min<std::size_t>(static_cast<std::size_t>(2.0 * period), logOf.size() - 1);
+        const auto nearest = std::max<std::size_t>(static_cast<std::size_t>(0.5 * period), 1);
+        double best = 0.0;
+        std::int32_t bestBefore = -1;
+        for (std::size_t back = nearest; back <= farthest && back <= t; ++back) {
+            const double d = logOf[back] - logPeriod;
+            const double value = score[t - back] - Tightness * d * d;
+            if (value > best) {
+                best = value;
+                bestBefore = static_cast<std::int32_t>(t - back);
+            }
+        }
+        score[t] = local[t] + best;
+        before[t] = bestBefore;
+    }
+    // The last beat: the best score in the last beat and a half.
+    const double lastPeriod = curve.at(static_cast<double>((n - 1) * Hop)) / static_cast<double>(Hop);
+    const std::size_t tail = n - 1 - std::min<std::size_t>(n - 1, static_cast<std::size_t>(1.5 * lastPeriod));
+    std::size_t at = indexOfMax(score, tail, n - 1);
+    std::vector<double> beats;
+    std::vector<double> strengths;
+    for (std::int32_t i = static_cast<std::int32_t>(at); i >= 0; i = before[static_cast<std::size_t>(i)]) {
+        beats.push_back(static_cast<double>(static_cast<std::size_t>(i) * Hop));
+        strengths.push_back(local[static_cast<std::size_t>(i)]);
+    }
+    std::reverse(beats.begin(), beats.end());
+    std::reverse(strengths.begin(), strengths.end());
+    if (beats.size() < 8) {
+        return {};
+    }
+    // Where the path had nothing to go by (a breakdown, a start without
+    // drums) it wanders to whatever is there at next to no cost. A beat
+    // is sure when it has a quarter of what the track's stronger beats
+    // have; two and more unsure beats in a row are spaced evenly between
+    // the sure ones around them.
+    constexpr double SureShare = 0.25;
+    const double typical = quantile(strengths, 0.75);
+    std::vector<std::size_t> sure;
+    for (std::size_t i = 0; i < beats.size(); ++i) {
+        if (strengths[i] >= SureShare * typical) {
+            sure.push_back(i);
+        }
+    }
+    if (sure.size() < 4) {
+        return {};
+    }
+    sureShare = static_cast<double>(sure.size()) / static_cast<double>(beats.size());
+    // Before the first sure beat and after the last the grid goes on at
+    // the period the curve has there, to the start and the end.
+    std::vector<double> whole;
+    for (double time = beats[sure.front()] - curve.at(beats[sure.front()]); time >= 0.0; time -= curve.at(time)) {
+        whole.push_back(time);
+    }
+    std::reverse(whole.begin(), whole.end());
+    whole.push_back(beats[sure.front()]);
+    for (std::size_t k = 0; k + 1 < sure.size(); ++k) {
+        const std::size_t a = sure[k];
+        const std::size_t b = sure[k + 1];
+        if (b - a < 3) {
+            whole.insert(whole.end(), beats.begin() + static_cast<std::ptrdiff_t>(a) + 1,
+                         beats.begin() + static_cast<std::ptrdiff_t>(b) + 1);
+            continue;
+        }
+        // How many beats the stretch holds is the curve's to say, not the
+        // path's: over a long breakdown the path gains or loses one for
+        // the price of a percent a beat.
+        constexpr double StepMs = 10.0;
+        double counted = 0.0;
+        for (double time = beats[a]; time < beats[b]; time += StepMs) {
+            counted += std::min(StepMs, beats[b] - time) / curve.at(time);
+        }
+        const auto count = static_cast<std::size_t>(std::max(1.0, std::round(counted)));
+        for (std::size_t i = 1; i <= count; ++i) {
+            whole.push_back(beats[a] + (beats[b] - beats[a]) * static_cast<double>(i) / static_cast<double>(count));
+        }
+    }
+    const double end = static_cast<double>(onsets.size() - 1);
+    for (double time = whole.back() + curve.at(whole.back()); time <= end; time += curve.at(time)) {
+        whole.push_back(time);
+    }
+    return whole;
+}
+
+// How far the tempo wanders: the spread of the curve's periods (5th to
+// 95th percentile) over their middle, in the windows that have a rhythm.
+// A drum machine holds to a thousandth; a drummer wanders by percents.
+// So does a machine whose tempo is changed on purpose (a step from 124 to
+// 126, a ramp): this tells a tempo that moves from one that holds, not
+// who plays. 0 where under eight windows have a rhythm: too few to say.
+double wander(const TempoCurve &curve)
+{
+    std::vector<double> periods;
+    for (std::size_t w = 0; w < curve.periodsMs.size(); ++w) {
+        if (curve.rhythm[w]) {
+            periods.push_back(curve.periodsMs[w]);
+        }
+    }
+    if (periods.size() < 8) {
+        return 0.0;
+    }
+    return (quantile(periods, 0.95) - quantile(periods, 0.05)) / quantile(periods, 0.5);
+}
+
 // Each followed beat set on its own onset: the peak of the onset
 // function within 25 ms of it, where there is a clear one. The windows
 // give the beat as eight beats have it on average, which on a drummer is
 // the pulse and not the hits; rekordbox's beat-by-beat grids are on the
 // hits (their beats lie 3 to 9 ms off the line through their
 // neighbours), and a loop is cut on a hit. A beat without a clear onset
-// near it stays where the windows put it.
+// near it stays where the windows or the path put it.
 void setOnOnsets(std::vector<double> &beats, const std::vector<double> &onsets)
 {
     if (beats.empty() || onsets.size() < 64) {
@@ -1347,7 +1573,8 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
     std::vector<double> followed;
     // How sure the grid is, 0 to 1: of the windows with a rhythm, the
     // share the straight grid explains; of a followed grid, the share of
-    // its windows that had a clear beat where it expected one. Nothing
+    // its windows that had a clear beat where it expected one, or of its
+    // path's beats that had something to go by. Nothing
     // regular in the audio at all (noise, speech) leaves it at 0, with a
     // grid that means nothing.
     double sure = 0.0;
@@ -1375,10 +1602,39 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
             std::size_t windowsSure = 0;
             std::size_t windowsTried = 0;
             followed = followWindows(onsets, *curve, period, phase, windowsSure, windowsTried);
+            double followedSure =
+                windowsTried > 0 ? static_cast<double>(windowsSure) / static_cast<double>(windowsTried) : 0.0;
+            // A drummer or a drum machine? Where the tempo wanders by over
+            // a percent the path follows it; where it holds, the windows
+            // do, which keep to the beat through a section whose loudest
+            // sounds lie between the beats. With the path for every track
+            // that is followed, 15 of the 72 collection tracks whose grid
+            // Sebastian had looked at and found right came out with
+            // another grid; the varied music was the better for it by ten
+            // tracks in 368. Neither how well a straight grid fits the
+            // path's beats nor how sure the window follower is of itself
+            // told the two kinds of track apart as well as the curve does.
+            constexpr double Wanders = 0.01;
+            if (wander(*curve) > Wanders) {
+                double pathSure = 0.0;
+                std::vector<double> path = trackBeats(onsets, *curve, pathSure);
+                if (path.size() >= 8) {
+                    // A path finds beats in anything, speech and noise
+                    // included, and is sure of them by its own measure:
+                    // it is sure of the track only as far as the curve
+                    // found a rhythm in it.
+                    std::size_t withARhythm = 0;
+                    for (const bool rhythm : curve->rhythm) {
+                        withARhythm += rhythm ? 1 : 0;
+                    }
+                    followed = std::move(path);
+                    followedSure = pathSure * static_cast<double>(withARhythm) / static_cast<double>(curve->rhythm.size());
+                }
+            }
             setOnOnsets(followed, onsets);
             moves = followed.size() >= 8;
             if (moves) {
-                sure = windowsTried > 0 ? static_cast<double>(windowsSure) / static_cast<double>(windowsTried) : 0.0;
+                sure = followedSure;
             }
         }
     } else {

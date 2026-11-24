@@ -47,8 +47,10 @@ struct TempoRange
 // on the repeats 4, 16 and 64 beats away,
 // each of which says the period that many times finer. That lag and its
 // relatives (half, two thirds, three quarters, four thirds, three halves,
-// double) are then each tried as the beat: the one at which the whole
-// track folds sharpest is it, with a wide preference around 128 BPM to
+// double) are then each tried as the beat: the one at which the track
+// folds sharpest is it (window by window, each window free to fold at a
+// period of its own within 5 percent, so that a drummer who wanders does
+// not blur the comparison), with a wide preference around 128 BPM to
 // decide between a tempo and its double. A relative outside the tempo
 // range (TempoRange below) counts as its double or half inside it.
 //
@@ -70,8 +72,12 @@ struct TempoRange
 // each next window of eight beats corrects the grid when its peak is
 // clearly the beat the grid expects; where it is not (a breakdown, a
 // fill) the grid goes on at the curve's tempo and the beats in between
-// are spaced evenly. Each followed beat is then set on its own onset
-// where it has a clear one within 25 ms.
+// are spaced evenly. Where the curve says the tempo wanders by over a
+// percent (a drummer, not a machine) the beats are instead the path
+// through the onsets that scores best with steps near the curve's
+// period, stretches with nothing to go by spaced evenly. Each followed
+// beat is then set on its own onset where it has a clear one within
+// 25 ms.
 //
 // What it does not do yet: say which beat starts the bar (beatInBar is
 // 0), or refine the beat on the samples of the transient.

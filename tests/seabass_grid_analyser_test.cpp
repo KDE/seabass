@@ -463,6 +463,126 @@ void movingInARange(double fromBpm, double toBpm, TempoRange range, const std::s
     within(c.hits.within20Ms, 0.9, 1.0, what + ": true beats with one of ours within 20 ms");
 }
 
+// A drummer at 96 BPM who speeds up by eight percent over the first half
+// of the track and slows down again over the second, and is never quite
+// steady from bar to bar either: a kick on one and three, a snare on two
+// and four, a hat on every eighth, and around them what a band plays that
+// is not on the drummer's grid (here: notes at moments of chance). Over
+// the whole track his beats pass through every place in the beat, so the
+// fold of the whole track is nearly flat at every period alike, and by it
+// the tempo came out on the preference for 128 alone, at four thirds of
+// 96; window by window the track folds sharpest at 96. And the grid
+// follows him: the path through the onsets does where the windows lose
+// him.
+//
+// With six quiet notes a second off the grid the grid is asked for as
+// well as the tempo. With twenty as loud as the drums only the tempo is:
+// there the beats are not found (one in ten), and it is the case in which
+// the fold of the whole track has the tempo wrong.
+void wanderingDrummer(double offTheGridASecond, double offTheGridLoud, bool theGridToo)
+{
+    const int rate = 44100;
+    const double pi = 3.14159265358979;
+    const double seconds = 160.0;
+    std::vector<float> audio(static_cast<std::size_t>(rate * (seconds + 2.0)), 0.0f);
+    std::vector<Beat> truth;
+    int k = 0;
+    for (double at = 0.5; at < seconds; ++k) {
+        truth.push_back({at * 1000.0, k % 4 + 1});
+        const double longWave = 1.0 - std::abs(2.0 * at / seconds - 1.0);
+        const double period = 60.0 / (92.0 * (1.0 + 0.08 * longWave) * (1.0 + 0.03 * std::sin(2.0 * pi * at / 9.0)));
+        if (k % 2 == 0) {
+            addKick(audio, rate, at);
+        } else {
+            addNote(audio, rate, at, 220.0, 0.45, 0.002, 0.06);
+            addNote(audio, rate, at, 1800.0, 0.3, 0.001, 0.04);
+        }
+        addNote(audio, rate, at, 3500.0, 0.12, 0.001, 0.012);
+        addNote(audio, rate, at + period / 2.0, 3500.0, 0.12, 0.001, 0.012);
+        at += period;
+    }
+    // Chance that is the same on every machine: a standard library's
+    // distributions are its own.
+    std::uint32_t state = 88172645u;
+    const auto chance = [&state]() {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return static_cast<double>(state) / 4294967296.0;
+    };
+    for (int i = 0; i < static_cast<int>(seconds * offTheGridASecond); ++i) {
+        const double at = 0.5 + (seconds - 0.5) * chance();
+        const double loud = offTheGridLoud * (0.3 + 0.7 * chance());
+        addNote(audio, rate, at, std::array<double, 4>{110.0, 260.0, 800.0, 2400.0}[static_cast<std::size_t>(i % 4)], loud, 0.003, 0.05);
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth, SeabassGridAnalyser::FollowedGridEarlierMs);
+    const std::string name = theGridToo ? "a wandering drummer at 96" : "a wandering drummer at 96 among much off his grid";
+    check(c.tempo == TempoRelation::Same, name + ": the tempo, was " + tempoRelationName(c.tempo));
+    if (theGridToo) {
+        check(c.candidateShape.kind == GridShapeKind::Moving, name + ": a grid that moves");
+        within(c.hits.within20Ms, 0.9, 1.0, name + ": true beats with one of ours within 20 ms");
+    }
+}
+
+// A drum machine at 124 BPM that goes to 124.5 half way (so that no
+// straight grid explains the track and it is followed), with sections in
+// which a stab between the beats is louder than the kick. Its tempo
+// holds, so it is the windows that follow it, and they keep to the kick
+// on over four fifths of the track. The path, which is for a tempo that
+// wanders, sits on the stabs for the length of each such section, and has
+// the kick on little over half.
+void stabsBetweenTheBeatsForASection()
+{
+    const int rate = 44100;
+    const int count = 320;
+    std::vector<float> audio(static_cast<std::size_t>((count * 60.0 / 124.0 + 1.5) * rate), 0.0f);
+    std::vector<Beat> truth;
+    double beat = 0.3;
+    for (int k = 0; k < count; ++k) {
+        const double period = 60.0 / (k < count / 2 ? 124.0 : 124.5);
+        truth.push_back({beat * 1000.0, k % 4 + 1});
+        addKick(audio, rate, beat, 0.8);
+        // Of every 80 beats the last 32 are such a section.
+        if (k % 80 >= 48) {
+            addStab(audio, rate, beat + period / 2.0, 1.0);
+        }
+        beat += period;
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth, SeabassGridAnalyser::FollowedGridEarlierMs);
+    check(c.tempo == TempoRelation::Same, std::string("stabs between the beats for a section: the tempo, was ") + tempoRelationName(c.tempo));
+    check(c.candidateShape.kind == GridShapeKind::Moving, "stabs between the beats for a section: followed");
+    within(c.hits.within20Ms, 0.75, 1.0, "stabs between the beats for a section: the grid stays on the kick");
+}
+
+// A loop of seven seconds, shorter than the windows the tempo's candidates
+// are compared in: it is one window, and its tempo is still read from the
+// audio. (With no window at all every candidate scored nothing and the
+// first one tried, half the period, was taken: 171 BPM for these 86.)
+void shortLoop()
+{
+    const int rate = 44100;
+    const double period = 0.7;
+    std::vector<float> audio(static_cast<std::size_t>(rate * 7.5), 0.0f);
+    std::vector<Beat> truth;
+    int k = 0;
+    for (double at = 0.2; at < 7.2; at += period, ++k) {
+        addKick(audio, rate, at);
+        truth.push_back({at * 1000.0, k % 4 + 1});
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    check(!analysis.beats.empty(), "a loop of seven seconds: a grid");
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth);
+    check(c.tempo == TempoRelation::Same, std::string("a loop of seven seconds: the tempo, was ") + tempoRelationName(c.tempo));
+}
+
 // Tones and hum: a level, held. No onsets, no grid; also where the tone is
 // low enough that its square ripples under the envelope's smoothing, and
 // where it has been through 16 bits.
@@ -551,6 +671,10 @@ int main()
     bassBetweenTheBeats();
     slowAndSparse();
     tempoRanges();
+    shortLoop();
+    wanderingDrummer(6.0, 0.35, true);
+    wanderingDrummer(20.0, 0.8, false);
+    stabsBetweenTheBeatsForASection();
     movingInARange(45.0, 50.0, TempoRange{40.0, 80.0}, "a kick from 45 to 50 BPM in 40 to 80");
     movingInARange(205.0, 230.0, TempoRange{120.0, 240.0}, "a kick from 205 to 230 BPM in 120 to 240");
     heldTones();

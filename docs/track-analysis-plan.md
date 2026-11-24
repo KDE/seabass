@@ -515,10 +515,17 @@ outcome a track:
 On the tracks at rekordbox's tempo and on its beat, Engine's grid is
 4.3 ms late at the median and anywhere between 26 ms early and 39 ms
 late (5th to 95th percentile); ours is 1.2 ms late, between 5 early and
-7 late. The tempo is where the two stand alike: 29 tracks each at
-another tempo than rekordbox's, 19 of them the same tracks (among
-Engine's are six of the seven in odd or triple metre; among ours four
-of seven hip-hop and four of six without drums).
+7 late. On the tempo the table is not fair to Engine: it was run with a
+tempo range of 78 to 155 (read from its settings afterwards), rekordbox
+and Seabass with 70 to 180, and 18 of the 110 tracks have a rekordbox
+tempo outside 78 to 155. Of Engine's 29 tracks at another tempo, 14 are
+those, an octave apart: the range speaking. On equal terms, with Seabass
+run with 78 to 155 as well and a tempo counted right when it is
+rekordbox's brought into that range by octaves, Engine has the tempo
+right on 97 of 110 and Seabass on 92; 10 tracks are wrong in both.
+Seabass run with that range has Engine's tempo on 91 of 110. So on
+the tempo of varied music Engine is ahead by five tracks, and where the
+beats are set it is behind.
 
 Against rekordbox's Normal grids (101 tracks), which are straight like
 Engine's: within 10 ms and steady Engine 18, Seabass 22; another tempo
@@ -563,6 +570,148 @@ and this tracker for those half a beat out, the start of the hit for
 those over 10 ms off: 46 of the 91 that differ on the tuning half) are
 listed with pictures for Sebastian to hear and approve or not; the list
 is with the private audio.
+
+## More music, and what it showed
+
+Two more sets came on 24 November, both analysed by rekordbox in its
+Dynamic mode with the range 70 to 180, and split into halves like the
+others; only the tuning halves have been run.
+
+- **The second playlist**: 233 files of the 226 tracks asked for to fill
+  what the first lacked (music that can be read at two tempos, drummers,
+  tempo changes, threes, and what a DJ plays that the collection has
+  little of); 126 scored tracks in the tuning half.
+- **CD rips**: 731 files, up to three albums of each of 326 artists,
+  picked by a rule and not by ear: rock, electronic, pop, hip-hop, jazz.
+  368 in the tuning half.
+
+With the analyser as it stood (the tempo range commit), the CD rips
+were the worst it had met: another tempo than rekordbox's on 114 of
+368, where the raw tracker of the Mixxx baseline has 60. Most of the
+114 were at four thirds or two thirds of rekordbox's tempo, and every
+one of those on a track whose tempo wanders by over a percent (5th to
+95th percentile of the local period); not one on a track that holds.
+The cause: a drummer who wanders smears the fold of the whole track at
+every period alike, the candidates' folds come out nearly as flat as
+each other, and the preference for 128 BPM decides alone.
+
+Two changes followed.
+
+- **The tempo's candidates are compared window by window**: every 8 s
+  of the track folded at a period of its own within 5 percent of the
+  candidate's, and the mean of those folds' peaks. One half of each
+  window says where the peak is and the other how high it is there,
+  because the highest point of a fold of few beats is partly chance,
+  more so the fewer the beats, and a plain window peak had the slower
+  candidates win (seven tracks of the CD rips went from right to half).
+  Taking the wandering out of the track first, by the tempo curve, and
+  then folding the whole of it was tried and did nothing.
+- **A drummer is followed by a path, not by windows**: the beats as the
+  path through the onset function that scores best with steps near the
+  tempo curve's period (Ellis, "Beat Tracking by Dynamic Programming",
+  2007), stretches with nothing to go by spaced evenly with as many
+  beats as the curve says, each beat then set on its own onset as
+  before. Only where the curve says the tempo wanders by over a percent.
+  For every followed track it was better still on the CD rips (154
+  within 10 ms and steady for 144) and worse on the collection: on a
+  drum machine's track the path leaves the beat for whatever is
+  loudest and sits between the beats for whole sections, and 15 of the
+  72 grids Sebastian had approved (below) came out as another grid.
+  Two other tests for "drummer or machine" (how well a straight grid
+  fits the path's sure beats; how sure the window follower is of
+  itself) told the two apart no better than the curve.
+
+Tuning halves, before and after (tempo range commit; these two
+changes):
+
+| | Another tempo | Within 10 ms, steady |
+|---|---|---|
+| Collection, 751 | 7; 6 | 660; 659 |
+| First variety list, 110 | 29; 26 | 48; 54 |
+| Second playlist, 126 | 36; 31 | 58; 64 |
+| CD rips, 368 | 114; 86 | 127; 144 |
+
+On the CD rips half of rekordbox's beats are within 10 ms of ours on
+52 percent of the tracks (45 before; the Mixxx raw tracker 60), nine in
+ten on 9 percent (the raw tracker 2). The raw tracker still has the
+tempo on more of them (301 of 369 for 278): on rock we are behind it
+there and ahead of it in where the beats are set.
+
+In the tests: a drummer who speeds up and slows down among notes off
+his grid (the tempo by windows, and the path), and a drum machine with
+loud stabs between the beats for sections (the windows, not the path).
+Two rules have no test that turns red without them and rest on the
+music alone: the two halves of a window checking each other, and the
+15 ms over which the path takes its onsets.
+
+## Sebastian's decisions on the tracks that differ
+
+Every one of the 91 tracks of the collection's tuning half on which
+the analyser's grid differed from rekordbox's (half a beat out, over
+10 ms off, a drift, another tempo) was put before Sebastian as
+pictures of the audio under both grids, with an answer to tick. The
+answers are kept by row id with the private audio's notes.
+
+| | Ours | Both fine | rekordbox | Neither | Cannot tell |
+|---|---|---|---|---|---|
+| Half a beat out, 33 | 28 | 1 | 3 | 0 | 1 |
+| Over 10 ms off, 40 | 31 | 0 | 4 | 4 | 1 |
+| Drifts, 11 | 9 | 0 | 1 | 1 | 0 |
+| Another tempo, 7 | 3 | 0 | 3 | 1 | 0 |
+
+With rekordbox or approved, the analyser of the tempo range commit:
+732 of 751 (97.5 percent); with the two changes above 730, one
+approved grid lost (a track at another tempo than rekordbox's whose
+tempo the window comparison now reads as rekordbox does). An approval
+counts for a run only while it has the grid he saw: the same kind of
+difference, the median within 3 ms, a drift within 10 ms. rekordbox
+stays the reference in every table; the approved tracks are counted in
+a row of their own.
+
+What the pictures taught. The first two pages drew envelopes smoothed
+at 60 Hz with no delay, which draws a hit that starts at 0 with its
+level peaking at 0 and its rise peaking 8 ms before: "the grid belongs
+at the foot of the rise" was 10 to 15 ms early there, and his answers
+on the tracks over 10 ms off stood at 14 to 11. Drawn again from the
+audio with nothing smoothed (the size of the analytic signal of each
+band, laid over itself at every beat, seven pixels a millisecond, where
+a hit leaves the floor within a millisecond of its start) they are 31
+to 4. A reading rule for a picture is to be checked by putting a known
+signal through the picture's own processing first.
+
+Two witnesses beside him on the tracks half a beat apart: Beat This!
+(ours on 28 of 33, rekordbox's on 3) and Denon's players (below: ours
+on 16 of the 17 they have analysed, rekordbox's on none).
+
+## Denon again: the new music, and the players
+
+**Engine DJ Desktop on the new sets** (tuning halves; again one
+straight grid on every file; its range 78 to 155). Within 10 ms of
+rekordbox's Dynamic grids and steady: second playlist 35 of 126 (ours
+64), CD rips 67 of 368 (ours 144). The tempo on equal terms, all
+brought to 78 to 155 by octaves: first variety list Engine 97 of 110,
+ours 94; second playlist 115 of 126 and 114; CD rips 326 of 368 and
+315 (282 before the two changes above). Engine is ahead on the tempo
+by a few tracks everywhere, and behind in where the beats are set.
+
+**The players on techno.** A backup of the stick WHALESHARK holds the
+grids the players (Prime 4, Go+) made for 953 tracks, 373 of them in
+the collection's tuning half; all straight. They are Denon's own
+analysis and not rekordbox's taken over: against rekordbox they spread
+by milliseconds.
+
+| On those 373 tracks, against rekordbox | Denon's players | Seabass |
+|---|---|---|
+| Within 3 ms, steady | 213 | 301 |
+| 3 to 10 ms, steady | 96 | 38 |
+| Over 10 ms off | 34 | 11 |
+| Half a beat out | 23 | 17 |
+| Another tempo | 0 | 2 |
+| Right by Sebastian's decision, else by rekordbox | 327 | 367 |
+
+Denon's grid sits +0.06 ms from rekordbox's at the median, half of the
+tracks between -1.9 and +1.8 ms. No track at another tempo: on techno
+the players' tempo is not in question.
 
 ## Phase 3, in order
 
