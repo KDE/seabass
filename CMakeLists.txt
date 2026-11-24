@@ -4451,6 +4451,18 @@ target_link_libraries(libdjinterop_engine_mp3_lead_in_test PRIVATE DjInterop SQL
 add_test(NAME libdjinterop_engine_mp3_lead_in_test COMMAND libdjinterop_engine_mp3_lead_in_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
 
+# #123: a cue added by a click on the details pane's waveform, which
+# draws an Engine MP3 on Engine's timeline, is stored where the click was
+# and drawn there again; a WAV is not moved.
+add_executable(engine_cue_click_timeline_test
+    tests/engine_cue_click_timeline_test.cpp
+)
+target_link_libraries(engine_cue_click_timeline_test PRIVATE seabass_core_testing)
+target_include_directories(engine_cue_click_timeline_test PRIVATE src)
+target_link_libraries(engine_cue_click_timeline_test PRIVATE DjInterop)
+add_test(NAME engine_cue_click_timeline_test COMMAND engine_cue_click_timeline_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/beat-click ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
+
 add_executable(libdjinterop_engine_cleanup_writer_test
     tests/libdjinterop_engine_cleanup_writer_test.cpp
 )

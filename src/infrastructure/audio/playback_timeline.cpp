@@ -33,6 +33,12 @@ PlaybackShift playbackShiftFor(const std::string &filePath, GridTimeline grid)
     return playbackShiftFor(readMp3LeadIn(filePath), correct, grid);
 }
 
+double cueToGridShiftMs(const std::string &filePath, GridTimeline grid)
+{
+    const PlaybackShift shift = playbackShiftFor(filePath, grid);
+    return shift.cuesMs - shift.beatsMs;
+}
+
 std::optional<double> cueTimelineOffsetMs(const std::string &filePath)
 {
     if (!domain::MatchingPolicy::correctMp3CueTiming() || !domain::hasMp3Extension(filePath)) {

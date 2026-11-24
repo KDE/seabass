@@ -328,4 +328,74 @@ TestCase {
             settings.correctMp3CueTiming = was;
         }
     }
+
+    // #123: a click on that waveform adds a cue where the click was. The
+    // pane draws an Engine MP3 on Engine's timeline and the cue writer
+    // takes rekordbox's, so the click is moved by the file's lead-in
+    // before it is staged: 51.179 ms on LAME, about 25 ms on FFmpeg's own
+    // encoder. Staged and drawn again, the cue is back at the click. A
+    // WAV, and any rekordbox track, are staged as clicked.
+    function fixtureFile(name) {
+        return Qt.resolvedUrl("../fixtures/" + name).toString()
+            .replace("file://", "").replace(/^\/([A-Za-z]:)/, "$1");
+    }
+    function test_aClickOnThePaneAddsTheCueWhereItWas_data() {
+        return [{tag: "engine-lame", format: "engine", file: "beat-click/beats-D-lame-44100.mp3", shift: 2257 * 1000 / 44100},
+                {tag: "engine-lavc", format: "engine", file: "beat-click/beats-B-lavc-44100.mp3", shift: -1},
+                {tag: "engine-wav", format: "engine", file: "mp3-lead-in/silence.wav", shift: 0},
+                {tag: "rekordbox-lame", format: "rekordbox", file: "beat-click/beats-D-lame-44100.mp3", shift: 0}];
+    }
+    function test_aClickOnThePaneAddsTheCueWhereItWas(data) {
+        const settings = createTemporaryObject(settingsComponent, testCase);
+        const was = settings.correctMp3CueTiming;
+        settings.correctMp3CueTiming = true;
+        try {
+            // Built with the recording controller and a real player, as
+            // makePanel() builds its own, not swapped in afterwards.
+            const panel = createTemporaryObject(panelComponent, testCase, {
+                addCueController: {statusMessage: "", errorMessage: "", busy: false, calls: [],
+                                   addCue: function(format, path, id, positionMs, kind, slot, color, comment,
+                                                    isLoop, loopEndMs) {
+                                       this.calls.push({positionMs: positionMs, isLoop: isLoop,
+                                                        loopEndMs: loopEndMs});
+                                   }},
+                playbackController: createTemporaryObject(realPlayerComponent, testCase),
+                format: data.format,
+                libraryPath: "/nonexistent/Library",
+            });
+            verify(panel !== null);
+            waitForRendering(panel);
+            panel.addCueEnabled = true;
+            const delegate = makeDelegate();
+            delegate.filePath = testCase.fixtureFile(data.file);
+            delegate.cues = [];
+            panel.showFor(delegate);
+            const view = findChild(panel, "trackDetailPanelWaveform");
+            const add = findChild(panel, "addCueButton");
+            verify(view !== null && add !== null);
+
+            view.positionClicked(5000);
+            compare(panel.pendingPositionMs, 5000, "the form names the position clicked");
+            add.clicked();
+            view.loopRangeSelected(5000, 7000);
+            add.clicked();
+            const staged = panel.addCueController.calls;
+            compare(staged.length, 2);
+
+            const shift = data.shift >= 0 ? data.shift : staged[0].positionMs - 5000;
+            if (data.shift < 0) {
+                verify(shift > 24 && shift < 27, "an FFmpeg-encoded file moves about 25 ms, not " + shift);
+            }
+            fuzzyCompare(staged[0].positionMs, 5000 + shift, 0.001);
+            fuzzyCompare(staged[1].positionMs, 5000 + shift, 0.001);
+            fuzzyCompare(staged[1].loopEndMs, 7000 + shift, 0.001);
+
+            // Drawn on the pane as the library will hold it: at the click.
+            const drawn = panel.playbackController.cuesOnGridTimeline(panel.format, panel.trackFilePath,
+                [{kind: "hot", hotCueNumber: 1, positionMs: staged[0].positionMs, isLoop: false, loopEndMs: 0}]);
+            fuzzyCompare(drawn[0].positionMs, 5000, 1000 / 44100);
+        } finally {
+            settings.correctMp3CueTiming = was;
+        }
+    }
 }

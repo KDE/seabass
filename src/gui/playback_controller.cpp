@@ -719,9 +719,21 @@ QVariantList PlaybackController::cuesOnGridTimeline(const QString &format, const
     }
     // The player's own shift for this file and an Engine grid: the cues
     // go where load() puts them, and the grid stays where it is.
-    const auto shift = infrastructure::audio::playbackShiftFor(filePath.toStdString(),
-                                                               infrastructure::audio::GridTimeline::Engine);
-    return shiftedCues(cues, shift.cuesMs - shift.beatsMs);
+    return shiftedCues(cues, infrastructure::audio::cueToGridShiftMs(filePath.toStdString(),
+                                                                     infrastructure::audio::GridTimeline::Engine));
+}
+
+double PlaybackController::positionOnCueTimeline(const QString &format, const QString &filePath,
+                                                 double positionMs) const
+{
+    if (format != QLatin1String("engine") || filePath.isEmpty()) {
+        return positionMs;
+    }
+    // The shift cuesOnGridTimeline() adds, taken off again. Nothing before
+    // the start of the file, as there.
+    return std::max(0.0, positionMs
+                             - infrastructure::audio::cueToGridShiftMs(filePath.toStdString(),
+                                                                       infrastructure::audio::GridTimeline::Engine));
 }
 
 void PlaybackController::releaseDetailWaveform()

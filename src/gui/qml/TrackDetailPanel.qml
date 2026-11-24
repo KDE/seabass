@@ -132,12 +132,21 @@ Pane {
     property string trackAlbum: ""
     property int trackPlayCount: 0
     // -1 means no pending Add-Cue form; set by clicking the
-    // waveform below.
+    // waveform below. On that waveform's timeline, the one the user
+    // picked it on: cueTimelinePosition() moves it for the writer.
     property real pendingPositionMs: -1
     // -1 means the pending add is a plain cue; a real value
     // (from dragging out a range) means it's a loop, and
     // pendingPositionMs is the loop-in.
     property real pendingLoopEndMs: -1
+
+    // A position on the waveform below put on the timeline the cues are
+    // held on and the cue writer takes (rekordbox's). An Engine MP3's
+    // waveform, grid and cues are drawn on Engine's, so a click there is
+    // moved by the file's lead-in, else the cue is written early (#123).
+    function cueTimelinePosition(ms) {
+        return panel.playbackController.positionOnCueTimeline(panel.trackFormat, panel.trackFilePath, ms);
+    }
 
     function showFor(delegate) {
         // An edit open in the comment field belongs to the track shown
@@ -257,9 +266,9 @@ Pane {
             cues.push({
                 kind: isHot ? "hot" : "memory",
                 hotCueNumber: isHot ? hotCueNumberSpin.value : 0,
-                positionMs: panel.pendingPositionMs,
+                positionMs: panel.cueTimelinePosition(panel.pendingPositionMs),
                 isLoop: isLoopAdded,
-                loopEndMs: isLoopAdded ? panel.pendingLoopEndMs : 0,
+                loopEndMs: isLoopAdded ? panel.cueTimelinePosition(panel.pendingLoopEndMs) : 0,
                 color: isLoopAdded ? "#3daee9" : (isHot ? "#ffcc00" : "#00a5e3"),
                 comment: cueCommentField.text,
             });
@@ -869,6 +878,7 @@ Pane {
                     }
                 }
                 Button {
+                    objectName: "addCueButton"
                     text: panel.pendingLoopEndMs >= 0 ? "Add Loop" : "Add Cue"
                     enabled: !addCueController.busy
                         && !(panel.pendingLoopEndMs >= 0 && panel.trackFormat !== "engine")
@@ -876,10 +886,11 @@ Pane {
                         var isLoop = panel.pendingLoopEndMs >= 0;
                         var isHot = isLoop || cueKindCombo.currentIndex === 0;
                         addCueController.addCue(panel.trackFormat, panel.trackLibraryPath,
-                            panel.trackSourceId, panel.pendingPositionMs,
+                            panel.trackSourceId, panel.cueTimelinePosition(panel.pendingPositionMs),
                             isHot ? "hot" : "memory", hotCueNumberSpin.value,
                             isLoop ? "#3daee9" : (isHot ? "#ffcc00" : "#00a5e3"), cueCommentField.text,
-                            isLoop, isLoop ? panel.pendingLoopEndMs : 0, panel.trackTitle);
+                            isLoop, isLoop ? panel.cueTimelinePosition(panel.pendingLoopEndMs) : 0,
+                            panel.trackTitle);
                     }
                 }
             }

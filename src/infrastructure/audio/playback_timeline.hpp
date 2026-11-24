@@ -53,6 +53,15 @@ PlaybackShift playbackShiftFor(const std::optional<domain::Mp3LeadIn> &leadIn, b
 // an MP3 by extension) and applies the policy.
 PlaybackShift playbackShiftFor(const std::string &filePath, GridTimeline grid);
 
+// What to add to a cue position (held on rekordbox's timeline) to put it
+// on the timeline of `grid`'s beat grid for this file, where a view that
+// draws the grid draws the cue: the player's shifts for both, one taken
+// off the other. For an Engine MP3 Engine's lead-in difference, 0 for a
+// rekordbox grid, which is on the cues' timeline already. Taking it off
+// a position picked on such a view puts that position back on the cues'
+// timeline, which is what a cue writer takes (#123).
+double cueToGridShiftMs(const std::string &filePath, GridTimeline grid);
+
 // rekordbox's position minus the decoder's for the same instant in this
 // file, in ms: what to add to a time measured on the decoder's timeline
 // (Qt Multimedia's, which is Engine's) to put it on the one cues are held
