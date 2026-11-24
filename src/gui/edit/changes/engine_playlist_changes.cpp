@@ -194,11 +194,70 @@ ChangeOutcome RenameEnginePlaylistChange::apply(SaveContext &ctx)
     return ChangeOutcome::success();
 }
 
+namespace
+{
+
+// Engine's delete takes everything below the path (#137). The plan stages
+// whatever it takes out from below first, so at apply time nothing should
+// be left there: whatever is, this save does not delete or move it, and
+// the delete is refused (the save goes back whole) rather than take it.
+class EmptiedFirstEngineDelete : public OwnedChange
+{
+public:
+    EmptiedFirstEngineDelete(QString enginePath, std::string path, int itemCountHint)
+        : OwnedChange(rekordboxExportSyncOwner(),
+                      std::make_unique<DeletePlaylistChange>(QString(), enginePath, path,
+                                                             QStringList{QStringLiteral("engine")},
+                                                             QStringLiteral("addcue"), itemCountHint,
+                                                             rekordboxExportSyncOwner().toStdString()))
+        , m_enginePath(std::move(enginePath))
+        , m_path(std::move(path))
+        , m_itemCountHint(itemCountHint)
+    {
+    }
+
+    ChangeOutcome apply(SaveContext &ctx) override
+    {
+        if (const QString refusal = engineRowWriteRefusal(m_enginePath); !refusal.isEmpty()) {
+            return ChangeOutcome::failure(refusal);
+        }
+        QStringList inside;
+        try {
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(),
+                                                                   m_itemCountHint,
+                                                                   rekordboxExportSyncOwner().toStdString());
+            for (const auto &playlist : infrastructure::engine::listEnginePlaylists(session.writeRoot())) {
+                if (playlist.path.size() > m_path.size() && playlist.path.compare(0, m_path.size(), m_path) == 0
+                    && playlist.path[m_path.size()] == '/') {
+                    const QString quoted = quotedPath(playlist.path);
+                    if (!inside.contains(quoted)) {
+                        inside << quoted;
+                    }
+                }
+            }
+        } catch (const std::exception &e) {
+            return ChangeOutcome::failure(QString::fromStdString(e.what()));
+        }
+        if (!inside.isEmpty()) {
+            return ChangeOutcome::failure(
+                QStringLiteral("Seabass did not delete %1: Engine's copy still holds %2, which this save does not "
+                               "delete or move out of it. Delete or move it in Engine DJ, then sync again.")
+                    .arg(quotedPath(m_path), inside.join(QStringLiteral(", "))));
+        }
+        return OwnedChange::apply(ctx);
+    }
+
+private:
+    QString m_enginePath;
+    std::string m_path;
+    int m_itemCountHint = 1;
+};
+
+}  // namespace
+
 std::unique_ptr<PendingChange> deleteEnginePlaylistChange(QString enginePath, std::string path, int itemCountHint)
 {
-    return ownedByRekordboxExportSync(std::make_unique<DeletePlaylistChange>(
-        QString(), std::move(enginePath), std::move(path), QStringList{QStringLiteral("engine")},
-        QStringLiteral("addcue"), itemCountHint, rekordboxExportSyncOwner().toStdString()));
+    return std::make_unique<EmptiedFirstEngineDelete>(std::move(enginePath), std::move(path), itemCountHint);
 }
 
 }  // namespace seabass::gui

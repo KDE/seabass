@@ -92,7 +92,10 @@ private:
 // no longer has. It carries the save's Engine item count and the page's
 // backup label, like the page's other Engine changes: it can be the
 // save's first Engine write (an old playlist of a reused id, staged
-// before its successor's create), which opens the write session.
+// before its successor's create), which opens the write session. It
+// refuses (fails the save) while Engine still has anything below the path:
+// the page stages what it takes out from below first, so whatever is left
+// there no row of the save deletes or moves, and must not go with it (#137).
 std::unique_ptr<PendingChange> deleteEnginePlaylistChange(QString enginePath, std::string path, int itemCountHint);
 
 }  // namespace seabass::gui

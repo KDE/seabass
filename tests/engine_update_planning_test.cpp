@@ -1199,6 +1199,129 @@ int main()
         std::cout << "a delete under a renamed folder names Engine's path before the save (#112) OK\n";
     }
 
+    // #137: rekordbox moved F/Y out to H/Y and deleted folder F. Engine's
+    // delete of F takes everything below it, so it depends on Y's move:
+    // unticking the move takes the folder's delete with it, and a record
+    // that declines the move keeps the delete out too.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"F/Y", 0}})};
+        w.engine = {en("e1", "Music/A.mp3", {{"F/Y", 0}})};
+        w.rekordboxPlaylists = {{"F", true, 3}, {"F/Y", false, 4}, {"H", true, 5}};
+        w.enginePlaylists = {{"F", true, 1}, {"F/Y", false, 1}, {"H", true, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"H/Y", 0}})};
+        w.rekordboxPlaylists = {{"H", true, 5}, {"H/Y", false, 4}};
+        const auto p = plan(w, base);
+        assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].header.key == "playlist:4"
+               && p.playlistsToRename[0].fromPath == "F/Y" && p.playlistsToRename[0].toPath == "H/Y");
+        assert(p.playlistsToDelete.size() == 1);
+        const PlaylistDelete &del = p.playlistsToDelete[0];
+        assert(del.header.key == "playlist:3" && del.folder && del.path == "F");
+        const auto &deps = del.header.dependsOn;
+        if (std::find(deps.begin(), deps.end(), "playlist:4") == deps.end()) {
+            std::cerr << "FAIL: the delete of folder \"F\" does not depend on the move of \"F/Y\" out of it\n";
+        }
+        assert(std::find(deps.begin(), deps.end(), "playlist:4") != deps.end());
+        World after = w;
+        apply(after, p);
+        assert(hasPlaylist(after, "H/Y") && !hasPlaylist(after, "F"));
+
+        // The move declined: the folder's delete stays out with it, shown
+        // as a row held back that names the move it waits on (a refusal:
+        // no buttons), and the record keeps the folder.
+        RekordboxBaseline declinedMove = base;
+        declinedMove.declined["playlist:4"] = p.playlistsToRename[0].header.rekordboxState;
+        const auto q = plan(w, declinedMove);
+        assert(q.playlistsToRename.empty() && q.playlistsToDelete.empty());
+        const EngineUpdateConflict *held = nullptr;
+        for (const auto &c : q.conflicts) {
+            if (c.header.key == "playlist:3") {
+                held = &c;
+            }
+        }
+        if (!held) {
+            std::cerr << "FAIL: the folder's delete held by a declined move is not shown\n";
+        }
+        assert(held && held->rekordboxChoice.empty() && held->engineChoice.empty());
+        assert(held->header.reasonText.find("\"F/Y\"") != std::string::npos);
+        assert(std::find(q.declinedSuppressed.begin(), q.declinedSuppressed.end(), "playlist:3")
+               == q.declinedSuppressed.end());
+        std::cout << "a folder's delete depends on the moves out of it (#137) OK\n";
+    }
+
+    // #137, review: rekordbox moved folder F/S to H, where it also made
+    // another folder H. The two folders are one in Engine (the paired one,
+    // the new H, is created), so no row moves S: F's delete would take S
+    // along. A refusal that names it, never a delete depending on H's
+    // create.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3")};
+        w.engine = {en("e1", "Music/A.mp3")};
+        w.rekordboxPlaylists = {{"F", true, 3}, {"F/S", true, 9}};
+        w.enginePlaylists = {{"F", true, 1}, {"F/S", true, 1}};
+        const auto base = baselineOf(w);
+        w.rekordboxPlaylists = {{"H", true, 5}, {"H", true, 9}};
+        const auto p = plan(w, base);
+        for (const auto &d : p.playlistsToDelete) {
+            if (d.path == "F") {
+                std::cerr << "FAIL: folder \"F\" is deleted though no row moves \"F/S\" out of it\n";
+            }
+            assert(d.path != "F");
+        }
+        bool refused = false;
+        for (const auto &c : p.conflicts) {
+            if (c.header.key == "playlist:3" && c.rekordboxChoice.empty() && c.engineChoice.empty()
+                && c.header.reasonText.find("\"F/S\"") != std::string::npos) {
+                refused = true;
+            }
+        }
+        assert(refused);
+        std::cout << "a folder's delete with an item no row moves out is refused (#137) OK\n";
+    }
+
+    // #137, review: nested. rekordbox moved F/S/Y out to the top and
+    // deleted F/S and F. F/S's delete depends on Y's move; F's on both.
+    // Y's move declined: both deletes held, each naming what it waits on.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"F/S/Y", 0}})};
+        w.engine = {en("e1", "Music/A.mp3", {{"F/S/Y", 0}})};
+        w.rekordboxPlaylists = {{"F", true, 3}, {"F/S", true, 4}, {"F/S/Y", false, 5}};
+        w.enginePlaylists = {{"F", true, 1}, {"F/S", true, 1}, {"F/S/Y", false, 1}};
+        const auto base = baselineOf(w);
+        w.rekordbox = {rb("1", "Music/A.mp3", {{"Y", 0}})};
+        w.rekordboxPlaylists = {{"Y", false, 5}};
+        const auto p = plan(w, base);
+        assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].fromPath == "F/S/Y"
+               && p.playlistsToRename[0].toPath == "Y");
+        assert(p.playlistsToDelete.size() == 2 && p.playlistsToDelete[0].path == "F/S"
+               && p.playlistsToDelete[1].path == "F");
+        const auto has = [](const PlaylistDelete &d, const std::string &key) {
+            return std::find(d.header.dependsOn.begin(), d.header.dependsOn.end(), key) != d.header.dependsOn.end();
+        };
+        assert(has(p.playlistsToDelete[0], "playlist:5"));
+        assert(has(p.playlistsToDelete[1], "playlist:5") && has(p.playlistsToDelete[1], "playlist:4"));
+        World after = w;
+        apply(after, p);
+        assert(hasPlaylist(after, "Y") && !hasPlaylist(after, "F") && !hasPlaylist(after, "F/S"));
+
+        RekordboxBaseline declinedMove = base;
+        declinedMove.declined["playlist:5"] = p.playlistsToRename[0].header.rekordboxState;
+        const auto q = plan(w, declinedMove);
+        assert(q.playlistsToRename.empty() && q.playlistsToDelete.empty());
+        int held = 0;
+        for (const auto &c : q.conflicts) {
+            if ((c.header.key == "playlist:3" || c.header.key == "playlist:4")
+                && c.header.reasonText.find("\"F/S/Y\"") != std::string::npos) {
+                ++held;
+            }
+        }
+        assert(held == 2);
+        std::cout << "nested folder deletes depend on the move out of them (#137) OK\n";
+    }
+
     // #99, then #125: a recorded list and rekordbox's under its id that
     // share tracks, or one with no tracks. A rename by id where rekordbox's
     // keeps at least half of the recorded tracks, or the recorded list is
