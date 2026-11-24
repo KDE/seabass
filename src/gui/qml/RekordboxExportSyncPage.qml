@@ -1071,73 +1071,34 @@ Page {
                                 + 2 * Theme.tightSpacing
                             // The track's cover, read off the GUI thread at the size it
                             // is drawn (ArtworkImage), on the square a row without one
-                            // shows. A playlist's row leaves the slot empty.
-                            Rectangle {
+                            // shows; it plays the row's copy of the track (#133), the
+                            // key shown while the row is hovered. A playlist's row
+                            // leaves the slot empty.
+                            PlayableCover {
                                 objectName: "rowCoverSlot"
                                 visible: row.hasTrack
                                 x: root.checkSlotWidth
                                 y: Theme.tightSpacing
                                 width: root.coverSide
                                 height: root.coverSide
-                                radius: Theme.coverRadius(Math.min(width, height))
                                 // Outlined: the surface is the odd rows' own tone.
-                                color: Theme.surface
                                 border.color: Theme.borderSubtle
                                 border.width: 1
-                                ArtworkImage {
-                                    objectName: "rowArtwork"
-                                    anchors.fill: parent
-                                    source: row.artworkPath
-                                    fallbackSource: row.fallbackArtworkPath
-                                }
-                                // Play the row's track from its cover: shown
-                                // while the row is hovered, and while it is
-                                // the track playing, as a pause key then.
-                                ToolButton {
-                                    id: coverPlay
-                                    objectName: "rowPlayButton"
-                                    readonly property bool current: root.playbackController !== null
-                                        && root.playbackController.hasTrack
-                                        && root.playbackController.currentFormat === (row.playTrack.side || "")
-                                        && root.playbackController.currentSourceId === (row.playTrack.sourceId || "")
-                                    anchors.fill: parent
-                                    // Every side, not `padding`: a style that sets a side itself
-                                    // (FluentWinUI3 does) wins over it, and moved this off the line.
-                                    leftPadding: 0
-                                    rightPadding: 0
-                                    topPadding: 0
-                                    bottomPadding: 0
-                                    display: AbstractButton.IconOnly
-                                    text: coverPlay.current && root.playbackController.playing ? "Pause" : "Play"
-                                    visible: root.playbackController !== null && (row.playTrack.filePath || "").length > 0
-                                        && (hover.hovered || coverPlay.hovered || coverPlay.current)
-                                    contentItem: Item {
-                                        SeabassIcon {
-                                            anchors.centerIn: parent
-                                            iconName: coverPlay.current && root.playbackController.playing
-                                                ? "media-playback-pause" : "media-playback-start"
-                                            size: Theme.iconSizeSmall * 0.6
-                                            color: "white"
-                                        }
-                                    }
-                                    background: Rectangle {
-                                        radius: 2
-                                        color: "black"
-                                        opacity: coverPlay.hovered ? 0.55 : 0.4
-                                    }
-                                    ToolTip.visible: hovered
-                                    ToolTip.text: coverPlay.current ? (root.playbackController.playing ? "Pause" : "Play")
-                                        : (row.playTrack.side === "engine" ? "Play Engine's copy of the track"
-                                                                          : "Play rekordbox's copy of the track")
-                                    onClicked: {
-                                        if (coverPlay.current) {
-                                            root.playbackController.togglePlay();
-                                            return;
-                                        }
-                                        const t = row.playTrack;
-                                        root.playbackController.load(t.side, root.pathForFormat(t.side), t.sourceId,
-                                            t.filePath, t.title, t.artist, t.artworkPath, t.cues);
-                                    }
+                                source: row.artworkPath
+                                fallbackSource: row.fallbackArtworkPath
+                                playbackController: root.playbackController
+                                playSource: ({format: row.playTrack.side || "",
+                                              libraryPath: root.pathForFormat(row.playTrack.side || ""),
+                                              sourceId: row.playTrack.sourceId || ""})
+                                playFilePath: row.playTrack.filePath || ""
+                                unavailableText: "No audio file on the stick for this track"
+                                playText: row.playTrack.side === "engine" ? "Play Engine's copy of the track"
+                                                                         : "Play rekordbox's copy of the track"
+                                rowHovered: hover.hovered
+                                onPlayRequested: {
+                                    const t = row.playTrack;
+                                    root.playbackController.load(t.side, root.pathForFormat(t.side), t.sourceId,
+                                        t.filePath, t.title, t.artist, t.artworkPath, t.cues);
                                 }
                             }
 

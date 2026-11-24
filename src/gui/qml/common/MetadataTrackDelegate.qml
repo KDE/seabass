@@ -158,14 +158,9 @@ Rectangle {
     // key is then shown disabled, and hovering it says playUnavailableText.
     property string playFilePath: ""
     property string playUnavailableText: ""
-    readonly property bool isCurrentTrack: delegate.playbackController !== null
-        && delegate.playbackController.hasTrack
-        && (delegate.playSource.format || "").length > 0
-        && delegate.playbackController.currentFormat === delegate.playSource.format
-        && delegate.playbackController.currentSourceId === (delegate.playSource.sourceId || "")
-        && delegate.playbackController.currentLibraryPath === (delegate.playSource.libraryPath || "")
+    readonly property bool isCurrentTrack: artworkTile.isCurrentTrack
     // This row is the track loaded, and it is playing: the key pauses.
-    readonly property bool playingThis: delegate.isCurrentTrack && delegate.playbackController.playing
+    readonly property bool playingThis: artworkTile.playingThis
 
     property alias actionItems: actionRow.data
     // Page-specific marks under the artist, in the title's column, wrapping
@@ -266,70 +261,22 @@ Rectangle {
                 ToolTip.text: delegate.selectTooltip
             }
 
-            Rectangle {
+            // The cover plays the track (PlayableCover, #133), shown while
+            // the row is hovered.
+            PlayableCover {
                 id: artworkTile
                 Layout.preferredWidth: Theme.iconSizeNormal
                 Layout.preferredHeight: Theme.iconSizeNormal
-                radius: Theme.coverRadius(Math.min(width, height))
                 color: Theme.groupBackground
-                // A cover the catalog names but the stick does not have
-                // draws nothing; the tile behind it shows.
-                ArtworkImage {
-                    objectName: "rowArtwork"
-                    anchors.fill: parent
-                    source: delegate.artworkUrl
-                    asynchronous: true
-                }
-                // On the tile rather than the key: a disabled key gets no
-                // hover, and that is the one that most needs explaining.
-                HoverHandler { id: coverHover }
-                // And only with something to say: a page may give a
-                // disabled key no reason, and an empty bubble is noise.
-                ToolTip.visible: coverHover.hovered && playKey.visible && ToolTip.text.length > 0
-                ToolTip.delay: 400
-                ToolTip.text: delegate.isCurrentTrack
-                    ? (delegate.playingThis ? "Pause" : "Play")
-                    : (playKey.enabled ? "Play this track, with its cues marked in the player"
-                                       : delegate.playUnavailableText)
-
-                ToolButton {
-                    id: playKey
-                    objectName: "rowPlayButton"
-                    anchors.fill: parent
-                    // Every side, not `padding`: a style that sets a side itself
-                    // (FluentWinUI3 does) wins over it, and moved this off the line.
-                    leftPadding: 0
-                    rightPadding: 0
-                    topPadding: 0
-                    bottomPadding: 0
-                    display: AbstractButton.IconOnly
-                    text: delegate.playingThis ? "Pause" : "Play"
-                    visible: delegate.playbackController !== null && (delegate.playSource.format || "").length > 0
-                        && (delegate.hovered || delegate.isCurrentTrack)
-                    enabled: delegate.isCurrentTrack || delegate.playFilePath.length > 0
-                    contentItem: Item {
-                        SeabassIcon {
-                            anchors.centerIn: parent
-                            iconName: delegate.playingThis
-                                ? "media-playback-pause" : "media-playback-start"
-                            size: Theme.iconSizeSmall * 0.6
-                            color: "white"
-                            opacity: playKey.enabled ? 1 : 0.4
-                        }
-                    }
-                    background: Rectangle {
-                        radius: artworkTile.radius
-                        color: "black"
-                        opacity: playKey.hovered ? 0.55 : 0.4
-                    }
-                    onClicked: {
-                        if (delegate.isCurrentTrack) {
-                            delegate.playbackController.togglePlay();
-                            return;
-                        }
-                        delegate.playRequested();
-                    }
-                }
+                source: delegate.artworkUrl
+                asynchronous: true
+                playbackController: delegate.playbackController
+                playSource: delegate.playSource
+                playFilePath: delegate.playFilePath
+                unavailableText: delegate.playUnavailableText
+                playText: "Play this track, with its cues marked in the player"
+                rowHovered: delegate.hovered
+                onPlayRequested: delegate.playRequested()
             }
 
             ColumnLayout {

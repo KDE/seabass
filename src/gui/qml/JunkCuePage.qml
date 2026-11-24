@@ -448,6 +448,9 @@ Page {
                     && root.playbackController.hasTrack
                     && root.playbackController.currentFormat === junkDelegate.format
                     && root.playbackController.currentSourceId === (junkDelegate.track.sourceId || "")
+                    // Another library's copy of the track, under the same
+                    // id, is not this row's (as on the cover).
+                    && root.playbackController.currentLibraryPath === root.pathForFormat(junkDelegate.format)
                 readonly property string streamingSource: junkDelegate.track.streamingSource || ""
 
                 color: junkDelegate.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd
@@ -515,70 +518,28 @@ Page {
                         }
                     }
 
-                    Rectangle {
+                    // The cover plays the row's copy of the track (#133),
+                    // the key shown while the pointer is on the cover, as
+                    // Browse shows it: on the whole row it covered the art
+                    // of every row the pointer crossed.
+                    PlayableCover {
                         objectName: "rowCell_artwork"
                         Layout.preferredWidth: Theme.iconSizeNormal
                         Layout.preferredHeight: Theme.iconSizeNormal
                         visible: junkDelegate.firstOfTrack
-                        color: Theme.surface
-                        radius: Theme.coverRadius(Math.min(width, height))
-                        ArtworkImage {
-                            objectName: "rowArtwork"
-                            anchors.fill: parent
-                            source: junkDelegate.track.artworkPath || ""
-                        }
-                        // The play key shows over the cover while the
-                        // pointer is on the cover, as Browse shows it; on
-                        // the whole row it covered the art of every row
-                        // the pointer crossed.
-                        HoverHandler { id: artworkHover }
-                        // Play the row's track from its cover: shown while
-                        // the row is hovered, and while it is the track
-                        // playing, as a pause key then. Not for a streaming
-                        // track, which has no file to play.
-                        ToolButton {
-                            id: coverPlay
-                            objectName: "rowPlayButton"
-                            anchors.fill: parent
-                            // Every side, not `padding`: a style that sets
-                            // a side itself wins over it.
-                            leftPadding: 0
-                            rightPadding: 0
-                            topPadding: 0
-                            bottomPadding: 0
-                            display: AbstractButton.IconOnly
-                            text: junkDelegate.isPlaying && root.playbackController.playing ? "Pause" : "Play"
-                            visible: root.playbackController !== null
-                                && (junkDelegate.track.filePath || "").length > 0
-                                && junkDelegate.streamingSource.length === 0
-                                && (artworkHover.hovered || coverPlay.hovered || junkDelegate.isPlaying)
-                            contentItem: Item {
-                                SeabassIcon {
-                                    anchors.centerIn: parent
-                                    iconName: junkDelegate.isPlaying && root.playbackController.playing
-                                        ? "media-playback-pause" : "media-playback-start"
-                                    size: Theme.iconSizeSmall * 0.75
-                                    color: "white"
-                                }
-                            }
-                            background: Rectangle {
-                                radius: Theme.coverRadius(Math.min(width, height))
-                                color: "black"
-                                opacity: coverPlay.hovered ? 0.55 : 0.4
-                            }
-                            ToolTip.visible: hovered
-                            ToolTip.text: junkDelegate.isPlaying
-                                ? (root.playbackController.playing ? "Pause" : "Play")
-                                : "Play " + root.formatLabel(junkDelegate.format) + "'s copy of the track"
-                            onClicked: {
-                                if (junkDelegate.isPlaying) {
-                                    root.playbackController.togglePlay();
-                                    return;
-                                }
-                                const t = junkDelegate.track;
-                                root.playbackController.load(junkDelegate.format, root.pathForFormat(junkDelegate.format),
-                                    t.sourceId, t.filePath, t.title, t.artist, t.artworkPath, t.cues);
-                            }
+                        source: junkDelegate.track.artworkPath || ""
+                        playbackController: root.playbackController
+                        playSource: ({format: junkDelegate.format, libraryPath: root.pathForFormat(junkDelegate.format),
+                                      sourceId: junkDelegate.track.sourceId || ""})
+                        playFilePath: junkDelegate.streamingSource.length === 0 ? junkDelegate.track.filePath || "" : ""
+                        unavailableText: junkDelegate.streamingSource.length > 0
+                            ? "Streaming track (" + junkDelegate.streamingSource + "): no local file to play"
+                            : "No audio file on the stick for this track"
+                        playText: "Play " + root.formatLabel(junkDelegate.format) + "'s copy of the track"
+                        onPlayRequested: {
+                            const t = junkDelegate.track;
+                            root.playbackController.load(junkDelegate.format, root.pathForFormat(junkDelegate.format),
+                                t.sourceId, t.filePath, t.title, t.artist, t.artworkPath, t.cues);
                         }
                     }
 

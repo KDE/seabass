@@ -2101,6 +2101,43 @@ TestCase {
         realPlayback.stop();
     }
 
+    // A row's cover plays its track (#133): the key shows over the cover
+    // while the row is hovered, a click plays rekordbox's copy, and it
+    // stays as a pause key while that is the track playing.
+    function test_aRowPlaysFromItsCover() {
+        const o = openOn(t73(), {playbackController: realPlayback});
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const item = delegateInView(o.page, b01);
+        tryVerify(() => o.c.rowAnalysis(b01).ready === true, 30000, "B01 is read");
+        const key = findChild(item, "rowPlayButton");
+        verify(key !== null, "the row has a play key");
+        mouseMove(o.page, 1, 1);
+        compare(key.visible, false, "hidden until the row is hovered");
+        const cover = findChild(item, "rowArtwork");
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        tryCompare(key, "visible", true);
+        compare(key.enabled, true, "B01 has its file on the stick");
+        wait(500);
+        waitForRendering(o.page);
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-cover-play.png");
+        }
+        mouseClick(key);
+        tryCompare(realPlayback, "currentSourceId", b01);
+        compare(realPlayback.currentFormat, "rekordbox");
+        compare(realPlayback.currentLibraryPath, o.page.rekordboxPath);
+        tryCompare(realPlayback, "playing", true);
+        compare(o.c.isTicked(b01), false, "the click ticks nothing");
+        compare(item.expanded, false, "and opens nothing");
+        mouseMove(o.page, 1, 1);
+        verify(key.visible, "shown while it is the track playing");
+        compare(key.text, "Pause");
+        mouseClick(key);
+        tryCompare(realPlayback, "playing", false);
+        realPlayback.stop();
+    }
+
     // A picture of the rows with their waveforms, at the page's usual width.
     function test_rowWaveformsScreenshot() {
         const o = openOn(t73(), {playbackController: realPlayback});

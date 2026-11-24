@@ -1755,51 +1755,41 @@ Page {
                         anchors.rightMargin: root.trackRowInset
                         spacing: root.trackColumnSpacing
 
-                        Rectangle {
+                        // Play, direct from the row (PlayableCover, #133): the
+                        // rest of the row (below) opens the track's details
+                        // instead, so this is the one place that plays without
+                        // an extra click. Shown while the pointer is on the
+                        // cover, so the artwork itself isn't permanently
+                        // obscured, and disabled for a track with no local
+                        // file (a streaming one: see the tooltip below).
+                        PlayableCover {
                             id: artworkRect
                             objectName: "rowCell_artwork"
                             Layout.preferredWidth: root.artworkColumnWidth
                             Layout.preferredHeight: Theme.iconSizeNormal
-                            color: Theme.surface
-                            radius: Theme.coverRadius(Math.min(width, height))
                             // An Engine row's own art first, the same song's
                             // rekordbox art when that does not load.
-                            ArtworkImage {
-                                objectName: "rowArtwork"
-                                anchors.fill: parent
-                                source: trackDelegate.artworkPath
-                                fallbackSource: trackDelegate.fallbackArtworkPath
-                            }
-                            // Play, direct from the row -- the rest of the
-                            // row (below) now opens the track detail page
-                            // instead, so this is the one place left that
-                            // plays without an extra click. Only shown on
-                            // hover so the artwork itself isn't permanently
-                            // obscured, and only for a track that can
-                            // actually play (streaming tracks have no
-                            // local file -- see the tooltip below).
-                            Rectangle {
-                                anchors.fill: parent
-                                visible: artworkHoverHandler.hovered && trackDelegate.streamingSource.length === 0
-                                color: "#80000000"
-                                // The cover's own corners.
-                                radius: parent.radius
-                                SeabassIcon {
-                                    anchors.centerIn: parent
-                                    iconName: "media-playback-start"
-                                    size: Theme.iconSizeSmall * 0.75
-                                    color: "white"
-                                }
-                            }
+                            source: trackDelegate.artworkPath
+                            fallbackSource: trackDelegate.fallbackArtworkPath
+                            playbackController: root.playbackController
+                            playSource: ({format: root.format, libraryPath: root.currentPath(),
+                                          sourceId: trackDelegate.sourceId})
+                            playFilePath: trackDelegate.streamingSource.length === 0 ? trackDelegate.filePath || "" : ""
+                            unavailableText: "No audio file for this track on the stick"
+                            onPlayRequested: root.playRow(trackDelegate)
+
                             // At the narrowest tier (see root.browseTier's own
                             // comment) every other column is squeezed out --
                             // this hover tooltip is the only way left to see
                             // title/artist/key/BPM/duration for this row.
-                            HoverHandler { id: artworkHoverHandler }
-                            ToolTip.visible: artworkHoverHandler.hovered
-                                && (trackDelegate.streamingSource.length > 0 || root.browseTier === 0)
+                            // A track that cannot be played says why, as
+                            // every cover's disabled key does.
+                            ToolTip.visible: artworkRect.coverHovered
+                                && (trackDelegate.streamingSource.length > 0 || !artworkRect.playKey.enabled
+                                    || root.browseTier === 0)
                             ToolTip.text: trackDelegate.streamingSource.length > 0
                                 ? "Streaming track (" + trackDelegate.streamingSource + ") - no local file, can't be played."
+                                : !artworkRect.playKey.enabled ? artworkRect.unavailableText
                                 : title + " - " + artist + "\n" + (key.length > 0 ? key : "--") + " · "
                                     + root.formatBpm(bpm) + " BPM · " + root.formatDuration(durationSeconds)
                             ToolTip.delay: 300
@@ -1819,11 +1809,18 @@ Page {
                                 hoverEnabled: true
                                 cursorShape: held ? Qt.ClosedHandCursor : trackDelegate.streamingSource.length === 0
                                     ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                // As the key under it does: the track
+                                // loaded plays or pauses, any other plays.
+                                // A track with no file opens its details,
+                                // as a click on the rest of the row does;
+                                // a streaming one, as before, nothing.
                                 onClicked: {
-                                    if (trackDelegate.streamingSource.length > 0) {
-                                        return;
+                                    if (artworkRect.playKey.enabled) {
+                                        artworkRect.press();
+                                    } else if (trackDelegate.streamingSource.length === 0) {
+                                        trackDetailPanel.showFor(trackDelegate);
+                                        root.trackPanelOpen = true;
                                     }
-                                    root.playRow(trackDelegate);
                                 }
                             }
                         }

@@ -1332,6 +1332,35 @@ TestCase {
         realPlayback.pause();
     }
 
+    // A track with no file to play: the key on its cover is disabled and
+    // the cover says why (#133).
+    function test_aCoverWithoutAFileSaysWhy() {
+        realPlayback.stop();
+        const page = openOnAFreshCopy(true);
+        const row = firstRowWhere(page, (i) => rowData(page, i, "kind") === "conflict" && rowData(page, i, "hasTrack")
+            && (rowData(page, i, "playTrack").filePath || "").length > 0);
+        verify(row >= 0);
+        const item = rowItem(page, row);
+        // Mid list, so the tooltip has room above the cover.
+        listOf(page).positionViewAtIndex(page.viewIndexOf(row), ListView.Center);
+        // Held still before the pointer goes there: the list settles a
+        // moment after it is moved.
+        tryVerify(() => !listOf(page).moving, 5000);
+        wait(500);
+        waitForRendering(listOf(page));
+        item.playTrack = Object.assign({}, rowData(page, row, "playTrack"), {filePath: ""});
+        const cover = findChild(item, "rowCoverSlot");
+        const key = findChild(item, "rowPlayButton");
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        tryCompare(key, "visible", true);
+        compare(key.enabled, false, "nothing to play");
+        tryVerify(() => cover.ToolTip.visible, 2000, "the cover says why");
+        compare(cover.ToolTip.text, "No audio file on the stick for this track");
+        mouseClick(key);
+        wait(100);
+        compare(realPlayback.hasTrack, false, "and nothing is loaded");
+    }
+
     function test_screenshot() {
         if (!screenshotDir || screenshotDir.length === 0) {
             skip("SEABASS_SCREENSHOT_DIR not set");

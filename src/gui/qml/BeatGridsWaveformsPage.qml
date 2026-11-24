@@ -546,6 +546,23 @@ Page {
                     noteColor: root.toneColor(trackRow.model.noteTone)
                     onSelectionToggled: selected => root.controller.setTicked(trackRow.rekordboxId, selected)
 
+                    // The cover plays rekordbox's copy of the track (#133),
+                    // as the row's waveform does when it opens it zoomed.
+                    // The track as it is loaded, so the cover and the
+                    // player name it by the same library path.
+                    readonly property var playTrack: trackRow.rekordboxId.length > 0
+                        ? root.controller.zoomTrack(trackRow.rekordboxId) : ({})
+                    playbackController: root.playbackController
+                    playSource: ({format: trackRow.playTrack.format || "", libraryPath: trackRow.playTrack.libraryPath || "",
+                                  sourceId: trackRow.playTrack.sourceId || ""})
+                    playFilePath: trackRow.analysis.playable === true ? trackRow.playTrack.filePath || "" : ""
+                    playUnavailableText: trackRow.analysis.ready === true ? "No audio file on the stick for this track" : ""
+                    onPlayRequested: {
+                        const t = trackRow.playTrack;
+                        root.playbackController.load(t.format, t.libraryPath, t.sourceId, t.filePath, t.title, t.artist,
+                                                     t.artworkPath || "", t.cues || [], t.fallbackArtworkPath || "", true);
+                    }
+
                     // rekordbox's analysis of the track, for its small
                     // waveform: asked for while the row is built, let go
                     // when it goes, read off the GUI thread (see
