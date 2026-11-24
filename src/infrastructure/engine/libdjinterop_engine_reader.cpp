@@ -786,6 +786,11 @@ std::vector<domain::CuePoint> cuesOfRow(const std::vector<std::optional<djintero
 
 }  // namespace
 
+std::vector<domain::CuePoint> engineRowCues(djinterop::track &track, double sampleRate)
+{
+    return cuesOfRow(track.hot_cues(), track.loops(), track.main_cue(), sampleRate);
+}
+
 LibdjinteropEngineReader::LibdjinteropEngineReader(std::string engineLibraryPath)
     : m_engineLibraryPath(std::move(engineLibraryPath))
     , m_leadInSource([](const std::string &file) { return audio::readMp3LeadIn(file); })

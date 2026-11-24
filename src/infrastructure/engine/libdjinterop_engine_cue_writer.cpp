@@ -32,6 +32,7 @@
 #include "infrastructure/engine/engine_blob_check.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -317,6 +318,24 @@ double LibdjinteropEngineCueWriter::cueTimelineShiftMs(const std::string &trackS
         throw std::runtime_error("no Engine track with id=" + trackSourceId);
     }
     return shiftMsOf(*track);
+}
+
+std::optional<std::vector<domain::CuePoint>> LibdjinteropEngineCueWriter::storedCues(const std::string &trackSourceId)
+{
+    auto track = database().track_by_id(std::stoll(trackSourceId));
+    if (!track) {
+        return std::nullopt;
+    }
+    // The rule writeCues() takes a rate by when it is given none.
+    double sampleRate = 44100.0;
+    try {
+        if (auto rate = track->sample_rate(); rate && *rate > 0.0) {
+            sampleRate = *rate;
+        }
+    } catch (const std::exception &) {
+        // the default above
+    }
+    return engineRowCues(*track, sampleRate);
 }
 
 void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,

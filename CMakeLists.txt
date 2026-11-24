@@ -1250,6 +1250,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/repair_issue_change.cpp
         src/gui/edit/changes/sync_plan_change.hpp
         src/gui/edit/changes/sync_plan_change.cpp
+        src/gui/edit/changes/cue_offset_repair_change.cpp
     )
     target_include_directories(seabass_edit PUBLIC src)
     target_link_libraries(seabass_edit PUBLIC seabass_core Qt6::Core)
@@ -3755,6 +3756,8 @@ if(TARGET seabass_edit)
         src/gui/staged_cue_edit_controller.cpp
         src/gui/sync_plan_list_model.hpp
         src/gui/sync_plan_list_model.cpp
+        src/gui/cue_offset_list_model.hpp
+        src/gui/cue_offset_list_model.cpp
         src/gui/sync_controller.hpp
         src/gui/sync_controller.cpp
         src/gui/engine_library_creation_task.hpp

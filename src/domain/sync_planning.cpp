@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <map>
 #include <optional>
+#include <tuple>
 
 namespace seabass::domain
 {
@@ -795,6 +796,34 @@ std::string catalogDisplayName(const std::string &format)
         return "OneLibrary";
     }
     return format;
+}
+
+bool sameCuesAsRead(const std::vector<CuePoint> &asRead, const std::vector<CuePoint> &now, double withinMs,
+                    bool positions)
+{
+    if (asRead.size() != now.size()) {
+        return false;
+    }
+    const auto ordered = [](std::vector<CuePoint> cues) {
+        std::sort(cues.begin(), cues.end(), [](const CuePoint &a, const CuePoint &b) {
+            return std::tie(a.kind, a.hotCueNumber, a.isLoop, a.positionMs)
+                < std::tie(b.kind, b.hotCueNumber, b.isLoop, b.positionMs);
+        });
+        return cues;
+    };
+    const std::vector<CuePoint> a = ordered(asRead);
+    const std::vector<CuePoint> b = ordered(now);
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].kind != b[i].kind || a[i].hotCueNumber != b[i].hotCueNumber || a[i].isLoop != b[i].isLoop) {
+            return false;
+        }
+        if (positions
+            && (std::abs(a[i].positionMs - b[i].positionMs) > withinMs
+                || (a[i].isLoop && std::abs(a[i].loopEndMs - b[i].loopEndMs) > withinMs))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::string formatCuePosition(double positionMs)

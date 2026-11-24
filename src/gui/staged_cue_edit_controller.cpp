@@ -221,7 +221,7 @@ void StagedCueEditController::setStagedStatusMessage(const QString &message)
 
 void StagedCueEditController::clearStagedStatusIfNothingStaged()
 {
-    if (m_statusIsAboutStaging && m_stagedByKey.empty()) {
+    if (m_statusIsAboutStaging && m_stagedByKey.empty() && otherStagedCount() == 0) {
         setStatusMessage({});
     }
 }

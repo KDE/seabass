@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -44,6 +45,9 @@
 #include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/changes/mark_rekordbox_imported_change.hpp"
 #include "gui/edit/changes/sync_plan_change.hpp"
+#include "gui/edit/changes/cue_offset_repair_change.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/local/analysis_file_facts.hpp"
@@ -301,6 +305,73 @@ AnalysisPreview previewAnalysis(const std::vector<domain::Track> &rekordboxTrack
 // exact same real diff+direction logic (domain::SyncLibraries) once per
 // pair actually available on this stick, combining every pair's
 // actionable plans into one list.
+// The cue copies the stick's log records, oldest first (#121).
+std::vector<domain::LoggedCueCopy> readLoggedCueCopies(const QString &rekordboxPath)
+{
+    std::vector<domain::LoggedCueCopy> copies;
+    const fs::path log = infrastructure::paths::stickOperationLog(pathFromQString(stickRootOf(rekordboxPath)));
+    std::ifstream in(log, std::ios::binary);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto copy = domain::parseLoggedCueCopy(line)) {
+            copies.push_back(std::move(*copy));
+        }
+    }
+    return copies;
+}
+
+// An Engine MP3 row and a rekordbox row, both with cues, the Engine row
+// no longer import-marked: the only pairs domain::findCueOffsets can find
+// anything in. Asked before a pair is kept, so a big library keeps few.
+bool mayHoldCueOffsets(const domain::SyncMatch &pair)
+{
+    const bool engineIsB = pair.trackB.format == "engine";
+    const domain::Track &engine = engineIsB ? pair.trackB : pair.trackA;
+    const domain::Track &other = engineIsB ? pair.trackA : pair.trackB;
+    return engine.format == "engine" && (other.format == "rekordbox" || other.format == "onelibrary")
+        && !engine.cues.empty() && !other.cues.empty() && !engine.engineCuesOnRekordboxTimeline
+        && engine.streamingSource.empty() && !engine.filePath.empty() && domain::hasMp3Extension(engine.filePath);
+}
+
+// Cues a few milliseconds off (#121) among the matched pairs. Only MP3s
+// are read, and only rows with cues on both sides. The lead-ins come from
+// the stick's metadata cache, where the Engine reader's pass left them
+// (CachedSampleRates::leadInOf): an analysis after every save must not read
+// the start of every MP3 on the stick again.
+std::vector<domain::CueOffsetFinding> findCueOffsetsIn(const std::vector<domain::SyncMatch> &pairs,
+                                                      const QString &rekordboxPath, const std::string &stickRoot,
+                                                      const application::CancellationToken &cancel)
+{
+    std::vector<domain::CueOffsetFinding> findings;
+    std::optional<std::vector<domain::LoggedCueCopy>> log;
+    const auto probe = SyncAnalysisStaging::metadataProbe();
+    std::optional<infrastructure::local::CachedSampleRates> rates;
+    if (!stickRoot.empty() && probe) {
+        rates.emplace(stickRoot, *probe);
+    }
+    for (const domain::SyncMatch &pair : pairs) {
+        cancel.throwIfCancelled();
+        const bool engineIsB = pair.trackB.format == "engine";
+        const domain::Track &engine = engineIsB ? pair.trackB : pair.trackA;
+        const domain::Track &other = engineIsB ? pair.trackA : pair.trackB;
+        if (!mayHoldCueOffsets(pair)) {
+            continue;
+        }
+        if (!log) {
+            log = readLoggedCueCopies(rekordboxPath);
+        }
+        const auto leadIn = rates ? rates->leadInOf(engine.filePath)
+                                  : infrastructure::audio::readMp3LeadIn(engine.filePath);
+        if (auto finding = domain::findCueOffsets(other, engine, leadIn, *log)) {
+            findings.push_back(std::move(*finding));
+        }
+    }
+    if (rates) {
+        rates->save();  // a read-only or full stick costs a read next time, never the pass
+    }
+    return findings;
+}
+
 SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString playlistName,
                                application::AnalysisCopyOptions analysisOptions, std::string stickRoot,
                                std::shared_ptr<QtProgressReporter> reporter, application::CancellationToken cancel)
@@ -415,10 +486,18 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
         result.oneLibraryTrackCount = static_cast<int>(oneLibraryTracks.size());
 
         std::vector<SyncPlan> actionable;
+        // The matched pairs that may hold cues a few milliseconds off
+        // (#121), whatever else Sync plans for them: a cue on both sides
+        // within Sync's tolerance (half a beat) is the same cue to Sync,
+        // however far from the sound one side has it.
+        std::vector<domain::SyncMatch> offsetCandidates;
         auto addPairPlans = [&](const std::vector<domain::Track> &tracksA, const std::vector<domain::Track> &tracksB,
                                  std::chrono::system_clock::time_point mtimeA,
                                  std::chrono::system_clock::time_point mtimeB) {
             for (auto &plan : application::SyncLibraries().execute(tracksA, tracksB, mtimeA, mtimeB, progress)) {
+                if (mayHoldCueOffsets(plan.match)) {
+                    offsetCandidates.push_back(plan.match);
+                }
                 if (plan.direction != SyncPlan::Direction::None || plan.needsChoice) {
                     actionable.push_back(std::move(plan));
                 }
@@ -438,10 +517,16 @@ SyncTaskResult runAnalyzeTask(QString rekordboxPath, QString enginePath, QString
             // see planEngineWithOneLibrary().
             for (auto &plan : application::planEngineWithOneLibrary(engineTracks, oneLibraryTracks, rekordboxTracks,
                                                                     engineMtime, oneLibraryMtime, progress)) {
+                if (mayHoldCueOffsets(plan.match)) {
+                    offsetCandidates.push_back(plan.match);
+                }
                 if (plan.direction != SyncPlan::Direction::None || plan.needsChoice) {
                     actionable.push_back(std::move(plan));
                 }
             }
+        }
+        if (hasEngine && hasRekordbox) {
+            result.cueOffsets = findCueOffsetsIn(offsetCandidates, rekordboxPath, stickRoot, cancel);
         }
         // rekordbox <-> OneLibrary is deliberately NOT planned as a pair.
         // For cues they are one source, not two: a OneLibrary row's cues
@@ -601,6 +686,16 @@ void SyncController::onAnalyzeFinished(SyncTaskResult &&result)
     m_analysisUnchecked = result.analysisUnchecked;
     m_analysisCheckFailed = result.analysisCheckFailed;
     m_model.setAnalysis(std::move(result.plans), std::move(result.conflicts), result.analysisOnly, result.riders);
+    m_cueOffsets.setFindings(std::move(result.cueOffsets));
+    // A repair staged before this re-analysis keeps its mark if its row is
+    // still listed; one whose row is gone is still in the session.
+    for (const auto &[key, side] : m_cueOffsetStagedSides) {
+        const int row = m_cueOffsets.indexOfKey(key);
+        if (row >= 0) {
+            m_cueOffsets.setStagedSide(row, side);
+        }
+    }
+    emit cueOffsetsChanged();
     // Plans staged before this re-analyze keep their mark if they are
     // still listed (the change itself lives in the session either way).
     for (const auto &[targetKey, info] : m_stagedByKey) {
@@ -633,6 +728,9 @@ bool SyncController::wouldStage(int planIndex, bool matchingSearchOnly) const
         return false;
     }
     if (m_model.plans()[static_cast<size_t>(planIndex)].direction == SyncPlan::Direction::None) {
+        return false;
+    }
+    if (cueOffsetStagedFor(m_model.plans()[static_cast<size_t>(planIndex)].match)) {
         return false;
     }
     return !matchingSearchOnly || m_model.isPlanVisible(planIndex);
@@ -969,10 +1067,17 @@ void SyncController::onImportSessionChangeApplied(const QString &changeId)
         m_importMarkStaged = false;
     }
     if (auto gained = m_gainedByChangeId.find(changeId); gained != m_gainedByChangeId.end()) {
-        m_syncedCueCount += gained->second;
+        // A change the save reached and found nothing to do for (its cues
+        // changed since they were read) synced nothing: it is off the
+        // pending list, and not counted.
+        const bool skipped = session() && session()->lastSkippedIds().contains(changeId);
+        if (!skipped) {
+            m_syncedCueCount += gained->second;
+        }
         m_gainedByChangeId.erase(gained);
         emit syncedChanged();
     }
+    onCueOffsetChangeApplied(changeId);
     rereadImportState();
 }
 
@@ -980,6 +1085,250 @@ void SyncController::onImportSessionChangesDiscarded()
 {
     m_importMarkStaged = false;
     emit importStateChanged();
+    if (!m_cueOffsetChangeIds.empty()) {
+        m_cueOffsetChangeIds.clear();
+        m_cueOffsetStagedSides.clear();
+        clearStagedStatusIfNothingStaged();
+        m_cueOffsets.clearStaged();
+        emit cueOffsetsChanged();
+    }
+}
+
+namespace
+{
+
+QString trackKeyOf(const domain::Track &track)
+{
+    return QString::fromStdString(track.format + ":" + track.sourceId);
+}
+
+}  // namespace
+
+// A change that reached the stick: a repair's own row goes once all of
+// its changes have landed, and whatever else is listed for the tracks it
+// wrote goes with it. A repair's row and a sync's plan of one pair were
+// read before either wrote; neither is true once one has (the save is
+// followed by a fresh read, onSaveFinished()).
+void SyncController::onCueOffsetChangeApplied(const QString &changeId)
+{
+    QStringList written;
+    for (auto it = m_cueOffsetChangeIds.begin(); it != m_cueOffsetChangeIds.end(); ++it) {
+        auto &ids = it->second;
+        const auto found = std::find(ids.begin(), ids.end(), changeId);
+        if (found == ids.end()) {
+            continue;
+        }
+        ids.erase(found);
+        written << it->first.section(QLatin1Char('|'), 0, 0) << it->first.section(QLatin1Char('|'), 1, 1);
+        if (ids.empty()) {
+            m_cueOffsets.removeAt(m_cueOffsets.indexOfKey(it->first));
+            m_cueOffsetStagedSides.erase(it->first);
+            m_cueOffsetChangeIds.erase(it);
+            clearStagedStatusIfNothingStaged();
+        }
+        break;
+    }
+    if (written.isEmpty() && changeId.startsWith(QStringLiteral("sync:"))) {
+        written << changeId.mid(5);
+    }
+    if (written.isEmpty()) {
+        return;
+    }
+    // The other list's rows for those tracks, unless something is staged
+    // for them (then the save that staged it is the next to write).
+    for (int row = m_cueOffsets.count() - 1; row >= 0; --row) {
+        const QString key = CueOffsetListModel::keyOf(m_cueOffsets.findings()[static_cast<size_t>(row)]);
+        if (m_cueOffsetChangeIds.count(key) == 0
+            && (written.contains(key.section(QLatin1Char('|'), 0, 0))
+                || written.contains(key.section(QLatin1Char('|'), 1, 1)))) {
+            m_cueOffsets.removeAt(row);
+        }
+    }
+    for (int index = m_model.planCount() - 1; index >= 0; --index) {
+        const auto &match = m_model.plans()[static_cast<size_t>(index)].match;
+        if ((written.contains(trackKeyOf(match.trackA)) || written.contains(trackKeyOf(match.trackB)))
+            && m_stagedByKey.count(m_model.planKeyAt(index)) == 0) {
+            m_model.removePlanAt(index);
+        }
+    }
+    for (int index = m_model.conflictCount() - 1; index >= 0; --index) {
+        const auto &conflict = m_model.conflicts()[static_cast<size_t>(index)];
+        if (written.contains(trackKeyOf(conflict.sourceA)) || written.contains(trackKeyOf(conflict.sourceB))
+            || written.contains(trackKeyOf(conflict.target))) {
+            m_model.removeConflictAt(index);
+        }
+    }
+    emit cueOffsetsChanged();
+    emit listChanged();
+}
+
+// Every save that wrote or skipped anything is followed by a fresh read:
+// both lists were read before it, and a row of one may be out of date
+// once a change of the other has landed.
+void SyncController::onSaveFinished(const QVariantMap &summary)
+{
+    // Undo Last Save is read again by reanalyzeAfterUndo(), once.
+    if (summary.value(QStringLiteral("undo")).toBool()) {
+        return;
+    }
+    if ((summary.value(QStringLiteral("written")).toInt() > 0 || summary.value(QStringLiteral("skipped")).toInt() > 0)
+        && (!m_rekordboxPath.isEmpty() || !m_enginePath.isEmpty())) {
+        startAnalysis(m_rekordboxPath, m_enginePath, m_currentPlaylistName, true);
+    }
+}
+
+bool SyncController::stageCueOffset(int row, const QString &side)
+{
+    if (row < 0 || row >= m_cueOffsets.count() || busy()) {
+        return false;
+    }
+    const domain::CueOffsetFinding &finding = m_cueOffsets.findings()[static_cast<size_t>(row)];
+    // No side: the cues whose evidence names one, each on its own. A side:
+    // the DJ's pick for the cues nothing explains; the known ones keep
+    // theirs.
+    std::optional<domain::CueOffsetSide> pick;
+    if (side == QStringLiteral("engine")) {
+        pick = domain::CueOffsetSide::Engine;
+    } else if (side == QStringLiteral("rekordbox")) {
+        pick = domain::CueOffsetSide::Rekordbox;
+    } else if (!side.isEmpty()) {
+        return false;
+    }
+    const bool onEngine = finding.moves(domain::CueOffsetSide::Engine, pick);
+    const bool onRekordbox = finding.moves(domain::CueOffsetSide::Rekordbox, pick);
+    if (!onEngine && !onRekordbox) {
+        return false;  // unsure: only the DJ's pick of a side moves it
+    }
+    if (!session()) {
+        attachSession();
+    }
+    LibraryEditSession *s = session();
+    if (!s) {
+        setErrorMessage("This stick's library could not be identified; nothing was changed.");
+        return false;
+    }
+    if (s->writing()) {
+        setErrorMessage("A save is running. Stage more once it has finished.");
+        return false;
+    }
+    const QString key = CueOffsetListModel::keyOf(finding);
+    if (syncStagedFor(finding)) {
+        // A sync staged for this pair writes its cues from what it read:
+        // one of the two would undo the other.
+        setErrorMessage(QStringLiteral("\"%1\" has a sync staged. Save that first, then move its cues.")
+                            .arg(QString::fromStdString(finding.rekordbox.title)));
+        return false;
+    }
+    unstageCueOffset(row);
+    std::vector<std::unique_ptr<PendingChange>> changes;
+    std::vector<QString> ids;
+    for (const auto moved : {domain::CueOffsetSide::Engine, domain::CueOffsetSide::Rekordbox}) {
+        if (finding.moves(moved, pick)) {
+            changes.push_back(std::make_unique<CueOffsetRepairChange>(m_rekordboxPath, m_enginePath, finding, moved,
+                                                                      pick, m_cueOffsets.count()));
+            ids.push_back(changes.back()->id());
+        }
+    }
+    if (!s->stageAll(std::move(changes))) {
+        return false;  // the session said why
+    }
+    m_cueOffsetChangeIds[key] = ids;
+    m_cueOffsetStagedSides[key] = pick ? sideName(*pick) : QStringLiteral("known");
+    m_cueOffsets.setStagedSide(row, pick ? sideName(*pick) : QStringLiteral("known"));
+    setStagedStatusMessage(QStringLiteral("Staged. Press Save to move the cues on the stick."));
+    emit cueOffsetsChanged();
+    return true;
+}
+
+void SyncController::unstageCueOffset(int row)
+{
+    if (row < 0 || row >= m_cueOffsets.count()) {
+        return;
+    }
+    const auto it = m_cueOffsetChangeIds.find(CueOffsetListModel::keyOf(m_cueOffsets.findings()[static_cast<size_t>(row)]));
+    if (it == m_cueOffsetChangeIds.end()) {
+        return;
+    }
+    if (LibraryEditSession *s = session()) {
+        QStringList ids;
+        for (const QString &id : it->second) {
+            ids << id;
+        }
+        s->unstageAll(ids);
+    }
+    m_cueOffsetStagedSides.erase(it->first);
+    m_cueOffsetChangeIds.erase(it);
+    m_cueOffsets.setStagedSide(row, QString());
+    clearStagedStatusIfNothingStaged();
+    emit cueOffsetsChanged();
+}
+
+// A sync staged that reads or writes either track of the finding's pair:
+// its target, or its source (whose cues it copies as they were read).
+bool SyncController::syncStagedFor(const domain::CueOffsetFinding &finding)
+{
+    const QString rekordboxKey = trackKeyOf(finding.rekordbox);
+    const QString engineKey = trackKeyOf(finding.engine);
+    for (const auto &[targetKey, info] : m_stagedByKey) {
+        (void)info;
+        if (targetKey == rekordboxKey || targetKey == engineKey) {
+            return true;
+        }
+        const int index = indexOfStagedKey(targetKey);
+        if (index < 0) {
+            continue;
+        }
+        const auto &match = m_model.plans()[static_cast<size_t>(index)].match;
+        for (const QString &key : {trackKeyOf(match.trackA), trackKeyOf(match.trackB)}) {
+            if (key == rekordboxKey || key == engineKey) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool SyncController::cueOffsetStagedFor(const domain::SyncMatch &pair) const
+{
+    for (const auto &[key, ids] : m_cueOffsetChangeIds) {
+        (void)ids;
+        for (const domain::Track *track : {&pair.trackA, &pair.trackB}) {
+            const QString trackKey = trackKeyOf(*track);
+            if (key.section(QLatin1Char('|'), 0, 0) == trackKey || key.section(QLatin1Char('|'), 1, 1) == trackKey) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+int SyncController::stageKnownCueOffsets()
+{
+    int staged = 0;
+    QStringList refused;
+    setErrorMessage({});
+    for (int row = 0; row < m_cueOffsets.count(); ++row) {
+        const auto &finding = m_cueOffsets.findings()[static_cast<size_t>(row)];
+        if (!finding.hasKnown() || !m_cueOffsets.stagedSide(row).isEmpty()) {
+            continue;
+        }
+        if (stageCueOffset(row)) {
+            ++staged;
+        } else {
+            refused << QString::fromStdString(finding.rekordbox.title.empty() ? finding.rekordbox.filename
+                                                                                : finding.rekordbox.title);
+        }
+    }
+    if (staged > 0) {
+        setStagedStatusMessage(QStringLiteral("Staged %1 track(s). Press Save to move their cues on the stick.").arg(staged));
+    }
+    if (!refused.isEmpty()) {
+        // Every refusal named, not only the last one's reason.
+        setErrorMessage(QStringLiteral("Not staged: %1. A sync staged for a track, or a save running, keeps its "
+                                       "cues where they are until it is saved.")
+                            .arg(refused.join(QStringLiteral(", "))));
+    }
+    return staged;
 }
 
 void SyncController::resolveConflict(int conflictIndex, bool useSourceA)
@@ -1009,22 +1358,30 @@ void SyncController::resolveConflict(int conflictIndex, bool useSourceA)
     }
     plan.cuesLeftOut = conflict.cuesLeftOut;
     plan.positionToleranceMs = conflict.positionToleranceMs;
-    m_model.removeConflictAt(conflictIndex);
     m_model.addPlan(std::move(plan));
-    // The decision is the edit: staged right away, Save writes it.
+    // The decision is the edit: staged right away, Save writes it. The
+    // decision leaves the list only once it is staged; refused, the plan
+    // goes again and the choice stays to be made.
     const int index = m_model.planCount() - 1;
-    stagePlan(index);
-    noticeCuesLeftOut({index});
+    bool staged = false;
+    stagePlan(index, nullptr, &staged);
+    if (!staged) {
+        m_model.removePlanAt(index);
+        return;
+    }
+    m_model.removeConflictAt(conflictIndex);
+    noticeCuesLeftOut({m_model.planCount() - 1});
 }
 
 // The base wires the session's state and staged-change signals; the only
 // part specific to this page is that a sync spans two catalogs, so the
 // session is told about both paths.
 //
-// A row whose change lands is dropped rather than re-derived: that pair
-// is consistent now, and SyncPlanner classifies each pair independently,
-// so no other row's classification can change. See
-// StagedCueEditController::onSessionChangeApplied().
+// A row whose change lands is dropped rather than re-derived (see
+// StagedCueEditController::onSessionChangeApplied()), and so are the
+// rows of the other list for the same tracks (onCueOffsetChangeApplied()):
+// a sync and a repair of one pair were both read before either wrote.
+// After the save the whole page is read again (onSaveFinished()).
 void SyncController::attachSession()
 {
     const QString &any = m_rekordboxPath.isEmpty() ? m_enginePath : m_rekordboxPath;
@@ -1037,18 +1394,30 @@ void SyncController::attachSession()
             m_importSession = s;
             connect(s, &LibraryEditSession::changeApplied, this, &SyncController::onImportSessionChangeApplied);
             connect(s, &LibraryEditSession::changesDiscarded, this, &SyncController::onImportSessionChangesDiscarded);
+            connect(s, &LibraryEditSession::saveFinished, this, &SyncController::onSaveFinished);
         }
     }
 }
 
-bool SyncController::stagePlan(int index, const SyncAnalysisStaging *staging)
+bool SyncController::stagePlan(int index, const SyncAnalysisStaging *staging, bool *staged)
 {
+    if (staged) {
+        *staged = false;
+    }
     const auto &plans = m_model.plans();
     if (index < 0 || static_cast<size_t>(index) >= plans.size()) {
         return false;
     }
     const SyncPlan &plan = plans[static_cast<size_t>(index)];
     if (plan.direction == SyncPlan::Direction::None) {
+        return false;
+    }
+    if (cueOffsetStagedFor(plan.match)) {
+        // Both would write this pair's cues, each from what it read: the
+        // second would undo the first.
+        setErrorMessage(QStringLiteral("\"%1\" has cues staged to move a few milliseconds. Save that first, then "
+                                       "sync it.")
+                            .arg(QString::fromStdString(plan.match.trackA.title)));
         return false;
     }
     if (!session()) {
@@ -1112,7 +1481,14 @@ bool SyncController::stagePlan(int index, const SyncAnalysisStaging *staging)
     const bool withAnalysis = change->hasAnalysisRider();
     const domain::CueChange gained = SyncPlanListModel::cueChangeOf(plan);
     m_gainedByChangeId[change->id()] = gained.gainedHot + gained.gainedMemory;
-    return stageChange(index, targetKey, std::move(change)) && withAnalysis;
+    // Written only onto the cues it read (H1 of #121's review): a save
+    // since the read, of this page or another, is not written over.
+    change->setCheckTargetAsRead(true);
+    const bool done = stageChange(index, targetKey, std::move(change));
+    if (staged) {
+        *staged = done;
+    }
+    return done && withAnalysis;
 }
 
 }  // namespace seabass::gui

@@ -17,8 +17,17 @@
 #include "domain/mp3_lead_in.hpp"
 #include "domain/track.hpp"
 
+namespace djinterop
+{
+class track;
+}
+
 namespace seabass::infrastructure::engine
 {
+
+// One row's hot cues, hot loops and main cue as the reader reads them,
+// at `sampleRate`, with no lead-in shift: Engine's own timeline.
+std::vector<domain::CuePoint> engineRowCues(djinterop::track &track, double sampleRate);
 
 // "" for alpha == 0 (djinterop::pad_color's own default-constructed
 // value, and what an Engine hot cue that was never explicitly colored

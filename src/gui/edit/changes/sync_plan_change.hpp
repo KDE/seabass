@@ -8,6 +8,8 @@
 #include <QStringList>
 
 #include <memory>
+#include <optional>
+#include <string>
 
 #include "domain/sync_planning.hpp"
 #include "domain/track.hpp"
@@ -39,6 +41,15 @@ public:
     SyncPlanChange(QString rekordboxPath, QString enginePath, domain::SyncPlan plan, int itemCountHint);
     ~SyncPlanChange() override;
 
+    // With this on, apply() first reads the target's cues as the catalog
+    // holds them now and writes nothing (a skip, said in the summary)
+    // unless they are still the cues the plan read
+    // (domain::sameCuesAsRead): another save since the read, a sync or a
+    // move of cues a few milliseconds off, would otherwise be written over
+    // with what this plan read before it. Sync Cue Points' own plans and
+    // its cue offset repairs set it.
+    void setCheckTargetAsRead(bool check) { m_checkTargetAsRead = check; }
+
     // Carries `rider` (see above). Null takes it away.
     void setAnalysisRider(std::unique_ptr<PendingChange> rider);
     bool hasAnalysisRider() const { return m_rider != nullptr; }
@@ -58,12 +69,22 @@ public:
     void beforeSave(SaveContext &ctx) override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
+protected:
+    const domain::SyncPlan &plan() const { return m_plan; }
+    // The stick log's line for the write apply() made.
+    virtual std::string logLine() const;
+    // The source's cues this change copies, as read, when it copies only
+    // some: then only they must still be there (setCheckTargetAsRead()).
+    // Nothing: it copies the source's whole set, which must be unchanged.
+    virtual std::optional<std::vector<domain::CuePoint>> sourceCuesCopied() const { return std::nullopt; }
+
 private:
     std::unique_ptr<PendingChange> m_rider;
     QString m_rekordboxPath;
     QString m_enginePath;
     domain::SyncPlan m_plan;
     int m_itemCountHint;
+    bool m_checkTargetAsRead = false;
 };
 
 }  // namespace seabass::gui
