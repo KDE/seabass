@@ -2995,7 +2995,16 @@ seabass_cli_test(cli_scan_no_stick EXIT 1 ARGS scan --rekordbox
 # Every choice says why (2026-10-04). Both of the fixture's choices were
 # choices before; the second is the brief's own example, Engine's pad 1 514 ms
 # from OneLibrary's. ("." stands for the ";" a CMake list cannot hold.)
-seabass_cli_test(cli_sync_dry_run EXIT 0 ARGS sync --dry-run --rekordbox ${_cli_rekordbox} --engine ${_cli_engine}
+#
+# On a copy, because sync opens exportLibrary.db, and the first SQLite
+# connection to a WAL database truncates its -shm and rebuilds it. The
+# rebuilt file is byte for byte the committed one, so this test's own
+# check passed, but a cli_* test hashing the fixture at that moment saw
+# the -shm changed (CI, 2026-11-24). Nothing in the copy may change.
+set(_cli_sync_dry "${CMAKE_BINARY_DIR}/test-fixture-copies/cli_sync_dry_run")
+seabass_cli_test(cli_sync_dry_run EXIT 0
+    COPY_FROM ${_cli_fixture} COPY_TO ${_cli_sync_dry} UNCHANGED_TREE ${_cli_sync_dry}
+    ARGS sync --dry-run --rekordbox ${_cli_sync_dry}/rekordbox --engine ${_cli_sync_dry}/engine
     EXPECT "rekordbox tracks:  1161\\n" "engine tracks:     1469\\n" "onelibrary tracks: 1644\\n"
            "matched tracks:    1383\\n" "Would copy cues to Engine for 30 track\\(s\\)"
            "Would copy cues to rekordbox for 8 track\\(s\\)" "Would copy cues to OneLibrary for 1 track\\(s\\)"
