@@ -683,6 +683,53 @@ Two witnesses beside him on the tracks half a beat apart: Beat This!
 (ours on 28 of 33, rekordbox's on 3) and Denon's players (below: ours
 on 16 of the 17 they have analysed, rekordbox's on none).
 
+### The CD rips, and two grids of the collection that came out anew
+
+On 24 November he looked at the tracks of the CD rips' tuning half that
+the analyser of 373e328e has at another tempo than rekordbox's Dynamic
+grid (86) or half a beat out (11), with the track laid over itself at
+each grid's beats and three strips of eight beats, and answered for 95.
+
+| How our grid stands to rekordbox's | Ours is right | rekordbox is right | He could not tell |
+|---|---|---|---|
+| Half its tempo | 21 | 5 | 2 |
+| Double its tempo | 2 | 4 | 0 |
+| Two thirds | 5 | 4 | 0 |
+| One and a half times | 4 | 2 | 2 |
+| Three quarters | 1 | 0 | 0 |
+| Four thirds | 4 | 1 | 0 |
+| A few percent apart | 11 | 4 | 1 |
+| No simple relation | 5 | 1 | 5 |
+| The same tempo, half a beat out | 10 | 1 | 0 |
+| All | 63 | 22 | 10 |
+
+So on this music a grid that differs from rekordbox's is ours to keep
+on two tracks in three, and rekordbox's Dynamic analysis is no truth
+for rock: with rekordbox or approved, the analyser is right on 207 of
+the 368 tracks (144 within 10 ms and steady, 63 approved), and
+rekordbox itself, taken as right wherever he did not say otherwise, on
+295. The tracks over 10 ms off (33) and those that drift (94) he has
+not looked at.
+
+Where one tempo is double the other he chose the slower one on 25 of
+32 tracks, between 70 and 92 BPM, and the faster one, between 155 and
+179, on 7: rekordbox counts this music twice as fast as he would mix
+it more often than we count it too slow. Beat This is no judge here:
+of the 38 tracks at another tempo on which it has rekordbox's tempo he
+gave 20 to ours and 15 to rekordbox.
+
+What is left for the analyser on this set: 21 tracks at a wrong tempo
+(5 at half, 4 at double, 4 at two thirds, 2 at one and a half times,
+1 at four thirds, 4 a few percent off, 1 other) and 1 half a beat out.
+
+Of the collection, two tracks had come out of that analyser with a grid
+he had not seen: one at double rekordbox's tempo, and one he had
+approved at another tempo that is now at rekordbox's tempo and half a
+beat out. He approved both: with rekordbox or approved the collection
+stands at 732 of 751 again, 73 of them approved, and what is left is
+the 19 tracks of before (rekordbox right on 11, neither on 6, undecided
+on 2).
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
