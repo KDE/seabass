@@ -107,6 +107,7 @@
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/rekordbox_baseline_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -277,6 +278,11 @@ std::string describe(const Row &row)
         {
             return std::string("cues to ")
                 + (e.plan.direction == d::SyncPlan::Direction::ToB ? "Engine " : "rekordbox ") + e.pathKey;
+        }
+        std::string operator()(const d::AnalysisEdit &e) const
+        {
+            return std::string("rekordbox's ") + (e.part == d::AnalysisEdit::Part::Grid ? "grid" : "waveform")
+                + " to Engine " + e.pathKey;
         }
     };
     return std::visit(Describe{}, *row.edit);
@@ -666,7 +672,9 @@ void testFixture()
 
 // --- proposal ----------------------------------------------------------
 
-void assertGoldenProposal(RekordboxExportSyncController &controller)
+// `conflicts`: the keys of the analysis conflicts raised beside the 24
+// rows (#136), unticked.
+void assertGoldenProposal(RekordboxExportSyncController &controller, const std::set<std::string> &conflicts = {})
 {
     assert(controller.hasBaseline());
     assert(controller.baselineSequence() == 40);
@@ -674,11 +682,16 @@ void assertGoldenProposal(RekordboxExportSyncController &controller)
     assert(controller.introText()
            == QStringLiteral("Compared with how this stick looked when Seabass last saved it, export 40."));
     const auto got = listed(controller);
-    assert(sameList(expectedProposal(), got));
+    auto expected = expectedProposal();
+    for (const auto &key : conflicts) {
+        expected.insert("[ ] no edit: conflict " + key);
+    }
+    assert(sameList(expected, got));
     assert(controller.checkedCount() == 24);
-    assert(controller.conflictCount() == 0);
+    assert(controller.conflictCount() == static_cast<int>(conflicts.size()));
     const QVariantMap counts = controller.sectionCounts();
-    const std::map<QString, int> want{{"conflicts", 0},        {"playlists", 5},          {"tracksToAdd", 3},
+    const std::map<QString, int> want{{"conflicts", static_cast<int>(conflicts.size())},
+                                      {"playlists", 5},          {"tracksToAdd", 3},
                                       {"tracksToRemove", 4},   {"membership", 10},        {"metadataToEngine", 2},
                                       {"cuesToEngine", 0},     {"restoresToRekordbox", 0}, {"engineOwnKept", 0},
                                       {"engineOnlyPlaylists", 0}, {"notAdded", 0}};
@@ -1037,7 +1050,7 @@ std::map<std::int64_t, std::vector<std::string>> analysisRows(const std::string 
 {
     std::map<std::int64_t, std::vector<std::string>> out;
     for (auto row : testing::sqlRows(db, "SELECT t.id, t.isAnalyzed, t.isBeatGridLocked, t.bpmAnalyzed, t.key, "
-                                         "p.trackData, p.overviewWaveFormData, p.beatData FROM Track t LEFT JOIN "
+                                         "p.trackData, p.overviewWaveFormData, p.beatData, t.bpm FROM Track t LEFT JOIN "
                                          "PerformanceData p ON p.trackId = t.id ORDER BY t.id;")) {
         const std::int64_t id = std::stoll(row.front());
         row.erase(row.begin());
@@ -1046,7 +1059,7 @@ std::map<std::int64_t, std::vector<std::string>> analysisRows(const std::string 
     return out;
 }
 
-enum Column { IsAnalyzed = 0, Locked = 1, BpmAnalyzed = 2, Key = 3, TrackData = 4, Overview = 5, BeatData = 6 };
+enum Column { IsAnalyzed = 0, Locked = 1, BpmAnalyzed = 2, Key = 3, TrackData = 4, Overview = 5, BeatData = 6, Bpm = 7 };
 
 // The player analysed B01: B04's analysis (a Prime 4's own, from S4) on
 // B01's row, the columns a player writes. `locked`: and its grid locked.
@@ -1146,7 +1159,19 @@ AnalysisRun runSyncWith(const std::string &name, std::optional<std::pair<bool, b
     // Experimental: the switches count only with the gate open.
     SyncAnalysisPolicy::setExperimentalEnabled(experimental);
     analyze(controller, run.stick);
-    assertGoldenProposal(controller);
+    // B01 analysed by the player: its grid and waveform differ from
+    // rekordbox's, a conflict each part asked for, left open here (#136).
+    std::set<std::string> conflicts;
+    if (analyseB01 && options && experimental) {
+        const std::string b01 = "contents/seabass test/t73 base/t73-b01-click-44k-102bpm.flac";
+        if (options->first) {
+            conflicts.insert("analysis:grid:" + b01);
+        }
+        if (options->second) {
+            conflicts.insert("analysis:waveform:" + b01);
+        }
+    }
+    assertGoldenProposal(controller, conflicts);
     controller.stageSelected();
     assert(controller.errorMessage().isEmpty());
     assert(controller.stagedCount() == 24);
@@ -1223,13 +1248,12 @@ void testAnalysisBoth()
         assert(record.samples == static_cast<double>(exact->samples));
         assert(record.sample_rate == exact->sampleRateHz);
     }
-    // B01, analysed by the player: rekordbox's grid; the waveform the
-    // player drew stays (a sync has no box to write over it), and the
-    // record the player wrote is kept.
+    // B01, analysed by the player: its grid and waveform differ from
+    // rekordbox's, two conflicts left open, so both stay (#136).
     {
         const auto &was = run.before.at(b01);
         const auto &now = run.after.at(b01);
-        assert(now[BeatData] != was[BeatData] && "rekordbox's grid");
+        assert(now[BeatData] == was[BeatData] && "the player's grid stays while asked");
         assert(now[Overview] == was[Overview] && "the player's waveform stays");
         assert(now[TrackData] == was[TrackData] && now[IsAnalyzed] == "1" && "the player's record stays");
     }
@@ -1251,8 +1275,8 @@ void testAnalysisBoth()
         waveforms += (fresh ? row[Overview] != "<null>" : row[Overview] != run.before.at(id)[Overview]) ? 1 : 0;
     }
     // The overview files of the created rows only (B01's waveform is the
-    // player's and stays), the player's analysis of B01 kept, and the
-    // ledger with the four grids.
+    // player's and stays), nothing kept (nothing of the player's
+    // replaced), and the ledger with the three grids.
     const auto overviews = filesUnder(overviewDirOf(stick));
     std::set<std::int64_t> overviewIds;
     for (const auto &[path, bytes] : overviews) {
@@ -1260,18 +1284,19 @@ void testAnalysisBoth()
     }
     assert((overviewIds == std::set<std::int64_t>{created[0], created[1], created[2]}));
     const auto kept = filesUnder(keptDirOf(stick));
-    assert(kept.size() == 1 && "B01's own analysis, and only that");
+    assert(kept.empty() && "nothing of the player's replaced");
     std::string ledgerError;
     const auto ledger = seabass::infrastructure::local::readBeatGridLedger(stick.root, &ledgerError);
-    assert(ledgerError.empty() && ledger.size() == 4);
+    assert(ledgerError.empty() && ledger.size() == 3);
     // The summary says what landed, counted from the stick.
     std::cout << "  landed: " << grids << " grid(s), " << waveforms << " waveform(s), " << completed
               << " completed, " << kept.size() << " kept\n";
-    assert(grids == 4 && waveforms == 3 && completed == 3);
+    assert(grids == 3 && waveforms == 3 && completed == 3);
     assert(run.summary.value("notes").toString()
-           == QStringLiteral("From rekordbox, 4 beat grids and 3 waveforms copied, 3 tracks now load without "
-                             "analysis. Engine's own analysis of one track was kept on the stick first."));
-    std::cout << "analysis both: 4 grids, 3 waveforms, 3 rows completed, B01's analysis kept, the rest as it was OK\n";
+           == QStringLiteral("From rekordbox, 3 beat grids and 3 waveforms copied, 3 tracks now load without "
+                             "analysis. Analysis left alone: one track whose beat grid or waveform on Engine "
+                             "differs from rekordbox's, a conflict for you to answer."));
+    std::cout << "analysis both: 3 grids, 3 waveforms, 3 rows completed, B01 asked and left, the rest as it was OK\n";
 
     // Undo: m.db as before the save (but the import counter, as the "save"
     // case has it), no overview file, nothing kept, no ledger.
@@ -1303,8 +1328,9 @@ void testAnalysisLocked()
     assert(now[Overview] == was[Overview] && "the waveform the player drew stays too");
     assert(run.summary.value("notes").toString()
            == QStringLiteral("From rekordbox, 3 beat grids and 3 waveforms copied, 3 tracks now load without "
-                             "analysis. Analysis left alone: one beat grid locked or moved on the player."));
-    std::cout << "analysis locked: B01's grid and waveform left alone, the grid counted OK\n";
+                             "analysis. Analysis left alone: one track whose beat grid or waveform on Engine "
+                             "differs from rekordbox's, a conflict for you to answer."));
+    std::cout << "analysis locked: B01's grid and waveform left alone, asked OK\n";
 }
 
 void testAnalysisGridsOnly()
@@ -1319,14 +1345,14 @@ void testAnalysisGridsOnly()
         assert(row[IsAnalyzed] == "0" && row[TrackData] == "<null>" && row[BeatData] == "<null>"
                && "left for the player: a row is completed with both or not at all");
     }
-    assert(run.after.at(b01)[BeatData] != run.before.at(b01)[BeatData]);
+    assert(run.after.at(b01)[BeatData] == run.before.at(b01)[BeatData] && "differs: asked, left");
     assert(run.after.at(b01)[Overview] == run.before.at(b01)[Overview] && "no waveform asked for");
     assert(filesUnder(overviewDirOf(stick)).empty());
-    assert(filesUnder(keptDirOf(stick)).size() == 1);
+    assert(filesUnder(keptDirOf(stick)).empty());
     assert(run.summary.value("notes").toString()
-           == QStringLiteral("From rekordbox, one beat grid copied. Engine's own analysis of one track was kept on "
-                             "the stick first. Analysis left alone: 3 tracks left for the player to analyse."));
-    std::cout << "analysis grids only: B01's grid, the 3 new rows left for the player OK\n";
+           == QStringLiteral("Analysis left alone: 3 tracks left for the player to analyse, one track whose beat "
+                             "grid or waveform on Engine differs from rekordbox's, a conflict for you to answer."));
+    std::cout << "analysis grids only: B01 asked and left, the 3 new rows left for the player OK\n";
 }
 
 // The stick after a save, but what differs between two runs of the same
@@ -1474,6 +1500,609 @@ void testAnalysis()
 #endif
 }
 
+
+// --- #136: an empty side never wins, a difference is a conflict ------------
+
+// B01 marked analysed with nothing stored (Engine DJ 5.1.0 left 30 such
+// rows on two sticks): the flag up, every analysis column NULL.
+void pretendAnalysedNothingStoredB01(const testing::EngineChangeStick &stick)
+{
+    const std::string b01 = std::to_string(trackIdOf(stick, "B01"));
+    const bool done = testing::sqlExec(stick.db, "UPDATE PerformanceData SET trackData = NULL, overviewWaveFormData = "
+                                                 "NULL, beatData = NULL WHERE trackId = " + b01
+                                                     + "; UPDATE Track SET isAnalyzed = 1 WHERE id = " + b01 + ";");
+    assert(done);
+    (void)done;
+}
+
+const std::string B01PathKey = "contents/seabass test/t73 base/t73-b01-click-44k-102bpm.flac";
+
+// The conflicts the page lists, by key.
+std::set<std::string> conflictKeys(RekordboxExportSyncController &controller)
+{
+    std::set<std::string> out;
+    for (const Row &row : controller.rows()->rows()) {
+        if (row.section == Section::Conflicts) {
+            out.insert(row.header.key);
+        }
+    }
+    return out;
+}
+
+void answer(RekordboxExportSyncController &controller, const std::string &key, bool rekordboxSide)
+{
+    const auto &rows = controller.rows()->rows();
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].section == Section::Conflicts && rows[i].header.key == key) {
+            controller.resolveConflict(static_cast<int>(i), rekordboxSide);
+            return;
+        }
+    }
+    std::cerr << "no conflict " << key << "\n";
+    assert(false && "the conflict to answer is listed");
+}
+
+// FlagDown: the player's analysis broken off, its flag down over the
+// waveform it drew (seen on a stick a Prime 4 loaded).
+enum class B01Shape { Unanalysed, Analysed, Locked, NothingStored, FlagDown };
+
+// One sync with the switches, B01 in `shape`: the conflicts the page
+// raised, then the save of every ticked row and `answers` (key to side,
+// true for rekordbox's), and the stick before and after it.
+struct DiffersRun
+{
+    testing::EngineChangeStick stick;
+    std::set<std::string> conflicts;
+    QVariantMap summary;
+    std::map<std::int64_t, std::vector<std::string>> before;
+    std::map<std::int64_t, std::vector<std::string>> after;
+    std::map<std::string, std::string> pioneerBefore;
+    std::map<std::string, std::string> pioneerAfter;
+};
+
+DiffersRun runDiffers(const std::string &name, bool grids, bool waveforms, B01Shape shape,
+                      const std::map<std::string, bool> &answers, RekordboxExportSyncController &controller,
+                      const std::function<void(const testing::EngineChangeStick &)> &prepare = {},
+                      const std::function<void(const testing::EngineChangeStick &)> &beforeStage = {})
+{
+    DiffersRun run;
+    run.stick = makeStick(name, "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
+    if (shape == B01Shape::Analysed || shape == B01Shape::Locked) {
+        pretendPlayerAnalysedB01(run.stick, shape == B01Shape::Locked);
+    } else if (shape == B01Shape::NothingStored) {
+        pretendAnalysedNothingStoredB01(run.stick);
+    } else if (shape == B01Shape::FlagDown) {
+        pretendPlayerAnalysedB01(run.stick, false);
+        const bool down = testing::sqlExec(run.stick.db, "UPDATE Track SET isAnalyzed = 0 WHERE id = "
+                                                             + std::to_string(trackIdOf(run.stick, "B01")) + ";");
+        assert(down);
+        (void)down;
+    }
+    if (prepare) {
+        prepare(run.stick);
+    }
+    run.before = analysisRows(run.stick.db);
+    run.pioneerBefore = filesUnder(run.stick.pioneer);
+    SyncAnalysisPolicy::reset();
+    SyncAnalysisPolicy::set(grids, waveforms);
+    SyncAnalysisPolicy::setExperimentalEnabled(true);
+    analyze(controller, run.stick);
+    run.conflicts = conflictKeys(controller);
+    // The sync's own 24 rows are there and ticked, whatever was raised.
+    assert(controller.checkedCount() == 24);
+    for (const auto &[key, side] : answers) {
+        answer(controller, key, side);
+    }
+    if (beforeStage) {
+        beforeStage(run.stick);
+    }
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    run.summary = waitForSave(sessionOf(run.stick), controller, false);
+    run.after = analysisRows(run.stick.db);
+    run.pioneerAfter = filesUnder(run.stick.pioneer);
+    std::cout << "  conflicts:";
+    for (const auto &key : run.conflicts) {
+        std::cout << " " << key;
+    }
+    std::cout << "\n  notes: \"" << run.summary.value("notes").toString().toStdString() << "\"\n";
+    return run;
+}
+
+void testAnalysisConflict()
+{
+    const std::string gridKey = "analysis:grid:" + B01PathKey;
+    const std::string waveformKey = "analysis:waveform:" + B01PathKey;
+
+    // Both sides hold a grid and a waveform of B01, and they differ: left
+    // open, the save writes neither, and the page asks, a conflict each.
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_open", true, true, B01Shape::Analysed, {}, controller);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        const auto &was = run.before.at(b01);
+        const auto &now = run.after.at(b01);
+        assert(now[BeatData] == was[BeatData] && "Engine's grid stays while the conflict is open");
+        assert(now[Overview] == was[Overview] && "and Engine's waveform");
+        assert(now[TrackData] == was[TrackData] && now[IsAnalyzed] == "1");
+        assert(run.pioneerAfter == run.pioneerBefore && "rekordbox's side byte for byte");
+        assert(filesUnder(keptDirOf(run.stick)).empty() && "nothing replaced, so nothing kept");
+        assert((run.conflicts == std::set<std::string>{gridKey, waveformKey}));
+        assert(run.summary.value("written").toInt() == 16);
+        std::cout << "differs, open: B01's grid and waveform stay, two conflicts raised OK\n";
+    }
+    // Grids only, then waveforms only: the one part's conflict.
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_grids", true, false, B01Shape::Analysed, {}, controller);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.after.at(b01) == run.before.at(b01));
+        assert((run.conflicts == std::set<std::string>{gridKey}));
+        std::cout << "differs, grids only: one grid conflict, B01 as it was OK\n";
+    }
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_waveforms", false, true, B01Shape::Analysed, {}, controller);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.after.at(b01) == run.before.at(b01));
+        assert((run.conflicts == std::set<std::string>{waveformKey}));
+        std::cout << "differs, waveforms only: one waveform conflict, B01 as it was OK\n";
+    }
+    // A grid locked on the player differs too: asked, never replaced unasked.
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_locked", true, true, B01Shape::Locked, {}, controller);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.after.at(b01) == run.before.at(b01));
+        assert((run.conflicts == std::set<std::string>{gridKey, waveformKey}));
+        std::cout << "differs, locked: asked, B01 as it was OK\n";
+    }
+    // Answered: rekordbox's grid, Engine's waveform. The grid is replaced,
+    // the player's analysis kept on the stick first; the waveform stays.
+    std::string rekordboxGrid;
+    std::string answeredDb;
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_answered", true, true, B01Shape::Analysed,
+                                    {{gridKey, true}, {waveformKey, false}}, controller);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        const auto &was = run.before.at(b01);
+        const auto &now = run.after.at(b01);
+        assert(now[BeatData] != was[BeatData] && "rekordbox's grid, as answered");
+        assert(now[Overview] == was[Overview] && "Engine's waveform, as answered");
+        assert(now[TrackData] == was[TrackData]);
+        assert(filesUnder(keptDirOf(run.stick)).size() == 1 && "the player's analysis kept first");
+        assert(run.pioneerAfter == run.pioneerBefore);
+        assert(run.summary.value("notes").toString()
+               == QStringLiteral("From rekordbox, 4 beat grids and 3 waveforms copied, 3 tracks now load without "
+                                 "analysis. Engine's own analysis of one track was kept on the stick first.")
+               && "both answered: nothing left to ask");
+        rekordboxGrid = now[BeatData];
+        answeredDb = run.stick.db;
+        std::cout << "differs, answered: rekordbox's grid in, Engine's waveform stays OK\n";
+    }
+    // The grids agree (B01 given the grid that answer wrote), and no record
+    // says Seabass wrote it: no grid conflict, only the waveform's.
+    {
+        RekordboxExportSyncController controller;
+        const auto sameGrid = [&](const testing::EngineChangeStick &stick) {
+            const std::string b01 = std::to_string(trackIdOf(stick, "B01"));
+            const bool done = testing::sqlExec(stick.db, "ATTACH DATABASE '" + answeredDb
+                                                             + "' AS answered; UPDATE PerformanceData SET beatData = "
+                                                               "(SELECT beatData FROM answered.PerformanceData WHERE "
+                                                               "trackId = " + b01 + ") WHERE trackId = " + b01
+                                                             + "; DETACH DATABASE answered;");
+            assert(done);
+            (void)done;
+        };
+        DiffersRun run = runDiffers("t73_differs_agree", true, true, B01Shape::Analysed, {}, controller, sameGrid);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.before.at(b01)[BeatData] == rekordboxGrid);
+        assert((run.conflicts == std::set<std::string>{waveformKey}) && "equal grids are no conflict");
+        assert(run.after.at(b01) == run.before.at(b01));
+        std::cout << "agree: equal grids raise nothing, the waveform is asked OK\n";
+    }
+    // Both answered rekordbox's: both replaced.
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_both", true, true, B01Shape::Analysed,
+                                    {{gridKey, true}, {waveformKey, true}}, controller);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.after.at(b01)[BeatData] == rekordboxGrid);
+        assert(run.after.at(b01)[Overview] != run.before.at(b01)[Overview]);
+        assert(filesUnder(overviewDirOf(run.stick)).size() == 4 && "B01's file and the three created rows'");
+        assert(!run.summary.value("notes").toString().contains(QStringLiteral("conflict")));
+        std::cout << "differs, both answered rekordbox's: grid and waveform replaced OK\n";
+    }
+    // The player's analysis broken off (flag down over its own waveform):
+    // the waveform is asked. rekordbox's answer completes the row with
+    // rekordbox's analysis, the only way it can take rekordbox's waveform;
+    // Engine's leaves it as it is.
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_flag_down_rekordbox", true, true, B01Shape::FlagDown,
+                                    {{waveformKey, true}}, controller);
+        assert((run.conflicts == std::set<std::string>{waveformKey}));
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        const auto &was = run.before.at(b01);
+        const auto &now = run.after.at(b01);
+        assert(was[IsAnalyzed] == "0");
+        assert(now[IsAnalyzed] == "1" && now[Overview] != was[Overview] && now[BeatData] != was[BeatData]
+               && "answered with rekordbox's: completed with rekordbox's analysis");
+        assert(run.pioneerAfter == run.pioneerBefore);
+        assert(!run.summary.value("notes").toString().contains(QStringLiteral("conflict")));
+        // As the answer says: the player's row was kept first, and Restore
+        // Engine's Analysis gives it back, its waveform byte for byte.
+        assert(filesUnder(keptDirOf(run.stick)).size() == 1 && "the player's row kept before the completion");
+        {
+            std::optional<seabass::domain::Track> rekordboxB01;
+            for (const auto &track : seabass::gui::LibraryCatalogCache::instance().tracksFor(
+                     "rekordbox", run.stick.pioneerPath().toStdString())) {
+                if (track.filename.rfind("T73-B01-", 0) == 0) {
+                    rekordboxB01 = track;
+                }
+            }
+            assert(rekordboxB01);
+            const auto item = seabass::application::beatGridCopyItemFor(
+                *rekordboxB01, std::to_string(b01),
+                seabass::infrastructure::paths::normalStickRootForCatalogPath(run.stick.pioneerPath().toStdString()));
+            seabass::infrastructure::local::StickKeptEngineAnalysisStore store(run.stick.root);
+            seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(pathToUtf8(run.stick.engine));
+            writer.setKeptAnalysisStore(&store);
+            // The completion wrote B01's overview file and rekordbox's tempo.
+            const auto hasB01File = [&]() {
+                for (const auto &[path, bytes] : filesUnder(overviewDirOf(run.stick))) {
+                    if (std::stoll(pathToUtf8(pathFromUtf8(path).stem())) == b01) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            assert(hasB01File() && "the completion wrote an overview file the row had not");
+            const auto restored = writer.restoreEngineAnalysis(std::to_string(b01), item.ledgerKey, {});
+            assert(restored.outcome == seabass::application::EngineAnalysisRestoreResult::Outcome::Restored);
+            // Every column, Track.bpm included, as the player left it, and
+            // the overview file the row had not taken away again.
+            assert(analysisRows(run.stick.db).at(b01) == was && "the player's row back, its waveform byte for byte");
+            assert(!hasB01File() && "the overview file the completion wrote, removed");
+        }
+        std::cout << "flag down, rekordbox's answer: completed, the player's row kept and restored exactly OK\n";
+    }
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_flag_down_engine", true, true, B01Shape::FlagDown,
+                                    {{waveformKey, false}}, controller);
+        assert((run.conflicts == std::set<std::string>{waveformKey}));
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.after.at(b01) == run.before.at(b01) && "Engine's answer: as it was");
+        assert(!run.summary.value("notes").toString().contains(QStringLiteral("conflict")));
+        std::cout << "flag down, Engine's answer: the row as it was OK\n";
+    }
+    // Answered with rekordbox's grid while B01's grid was not locked, then
+    // locked on the player before the save: the lock is the DJ's newer word.
+    // The grid stays, and the note says why.
+    {
+        RekordboxExportSyncController controller;
+        const auto lockNow = [](const testing::EngineChangeStick &stick) {
+            const bool done = testing::sqlExec(stick.db, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = "
+                                                             + std::to_string(trackIdOf(stick, "B01")) + ";");
+            assert(done);
+            (void)done;
+        };
+        DiffersRun run = runDiffers("t73_differs_locked_since", true, true, B01Shape::Analysed,
+                                    {{gridKey, true}, {waveformKey, false}}, controller, {}, lockNow);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.before.at(b01)[Locked] == "0");
+        assert(run.after.at(b01)[BeatData] == run.before.at(b01)[BeatData] && "a lock set since the answer holds");
+        assert(run.after.at(b01)[Locked] == "1");
+        assert(run.summary.value("notes").toString().contains(QStringLiteral("locked or moved on the player")));
+        std::cout << "answered, then locked on the player: the grid stays, said so OK\n";
+    }
+    // A track whose analysis cannot be compared (here the writer throws: B01
+    // has no overview, so its waveform would go in, and the library's uuid
+    // cannot name an overview file): named on the page, no conflict, and
+    // no rider staged for it, so the save neither writes its analysis nor
+    // says it differs. Analysed and staged only: every completion of this
+    // library would fail the same way.
+    {
+        RekordboxExportSyncController controller;
+        const auto stick = makeStick("t73_differs_uncompared", "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
+        pretendPlayerAnalysedB01(stick, false);
+        const bool broken = testing::sqlExec(stick.db, "UPDATE PerformanceData SET overviewWaveFormData = NULL WHERE "
+                                                       "trackId = " + std::to_string(trackIdOf(stick, "B01"))
+                                                           + "; UPDATE Information SET uuid = 'not/a/uuid';");
+        assert(broken);
+        (void)broken;
+        SyncAnalysisPolicy::reset();
+        SyncAnalysisPolicy::set(true, true);
+        SyncAnalysisPolicy::setExperimentalEnabled(true);
+        analyze(controller, stick);
+        const QString intro = controller.introText();
+        std::cout << "  intro: \"" << intro.toStdString() << "\"\n";
+        std::optional<seabass::domain::Track> rekordboxB01;
+        for (const auto &track : seabass::gui::LibraryCatalogCache::instance().tracksFor(
+                 "rekordbox", stick.pioneerPath().toStdString())) {
+            if (track.filename.rfind("T73-B01-", 0) == 0) {
+                rekordboxB01 = track;
+            }
+        }
+        assert(rekordboxB01);
+        const QString title = QString::fromStdString(rekordboxB01->title.empty() ? rekordboxB01->filename
+                                                                                  : rekordboxB01->title);
+        assert(intro.contains(QStringLiteral("The beat grid and waveform of \"%1\" could not be compared with "
+                                             "rekordbox's, so this sync leaves them as they are.")
+                                  .arg(title))
+               && "named on the page");
+        assert(conflictKeys(controller).empty() && "nothing compared, nothing asked");
+        controller.stageSelected();
+        assert(controller.errorMessage().isEmpty());
+        const QStringList pending = sessionOf(stick)->pendingDescriptions();
+        for (const QString &line : pending) {
+            assert(!(line.startsWith(QStringLiteral("Copy rekordbox's")) && line.contains(title))
+                   && "no rider for a track not compared");
+        }
+        assert(ridersIn(pending) == 3 && "the created rows' riders only");
+        controller.unstageAll();
+        std::cout << "not compared: named on the page, no conflict, no rider OK\n";
+    }
+    // B01's ledger key, as the save keys the kept store and the ledger.
+    const auto b01LedgerKey = [](const testing::EngineChangeStick &stick) {
+        std::optional<seabass::domain::Track> rekordboxB01;
+        for (const auto &track : seabass::gui::LibraryCatalogCache::instance().tracksFor(
+                 "rekordbox", stick.pioneerPath().toStdString())) {
+            if (track.filename.rfind("T73-B01-", 0) == 0) {
+                rekordboxB01 = track;
+            }
+        }
+        assert(rekordboxB01);
+        return seabass::application::beatGridCopyItemFor(
+                   *rekordboxB01, std::to_string(trackIdOf(stick, "B01")),
+                   seabass::infrastructure::paths::normalStickRootForCatalogPath(stick.pioneerPath().toStdString()))
+            .ledgerKey;
+    };
+    // The flag down over the player's waveform, and what was kept of B01
+    // before unreadable: rekordbox's answer could not be carried out, so it
+    // is not asked. The page names the track, and the save leaves it alone
+    // and says no conflict.
+    {
+        RekordboxExportSyncController controller;
+        const auto damageKept = [&](const testing::EngineChangeStick &stick) {
+            const fs::path kept =
+                seabass::infrastructure::local::keptEngineAnalysisFile(stick.root, b01LedgerKey(stick));
+            fs::create_directories(kept.parent_path());
+            std::ofstream(kept, std::ios::binary) << "seabass-engine-analysis\t3\ndamaged";
+        };
+        QString intro;
+        DiffersRun run = runDiffers("t73_differs_unkeepable", true, true, B01Shape::FlagDown, {}, controller, damageKept,
+                                    [&](const testing::EngineChangeStick &) { intro = controller.introText(); });
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        std::cout << "  intro: \"" << intro.toStdString() << "\"\n";
+        assert(run.conflicts.empty() && "an answer that cannot be carried out is not asked");
+        assert(intro.contains(QStringLiteral("cannot be kept on the stick first")) && "named on the page");
+        assert(run.after.at(b01) == run.before.at(b01));
+        assert(!run.summary.value("notes").toString().contains(QStringLiteral("conflict")));
+        std::cout << "flag down, kept entry damaged: not asked, named, left alone OK\n";
+    }
+    // A grid Seabass wrote (the ledger's), locked on the player; rekordbox's
+    // differs. Asked, answered with Engine's side; unlocked on the player
+    // since: no difference by the writer's rule any more (the ledger's grid
+    // is replaced), so without the answer the save would write over it.
+    // Asked again instead, and left open, the save leaves it alone.
+    {
+        RekordboxExportSyncController controller;
+        const auto stick = makeStick("t73_differs_ledger_unlocked", "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
+        pretendPlayerAnalysedB01(stick, false);
+        const std::int64_t b01 = trackIdOf(stick, "B01");
+        {
+            seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer(pathToUtf8(stick.engine));
+            std::vector<seabass::domain::Beat> beats;
+            for (int i = 0; i * 428.5 < 60000.0; ++i) {
+                beats.push_back({7.0 + i * 428.5, i % 4 + 1});
+            }
+            seabass::application::BeatGridWriteOptions write;
+            write.overwriteEngineEdits = true;
+            const auto written = writer.writeBeatGrid(std::to_string(b01), beats, write);
+            assert(written.outcome == seabass::application::BeatGridWriteResult::Outcome::Written);
+            std::string error;
+            const bool ledgered = seabass::infrastructure::local::writeBeatGridLedger(
+                stick.root, {{b01LedgerKey(stick), written.gridFingerprint}}, &error);
+            assert(ledgered && error.empty());
+            (void)ledgered;
+        }
+        const bool locked = testing::sqlExec(stick.db, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = "
+                                                           + std::to_string(b01) + ";");
+        assert(locked);
+        (void)locked;
+        seabass::gui::LibraryCatalogCache::instance().invalidate("engine", stick.enginePath().toStdString());
+        const fs::path dbBefore = pathFromUtf8(stick.db + ".before-save");
+        fs::copy_file(pathFromUtf8(stick.db), dbBefore);
+        const std::string record40 = fileBytes(recordOf(stick));
+        SyncAnalysisPolicy::reset();
+        SyncAnalysisPolicy::set(true, false);
+        SyncAnalysisPolicy::setExperimentalEnabled(true);
+        analyze(controller, stick);
+        assert((conflictKeys(controller) == std::set<std::string>{gridKey}) && "the ledger's grid, locked: asked");
+        answer(controller, gridKey, false);
+        controller.stageSelected();
+        waitForSave(sessionOf(stick), controller, false);
+        std::map<std::string, std::string> answers;
+        {
+            std::string error;
+            const auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+            assert(record && record->declined.count(gridKey));
+            answers[gridKey] = record->declined.at(gridKey);
+        }
+        const auto backToBefore = [&](bool unlock) {
+            fs::copy_file(dbBefore, pathFromUtf8(stick.db), fs::copy_options::overwrite_existing);
+            for (const char *suffix : {"-wal", "-shm", "-journal"}) {
+                fs::remove(pathFromUtf8(stick.db + suffix));
+            }
+            {
+                std::ofstream(recordOf(stick), std::ios::binary | std::ios::trunc) << record40;
+            }
+            std::string error;
+            auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+            assert(record && error.empty());
+            record->declined[gridKey] = answers.at(gridKey);
+            const bool written = seabass::infrastructure::local::writeRekordboxBaseline(
+                stick.root, *record, [](const std::string &) {}, &error);
+            assert(written);
+            (void)written;
+            if (unlock) {
+                const bool done = testing::sqlExec(stick.db, "UPDATE Track SET isBeatGridLocked = 0 WHERE id = "
+                                                                 + std::to_string(b01) + ";");
+                assert(done);
+                (void)done;
+            }
+            seabass::gui::LibraryCatalogCache::instance().invalidate("engine", stick.enginePath().toStdString());
+        };
+        backToBefore(false);
+        analyze(controller, stick);
+        assert(conflictKeys(controller).empty() && "still locked, nothing changed: not asked");
+        backToBefore(true);
+        const auto gridBefore = analysisRows(stick.db).at(b01)[BeatData];
+        analyze(controller, stick);
+        assert((conflictKeys(controller) == std::set<std::string>{gridKey}) && "unlocked since: asked again");
+        controller.stageSelected();
+        const QVariantMap open = waitForSave(sessionOf(stick), controller, false);
+        assert(analysisRows(stick.db).at(b01)[BeatData] == gridBefore && "left open: the ledger's grid stays");
+        (void)open;
+        std::cout << "ledger's grid, answered while locked, unlocked since: asked again, not written OK\n";
+    }
+    // Answered with Engine's side: recorded, both sides' state with it, and
+    // not asked again while neither changes, also across a save that does
+    // not ask (the answers stay in the record). Engine's grid changed
+    // since: the grid is asked again, the waveform still not.
+    {
+        RekordboxExportSyncController controller;
+        const auto stick = makeStick("t73_differs_remembered", "m-before-R3.db", "rekordbox-baseline-export40.tsv.gz");
+        pretendPlayerAnalysedB01(stick, true);  // locked: see the unlock below
+        const fs::path dbBefore = pathFromUtf8(stick.db + ".before-save");
+        fs::copy_file(pathFromUtf8(stick.db), dbBefore);
+        const std::string record40 = fileBytes(recordOf(stick));
+        SyncAnalysisPolicy::reset();
+        SyncAnalysisPolicy::set(true, true);
+        SyncAnalysisPolicy::setExperimentalEnabled(true);
+        const auto answersIn = [&]() {
+            std::string error;
+            const auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+            assert(record && error.empty());
+            std::map<std::string, std::string> out;
+            for (const auto &[key, state] : record->declined) {
+                if (key.rfind("analysis:", 0) == 0) {
+                    out[key] = state;
+                }
+            }
+            return out;
+        };
+        // The stick as before the save (Engine and the record at 40), but
+        // for the answers, which the record keeps.
+        const auto backToBefore = [&](const std::map<std::string, std::string> &answers) {
+            fs::copy_file(dbBefore, pathFromUtf8(stick.db), fs::copy_options::overwrite_existing);
+            for (const char *suffix : {"-wal", "-shm", "-journal"}) {
+                fs::remove(pathFromUtf8(stick.db + suffix));
+            }
+            {
+                std::ofstream(recordOf(stick), std::ios::binary | std::ios::trunc) << record40;
+            }
+            std::string error;
+            auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+            assert(record && error.empty());
+            for (const auto &[key, state] : answers) {
+                record->declined[key] = state;
+            }
+            const bool written = seabass::infrastructure::local::writeRekordboxBaseline(
+                stick.root, *record, [](const std::string &) {}, &error);
+            assert(written && error.empty());
+            (void)written;
+            seabass::gui::LibraryCatalogCache::instance().invalidate("engine", stick.enginePath().toStdString());
+        };
+
+        analyze(controller, stick);
+        assert((conflictKeys(controller) == std::set<std::string>{gridKey, waveformKey}));
+        answer(controller, gridKey, false);
+        answer(controller, waveformKey, false);
+        controller.stageSelected();
+        assert(controller.errorMessage().isEmpty());
+        waitForSave(sessionOf(stick), controller, false);
+        const auto answers = answersIn();
+        assert(answers.size() == 2 && answers.count(gridKey) && answers.count(waveformKey) && "both answers recorded");
+        const auto b01 = trackIdOf(stick, "B01");
+        assert(analysisRows(stick.db).at(b01) == analysisRows(pathToUtf8(dbBefore)).at(b01));
+
+        // Neither side changed: nothing asked, and the save keeps them.
+        backToBefore(answers);
+        analyze(controller, stick);
+        assert(conflictKeys(controller).empty() && "answered, and nothing changed since");
+        assert(controller.checkedCount() == 24);
+        controller.stageSelected();
+        const QVariantMap kept = waitForSave(sessionOf(stick), controller, false);
+        std::cout << "  remembered, notes: \"" << kept.value("notes").toString().toStdString() << "\"\n";
+        assert(!kept.value("notes").toString().contains(QStringLiteral("conflict"))
+               && "an answer remembered is not asked in the note either");
+        assert(answersIn() == answers && "a save that did not ask keeps the answers");
+        assert(analysisRows(stick.db).at(b01) == analysisRows(pathToUtf8(dbBefore)).at(b01));
+
+        // B01's grid changed on the player since: asked again, the grid only.
+        backToBefore(answers);
+        // Another grid of the player's: B11's (the fixture's other analysed
+        // row), unlike both the one answered and rekordbox's.
+        const bool moved = testing::sqlExec(stick.db, "UPDATE PerformanceData SET beatData = (SELECT beatData FROM "
+                                                      "PerformanceData WHERE trackId = "
+                                                          + std::to_string(trackIdOf(stick, "B11")) + ") WHERE trackId = "
+                                                          + std::to_string(b01) + ";");
+        assert(moved);
+        (void)moved;
+        analyze(controller, stick);
+        std::cout << "  remembered, Engine changed: conflicts";
+        for (const auto &key : conflictKeys(controller)) {
+            std::cout << " " << key;
+        }
+        std::cout << "\n";
+        assert((conflictKeys(controller) == std::set<std::string>{gridKey}) && "Engine's grid changed: asked again");
+
+        // Answered while B01's grid was locked; unlocked on the player since,
+        // the same grid: the lock was part of the answer, so asked again.
+        backToBefore(answers);
+        const bool unlocked = testing::sqlExec(stick.db, "UPDATE Track SET isBeatGridLocked = 0 WHERE id = "
+                                                             + std::to_string(b01) + ";");
+        assert(unlocked);
+        (void)unlocked;
+        analyze(controller, stick);
+        assert((conflictKeys(controller) == std::set<std::string>{gridKey}) && "unlocked since: asked again");
+        std::cout << "remembered: Engine's side answered once, asked again after Engine's grid changed or was "
+                     "unlocked OK\n";
+    }
+    // Engine's side empty: a row marked analysed with nothing stored is no
+    // grid and no waveform. Never a conflict, rekordbox's side untouched,
+    // and nothing taken from B01 either.
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_nothing_stored", true, true, B01Shape::NothingStored, {}, controller);
+        const std::int64_t b01 = trackIdOf(run.stick, "B01");
+        assert(run.conflicts.empty() && "an empty side is no side of a conflict");
+        assert(run.pioneerAfter == run.pioneerBefore && "rekordbox's grid and waveform byte for byte");
+        const auto &now = run.after.at(b01);
+        assert(now[IsAnalyzed] == "1");
+        // Left as it is, or completed from rekordbox; never anything else.
+        assert(now == run.before.at(b01) || (now[BeatData] != "<null>" && now[Overview] != "<null>"));
+        std::cout << "Engine empty: no conflict, rekordbox's side byte for byte OK\n";
+    }
+    // Engine's side empty, never analysed: rekordbox's analysis goes over
+    // (the created rows, and B01 as the save finds it), never a conflict.
+    {
+        RekordboxExportSyncController controller;
+        DiffersRun run = runDiffers("t73_differs_unanalysed", true, true, B01Shape::Unanalysed, {}, controller);
+        assert(run.conflicts.empty());
+        assert(run.pioneerAfter == run.pioneerBefore);
+        for (const char *name : {"N1", "N2", "N3"}) {
+            const auto &row = run.after.at(trackIdOf(run.stick, name));
+            assert(row[IsAnalyzed] == "1" && row[BeatData] != "<null>" && row[Overview] != "<null>");
+        }
+        std::cout << "Engine never analysed: rekordbox's analysis goes over, no conflict OK\n";
+    }
+    SyncAnalysisPolicy::reset();
+}
 
 // --- Sync Cue Points with rekordbox's analysis ------------------------------
 
@@ -3135,6 +3764,13 @@ int main(int argc, char **argv)
         testReplay();
     } else if (which == "analysis") {
         testAnalysis();
+    } else if (which == "analysisconflict") {
+#ifdef SEABASS_HAVE_TAGLIB
+        testAnalysisConflict();
+#else
+        std::cerr << "analysisconflict: needs TagLib\n";
+        return 1;
+#endif
     } else if (which == "create") {
         testCreate();
     } else if (which == "cuesync") {

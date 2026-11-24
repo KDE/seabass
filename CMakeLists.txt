@@ -3773,7 +3773,7 @@ if(TARGET seabass_edit)
     # Sync Cue Points and Create Engine Library with the same switches:
     # the same reason.
     if(TARGET seabass_taglib)
-        list(APPEND _t73_cases analysis cuesync create)
+        list(APPEND _t73_cases analysis analysisconflict cuesync create)
     endif()
     foreach(_t73_case ${_t73_cases})
         add_test(NAME testshark_t73_${_t73_case}_test COMMAND testshark_t73_test

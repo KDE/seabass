@@ -144,6 +144,8 @@ struct BeatGridCopyResult
     int cannotKeep = 0;
     // Whether the player has analysed the row cannot be read: left alone.
     int rowUnreadable = 0;
+    // Engine's own grid differs from rekordbox's (differingIsConflict).
+    int differsFromEngine = 0;
     int failed = 0;
     // Not reached: the run was cancelled first.
     int notReached = 0;
@@ -168,7 +170,8 @@ struct BeatGridCopyResult
     int total() const
     {
         return written + wouldWrite + alreadySame + noRekordboxGrid + notAnalysed + analysedNothingStored + lockedOnEngine
-            + editedOnEngine + noSampleRate + unsupportedLibrary + notRequested + cannotKeep + rowUnreadable + failed + notReached;
+            + editedOnEngine + noSampleRate + unsupportedLibrary + notRequested + cannotKeep + rowUnreadable
+            + differsFromEngine + failed + notReached;
     }
 };
 
@@ -204,6 +207,9 @@ struct AnalysisCopyOptions
     bool overwriteEngineEdits = false;
     // As AnalysisImportOptions::overwritePlayerWaveforms.
     bool overwritePlayerWaveforms = false;
+    // As AnalysisImportOptions::differingIsConflict and respectLock.
+    bool differingIsConflict = false;
+    bool respectLock = false;
     // As BeatGridCopyOptions::previewOnly, for both parts: what would be
     // written or completed is counted apart from what was.
     bool previewOnly = false;
@@ -247,13 +253,16 @@ struct WaveformCopyCounts
     int rowUnreadable = 0;
     // The player drew its own waveform, left as it is (Waveform::PlayersWaveform).
     int playersWaveform = 0;
+    // Engine's own waveform differs from rekordbox's (differingIsConflict).
+    int differsFromEngine = 0;
     int failed = 0;
     int notReached = 0;
 
     int total() const
     {
         return written + wouldWrite + alreadySame + notRequested + noRekordboxWaveform + notAnalysed + noSampleCount
-            + unsupportedLibrary + cannotKeep + rowUnreadable + playersWaveform + failed + notReached;
+            + unsupportedLibrary + cannotKeep + rowUnreadable + playersWaveform + differsFromEngine + failed
+            + notReached;
     }
 };
 

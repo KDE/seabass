@@ -56,6 +56,9 @@ public:
         // The player's analysis could not be kept first (the file is not
         // under the stick root), so it was not replaced.
         bool cannotKeep = false;
+        // A part both sides hold, differently, left alone: a conflict for
+        // the user (AnalysisImportOptions::differingIsConflict).
+        bool differs = false;
         QString otherReason;
         // With leftForPlayer, what kept the row from being completed, in
         // words ("no rekordbox waveform", "no length for the file"); empty
@@ -96,6 +99,7 @@ struct AnalysisNoteCounts
     int noAnalysis = 0;
     int same = 0;
     int cannotKeep = 0;
+    int differs = 0;
     // Left for the player, by what kept the row from being completed.
     std::map<QString, int> forPlayerBecause;
     std::map<QString, int> other;
@@ -226,7 +230,11 @@ private:
 // completed all or nothing, so only with both parts asked for; a grid
 // locked or moved on the player is never replaced (overwriteEngineEdits
 // is always off) and is counted as left alone, and neither is a waveform
-// the player drew (overwritePlayerWaveforms always off).
+// the player drew (overwritePlayerWaveforms always off). Sync after
+// Rekordbox Export also sets differingIsConflict (#136): a part Engine
+// holds of its own that differs from rekordbox's is left alone, said so in
+// the note, and asked as a conflict, whose answer with rekordbox's side is
+// a change of its own (answerWithRekordboxs()).
 //
 // There is no preview behind it: rekordbox's analysis is read, and a row
 // the save creates is found by its file (it has no id until
@@ -314,6 +322,14 @@ public:
     // (Sync after Rekordbox Export) counts nothing.
     void countAsUnit() { m_countsAsUnit = true; }
 
+    // Sync after Rekordbox Export: the user answered a conflict over this
+    // track's grid or waveform with rekordbox's (#136). Written over
+    // Engine's own part, which is kept on the stick first; counted as a
+    // unit of the save, with an id of its own beside the track's rider.
+    // `lockedWhenAsked`: the grid was locked when the conflict was raised,
+    // so the answer writes over the lock; else a lock set since stays.
+    void answerWithRekordboxs(bool lockedWhenAsked);
+
     QString id() const override;
     QString owner() const override { return m_owner; }
     QString description() const override;
@@ -339,6 +355,7 @@ private:
     bool m_declaresFiles = true;
     QString m_carrierId;
     bool m_countsAsUnit = false;
+    bool m_answer = false;
 };
 
 // What a workflow that stages SyncAnalysisChange riders reads once when it

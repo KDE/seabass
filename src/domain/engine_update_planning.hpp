@@ -138,6 +138,10 @@ enum class EngineUpdateReason {
     EnginePathAmbiguous,  // enginePlaylistCountAtPath != 1
     DuplicateEngineRows,  // two Engine rows for one file: Clean Up first
     FileNotOnStick,       // rekordbox lists a file the stick does not have
+    // Both sides hold a beat grid, or both a waveform, of the track, and
+    // they differ (#136): the user picks. Raised beside the plan, not by
+    // the planner, from what the stick's analysis holds.
+    AnalysisDiffers,
 };
 
 // One cue item a cue row covers (rekordbox_baseline.hpp's cue keys).
@@ -290,9 +294,41 @@ struct CueEdit
     std::string pathKey;
 };
 
+// rekordbox's beat grid or waveform of a track onto Engine's row, over
+// Engine's own: only ever a conflict's choice (AnalysisDiffers), never a
+// row of the plan. Keyed "analysis:grid:<pathKey>" or
+// "analysis:waveform:<pathKey>", outside the record's grammar
+// (parseItemKey gives nullopt), so the record never holds it: the
+// analysis itself says, next time, whether the two still differ.
+struct AnalysisEdit
+{
+    enum class Part { Grid, Waveform };
+
+    EngineUpdateItemHeader header;
+    Part part = Part::Grid;
+    Track rekordbox;
+    Track engine;
+    std::string pathKey;
+    // A row whose flag is down over the player's own waveform takes
+    // rekordbox's only as a completion: the answer then writes rekordbox's
+    // whole analysis (grid and waveform), as Beat Grids & Waveforms does
+    // with "Also replace waveforms the player drew".
+    bool completesRow = false;
+    // The grid was locked on the player when the conflict was raised: the
+    // answer then writes over the lock, as the user saw it. A lock set
+    // since is the DJ's newer word, and stays.
+    bool engineLocked = false;
+    // What the conflict showed of rekordbox's analysis of the part (both
+    // parts for a completion): the write leaves the track alone when it
+    // changed since.
+    std::string analysisDigest;
+};
+
+std::string analysisItemKey(AnalysisEdit::Part part, const std::string &pathKey);
+
 // Any one write of the proposal, for a conflict's choices.
 using EngineUpdateEdit = std::variant<TrackToAdd, TrackToRemove, PlaylistCreate, PlaylistRename, PlaylistDelete,
-                                      MembershipEdit, MetadataEdit, CueEdit>;
+                                      MembershipEdit, MetadataEdit, CueEdit, AnalysisEdit>;
 
 // Something the planner cannot decide. Each choice is what staging it
 // writes; an empty choice writes nothing (Engine keeps what it has).

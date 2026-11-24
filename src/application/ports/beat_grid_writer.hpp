@@ -74,6 +74,11 @@ struct BeatGridWriteResult
         // analysed flag is not a number, or it is up over beat data that
         // does not decode or has no rate and length. Left alone.
         RowUnreadable,
+        // AnalysisImportOptions::differingIsConflict: the row holds a grid
+        // of Engine's own (the player's analysis, or one moved or locked
+        // on the player) that is not rekordbox's. Left alone: which of the
+        // two the track keeps is the user's to say.
+        DiffersFromEngine,
     };
     Outcome outcome = Outcome::NoSourceGrid;
     int markers = 0;

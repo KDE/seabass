@@ -189,6 +189,8 @@ void apply(World &w, const EngineUpdateProposal &p, bool takeRekordboxChoice = f
                             deletes.push_back(e);
                         } else if constexpr (std::is_same_v<T, CueEdit>) {
                             cues.push_back(e);
+                        } else if constexpr (std::is_same_v<T, AnalysisEdit>) {
+                            // Never a planner's choice: raised beside the plan.
                         } else {
                             static_assert(std::is_same_v<T, TrackToRemove>);
                             removes.push_back(e);

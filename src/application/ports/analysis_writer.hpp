@@ -49,6 +49,21 @@ struct AnalysisImportOptions
     // keeping knows it: a row Seabass completed, both its grids the
     // ledger's.
     bool overwritePlayerWaveforms = false;
+    // A sync's rule (#136): where both sides hold a grid, or both a
+    // waveform, and they differ, neither is picked. The part is left alone
+    // and said to differ (DiffersFromEngine) instead of being written over
+    // the player's own, or left as RowLocked, RowEditedOnEngine or
+    // PlayersWaveform: the user answers it as a conflict. A grid Seabass
+    // wrote there (the ledger's) or a waveform of an analysis Seabass knows
+    // is not Engine's own and is replaced as before; an empty side (no
+    // grid, no waveform) is never a side of a difference.
+    // overwriteEngineEdits and overwritePlayerWaveforms, an answer's, take
+    // precedence for their part.
+    bool differingIsConflict = false;
+    // With overwriteEngineEdits: a grid locked on the player still stays
+    // (RowLocked). For an answer given while the grid was not locked: a
+    // lock set on the player since is the DJ's newer word.
+    bool respectLock = false;
     // As BeatGridWriteOptions::ownGridFingerprint.
     std::optional<std::string> ownGridFingerprint;
     // The audio file's sample rate, for a row with no analysis record of
@@ -105,6 +120,9 @@ struct AnalysisImportResult
         // The player drew its own waveform of the row, and
         // overwritePlayerWaveforms is off: left as it is.
         PlayersWaveform,
+        // As PlayersWaveform, under differingIsConflict: the player's
+        // waveform and rekordbox's differ, and neither is picked.
+        DiffersFromEngine,
     };
     Waveform waveform = Waveform::NotRequested;
 
@@ -117,6 +135,10 @@ struct AnalysisImportResult
     // DJ 5.1 left rows so). Completed like one the player has not analysed,
     // with both parts or not at all; nothing of the player's to keep.
     bool analysedNothingStored = false;
+
+    // The row's grid is locked on the player (a lock that cannot be read
+    // counts as one), as the call found it.
+    bool rowLocked = false;
 
     // The overview file's path from the Engine Library folder, '/'-separated,
     // when one was (in a preview: would be) written.
@@ -180,6 +202,10 @@ struct LetPlayerAnalyseResult
         UnsupportedSchema,
     };
     Outcome outcome = Outcome::NotAnalysed;
+    // What was kept of the row before could not be read and was cleared
+    // (in a preview: would be), whatever the outcome: on a row whose flag
+    // is down, the only thing done.
+    bool clearedDamagedEntry = false;
 };
 
 // What a row's analysis is, for the page: whether the player (or Seabass)

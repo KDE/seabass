@@ -40,7 +40,15 @@
 #include "gui/library_catalog_cache.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_path.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
+#include "infrastructure/local/analysis_file_facts.hpp"
+#include "infrastructure/local/beat_grid_ledger_file.hpp"
+#include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/local/engine_update_stick_facts.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
+#include "infrastructure/local/rekordbox_analysis_source.hpp"
+#include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
@@ -71,6 +79,18 @@ struct RekordboxExportSyncAnalysis
     // Engine's names its row there. A track added in the same save gets
     // rekordbox's file, which is the one AddEngineTrackChange writes.
     std::map<std::string, std::string> engineFileByKey;
+    // The grids and waveforms the save's rider leaves to an answer (#136),
+    // by rekordbox track id: the ones the record says were answered with
+    // Engine's side, unchanged since (not asked), and the ones asked again
+    // over a write the rider would otherwise make.
+    std::map<std::string, std::set<domain::AnalysisEdit::Part>> rememberedAnalysisAnswers;
+    // Tracks whose analysis could not be compared, rekordbox track id to
+    // title: said on the page, and left alone by the save.
+    std::map<std::string, std::string> uncomparedAnalysis;
+    // Tracks whose analysis differs but whose rekordbox answer could not be
+    // carried out (Engine's own analysis cannot be kept first), rekordbox
+    // track id to title: not asked, said on the page, left alone.
+    std::map<std::string, std::string> unkeepableAnalysis;
     QString errorMessage;
     bool cancelled = false;
 };
@@ -175,7 +195,263 @@ std::shared_ptr<application::TrackMetadataProbe> metadataProbe()
 #endif
 }
 
+// #136, with "Copy beat grids/waveforms from rekordbox to Engine when
+// syncing" on: the tracks whose analysis a save of this proposal would copy
+// (an Engine row the plan writes a rating, a comment or cues to, a
+// conflict's choice included; a track the save adds has no analysis of
+// Engine's own) are previewed through the writer with nothing written, as
+// SyncAnalysisChange will write them, under differingIsConflict. A part
+// both sides hold, and that differs, is a conflict of its own: rekordbox's
+// side puts rekordbox's part over Engine's, Engine's side writes nothing.
+// Until it is answered, the save's rider leaves that part alone. An empty
+// side is never one: rekordbox without a grid or a waveform leaves Engine's
+// as it is, and Engine without one (never analysed, or marked analysed with
+// nothing stored) gets rekordbox's, or is left alone, as the rider decides.
+// A track whose preview fails raises nothing: the rider then reads it again
+// and leaves it alone if it still cannot. Runs on the analysis' worker.
+//
+// Answered with Engine's side (both left as they are), a conflict is
+// recorded in the record's declined items under its key, with both sides'
+// part as they were then (header.rekordboxState,
+// infrastructure::local::analysisConflictState): rekordbox's grid or
+// waveform, and Engine's as the player reads it. It is not raised again
+// while that is the same; a change on either side raises it again. The
+// parts so remembered come back in `remembered` (rekordbox track id to
+// parts), for the stage: the save's rider leaves them out, as it leaves
+// out a part answered now.
+//
+// A row whose flag is down over the player's own waveform takes
+// rekordbox's only as a completion (the writer raises the difference only
+// where one is possible): the answer then writes rekordbox's whole
+// analysis (AnalysisEdit::completesRow).
+using RememberedAnalysisAnswers = std::map<std::string, std::set<domain::AnalysisEdit::Part>>;
+
+void raiseAnalysisConflicts(domain::EngineUpdateProposal &proposal, const QString &rekordboxPath,
+                            const QString &enginePath, const SyncAnalysisStaging &staging,
+                            const std::optional<domain::RekordboxBaseline> &baseline,
+                            RememberedAnalysisAnswers &remembered, std::map<std::string, std::string> &uncompared,
+                            std::map<std::string, std::string> &unkeepable,
+                            const application::CancellationToken &cancel)
+{
+    if (!staging.any()) {
+        return;
+    }
+    struct Pair
+    {
+        domain::Track rekordbox;
+        domain::Track engine;
+        std::string pathKey;
+    };
+    std::vector<Pair> pairs;
+    std::set<std::string> seen;
+    std::map<std::string, int> perEngineRow;
+    const auto add = [&](const domain::Track &rekordbox, const domain::Track &engine, const std::string &pathKey) {
+        if (rekordbox.sourceId.empty() || engine.sourceId.empty() || rekordbox.filePath.empty() || pathKey.empty()
+            || !seen.insert(rekordbox.sourceId).second) {
+            return;
+        }
+        ++perEngineRow[engine.sourceId];
+        pairs.push_back({rekordbox, engine, pathKey});
+    };
+    const auto addEdit = [&](const EngineUpdateEdit &edit) {
+        if (const auto *m = std::get_if<MetadataEdit>(&edit); m && m->direction == MetadataEdit::Direction::ToEngine) {
+            add(m->rekordbox, m->engine, m->pathKey);
+        } else if (const auto *c = std::get_if<CueEdit>(&edit); c && c->plan.direction == SyncPlan::Direction::ToB) {
+            add(c->plan.match.trackA, c->plan.match.trackB, c->pathKey);
+        }
+    };
+    for (const auto &e : proposal.metadataToEngine) {
+        addEdit(e);
+    }
+    for (const auto &e : proposal.cuesToEngine) {
+        addEdit(e);
+    }
+    for (const auto &conflict : proposal.conflicts) {
+        for (const auto &e : conflict.rekordboxChoice) {
+            addEdit(e);
+        }
+    }
+    // Two rekordbox tracks for one Engine row: the rider leaves the row
+    // alone (tracksForAnalysis), so there is nothing to ask.
+    std::erase_if(pairs, [&](const Pair &p) { return perEngineRow[p.engine.sourceId] > 1; });
+    if (pairs.empty()) {
+        return;
+    }
+
+    const std::string pioneer = rekordboxPath.toStdString();
+    const std::string &stickRoot = staging.stickRoot;
+    std::string ledgerError;
+    const auto ledger = infrastructure::local::readBeatGridLedger(pathFromUtf8(stickRoot), &ledgerError);
+    std::unique_ptr<infrastructure::rekordbox::AnlzPathIndex> index;
+    try {
+        index = std::make_unique<infrastructure::rekordbox::AnlzPathIndex>(pioneer);
+    } catch (const std::exception &) {
+        // Each track then finds its analysis file the slow way.
+    }
+    infrastructure::engine::LibdjinteropEngineCueWriter writer(enginePath.toStdString());
+    // Read only: a preview finds what is kept and never writes it.
+    infrastructure::local::StickKeptEngineAnalysisStore kept(pathFromUtf8(stickRoot));
+    writer.setKeptAnalysisStore(&kept);
+    const auto probe = SyncAnalysisStaging::metadataProbe();
+    infrastructure::local::CachedSampleRates rates(stickRoot, *probe);
+    writer.setLeadInSource([&rates](const std::string &file) { return rates.leadInOf(file); });
+    const application::AnalysisFileFactsSource facts = [&rates](const application::BeatGridCopyItem &item) {
+        return infrastructure::local::analysisFileFactsOf(item, rates);
+    };
+    application::AnalysisCopyOptions options = staging.options;
+    options.previewOnly = true;
+    options.overwriteEngineEdits = false;
+    options.overwritePlayerWaveforms = false;
+    options.differingIsConflict = true;
+    options.skipOverviewFile = false;
+    options.zeroLoudness = false;
+
+    using Outcome = application::BeatGridWriteResult::Outcome;
+    using Waveform = application::AnalysisImportResult::Waveform;
+    using Part = domain::AnalysisEdit::Part;
+    for (const Pair &pair : pairs) {
+        cancel.throwIfCancelled();
+        const application::BeatGridCopyItem item =
+            application::beatGridCopyItemFor(pair.rekordbox, pair.engine.sourceId, stickRoot);
+        application::RekordboxAnalysis analysis;
+        application::AnalysisItemOutcome outcome;
+        std::optional<domain::TrackAnalysis> engineNow;
+        // An answer the record holds for a part of this track: a write the
+        // rider would now make there without a difference (a grid of the
+        // ledger's unlocked since) is no longer what was answered, and is
+        // asked again rather than written.
+        const auto answeredBefore = [&](Part part) {
+            return baseline && baseline->declined.count(domain::analysisItemKey(part, pair.pathKey)) > 0;
+        };
+        const auto asked = [&](Part part) {
+            const bool grid = part == Part::Grid;
+            if (grid ? outcome.result.grid.outcome == Outcome::DiffersFromEngine
+                     : outcome.result.waveform == Waveform::DiffersFromEngine) {
+                return true;
+            }
+            return answeredBefore(part)
+                && (grid ? outcome.result.grid.outcome == Outcome::Written
+                         : outcome.result.waveform == Waveform::Written);
+        };
+        try {
+            analysis = infrastructure::local::rekordboxAnalysisOf(pioneer, item, index.get(), options.grids,
+                                                                   options.waveforms);
+            outcome = application::importAnalysisItem(item, analysis, writer, ledger, options, facts);
+            if (asked(Part::Grid) || asked(Part::Waveform)) {
+                engineNow = infrastructure::engine::readTrackAnalysis(enginePath.toStdString(), pair.engine.sourceId);
+            }
+        } catch (const std::exception &e) {
+            // This track alone, named on the page; the save leaves its
+            // analysis alone (the rider skips it), so nothing is said to
+            // differ that was not compared.
+            qWarning("Sync after Rekordbox Export: the analysis of \"%s\" (Engine track %s) was not compared: %s",
+                     pair.rekordbox.title.c_str(), item.engineTrackId.c_str(), e.what());
+            uncompared[pair.rekordbox.sourceId] =
+                pair.rekordbox.title.empty() ? pair.rekordbox.filename : pair.rekordbox.title;
+            continue;
+        }
+        for (const Part part : {Part::Grid, Part::Waveform}) {
+            const bool grid = part == Part::Grid;
+            if (!asked(part)) {
+                continue;
+            }
+            // Asked again over a write the rider would make: the rider
+            // leaves the part to the conflict.
+            if (grid ? outcome.result.grid.outcome == Outcome::Written
+                     : outcome.result.waveform == Waveform::Written) {
+                remembered[pair.rekordbox.sourceId].insert(part);
+            }
+            // A flag down over the player's waveform: rekordbox's goes in
+            // only with the rest of its analysis, a completion.
+            const bool completesRow =
+                !grid && (outcome.result.grid.outcome == Outcome::RowNotAnalysed || outcome.result.completedRow);
+            // The digest of what the answer reads, as SyncAnalysisChange
+            // reads it: this part alone, or both for a completion.
+            application::RekordboxAnalysis shown = analysis;
+            if (!grid && !completesRow) {
+                shown.beats.clear();
+            } else if (grid) {
+                shown.threeBandPreview.reset();
+                shown.colourPreview.reset();
+                shown.scrollEntries.reset();
+            }
+            domain::EngineUpdateConflict conflict;
+            conflict.header.key = domain::analysisItemKey(part, pair.pathKey);
+            conflict.header.rekordboxState =
+                infrastructure::local::analysisConflictState(grid, analysis, *engineNow, outcome.result.rowLocked);
+            if (baseline) {
+                // Answered with Engine's side, and neither side changed since.
+                const auto answered = baseline->declined.find(conflict.header.key);
+                if (answered != baseline->declined.end() && answered->second == conflict.header.rekordboxState) {
+                    remembered[pair.rekordbox.sourceId].insert(part);
+                    continue;
+                }
+            }
+            // The answer as it would be staged, previewed: one that cannot
+            // be carried out (Engine's own analysis cannot be kept first,
+            // what was kept of it before being unreadable) is not offered.
+            // The track is named on the page instead, and left alone.
+            {
+                application::AnalysisCopyOptions answer = options;
+                answer.differingIsConflict = false;
+                answer.grids = grid || completesRow;
+                answer.waveforms = !grid;
+                answer.overwriteEngineEdits = answer.grids;
+                answer.overwritePlayerWaveforms = answer.waveforms;
+                bool keepable = true;
+                try {
+                    const auto answered = application::importAnalysisItem(item, analysis, writer, ledger, answer, facts);
+                    keepable = answered.result.grid.outcome != Outcome::CannotKeepEngines
+                        && answered.result.waveform != Waveform::CannotKeepEngines;
+                } catch (const std::exception &) {
+                    keepable = false;
+                }
+                if (!keepable) {
+                    unkeepable[pair.rekordbox.sourceId] =
+                        pair.rekordbox.title.empty() ? pair.rekordbox.filename : pair.rekordbox.title;
+                    continue;
+                }
+            }
+            conflict.header.conflict = true;
+            conflict.header.reason = domain::EngineUpdateReason::AnalysisDiffers;
+            conflict.header.reasonText = grid
+                ? "rekordbox and Engine each have a beat grid for this track, and they differ. Seabass never "
+                  "writes a beat grid into rekordbox, so keeping Engine's leaves both as they are."
+                : "rekordbox and Engine each have a waveform for this track, and they differ. Seabass never "
+                  "writes a waveform into rekordbox, so keeping Engine's leaves both as they are.";
+            if (completesRow) {
+                conflict.header.reasonText += " The player has not finished analysing the track, so rekordbox's "
+                                              "waveform goes in only with the rest of rekordbox's analysis: its "
+                                              "beat grid, tempo and key too. The player's waveform is kept on the "
+                                              "stick first.";
+            }
+            conflict.pathKey = pair.pathKey;
+            conflict.rekordboxSide = grid ? "Use rekordbox's beat grid on Engine"
+                : completesRow            ? "Use rekordbox's analysis (beat grid, waveform, tempo and key) on Engine"
+                                          : "Use rekordbox's waveform on Engine";
+            conflict.engineSide = grid ? "Keep Engine's beat grid, and leave both as they are"
+                                       : "Keep Engine's waveform, and leave both as they are";
+            domain::AnalysisEdit edit;
+            edit.header = conflict.header;
+            edit.header.conflict = false;
+            edit.header.checkedByDefault = true;
+            edit.part = part;
+            edit.completesRow = completesRow;
+            edit.engineLocked = outcome.result.rowLocked;
+            edit.rekordbox = pair.rekordbox;
+            edit.engine = pair.engine;
+            edit.pathKey = pair.pathKey;
+            edit.analysisDigest = infrastructure::local::rekordboxAnalysisDigest(shown);
+            conflict.rekordboxChoice.push_back(std::move(edit));
+            proposal.conflicts.push_back(std::move(conflict));
+        }
+    }
+    rates.save();
+}
+
+
 RekordboxExportSyncAnalysis runAnalysis(const QString &rekordboxPath, const QString &enginePath,
+                                        const SyncAnalysisStaging &analysisStaging,
                                         const std::shared_ptr<QtProgressReporter> &reporter,
                                         application::CancellationToken cancel)
 {
@@ -258,6 +534,9 @@ RekordboxExportSyncAnalysis runAnalysis(const QString &rekordboxPath, const QStr
         };
         input.pathKeyOf = [](const std::string &relative) { return baselinePathKey(relative); };
         result.proposal = domain::EngineUpdatePlanner::plan(input);
+        raiseAnalysisConflicts(result.proposal, rekordboxPath, enginePath, analysisStaging, result.baseline,
+                               result.rememberedAnalysisAnswers, result.uncomparedAnalysis, result.unkeepableAnalysis,
+                               cancel);
     } catch (const application::OperationCancelled &) {
         result.cancelled = true;
     } catch (const std::exception &e) {
@@ -362,6 +641,17 @@ RecordPlan recordPlanOf(const std::vector<Row> &rows, const RekordboxExportSyncA
                 // back as a change of both. A refusal answers nothing and
                 // comes back.
                 const bool refusal = conflict->rekordboxChoice.empty() && conflict->engineChoice.empty();
+                // #136: a grid or a waveform answered with Engine's side is
+                // recorded with both sides' state, and asked again only
+                // once either changes (raiseAnalysisConflicts). Left open,
+                // it is asked again, with or without a record.
+                if (conflict->header.reason == domain::EngineUpdateReason::AnalysisDiffers) {
+                    if (emptyAnswer && !answeredByARow.count(row.uid)) {
+                        declined[conflict->header.key] = conflict->header.rekordboxState;
+                        record.answeredWithoutAWrite = true;
+                    }
+                    continue;
+                }
                 const bool openWithoutRecord = !analysis.baseline && !refusal;
                 if ((emptyAnswer || openWithoutRecord) && !answeredByARow.count(row.uid)) {
                     for (const auto &key : withCueItems(conflict->header)) {
@@ -525,7 +815,38 @@ QString RekordboxExportSyncController::introText() const
     if (!m_analysis) {
         return {};
     }
-    return QString::fromStdString(application::engineUpdateIntroText(m_analysis->proposal));
+    QString text = QString::fromStdString(application::engineUpdateIntroText(m_analysis->proposal));
+    // #136: a track whose beat grid and waveform could not be compared is
+    // said here, and the save leaves its analysis alone.
+    const auto &uncompared = m_analysis->uncomparedAnalysis;
+    if (!uncompared.empty()) {
+        QStringList titles;
+        for (const auto &[id, title] : uncompared) {
+            titles << QStringLiteral("\"%1\"").arg(QString::fromStdString(title));
+        }
+        text += (text.isEmpty() ? QString() : QStringLiteral(" "))
+            + (uncompared.size() == 1
+                   ? QStringLiteral("The beat grid and waveform of %1 could not be compared with rekordbox's, so "
+                                    "this sync leaves them as they are.")
+                   : QStringLiteral("The beat grids and waveforms of %1 could not be compared with rekordbox's, so "
+                                    "this sync leaves them as they are."))
+                  .arg(titles.join(QStringLiteral(", ")));
+    }
+    // A difference whose rekordbox answer could not be carried out: not
+    // asked, said here, and left alone.
+    const auto &unkeepable = m_analysis->unkeepableAnalysis;
+    if (!unkeepable.empty()) {
+        QStringList titles;
+        for (const auto &[id, title] : unkeepable) {
+            titles << QStringLiteral("\"%1\"").arg(QString::fromStdString(title));
+        }
+        text += (text.isEmpty() ? QString() : QStringLiteral(" "))
+            + QStringLiteral("Engine's own analysis of %1 differs from rekordbox's, but cannot be kept on the stick "
+                             "first (what was kept of it before cannot be read), so this sync leaves it as it is. "
+                             "Let the Player Analyse Again in Beat Grids & Waveforms clears what was kept.")
+                  .arg(titles.join(QStringLiteral(", ")));
+    }
+    return text;
 }
 
 bool RekordboxExportSyncController::proposalEmpty() const
@@ -632,10 +953,12 @@ void RekordboxExportSyncController::startAnalysis(bool restart)
     auto reporter = makeReporter();
     const QString rekordboxPath = m_rekordboxPath;
     const QString enginePath = m_enginePath;
+    // Preferences read here, on the GUI thread, as a stage reads them.
+    const SyncAnalysisStaging analysisStaging = SyncAnalysisStaging::fromPreferences(rekordboxPath);
     startScan<RekordboxExportSyncAnalysis>(
         analysisKey(), stickRootOf(enginePath.isEmpty() ? rekordboxPath : enginePath), restart,
-        [rekordboxPath, enginePath, reporter](application::CancellationToken cancel) {
-            return runAnalysis(rekordboxPath, enginePath, reporter, std::move(cancel));
+        [rekordboxPath, enginePath, analysisStaging, reporter](application::CancellationToken cancel) {
+            return runAnalysis(rekordboxPath, enginePath, analysisStaging, reporter, std::move(cancel));
         },
         [this](RekordboxExportSyncAnalysis &&result) { onAnalyzeFinished(std::move(result)); });
 }
@@ -906,7 +1229,7 @@ void RekordboxExportSyncController::stageSelected()
 
     // The ticked rows by what they are, in the model's order.
     std::vector<std::size_t> creates, adds, renames, members, metadataToEngine, cuesToEngine, deletes, removals,
-        restoresMetadata, restoresCues;
+        restoresMetadata, restoresCues, analysisAnswers;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const Row &row = rows[i];
         if (!RekordboxExportSyncListModel::writable(row.section) || !row.included || !row.edit) {
@@ -929,6 +1252,8 @@ void RekordboxExportSyncController::stageSelected()
             deletes.push_back(i);
         } else if (std::holds_alternative<TrackToRemove>(edit)) {
             removals.push_back(i);
+        } else if (std::holds_alternative<domain::AnalysisEdit>(edit)) {
+            analysisAnswers.push_back(i);
         }
     }
     // Parents first for creates, deepest first for deletes, whatever order
@@ -1120,6 +1445,34 @@ void RekordboxExportSyncController::stageSelected()
     const std::vector<SyncAnalysisChange::Track> analysisTracks = analysisStaging.any()
         ? tracksForAnalysis(rows, adds, metadataToEngine, cuesToEngine, analysisStaging.stickRoot)
         : std::vector<SyncAnalysisChange::Track>{};
+    // The conflicts over a grid or a waveform answered with rekordbox's
+    // (#136): each part a change of its own, after the track's rider, so
+    // the part the rider left alone is written last.
+    for (std::size_t i : analysisAnswers) {
+        const auto e = std::get<domain::AnalysisEdit>(*rows[i].edit);
+        SyncAnalysisChange::Track track;
+        track.rekordbox = e.rekordbox;
+        track.engineTrackId = e.engine.sourceId;
+        track.engineFilePath = e.engine.filePath;
+        track.analysisDigest = e.analysisDigest;
+        application::AnalysisCopyOptions options;
+        // A completion takes both parts: rekordbox's waveform goes into a
+        // row the player has not finished only with rekordbox's grid.
+        options.grids = e.part == domain::AnalysisEdit::Part::Grid || e.completesRow;
+        options.waveforms = e.part == domain::AnalysisEdit::Part::Waveform;
+        const std::string stickRoot = analysisStaging.stickRoot;
+        const auto answerProbe = analysisStaging.probe;
+        const bool lockedWhenAsked = e.engineLocked;
+        planned.push_back({{i}, true,
+                           [rekordboxPath, enginePath, stickRoot, track, options, answerProbe,
+                            lockedWhenAsked](int hint) -> std::unique_ptr<PendingChange> {
+                               auto change = std::make_unique<SyncAnalysisChange>(
+                                   rekordboxExportSyncOwner(), rekordboxPath, enginePath, stickRoot, track, options,
+                                   answerProbe, hint, true);
+                               change->answerWithRekordboxs(lockedWhenAsked);
+                               return change;
+                           }});
+    }
     for (std::size_t i : deletes) {
         if (deletedEarly.count(i)) {
             continue;
@@ -1201,13 +1554,55 @@ void RekordboxExportSyncController::stageSelected()
     // The analysis rides with the tracks: it carries none of the save's
     // count (SyncAnalysisChange::unitsWritten) and says what it did in the
     // save's summary notes, so the count above is the sync's as it was.
+    // A part whose conflict is answered, either way, now or remembered from
+    // an earlier save, is the answer's alone: the rider leaves it out, so
+    // the note never asks what was answered (Engine's side writes nothing;
+    // rekordbox's is its own change, both parts for a completion).
+    std::map<std::string, std::set<domain::AnalysisEdit::Part>> answeredParts = analysis.rememberedAnalysisAnswers;
+    for (std::size_t i : analysisAnswers) {
+        const auto &e = std::get<domain::AnalysisEdit>(*rows[i].edit);
+        answeredParts[e.rekordbox.sourceId].insert(e.part);
+        if (e.completesRow) {
+            answeredParts[e.rekordbox.sourceId].insert(domain::AnalysisEdit::Part::Grid);
+        }
+    }
+    for (const Row &row : rows) {
+        if (row.section != Section::Conflicts || row.resolvedSide != QLatin1String("engine") || !row.conflict) {
+            continue;
+        }
+        for (const auto &edit : row.conflict->rekordboxChoice) {
+            if (const auto *e = std::get_if<domain::AnalysisEdit>(&edit)) {
+                answeredParts[e->rekordbox.sourceId].insert(e->part);
+            }
+        }
+    }
+    std::size_t riderCount = 0;
     if (!analysisTracks.empty()) {
         std::vector<std::unique_ptr<PendingChange>> riders;
         for (const auto &track : analysisTracks) {
-            riders.push_back(std::make_unique<SyncAnalysisChange>(
-                rekordboxExportSyncOwner(), rekordboxPath, enginePath, analysisStaging.stickRoot, track,
-                analysisStaging.options, analysisStaging.probe, engineChanges, riders.empty()));
+            // Not compared when the page was read: left as it is, as the
+            // page says, rather than written or said to differ unasked.
+            if (analysis.uncomparedAnalysis.count(track.rekordbox.sourceId)
+                || analysis.unkeepableAnalysis.count(track.rekordbox.sourceId)) {
+                continue;
+            }
+            application::AnalysisCopyOptions options = analysisStaging.options;
+            // #136: a part both sides hold, differently, is asked, never
+            // written over Engine's own or left without saying so.
+            options.differingIsConflict = true;
+            if (const auto answered = answeredParts.find(track.rekordbox.sourceId); answered != answeredParts.end()) {
+                options.grids = options.grids && !answered->second.count(domain::AnalysisEdit::Part::Grid);
+                options.waveforms = options.waveforms && !answered->second.count(domain::AnalysisEdit::Part::Waveform);
+            }
+            if (!options.grids && !options.waveforms) {
+                continue;
+            }
+            riders.push_back(std::make_unique<SyncAnalysisChange>(rekordboxExportSyncOwner(), rekordboxPath,
+                                                                  enginePath, analysisStaging.stickRoot, track,
+                                                                  options, analysisStaging.probe, engineChanges,
+                                                                  riders.empty()));
         }
+        riderCount = riders.size();
         changes.insert(changes.begin() + static_cast<std::ptrdiff_t>(analysisAt),
                        std::make_move_iterator(riders.begin()), std::make_move_iterator(riders.end()));
     }
@@ -1216,11 +1611,23 @@ void RekordboxExportSyncController::stageSelected()
         return baselineStickRelativePath(root, filePath);
     };
     const auto pathKeyOf = [](const std::string &relative) { return baselinePathKey(relative); };
+    // The analysis answers the record holds (#136) stay in it, whether or
+    // not this save offered their track: nextBaseline keeps only the
+    // declines of items offered. A key this save answered anew, either
+    // way, takes the new answer (rekordbox's side: no entry, the two agree
+    // once it is written).
+    if (analysis.baseline) {
+        for (const auto &[key, state] : analysis.baseline->declined) {
+            if (key.rfind("analysis:", 0) == 0 && !declined.count(key) && !applied.count(key)) {
+                declined.emplace(key, state);
+            }
+        }
+    }
     domain::RekordboxBaseline next =
         domain::nextBaseline(analysis.baseline ? &*analysis.baseline : nullptr, analysis.rekordbox,
                              analysis.rekordboxPlaylists, analysis.currentSequence, offered, applied, declined,
                              stickRelativeOf, pathKeyOf);
-    const int changeCount = static_cast<int>(changes.size() - analysisTracks.size());
+    const int changeCount = static_cast<int>(changes.size() - riderCount);
     std::set<std::string> reusedIds;
     for (const auto &key : offered) {
         if (domain::parseReusedPlaylistItemKey(key)) {

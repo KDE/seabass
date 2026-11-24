@@ -585,6 +585,9 @@ Words gridWords(const BeatGridTrackState &s)
         return {QStringLiteral("Cannot be kept"), QStringLiteral("warn"), cannotKeepTip(s)};
     case Outcome::RowUnreadable:
         return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
+    case Outcome::DiffersFromEngine:
+        return {QStringLiteral("Differs on Engine"), QStringLiteral("warn"),
+                QStringLiteral("Engine has its own beat grid for this track, and it differs from rekordbox's.")};
     }
     return {};
 }
@@ -623,6 +626,9 @@ Words waveformWords(const BeatGridTrackState &s)
         return {QStringLiteral("Drawn by the player"), QStringLiteral("warn"),
                 QStringLiteral("The player drew its own waveform of this track, and it stays. \"Also replace "
                                "waveforms the player drew\" replaces it all the same.")};
+    case Waveform::DiffersFromEngine:
+        return {QStringLiteral("Differs on Engine"), QStringLiteral("warn"),
+                QStringLiteral("Engine has its own waveform for this track, and it differs from rekordbox's.")};
     }
     return {};
 }
@@ -1872,7 +1878,9 @@ void BeatGridsController::recount()
         if (!t.failed) {
             s.kept += t.facts.kept == application::EngineAnalysisFacts::Kept::Kept ? 1 : 0;
             s.restorable += t.canRestore() ? 1 : 0;
-            s.analysed += t.facts.rowAnalysed ? 1 : 0;
+            // What "Let the Player Analyse Again" acts on: an analysed row,
+            // or one whose kept entry cannot be read, which it clears.
+            s.analysed += t.facts.rowAnalysed || t.facts.kept == application::EngineAnalysisFacts::Kept::Damaged ? 1 : 0;
         }
         if (t.wouldWrite()) {
             ++s.rows;
@@ -2178,7 +2186,9 @@ void BeatGridsController::stageEngineAnalysisChanges(bool restore)
             continue;
         }
         const BeatGridTrackState &t = state->second;
-        if (restore ? !t.canRestore() : (t.failed || !t.facts.rowAnalysed)) {
+        if (restore ? !t.canRestore()
+                    : (t.failed
+                       || !(t.facts.rowAnalysed || t.facts.kept == application::EngineAnalysisFacts::Kept::Damaged))) {
             continue;
         }
         chosen.emplace_back(&m_library->plan.items[static_cast<size_t>(m_library->tracks[at->second].item)], &t);
