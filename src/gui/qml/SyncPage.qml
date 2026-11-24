@@ -685,9 +685,11 @@ Page {
             }
             StatFigure {
                 Layout.leftMargin: Theme.rowSpacing
-                value: syncController.stagedCount
+                // Staged syncs and staged moves of cues a few milliseconds
+                // off: the one Save writes both.
+                value: syncController.stagedCount + syncController.cueOffsetStagedCount
                 label: "staged"
-                valueColor: syncController.stagedCount > 0 ? Theme.warnText : Theme.text
+                valueColor: syncController.stagedCount + syncController.cueOffsetStagedCount > 0 ? Theme.warnText : Theme.text
             }
         }
 
@@ -778,8 +780,8 @@ Page {
                 Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                 spacing: Theme.rowSpacing
                 Label {
-                    visible: syncController.stagedCount > 0
-                    text: syncController.stagedCount + " staged, not saved yet"
+                    visible: syncController.stagedCount + syncController.cueOffsetStagedCount > 0
+                    text: (syncController.stagedCount + syncController.cueOffsetStagedCount) + " staged, not saved yet"
                     color: Theme.warnText
                     font.pointSize: Theme.fontSmall
                 }
@@ -867,6 +869,13 @@ Page {
             objectName: "analysisUncheckedBanner"
             visible: syncController.analysisUncheckedText.length > 0 && !syncController.busy
             text: syncController.analysisUncheckedText
+        }
+
+        // Cues a few milliseconds off (#121): pairs this list calls the
+        // same cue, one side of which sits off the sound by what an older
+        // build or the player's first load left. Hidden when there are none.
+        CueOffsetsSection {
+            controller: syncController
         }
 
         ListView {
