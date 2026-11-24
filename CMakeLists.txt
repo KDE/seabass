@@ -555,6 +555,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/stick_performance_history.cpp
     src/infrastructure/bulk_write_strategy.cpp
     src/infrastructure/durable_file_write.cpp
+    src/infrastructure/track_import/verified_file_copy.cpp
     src/infrastructure/paths/shared_read_stream.cpp
     src/infrastructure/rekordbox/anlz_byte_source.cpp
     src/infrastructure/rekordbox/anlz_source_for_root.cpp
@@ -764,6 +765,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/cleanup/pending_deletion_manifest.cpp
     src/infrastructure/cleanup/stick_containment.cpp
     src/infrastructure/durable_file_write.cpp
+    src/infrastructure/track_import/verified_file_copy.cpp
     src/infrastructure/paths/shared_read_stream.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
     src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
@@ -2383,6 +2385,11 @@ add_executable(track_import_plan_test tests/track_import_plan_test.cpp)
 target_link_libraries(track_import_plan_test PRIVATE seabass_core_testing)
 target_include_directories(track_import_plan_test PRIVATE src)
 add_test(NAME track_import_plan_test COMMAND track_import_plan_test)
+
+add_executable(verified_file_copy_test tests/verified_file_copy_test.cpp)
+target_link_libraries(verified_file_copy_test PRIVATE seabass_core_testing)
+target_include_directories(verified_file_copy_test PRIVATE src)
+add_test(NAME verified_file_copy_test COMMAND verified_file_copy_test)
 
 add_executable(filesystem_health_test
     tests/filesystem_health_test.cpp
