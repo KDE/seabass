@@ -172,8 +172,9 @@ private:
     // The tracks whose cues it read again, at their file's rate.
     std::vector<domain::Track *> fillRatesFromSource(std::vector<domain::Track> &tracks);
     // The marked rows (see setLeadInSource()), read at the start of a
-    // pass; none, with a warning, when they cannot be read.
-    void takeRekordboxImportMarks();
+    // pass; none, with a warning, when they cannot be read. From the m.db
+    // under `databaseRoot`, the folder the pass reads it from.
+    void takeRekordboxImportMarks(const std::string &databaseRoot);
     // Whether this pass found the mark on the track's row.
     bool onRekordboxTimeline(const domain::Track &track) const;
     std::unordered_set<std::int64_t> m_rekordboxTimelineRows;

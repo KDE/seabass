@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/libdjinterop_waveform_reader.hpp"
+#include "infrastructure/database_read_copy.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -134,17 +135,23 @@ DecodableBlobs decodableBlobs(const std::string &engineLibraryPath, std::int64_t
 
 }  // namespace
 
-domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
-                                        std::size_t detailUpTo)
+namespace
+{
+
+// readTrackAnalysis(), from `read`, which names the Engine Library or the
+// read copy standing for it.
+domain::TrackAnalysis readTrackAnalysisFrom(const StickDatabaseRead &read, const std::string &trackSourceId,
+                                            std::size_t detailUpTo)
 {
     domain::TrackAnalysis analysis;
     try {
-        if (!djinterop::engine::database_exists(engineLibraryPath)) {
+        const std::string databaseRoot = read.rootUtf8();
+        if (!djinterop::engine::database_exists(databaseRoot)) {
             return {};
         }
         const std::int64_t trackId = std::stoll(trackSourceId);
-        const DecodableBlobs decodable = decodableBlobs(engineLibraryPath, trackId);
-        auto db = djinterop::engine::load_database(engineLibraryPath);
+        const DecodableBlobs decodable = decodableBlobs(databaseRoot, trackId);
+        auto db = djinterop::engine::load_database(databaseRoot);
         std::optional<djinterop::track> track = db.track_by_id(trackId);
         if (!track) {
             return {};
@@ -204,6 +211,46 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, co
         return {};
     }
     return analysis;
+}
+
+}  // namespace
+
+domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
+                                        std::size_t detailUpTo)
+{
+    try {
+        // Every open from the shared read copy when a read of the stick's
+        // own would write beside m.db (#110).
+        const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+        return readTrackAnalysisFrom(read, trackSourceId, detailUpTo);
+    } catch (const std::exception &) {
+        return {};
+    }
+}
+
+std::optional<domain::TrackAnalysis> readTrackAnalysisIfReady(const std::string &engineLibraryPath,
+                                                              const std::string &trackSourceId, std::size_t detailUpTo)
+{
+    try {
+        const StickDatabaseRead read =
+            StickDatabaseRead::engine(engineLibraryPath, StickDatabaseRead::IfNoCopy::GoWithout);
+        if (!read.ready()) {
+            return std::nullopt;
+        }
+        return readTrackAnalysisFrom(read, trackSourceId, detailUpTo);
+    } catch (const std::exception &) {
+        return domain::TrackAnalysis{};
+    }
+}
+
+bool prepareReadCopy(const std::string &engineLibraryPath)
+{
+    try {
+        const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
 }
 
 std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engineLibraryPath,

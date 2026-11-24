@@ -11,6 +11,7 @@
 
 #include "gui/media_controller.hpp"
 #include "gui/qt_path.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "infrastructure/system/process_liveness.hpp"
 #include "infrastructure/system/stick_hardware_info.hpp"
@@ -62,6 +63,11 @@ EditSessionRegistry::EditSessionRegistry(std::unique_ptr<application::LibraryEdi
         }
     });
     m_heartbeat.start();
+    // Reads of the stick take their copies of its WAL-mode databases only
+    // while Seabass is not writing one, and drop them when it is done
+    // (#110, infrastructure::StickReadSnapshots).
+    connect(this, &EditSessionRegistry::stateChanged, this,
+            [this]() { infrastructure::StickReadSnapshots::instance().setWriting(anyWriting()); });
 }
 
 EditSessionRegistry::~EditSessionRegistry()

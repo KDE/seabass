@@ -163,10 +163,13 @@ int main()
         const auto state = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));
         exec(writer, "ROLLBACK");
         sqlite3_close(writer);
-        if (state.error.empty() || state.error.find("mid-save") != std::string::npos) {
-            std::cerr << "error='" << state.error << "'\n";
+        if (!state.error.empty() || state.engineCounter != 15217) {
+            std::cerr << "error='" << state.error << "' counter=" << state.engineCounter << "\n";
         }
-        assert(state.hasEngineLibrary && !state.error.empty());
+        // Read from a copy since #110 (a journal beside m.db): the copy
+        // rolls the writer's journal back in itself and reads what was
+        // committed. Never "mid-save", never a failed read.
+        assert(state.hasEngineLibrary && state.error.empty() && state.engineCounter == 15217);
         assert(state.error.find("mid-save") == std::string::npos && "a live writer is not a pulled stick");
         assert(entriesOf(recovered) == keptBefore && "nothing copied aside");
         const auto after = readRekordboxImportState(seabass::pathToUtf8(library), seabass::pathToUtf8(pioneer));

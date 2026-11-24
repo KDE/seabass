@@ -202,8 +202,9 @@ std::vector<domain::CueTableEntry> readCueTable(const SqlCipherDb &db, int64_t c
 
 OneLibraryCueTables::OneLibraryCueTables(const std::string &pioneerRoot)
 {
+    const StickDatabaseRead read = oneLibraryDatabaseRead(pioneerRoot);
     SqlCipherLibrary lib;
-    SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
+    SqlCipherDb db(lib, read.pathUtf8(), /*readOnly=*/true);
     db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     SqlCipherStatement select(db, std::string(CueTableColumns) + " ORDER BY content_id, cue_id");
     while (select.step()) {
@@ -756,16 +757,21 @@ std::vector<std::pair<int64_t, std::string>> contentPathsIn(SqlCipherDb &db)
 }
 }  // namespace
 
+StickDatabaseRead oneLibraryDatabaseRead(const std::string &pioneerRoot, ReadFor purpose)
+{
+    return StickDatabaseRead(pathFromUtf8(pioneerRoot), std::filesystem::path("rekordbox") / "exportLibrary.db",
+                             StickDatabaseRead::Copy::Always, StickDatabaseRead::IfNoCopy::Make, purpose);
+}
+
 std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::string &pioneerRoot)
 {
     // From a copy, always: exportLibrary.db is in WAL mode (rekordbox
     // writes it so), and its header is encrypted, so it cannot be told
     // from the bytes the way a plain SQLite file can. See
     // database_read_copy.hpp.
-    const DatabaseReadCopy copy(pathFromUtf8(OneLibraryCueWriter::dbPathFor(pioneerRoot)),
-                                std::filesystem::path("rekordbox") / "exportLibrary.db");
+    const StickDatabaseRead read = oneLibraryDatabaseRead(pioneerRoot);
     SqlCipherLibrary lib;
-    SqlCipherDb opened(lib, pathToUtf8(copy.path()), /*readOnly=*/false);
+    SqlCipherDb opened(lib, read.pathUtf8(), /*readOnly=*/true);
     opened.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
     return contentPathsIn(opened);
 }

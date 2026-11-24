@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include <algorithm>
 #include <chrono>
@@ -2014,7 +2015,13 @@ int runEngineAnalysisWayBack(const seabass::application::BeatGridCopyPlan &plan,
     local::StickKeptEngineAnalysisStore store(root);
     Counts preview;
     try {
-        seabass::infrastructure::engine::LibdjinteropEngineCueWriter checker(enginePath);
+        // m.db from a copy when a read of the stick's own would write
+        // beside it (#110); audio and overview files from the stick.
+        const seabass::infrastructure::StickDatabaseRead read =
+            seabass::infrastructure::StickDatabaseRead::engine(enginePath);
+        seabass::infrastructure::engine::LibdjinteropEngineCueWriter checker(read.rootUtf8());
+        checker.setAudioRoot(enginePath);
+        checker.setOverviewFileRoot(enginePath);
         checker.setKeptAnalysisStore(&store);
         preview = runAll(checker, true);
     } catch (const std::exception &e) {
@@ -2467,7 +2474,13 @@ int runCopyBeatGridsCommand(const std::optional<std::string> &rekordboxPathArg,
     // question before a copy name what the copy would actually do.
     app::AnalysisCopyResult preview;
     try {
-        seabass::infrastructure::engine::LibdjinteropEngineCueWriter checker(enginePath);
+        // m.db from a copy when a read of the stick's own would write
+        // beside it (#110); audio and overview files from the stick.
+        const seabass::infrastructure::StickDatabaseRead read =
+            seabass::infrastructure::StickDatabaseRead::engine(enginePath);
+        seabass::infrastructure::engine::LibdjinteropEngineCueWriter checker(read.rootUtf8());
+        checker.setAudioRoot(enginePath);
+        checker.setOverviewFileRoot(enginePath);
         checker.setKeptAnalysisStore(&keptStore);
         preview = runAll(checker, true);
     } catch (const std::exception &e) {

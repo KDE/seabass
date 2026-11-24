@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,5 +49,14 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &engin
 // not read: there the decoder is still handed them unchecked.
 domain::TrackAnalysis readTrackAnalysis(const std::string &engineLibraryPath, const std::string &trackSourceId,
                                         std::size_t detailUpTo = 0);
+
+// readTrackAnalysis() for a caller on the GUI thread, which must not copy
+// a whole database (#110): nothing (nullopt) when m.db is read from a copy
+// and none is ready yet. prepareReadCopy(), off that thread, makes it;
+// false when it cannot be made.
+std::optional<domain::TrackAnalysis> readTrackAnalysisIfReady(const std::string &engineLibraryPath,
+                                                              const std::string &trackSourceId,
+                                                              std::size_t detailUpTo = 0);
+bool prepareReadCopy(const std::string &engineLibraryPath);
 
 }  // namespace seabass::infrastructure::engine

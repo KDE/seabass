@@ -13,6 +13,7 @@
 #include <memory>
 
 #include "gui/async_request.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "gui/process_end.hpp"
 #include "gui/qt_workarounds.hpp"
 
@@ -127,6 +128,9 @@ int main(int argc, char **argv)
     // The installed org.kde.seabass.desktop, by name: on Wayland this is the
     // app id a compositor matches the window's icon and taskbar entry by.
     QGuiApplication::setDesktopFileName(QStringLiteral("org.kde.seabass"));
+    // Read copies of stick databases a Seabass that crashed left in the
+    // temporary folder (#110): its own are dropped as it closes.
+    seabass::infrastructure::removeStaleReadCopies();
 
 #ifdef Q_OS_LINUX
     // Qt Quick's default text renderer draws glyphs from a distance

@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_analysis_state.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <sqlite3.h>
 
 #include <filesystem>
+#include <optional>
 
 namespace seabass::infrastructure::engine
 {
@@ -37,8 +39,16 @@ AnalysisStateAudit auditAnalysisState(const std::string &engineLibraryPath)
     }
     audit.libraryPresent = true;
 
+    // From a copy when a read would write beside m.db (#110).
+    std::optional<StickDatabaseRead> read;
+    try {
+        read.emplace(StickDatabaseRead::file(database));
+    } catch (const std::exception &e) {
+        audit.error = std::string("could not read the Engine database: ") + e.what();
+        return audit;
+    }
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(pathToUtf8(database).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(read->pathUtf8().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         audit.error = "could not open the Engine database";
         if (handle != nullptr) {
             sqlite3_close(handle);

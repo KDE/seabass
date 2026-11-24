@@ -17,6 +17,7 @@
 
 #include "domain/onelibrary_cue_table.hpp"
 #include "domain/track.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 
 namespace seabass::infrastructure::onelibrary
@@ -123,6 +124,14 @@ public:
 private:
     std::map<int64_t, std::vector<domain::CueTableEntry>> m_tables;
 };
+
+// The stick's exportLibrary.db as one read opens it: always a copy of it
+// and its -wal (#110). rekordbox keeps it in WAL mode, where a read-only
+// connection writes the -shm, and its header is encrypted, so the mode
+// cannot be told from the bytes the way a plain SQLite file's can. See
+// database_read_copy.hpp. Throws when the copy cannot be made.
+// ReadFor::Writing: the live file, for a save reading what it writes.
+StickDatabaseRead oneLibraryDatabaseRead(const std::string &pioneerRoot, ReadFor purpose = ReadFor::Reading);
 
 // Every content row's id and path in the stick's exportLibrary.db, read
 // from a copy of it and its -wal (infrastructure::DatabaseReadCopy), so

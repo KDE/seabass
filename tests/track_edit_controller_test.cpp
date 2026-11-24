@@ -26,6 +26,8 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <set>
+#include <string>
 
 #include "application/use_cases/scan_library.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -71,6 +73,21 @@ bool waitFor(Object *object, Signal signal, const std::function<bool()> &done)
         spy.wait(5000);
     }
     return done();
+}
+
+// This process's read copies (#110) in the temporary folder, by name.
+std::set<std::string> ownReadCopies()
+{
+    const std::string own = std::string(infrastructure::ReadCopyPrefix) + infrastructure::readCopyOwnerTag();
+    std::set<std::string> names;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(fs::temp_directory_path(), ec)) {
+        const std::string name = pathToUtf8(entry.path().filename());
+        if (name.rfind(own, 0) == 0) {
+            names.insert(name);
+        }
+    }
+    return names;
 }
 
 }  // namespace
@@ -147,6 +164,12 @@ int main(int argc, char **argv)
     assert(waitFor(&controller, &TrackEditController::commentLimitChanged,
                    [&] { return controller.commentLimit().value(QStringLiteral("known")).toBool(); }));
     assert(controller.setRating(pioneer, engine, file, QStringLiteral("T"), original, 3 == original ? 2 : 3));
+    // The reads so far share one copy of each database that needs one
+    // (#110): OneLibrary's is always copied.
+    QThreadPool::globalInstance()->waitForDone();
+    const std::set<std::string> copiesBeforeWrite = ownReadCopies();
+    assert(!copiesBeforeWrite.empty() && copiesBeforeWrite.size() <= 2
+           && "the reads share a read copy per database");
     QSignalSpy finishedAgain(session, &LibraryEditSession::saveFinished);
     session->save();
     assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finishedAgain.isEmpty(); }));
@@ -158,13 +181,22 @@ int main(int argc, char **argv)
     assert(controller.setRating(pioneer, engine, file, QStringLiteral("T"), 3 == original ? 2 : 3, 4)
            && "a second edit of the same track stages");
     assert(controller.hasStagedRating(file));
+    // The write dropped the copies the reads before it shared: the read
+    // after it took its own, of what the write left.
+    QThreadPool::globalInstance()->waitForDone();
+    for (const std::string &name : ownReadCopies()) {
+        assert(!copiesBeforeWrite.contains(name) && "a write drops the read copies taken before it");
+    }
     std::cout << "case 4 (after a save the track shown can be edited again) OK\n";
 
     // 5. Leaving Browse does not wait for a read of the stick: a
     //    controller destroyed while its read is held up in the worker
-    //    returns at once, and the read, let go, ends on its own and leaves
-    //    no temporary copy behind.
+    //    returns at once, and the read, let go, ends on its own. It
+    //    reuses the copy the reads share (#110), takes no other, and that
+    //    one goes when the copies are dropped (a write ends, the sticks
+    //    change: StickReadSnapshots::forget()).
     {
+        const std::set<std::string> copiesBefore = ownReadCopies();
         std::promise<void> entered;
         std::promise<void> release;
         std::shared_future<void> released = release.get_future().share();
@@ -185,11 +217,11 @@ int main(int argc, char **argv)
         TrackEditController::setIndexBuildGateForTesting({});
         release.set_value();
         QThreadPool::globalInstance()->waitForDone();
-        std::error_code ec;
-        for (const auto &entry : fs::directory_iterator(fs::temp_directory_path(), ec)) {
-            assert(pathToUtf8(entry.path().filename()).rfind(infrastructure::ReadCopyPrefix, 0) != 0
-                   && "the read removed its copy");
+        for (const std::string &name : ownReadCopies()) {
+            assert(copiesBefore.contains(name) && "the read reused the shared copy and took no other");
         }
+        infrastructure::StickReadSnapshots::instance().forget();
+        assert(ownReadCopies().empty() && "dropped, the copies leave nothing behind");
         std::cout << "case 5 (a controller destroyed mid-read returns at once and leaks no copy) OK\n";
     }
     registry->discardAll();

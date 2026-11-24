@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "infrastructure/engine/engine_artwork.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/engine/engine_sqlite.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
@@ -625,8 +626,16 @@ ArtworkAudit auditArtwork(const std::string &engineLibraryPath, const ArtworkSou
     const std::string stickLabel = volumeLabelOf(stickRoot);
     audit.stickLabel = stickLabel;
 
+    // From a copy when a read would write beside m.db (#110).
+    std::optional<StickDatabaseRead> read;
+    try {
+        read.emplace(StickDatabaseRead::file(db));
+    } catch (const std::exception &e) {
+        audit.error = "could not read " + pathToUtf8(db) + ": " + e.what();
+        return audit;
+    }
     sqlite3 *handle = nullptr;
-    if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(read->pathUtf8().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         audit.error = "could not read " + pathToUtf8(db);
         if (handle) {
             sqlite3_close(handle);
@@ -968,7 +977,14 @@ ArtworkBytes artworkBytesOnStick(const std::vector<domain::Track> &tracks, const
         sqlite3_close(handle);
         return ArtworkBytes{bytes, true};
     };
-    if (sqlite3_open_v2(pathToUtf8(db).c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+    // From a copy when a read would write beside m.db (#110).
+    std::optional<StickDatabaseRead> read;
+    try {
+        read.emplace(StickDatabaseRead::file(db));
+    } catch (const std::exception &) {
+        return giveUp();
+    }
+    if (sqlite3_open_v2(read->pathUtf8().c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         return giveUp();
     }
     sqlite3_busy_timeout(handle, 5000);

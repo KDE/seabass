@@ -4,6 +4,7 @@
 
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/database_read_copy.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
 #include "infrastructure/engine/engine_cue_timeline.hpp"
 #include "infrastructure/engine/engine_pending_journals.hpp"
@@ -273,7 +274,8 @@ std::string databaseArtworkFile(sqlite3 *db, int &failures, std::int64_t albumAr
     return pathToUtf8(file);
 }
 
-std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &engineLibraryPath)
+std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &engineLibraryPath,
+                                                         const std::string &databaseRoot)
 {
     std::unordered_map<int64_t, std::string> result;
     const std::filesystem::path root = pathFromUtf8(engineLibraryPath);
@@ -281,7 +283,7 @@ std::unordered_map<int64_t, std::string> readArtworkPaths(const std::string &eng
     // Engine Library folder itself, and "STICK/./Engine Library" keeps the
     // ".", so one cover would be spelled two ways.
     const std::filesystem::path stickRoot = pathFromUtf8(paths::normalStickRootForCatalogPath(engineLibraryPath));
-    std::string dbPath = pathToUtf8(root / "Database2" / "m.db");
+    std::string dbPath = pathToUtf8(pathFromUtf8(databaseRoot) / "Database2" / "m.db");
 
     sqlite3 *db = nullptr;
     if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
@@ -368,12 +370,13 @@ std::string localCopiesKey(const std::string &engineLibraryPath, const std::stri
 }
 
 std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &engineLibraryPath,
+                                                           const std::string &databaseRoot,
                                                            const std::string &volumeIdentity,
                                                            const application::CancellationToken &cancel,
                                                            int &failures)
 {
     std::unordered_map<int64_t, std::string> result;
-    const std::filesystem::path dbFile = pathFromUtf8(engineLibraryPath) / "Database2" / "m.db";
+    const std::filesystem::path dbFile = pathFromUtf8(databaseRoot) / "Database2" / "m.db";
     const std::string dbPath = pathToUtf8(dbFile);
     // An Engine 1.x library has no Database2/m.db and nothing here to read.
     // Anything else that fails is said, not taken for a library without
@@ -525,10 +528,10 @@ std::unordered_map<int64_t, std::string> readStoredArtwork(const std::string &en
 // cache location on the *computer* that manages playback, never at
 // anything present on this stick, so callers must never treat it as an
 // ordinary local track (play it, merge it, sync it, clean it up).
-std::unordered_map<int64_t, std::string> readStreamingSources(const std::string &engineLibraryPath)
+std::unordered_map<int64_t, std::string> readStreamingSources(const std::string &databaseRoot)
 {
     std::unordered_map<int64_t, std::string> result;
-    std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    std::string dbPath = pathToUtf8(pathFromUtf8(databaseRoot) / "Database2" / "m.db");
 
     // Two outcomes that look alike and are not. An Engine 1.x library has no
     // Database2/m.db, and a 2.x one older than schema 2.18 no streamingSource
@@ -610,10 +613,10 @@ std::unordered_map<int64_t, std::string> readStreamingSources(const std::string 
 // particular track was newer -- and a sync is exactly what makes m.db the
 // newest file on the stick. A value of 0 or below is "unknown" and left
 // out, which makes Sync fall back to the catalog dates for that track.
-std::unordered_map<int64_t, std::int64_t> readLastEditTimes(const std::string &engineLibraryPath)
+std::unordered_map<int64_t, std::int64_t> readLastEditTimes(const std::string &databaseRoot)
 {
     std::unordered_map<int64_t, std::int64_t> result;
-    std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    std::string dbPath = pathToUtf8(pathFromUtf8(databaseRoot) / "Database2" / "m.db");
 
     sqlite3 *db = nullptr;
     if (sqlite3_open_v2(dbPath.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
@@ -650,10 +653,10 @@ std::unordered_map<int64_t, std::int64_t> readLastEditTimes(const std::string &e
 // before 2.20), in PerformanceData on 3.x, where the cue blobs are. None
 // on a schema without the column, or without a Database2/m.db (1.x).
 // Raw SQLite: libdjinterop's high-level track API does not expose it.
-std::unordered_set<int64_t> readRekordboxImportMarks(const std::string &engineLibraryPath)
+std::unordered_set<int64_t> readRekordboxImportMarks(const std::string &databaseRoot)
 {
     std::unordered_set<int64_t> result;
-    const std::string dbPath = pathToUtf8(pathFromUtf8(engineLibraryPath) / "Database2" / "m.db");
+    const std::string dbPath = pathToUtf8(pathFromUtf8(databaseRoot) / "Database2" / "m.db");
     std::error_code existsError;
     if (!std::filesystem::exists(pathFromUtf8(dbPath), existsError) && !existsError) {
         return result;
@@ -878,7 +881,7 @@ bool LibdjinteropEngineReader::onRekordboxTimeline(const domain::Track &track) c
     }
 }
 
-void LibdjinteropEngineReader::takeRekordboxImportMarks()
+void LibdjinteropEngineReader::takeRekordboxImportMarks(const std::string &databaseRoot)
 {
     m_rekordboxTimelineRows.clear();
     // Not caught, as readStreamingSources() is not: without the marks a
@@ -886,7 +889,7 @@ void LibdjinteropEngineReader::takeRekordboxImportMarks()
     // writer, which acts on the mark, would write them back that way and
     // take the mark off. The pass fails instead.
     try {
-        m_rekordboxTimelineRows = readRekordboxImportMarks(m_engineLibraryPath);
+        m_rekordboxTimelineRows = readRekordboxImportMarks(databaseRoot);
     } catch (const application::OperationCancelled &) {
         throw;
     } catch (const std::exception &e) {
@@ -906,7 +909,7 @@ void LibdjinteropEngineReader::fillCues(std::vector<domain::Track> &tracks)
     // fails the pass, as in readTracks().
     const std::vector<domain::Track *> reRead = fillRatesFromSource(tracks);
     if (!reRead.empty()) {
-        takeRekordboxImportMarks();
+        takeRekordboxImportMarks(StickDatabaseRead::engine(m_engineLibraryPath).rootUtf8());
         // Flag and write shift only on rows with cues: a row read again
         // with none has neither.
         for (domain::Track *track : reRead) {
@@ -968,7 +971,9 @@ std::vector<domain::Track *> LibdjinteropEngineReader::fillRatesFromSource(std::
             m_progress->warn("the sample rates of unanalysed tracks were not looked up: " + busy + " is locked");
             return reRead;
         }
-        auto db = djinterop::engine::load_database(m_engineLibraryPath);
+        // From a copy when a read would write beside m.db (#110).
+        const StickDatabaseRead read = StickDatabaseRead::engine(m_engineLibraryPath);
+        auto db = djinterop::engine::load_database(read.rootUtf8());
         for (domain::Track *track : cued) {
             m_cancel.throwIfCancelled();
             std::int64_t id = 0;
@@ -1028,7 +1033,8 @@ void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
         // a pulled stick left is recovered first here too. One that cannot
         // be costs the covers, not the rest of the stage this runs in.
         recoverEnginePendingJournals(m_engineLibraryPath);
-        stored = readStoredArtwork(m_engineLibraryPath, m_volumeIdentity, m_cancel, failures);
+        const StickDatabaseRead read = StickDatabaseRead::engine(m_engineLibraryPath);
+        stored = readStoredArtwork(m_engineLibraryPath, read.rootUtf8(), m_volumeIdentity, m_cancel, failures);
     } catch (const application::OperationCancelled &) {
         throw;
     } catch (const std::exception &e) {
@@ -1053,7 +1059,13 @@ void LibdjinteropEngineReader::fillArtwork(std::vector<domain::Track> &tracks)
 
 std::optional<size_t> LibdjinteropEngineReader::countTracks()
 {
-    const std::string dbPath = pathToUtf8(pathFromUtf8(m_engineLibraryPath) / "Database2" / "m.db");
+    std::optional<StickDatabaseRead> read;
+    try {
+        read.emplace(StickDatabaseRead::engine(m_engineLibraryPath));
+    } catch (const std::exception &) {
+        return std::nullopt;  // no copy, no count: as a database that does not open
+    }
+    const std::string dbPath = read->pathUtf8();
     sqlite3 *handle = nullptr;
     if (sqlite3_open_v2(dbPath.c_str(), &handle, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
         if (handle != nullptr) {
@@ -1088,11 +1100,18 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
         throw std::runtime_error("the Engine Library on this stick is being written right now (" + busy
                                  + " is locked); try again once that has finished");
     }
-    if (!djinterop::engine::database_exists(m_engineLibraryPath)) {
+    // Every open below reads m.db from a copy when a read of the stick's
+    // own would write beside it (#110): a WAL-mode m.db gets its -shm
+    // rewritten by any connection. database_exists() opens it too. The
+    // copy's folder stands for the Engine Library; the audio files are
+    // still found from the real one.
+    const StickDatabaseRead read = StickDatabaseRead::engine(m_engineLibraryPath);
+    const std::string databaseRoot = read.rootUtf8();
+    if (!djinterop::engine::database_exists(databaseRoot)) {
         throw std::runtime_error("no Engine Library found at " + m_engineLibraryPath);
     }
 
-    auto db = djinterop::engine::load_database(m_engineLibraryPath);
+    auto db = djinterop::engine::load_database(databaseRoot);
     auto allTracks = db.tracks();
 
     std::unordered_map<int64_t, std::vector<domain::PlaylistMembership>> playlistsByTrackId;
@@ -1106,7 +1125,7 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
 
     std::unordered_map<int64_t, std::string> artworkByTrackId;
     try {
-        artworkByTrackId = readArtworkPaths(m_engineLibraryPath);
+        artworkByTrackId = readArtworkPaths(m_engineLibraryPath, databaseRoot);
     } catch (const std::exception &e) {
         m_progress->warn(std::string("could not read album art: ") + e.what());
     }
@@ -1114,14 +1133,14 @@ std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
     std::unordered_map<int64_t, std::string> streamingSourceByTrackId;
     std::unordered_map<int64_t, std::int64_t> lastEditTimeByTrackId;
     // Not caught: see readStreamingSources for why a failure fails the read.
-    streamingSourceByTrackId = readStreamingSources(m_engineLibraryPath);
+    streamingSourceByTrackId = readStreamingSources(databaseRoot);
     try {
-        lastEditTimeByTrackId = readLastEditTimes(m_engineLibraryPath);
+        lastEditTimeByTrackId = readLastEditTimes(databaseRoot);
     } catch (const std::exception &e) {
         m_progress->warn(std::string("could not read track edit times: ") + e.what());
     }
 
-    takeRekordboxImportMarks();
+    takeRekordboxImportMarks(databaseRoot);
 
     m_progress->start("Scanning Engine tracks", allTracks.size());
     size_t processed = 0;

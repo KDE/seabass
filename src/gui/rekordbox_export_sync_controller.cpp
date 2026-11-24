@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/rekordbox_export_sync_controller.hpp"
+#include "infrastructure/database_read_copy.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -288,7 +289,13 @@ void raiseAnalysisConflicts(domain::EngineUpdateProposal &proposal, const QStrin
     } catch (const std::exception &) {
         // Each track then finds its analysis file the slow way.
     }
-    infrastructure::engine::LibdjinteropEngineCueWriter writer(enginePath.toStdString());
+    // The preview reads m.db from a copy when a read of the stick's own
+    // would write beside it (#110); the audio and overview files it looks
+    // at are the stick's own.
+    const infrastructure::StickDatabaseRead read = infrastructure::StickDatabaseRead::engine(enginePath.toStdString());
+    infrastructure::engine::LibdjinteropEngineCueWriter writer(read.rootUtf8());
+    writer.setAudioRoot(enginePath.toStdString());
+    writer.setOverviewFileRoot(enginePath.toStdString());
     // Read only: a preview finds what is kept and never writes it.
     infrastructure::local::StickKeptEngineAnalysisStore kept(pathFromUtf8(stickRoot));
     writer.setKeptAnalysisStore(&kept);
