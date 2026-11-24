@@ -851,6 +851,36 @@ rips 185 of 355), and the version before it on 1018: the tempo by
 windows and the path are still a gain by the corrected decisions. The
 figures of the section before this one were taken after the first 15.
 
+### The tempo's choice, tried again: no other weighting does better
+
+With the decisions as the truth for tempo (rekordbox's, or ours where
+he gave the track to ours), the candidates the analyser weighs were
+written out for every track of the four tuning halves and other rules
+tried on them offline. On the 1139 tracks that could be matched the
+true tempo is among the candidates on 1103, and the rule as committed
+(the fold window by window, times a preference around 128 BPM an
+octave wide) picks it on 1065. Nothing tried picks it more often:
+
+- the preference counted for more or less (to the power 0 to 1.5),
+  around 110, 120 or 140 BPM, 0.7 or 1.4 octaves wide: 806 to 1059;
+- first the family by the fold alone (the first guess and its doubles,
+  its thirds, its quarters), then the octave by the preference: 1020
+  to 1064;
+- the fold at each candidate's own half, third, double, threefold and
+  fourfold period added to its score, or deciding the family: 922 to
+  1066.
+
+So the errors that are left at two thirds, three quarters, four thirds
+and one and a half times the tempo are not a matter of weights: how
+sharply the track folds at a period and at the levels around it does
+not tell the beat from those relatives on these tracks. It needs
+another kind of evidence. One is at hand: the raw tracker of the Mixxx
+baseline. By the same truth our tempo is right on 1251 of 1327 tracks
+and the raw tracker's on 1220, and they are wrong on different tracks:
+of the 76 we have wrong it has 40 right, of the 107 it has wrong we
+have 71 right. An arbiter between the two would have to be right on
+two disagreements in three to gain anything; none is known yet.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
