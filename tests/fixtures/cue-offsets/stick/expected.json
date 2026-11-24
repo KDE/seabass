@@ -1,0 +1,92 @@
+[
+ {
+  "file": "beats-ref-44100.wav",
+  "engineId": 105,
+  "rate": 44100,
+  "state": "control",
+  "rekordboxPadA_ms": 1000.0,
+  "enginePad1_ms": 1000.0,
+  "modelShift_ms": 0.0,
+  "sideToMove": "none",
+  "moveTo_ms": null
+ },
+ {
+  "file": "beats-A-notag-44100.mp3",
+  "engineId": 106,
+  "rate": 44100,
+  "state": "import-marked, never loaded",
+  "rekordboxPadA_ms": 1024.0,
+  "enginePad1_ms": 1024.0,
+  "modelShift_ms": 0.0,
+  "sideToMove": "none",
+  "moveTo_ms": null
+ },
+ {
+  "file": "beats-C-badcrc-44100.mp3",
+  "engineId": 91,
+  "rate": 44100,
+  "state": "correct",
+  "rekordboxPadA_ms": 1050.0,
+  "enginePad1_ms": 998.821,
+  "modelShift_ms": 51.179,
+  "sideToMove": "none",
+  "moveTo_ms": null
+ },
+ {
+  "file": "beats-D-lame-48000.mp3",
+  "engineId": 104,
+  "rate": 48000,
+  "state": "copied to Engine unmoved by an old build",
+  "rekordboxPadA_ms": 1046.0,
+  "enginePad1_ms": 1046.0,
+  "modelShift_ms": 47.021,
+  "sideToMove": "engine",
+  "moveTo_ms": 998.979
+ },
+ {
+  "file": "beats-B-noencoder-44100.mp3",
+  "engineId": 92,
+  "rate": 44100,
+  "state": "copied to rekordbox unmoved by an old build",
+  "rekordboxPadA_ms": 1050.0,
+  "enginePad1_ms": 1050.0,
+  "modelShift_ms": 26.122,
+  "sideToMove": "rekordbox",
+  "moveTo_ms": 1076.122
+ },
+ {
+  "file": "beats-B-lavc-44100.mp3",
+  "engineId": 107,
+  "rate": 44100,
+  "state": "moved by the player on first load",
+  "rekordboxPadA_ms": 1024.0,
+  "enginePad1_ms": 972.027,
+  "modelShift_ms": 25.057,
+  "sideToMove": "engine",
+  "moveTo_ms": 998.943
+ },
+ {
+  "file": "beats-D-lame-44100.mp3",
+  "engineId": 103,
+  "rate": 44100,
+  "state": "same number both sides, nothing says who wrote it",
+  "rekordboxPadA_ms": 1050.0,
+  "enginePad1_ms": 1050.0,
+  "modelShift_ms": 51.179,
+  "sideToMove": "unknown: list it, change nothing",
+  "moveTo_ms": null
+ },
+ {
+  "file": "beats-A-notag-44100.mp3",
+  "engineId": 106,
+  "rate": 44100,
+  "state": "derived by the test: mark gone, moved 229 samples by the player on first load",
+  "derived": true,
+  "rekordboxPadA_ms": 1024.0,
+  "enginePad1_ms": 1018.807,
+  "modelShift_ms": 0.0,
+  "playerShift_samples": 229,
+  "sideToMove": "engine",
+  "moveTo_ms": 1024.0
+ }
+]
