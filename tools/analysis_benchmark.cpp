@@ -689,6 +689,17 @@ bool parseTempoRange(const std::string &text, domain::TempoRange &range)
     return true;
 }
 
+// Says which range Seabass's own analyser runs with, as the analyser made
+// it valid: a run's numbers are that range's numbers.
+void printTempoRange(const std::vector<std::string> &analyserNames)
+{
+    if (std::find(analyserNames.begin(), analyserNames.end(), "seabass") == analyserNames.end()) {
+        return;
+    }
+    const domain::TempoRange range = domain::SeabassGridAnalyser(seabassTempoRange).tempoRange();
+    std::printf("seabass: tempo range %g to %g BPM\n", range.lowBpm, range.highBpm);
+}
+
 // A grid analyser by its name: Seabass's own, or one of the baseline's
 // where the build has them. Null for a name that is neither.
 std::unique_ptr<domain::GridAnalyser> makeGridAnalyser(const std::string &name)
@@ -830,6 +841,7 @@ int synthMode(int argc, char **argv)
     if (!analyserNames) {
         return 2;
     }
+    printTempoRange(*analyserNames);
     std::vector<std::string> names;
     if (preset == "all") {
         names = synth::synthPresetNames();
@@ -1300,6 +1312,7 @@ int audioMode(int argc, char **argv)
     if (!analyserNames) {
         return 2;
     }
+    printTempoRange(*analyserNames);
     std::error_code listEc;
     const bool fromList = fs::is_regular_file(stick, listEc);
     if (!fromList && !fs::exists(stick / "PIONEER" / "rekordbox" / "export.pdb")) {

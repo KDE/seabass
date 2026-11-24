@@ -360,8 +360,8 @@ void tempoRanges()
         {{98.0, 195.0}, TempoRelation::Same, "98 to 195: 174"},
         {{58.0, 115.0}, TempoRelation::Half, "58 to 115: 87"},
         {{45.0, 90.0}, TempoRelation::Half, "45 to 90: 87"},
-        // Narrower than an octave: widened at the top, to 150 to 300.
-        {{150.0, 160.0}, TempoRelation::Same, "150 to 160, widened: 174"},
+        // Narrower than an octave: widened at the top, to 100 to 200.
+        {{100.0, 110.0}, TempoRelation::Same, "100 to 110, widened: 174"},
         // No range at all: the default one, in which both 87 and 174 lie
         // and the answer is one of the two.
         {{0.0, -1.0}, TempoRelation::Unknown, "no range: the default"},
@@ -405,32 +405,62 @@ void tempoRanges()
     }
 
     // A range none of the rhythm's own levels lies in: the tempo is
-    // brought into it by octaves all the same. A kick at 124 BPM in a
-    // range of 30 to 60 has a beat on every third or every fourth kick
-    // (41 or 31 BPM; the kicks alone do not say which), not on every
-    // second (62).
+    // brought into it by octaves all the same. A kick at 170 BPM in a
+    // range of 40 to 80 has a beat on every third or every fourth kick
+    // (57 or 42 BPM; the kicks alone do not say which), not on every
+    // second (85).
     {
-        std::vector<float> house(static_cast<std::size_t>(rate) * 120, 0.0f);
-        for (double at = 0.3; at < 118.0; at += 60.0 / 124.0) {
-            addKick(house, rate, at);
+        std::vector<float> fast(static_cast<std::size_t>(rate) * 120, 0.0f);
+        for (double at = 0.3; at < 118.0; at += 60.0 / 170.0) {
+            addKick(fast, rate, at);
         }
-        InMemoryPcmSource source(house, rate);
-        SeabassGridAnalyser analyser(TempoRange{30.0, 60.0});
+        InMemoryPcmSource source(fast, rate);
+        SeabassGridAnalyser analyser(TempoRange{40.0, 80.0});
         const GridAnalysis analysis = analyser.analyse(source);
-        check(analysis.beats.size() > 40, "30 to 60, a kick at 124: a grid");
+        check(analysis.beats.size() > 40, "40 to 80, a kick at 170: a grid");
         if (analysis.beats.size() > 40) {
             const double gap = (analysis.beats.back().timeMs - analysis.beats.front().timeMs)
                 / static_cast<double>(analysis.beats.size() - 1);
-            within(gap, 1000.0, 2000.0, "30 to 60, a kick at 124: a tempo in the range");
-            const double kicks = gap / (60000.0 / 124.0);
-            within(kicks - std::round(kicks), -0.01, 0.01, "30 to 60, a kick at 124: a whole number of kicks to the beat");
+            within(gap, 750.0, 1500.0, "40 to 80, a kick at 170: a tempo in the range");
+            const double kicks = gap / (60000.0 / 170.0);
+            within(kicks - std::round(kicks), -0.01, 0.01, "40 to 80, a kick at 170: a whole number of kicks to the beat");
         }
+        // A steady kick is a sure grid, in a slow range as in any.
+        check(analysis.confidence > 0.8, "40 to 80, a kick at 170: sure of it");
     }
 
-    const TempoRange widened = SeabassGridAnalyser(TempoRange{150.0, 160.0}).tempoRange();
-    check(widened.lowBpm == 150.0 && widened.highBpm == 300.0, "a range under an octave is widened at the top");
+    const TempoRange widened = SeabassGridAnalyser(TempoRange{100.0, 110.0}).tempoRange();
+    check(widened.lowBpm == 100.0 && widened.highBpm == 200.0, "a range under an octave is widened at the top");
+    const TempoRange point = SeabassGridAnalyser(TempoRange{100.0, 100.0}).tempoRange();
+    check(point.lowBpm == 100.0 && point.highBpm == 200.0, "a range of one tempo is widened as well");
+    const TempoRange lowered = SeabassGridAnalyser(TempoRange{200.0, 250.0}).tempoRange();
+    check(lowered.lowBpm == 120.0 && lowered.highBpm == 240.0, "a range too high has its bottom brought down");
     const TempoRange clamped = SeabassGridAnalyser(TempoRange{5.0, 1000.0}).tempoRange();
-    check(clamped.lowBpm == 30.0 && clamped.highBpm == 300.0, "a range is kept between 30 and 300 BPM");
+    check(clamped.lowBpm == 40.0 && clamped.highBpm == 240.0, "a range is kept between 40 and 240 BPM");
+}
+
+// A tempo that moves is followed in a slow range and in a fast one as in
+// the default: a kick that speeds up from `fromBpm` to `toBpm` over two
+// and a half minutes, in a range that holds both and not their doubles.
+void movingInARange(double fromBpm, double toBpm, TempoRange range, const std::string &what)
+{
+    const int rate = 44100;
+    const double seconds = 150.0;
+    std::vector<float> audio(static_cast<std::size_t>(rate * (seconds + 2.0)), 0.0f);
+    std::vector<Beat> truth;
+    int k = 0;
+    for (double at = 0.5; at < seconds;) {
+        addKick(audio, rate, at);
+        truth.push_back({at * 1000.0, k++ % 4 + 1});
+        at += 60.0 / (fromBpm + (toBpm - fromBpm) * at / seconds);
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser(range);
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth, SeabassGridAnalyser::FollowedGridEarlierMs);
+    check(c.tempo == TempoRelation::Same, what + ": the tempo, was " + tempoRelationName(c.tempo));
+    check(c.candidateShape.kind == GridShapeKind::Moving, what + ": a grid that moves");
+    within(c.hits.within20Ms, 0.9, 1.0, what + ": true beats with one of ours within 20 ms");
 }
 
 // Tones and hum: a level, held. No onsets, no grid; also where the tone is
@@ -521,6 +551,8 @@ int main()
     bassBetweenTheBeats();
     slowAndSparse();
     tempoRanges();
+    movingInARange(45.0, 50.0, TempoRange{40.0, 80.0}, "a kick from 45 to 50 BPM in 40 to 80");
+    movingInARange(205.0, 230.0, TempoRange{120.0, 240.0}, "a kick from 205 to 230 BPM in 120 to 240");
     heldTones();
     noiseIsUnsure();
     sectionsThatAnswer();

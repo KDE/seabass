@@ -9,6 +9,29 @@
 namespace seabass::domain
 {
 
+// The tempos an analysis may give out, like the "BPM range" of rekordbox
+// and of every DJ program: whether a track is at 87 or at 174 BPM is not
+// in the audio (the studies say so, and so do our own numbers: see "What
+// the literature says" in docs/track-analysis-plan.md), it is in what the
+// DJ plays. A tempo found outside the range is taken as its double or
+// its half inside it (what is given out can still be a hair outside:
+// the ends have half a percent of room, and the later corrections move a
+// period by under a percent). A range of one octave (88 to 175) settles
+// every such choice; a wider one leaves those inside it to the analyser.
+// The default is rekordbox's own, with which its reference grids were
+// made.
+//
+// A range narrower than an octave has no place for some tempos, so it is
+// widened at the top to one; rekordbox's own "88-175" is a hair under.
+// Ranges are kept between 40 and 240 BPM, which is as slow and as fast
+// as the analyser reads a beat; where the top would pass 240 the bottom
+// comes down instead.
+struct TempoRange
+{
+    double lowBpm = 70.0;
+    double highBpm = 180.0;
+};
+
 // Seabass's own beat grid analyser (docs/track-analysis-plan.md, phase 3).
 //
 // What it listens to: the audio from 30 Hz to 5 kHz in five bands, the
@@ -52,23 +75,6 @@ namespace seabass::domain
 //
 // What it does not do yet: say which beat starts the bar (beatInBar is
 // 0), or refine the beat on the samples of the transient.
-// The tempos an analysis may give out, like the "BPM range" of rekordbox
-// and of every DJ program: whether a track is at 87 or at 174 BPM is not
-// in the audio (the studies say so, and so do our own numbers: see "What
-// the literature says" in docs/track-analysis-plan.md), it is in what the
-// DJ plays. A tempo found outside the range is given out as its double or
-// its half inside it. A range of one octave (88 to 175) settles every
-// such choice; a wider one leaves those inside it to the analyser. The
-// default is rekordbox's own, with which its reference grids were made.
-//
-// A range narrower than an octave has no place for some tempos, so it is
-// widened at the top to one; rekordbox's own "88-175" is a hair under.
-struct TempoRange
-{
-    double lowBpm = 70.0;
-    double highBpm = 180.0;
-};
-
 class SeabassGridAnalyser : public GridAnalyser
 {
 public:

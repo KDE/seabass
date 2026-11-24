@@ -873,15 +873,19 @@ struct TempoCurve
 // from 100 to 125 BPM, and short of the lags at two thirds, three
 // quarters, four thirds and three halves of the beat, which a rhythm
 // repeats at too and which are no change of tempo); through those the
-// path of lags that scores best without jumping. A window is scored against the track's strong windows
+// path of lags that scores best without jumping. The lags stay within
+// what `allowed` holds and a tenth beyond, and in any case may go as far
+// as 280 and 1100 ms. A window is scored against the track's strong windows
 // and not against its own best: one with no rhythm in it (a breakdown)
 // then has no say, and the path goes straight through it. Left to its
 // own best it would pick whatever its noise repeats at, and a grid
 // carried through the breakdown at that period comes out beside the beat.
-std::optional<TempoCurve> tempoCurve(const std::vector<double> &onsets, double guess)
+std::optional<TempoCurve> tempoCurve(const std::vector<double> &onsets, double guess, const Periods &allowed)
 {
-    const auto firstLag = std::max<std::size_t>(280, static_cast<std::size_t>(0.78 * guess));
-    const auto lastLag = std::min<std::size_t>(1100, static_cast<std::size_t>(1.28 * guess));
+    const auto firstLag = std::max(std::min<std::size_t>(280, static_cast<std::size_t>(0.93 * allowed.shortest)),
+                                   static_cast<std::size_t>(0.78 * guess));
+    const auto lastLag = std::min(std::max<std::size_t>(1100, static_cast<std::size_t>(1.1 * allowed.longest)),
+                                  static_cast<std::size_t>(1.28 * guess));
     constexpr std::size_t HopMs = 2000;
     constexpr std::size_t HalfMs = 4000;
     constexpr std::size_t Transform = 16384;
@@ -1232,11 +1236,13 @@ void setOnOnsets(std::vector<double> &beats, const std::vector<double> &onsets)
 
 SeabassGridAnalyser::SeabassGridAnalyser(TempoRange range)
 {
-    // From 30 BPM, to 300; at least an octave. What is no range at all
-    // is the default one.
-    constexpr double Lowest = 30.0;
-    constexpr double Highest = 300.0;
-    if (!(range.lowBpm > 0.0) || !(range.highBpm > range.lowBpm) || !std::isfinite(range.highBpm)) {
+    // From 40 BPM, to 240: a beat every second and a half is as slow as
+    // the tempo curve's windows of 8 s can follow, and a beat every
+    // quarter of a second as fast as a fold tells a kick from a tick. At
+    // least an octave. What is no range at all is the default one.
+    constexpr double Lowest = 40.0;
+    constexpr double Highest = 240.0;
+    if (!(range.lowBpm > 0.0) || !(range.highBpm >= range.lowBpm) || !std::isfinite(range.highBpm)) {
         range = TempoRange{};
     }
     range.lowBpm = std::clamp(range.lowBpm, Lowest, Highest / 2.0);
@@ -1345,7 +1351,7 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
     // regular in the audio at all (noise, speech) leaves it at 0, with a
     // grid that means nothing.
     double sure = 0.0;
-    if (const std::optional<TempoCurve> curve = tempoCurve(levelled(both.forTempo), period)) {
+    if (const std::optional<TempoCurve> curve = tempoCurve(levelled(both.forTempo), period, allowed)) {
         const std::vector<WindowReading> readings = readWindows(onsets, period, phase);
         std::vector<double> offsets;
         std::size_t withRhythm = 0;

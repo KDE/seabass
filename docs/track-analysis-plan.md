@@ -453,7 +453,7 @@ arXiv 2407.21658. Ahn, Hwang and Jung, "The SMC Blind Spot", arXiv
 The analyser takes a tempo range (`TempoRange` in
 `domain/seabass_grid_analyser.hpp`; `--tempo-range LOW-HIGH` in the
 benchmark), as rekordbox does with its "BPM range". A tempo found
-outside it is given out as its double or half inside it. The default is
+outside it is taken as its double or half inside it. The default is
 rekordbox's default, 70 to 180, with which every reference grid here was
 made. The setting has no place in the app yet: the analyser is not
 wired into it. When it is, the ranges to offer are rekordbox's: 45-90,
@@ -462,7 +462,8 @@ wired into it. When it is, the ranges to offer are rekordbox's: 45-90,
 - A range narrower than an octave is widened at the top to one
   (rekordbox's own are a hair under: 88 to 175), and both ends have half
   a percent of room, so that a track at 70.00 BPM is at 70 in a range
-  from 70.
+  from 70. Ranges are kept between 40 and 240 BPM. The benchmark prints
+  the range a run was made with.
 - Where the range has room for a tempo and its double, the one nearer
   128 BPM is preferred, as before. Not the one nearer the middle of the
   range: with the preference around 112 BPM (the middle of 70 to 180),
