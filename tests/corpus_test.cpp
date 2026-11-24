@@ -104,6 +104,7 @@
 // not been declared" at the first use. CI builds with the GUI on, so
 // nothing caught it.
 #include "scratch_path.hpp"
+#include "fixture_copy.hpp"
 
 namespace fs = std::filesystem;
 using namespace seabass;
@@ -237,10 +238,44 @@ std::optional<DataSet> unpackZippedSet(const fs::path &zipPath)
     return set;
 }
 
+// A committed set is read from a scratch copy, never from the source
+// tree. Opening a SQLite database runs its WAL recovery even read-only:
+// the first connection truncates exportLibrary.db-shm and rebuilds it,
+// so a fixture read in place changes under every test that watches it.
+// The cli_* tests hash those files before and after their run, and one
+// running beside this test caught the rebuild halfway (CI, 2026-11-24).
+// Expectations stay with the committed set, where they are recorded.
+std::optional<DataSet> committedSetCopy(const fs::path &dir)
+{
+    const fs::path target = unpackedSetsRoot() / dir.filename();
+    std::error_code ec;
+    fs::remove_all(target, ec);
+    if (fs::is_directory(dir / "rekordbox", ec)) {
+        seabass::testing::copyPioneerFixture(dir / "rekordbox", target / "rekordbox", ec);
+        if (ec) {
+            std::cout << "could not copy " << pathToUtf8(dir / "rekordbox") << ": " << ec.message() << "\n";
+            return std::nullopt;
+        }
+    }
+    if (fs::is_directory(dir / "engine", ec)) {
+        fs::create_directories(target, ec);
+        fs::copy(dir / "engine", target / "engine", fs::copy_options::recursive, ec);
+        if (ec) {
+            std::cout << "could not copy " << pathToUtf8(dir / "engine") << ": " << ec.message() << "\n";
+            return std::nullopt;
+        }
+    }
+    auto set = asDataSet(target);
+    if (set) {
+        set->expectationsPath = dir / "SET-EXPECTATIONS.txt";
+    }
+    return set;
+}
+
 std::vector<DataSet> discoverSets()
 {
     std::vector<DataSet> sets;
-    if (auto committed = asDataSet("tests/fixtures/anonymized_library")) {
+    if (auto committed = committedSetCopy("tests/fixtures/anonymized_library")) {
         committed->name = "committed fixture";
         sets.push_back(*committed);
     } else {
@@ -253,7 +288,7 @@ std::vector<DataSet> discoverSets()
     // fixture's 1161) and kept for the cross-format cases rather than for
     // scale -- see caseCollapseGroupsAcrossFormats, which could only
     // report that it was not exercisable until this landed.
-    if (auto oneStick = asDataSet("tests/fixtures/one_stick_two_catalogs")) {
+    if (auto oneStick = committedSetCopy("tests/fixtures/one_stick_two_catalogs")) {
         oneStick->name = "committed fixture (one stick, two catalogs)";
         sets.push_back(*oneStick);
     } else {
