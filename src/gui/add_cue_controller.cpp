@@ -129,11 +129,13 @@ void AddCueController::addCue(const QString &format, const QString &path, const 
     setStatusMessage("Staged: " + description + ". Press Save to write it to the stick.");
 }
 
-QVariantList AddCueController::pendingCuesFor(const QString &sourceId) const
+QVariantList AddCueController::pendingCuesFor(const QString &format, const QString &path,
+                                             const QString &sourceId) const
 {
     QVariantList list;
     for (const auto &[id, cue] : m_pending) {
-        if (cue.value("sourceId").toString() == sourceId) {
+        if (cue.value("sourceId").toString() == sourceId && cue.value("format").toString() == format
+            && cue.value("path").toString() == path) {
             list << cue;
         }
     }

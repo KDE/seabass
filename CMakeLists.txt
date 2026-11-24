@@ -3726,6 +3726,19 @@ if(TARGET seabass_edit)
     set_tests_properties(track_edit_controller_test PROPERTIES
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
 
+    # AddCueController's staged cues keyed by format, library and id.
+    add_executable(add_cue_pending_test
+        src/gui/add_cue_controller.hpp
+        src/gui/add_cue_controller.cpp
+        tests/add_cue_pending_test.cpp
+    )
+    target_include_directories(add_cue_pending_test PRIVATE src tests)
+    target_link_libraries(add_cue_pending_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Gui
+        Qt6::Concurrent Qt6::Qml Qt6::Test)
+    add_test(NAME add_cue_pending_test COMMAND add_cue_pending_test)
+    set_tests_properties(add_cue_pending_test PROPERTIES
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+
     # The #73 hardware round of 2026-11-13 replayed on what the stick
     # TESTSHARK held at each step (tests/fixtures/testshark_t73): the audio
     # heads and the chain checker, the 24-row proposal, save, undo and save

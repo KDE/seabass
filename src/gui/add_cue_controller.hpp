@@ -84,9 +84,12 @@ public:
                              const QString &kind, int hotCueNumber, const QString &color, const QString &comment,
                              bool isLoop, double loopEndMs, const QString &trackTitle = QString());
 
-    // Staged cues for one track, each {changeId, kind, hotCueNumber,
-    // positionMs, isLoop, loopEndMs, color, comment}.
-    Q_INVOKABLE QVariantList pendingCuesFor(const QString &sourceId) const;
+    // Staged cues for one track, each {changeId, format, path, sourceId,
+    // kind, hotCueNumber, positionMs, isLoop, loopEndMs, color, comment}.
+    // The track is its library and its id together: rekordbox and Engine
+    // number their tracks independently, so one id is a track in each.
+    Q_INVOKABLE QVariantList pendingCuesFor(const QString &format, const QString &path,
+                                            const QString &sourceId) const;
     Q_INVOKABLE void unstage(const QString &changeId);
 
 signals:

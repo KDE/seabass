@@ -258,7 +258,8 @@ TestCase {
             function beatTicksAt(durationMs, widthPx) { return []; }
             function load(format, libraryPath, sourceId, filePath, title, artist, artworkPath, cues,
                           fallbackArtworkPath, startPlaying) {
-                loads.push({sourceId: sourceId, filePath: filePath, title: title, startPlaying: startPlaying});
+                loads.push({format: format, libraryPath: libraryPath, sourceId: sourceId, filePath: filePath,
+                            title: title, startPlaying: startPlaying});
                 calls.push("load");
                 hasTrack = true;
                 currentFormat = format;
@@ -271,6 +272,51 @@ TestCase {
             function seek(ms) { calls.push("seek"); position = ms; }
             function stop() { calls.push("stop"); }
         }
+    }
+
+    // The pane's track is its library's row: the page can switch to
+    // another library while the pane still shows it (Browse, Engine to
+    // Device Library), and the same id is another track there. Engine's
+    // 786 is "Discotech" and export.pdb's 786 is "1985": opened as
+    // rekordbox's 786, the popup drew 1985's waveform and grid under
+    // Discotech's title and audio (Sebastian's screenshot, 2026-11-24).
+    // Everything the pane reads, plays or opens names the track by the
+    // library it was shown from.
+    function test_thePaneKeepsItsTracksLibrary() {
+        const player = createTemporaryObject(paneFake, testCase);
+        const asked = [];
+        player.waveformFor = function(format, path, id) { asked.push(format + "|" + path + "|" + id); return []; };
+        player.beatTicksFor = function(format, path, id) { asked.push(format + "|" + path + "|" + id); return []; };
+        const cueAsks = [];
+        const panel = createTemporaryObject(panelComponent, testCase, {
+            addCueController: {statusMessage: "", errorMessage: "", busy: false, pendingRevision: 0,
+                               pendingCuesFor: function(format, path, id) {
+                                   cueAsks.push(format + "|" + path + "|" + id);
+                                   return [];
+                               }},
+            playbackController: player,
+            format: "engine",
+            libraryPath: "/fixture/Engine Library",
+        });
+        panel.showFor({sourceId: "786", title: "Discotech", artist: "Huntemann", cues: [], durationSeconds: 346,
+                       playlistNames: [], streamingSource: "", filePath: "/fixture/Contents/discotech.m4a"});
+        // The page switches to the Device Library on the same stick.
+        panel.format = "rekordbox";
+        panel.libraryPath = "/fixture/PIONEER";
+        waitForPolish(testCase.Window.window);
+        const engine = "engine|/fixture/Engine Library|786";
+        verify(asked.length > 0 && asked.every((key) => key === engine), "the pane reads Engine's 786: " + asked);
+        verify(cueAsks.length > 0 && cueAsks.every((key) => key === engine), "its staged cues: " + cueAsks);
+        const view = findChild(panel, "trackDetailPanelWaveform");
+        mouseClick(view, view.width / 2, view.height / 2);
+        const popup = findChild(panel, "waveformZoomPopup");
+        tryCompare(popup, "opened", true);
+        compare(player.loads.length, 1);
+        compare(player.loads[0].format, "engine", "Engine's 786, not export.pdb's");
+        compare(player.loads[0].libraryPath, "/fixture/Engine Library");
+        compare(player.loads[0].sourceId, "786");
+        verify(panel.isLoadedTrack, "and the pane knows it is the track loaded");
+        popup.close();
     }
 
     // Nothing playing: the track goes into the player paused, at its start.

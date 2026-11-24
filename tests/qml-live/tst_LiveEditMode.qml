@@ -395,7 +395,7 @@ TestCase {
         ctrl.addCue("rekordbox", rekordboxPath, target.sourceId, addedCueMs, "memory", 0, "", "rig W2", false, 0,
                     target.title);
         compare(ctrl.errorMessage, "");
-        compare(ctrl.pendingCuesFor(target.sourceId).length, 1);
+        compare(ctrl.pendingCuesFor("rekordbox", rekordboxPath, target.sourceId).length, 1);
         var s = session();
         tryCompare(s, "pendingCount", 1, 5000);
         var summary = saveAndWait(false);

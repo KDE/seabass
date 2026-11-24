@@ -917,6 +917,9 @@ Page {
             // gone without a word.
             var placing = trackDetailPanel.pendingPositionMs >= 0;
             if (row >= 0 && root.trackPanelOpen && !placing && trackDetailPanel.trackSourceId === previousSourceId
+                    && trackDetailPanel.trackFormat === root.playbackController.currentFormat
+                    && trackDetailPanel.trackLibraryPath === root.playbackController.currentLibraryPath
+                    && root.playbackController.currentFormat === root.format
                     && root.playbackController.currentLibraryPath === root.currentPath()) {
                 trackDetailPanel.showFor(scanController.tracks.trackAt(row));
             }
@@ -1091,6 +1094,17 @@ Page {
         Qt.callLater(root.offerLeftOverEdits);
     }
     onFormatChanged: rescan()
+    // The library the list is read from. Another one chosen (Engine to
+    // Device Library, say) closes the details pane and Matching: each
+    // shows a row of the list it was opened from, which is no longer on
+    // screen, and that row's id is another track, or none, in the library
+    // now shown.
+    readonly property string listedLibrary: root.format + "\n" + root.currentPath()
+    onListedLibraryChanged: {
+        root.trackPanelOpen = false;
+        root.matchingPanelOpen = false;
+        root.anchorSourceId = "";
+    }
 
     // Live-applies without a rescan, setHideStreamingTracks() just
     // re-runs the existing display-filter pipeline (same one search()

@@ -1116,6 +1116,28 @@ TestCase {
         realPlayback.stop();
     }
 
+    // Another library chosen closes the details pane and Matching: they
+    // show a row of the list they were opened from, and its id is another
+    // track in the library now listed (Engine's 786 is "1985" in that
+    // stick's export.pdb, and the pane's waveform opened it as the track
+    // shown, Sebastian's screenshot of 2026-11-24).
+    function test_anotherLibraryClosesThePanesOfTheOldOne() {
+        const page = makePage();
+        compare(page.format, "rekordbox");
+        const row = {sourceId: "786", title: "Discotech", artist: "Huntemann", filePath: "/nonexistent/a.m4a",
+                     artworkPath: "", cues: [], durationSeconds: 346, playlistNames: [], streamingSource: "",
+                     rating: -1, bpm: 138, key: "8A", bitrate: 0, playCount: 0, comment: "", album: ""};
+        findChild(page, "trackDetailPanel").showFor(row);
+        page.trackPanelOpen = true;
+        page.anchorSourceId = "786";
+        page.matchingPanelOpen = true;
+        compare(page.trackPanelOpen, true);
+        page.format = "engine";
+        compare(page.trackPanelOpen, false, "the details pane closes");
+        compare(page.matchingPanelOpen, false, "and Matching");
+        compare(page.anchorSourceId, "", "with no anchor kept from the other library");
+    }
+
     // ---- Browse in two phases, against a held catalog cache
     // (browseFixture): the rekordbox list is up at once and its cue pass
     // waits until the test lets it go. ----
