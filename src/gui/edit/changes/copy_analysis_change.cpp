@@ -290,7 +290,11 @@ ChangeOutcome landImport(SaveContext &ctx, FormatWriteSession &session, const QS
         session.noteItemApplied();
         ctx.log().record("beat grids: copied rekordbox's " + std::string(gridWritten ? "grid" : "")
                          + (gridWritten && waveformWritten ? " and " : "") + (waveformWritten ? "waveform" : "")
-                         + (result.completedRow ? ", completing the row," : "") + " to Engine track id="
+                         + (result.completedRow ? (result.analysedNothingStored
+                                                       ? ", completing the row Engine marked analysed with none stored,"
+                                                       : ", completing the row,")
+                                                : "")
+                         + " to Engine track id="
                          + item.engineTrackId);
         return ChangeOutcome::success();
     }
@@ -318,6 +322,13 @@ AnalysisSaveTally::Row analysisTallyRowOf(const application::AnalysisImportResul
     // One track, one bucket: a row the player has not analysed whose grid
     // is locked is left alone for the lock (the DJ's word), not counted
     // again as left for the player.
+    // A row Engine marked analysed with nothing stored is not the
+    // player's to analyse: it is left as it is, and said so.
+    if (result.analysedNothingStored && !result.completedRow && !row.gridSetOnPlayer && !row.grid && !row.waveform
+        && !row.cannotKeep) {
+        row.otherReason = QStringLiteral("marked analysed by Engine with nothing stored, left as it is");
+        return row;
+    }
     row.leftForPlayer = !result.completedRow && !row.gridSetOnPlayer
         && (result.grid.outcome == Outcome::RowNotAnalysed || result.grid.outcome == Outcome::NoSampleRate
             || result.waveform == Waveform::RowNotAnalysed || result.waveform == Waveform::NoSampleCount);

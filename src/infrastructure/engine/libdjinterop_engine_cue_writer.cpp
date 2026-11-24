@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -612,6 +613,22 @@ std::string gridFingerprint(const BeatDataBlob &blob)
 
 // rekordbox's beats (already on Engine's timeline) as Engine's markers at
 // a rate and length, with the bars rekordbox breaks and Engine cannot.
+// The tempo a converted grid plays at, from its first marker to its last;
+// nothing when it does not say one.
+std::optional<double> gridTempo(const std::vector<GridMarkerBlob> &grid, double sampleRate)
+{
+    if (grid.size() < 2 || !(sampleRate > 0.0)) {
+        return std::nullopt;
+    }
+    const double seconds = (grid.back().sample_offset - grid.front().sample_offset) / sampleRate;
+    const double beats = static_cast<double>(grid.back().beat_number - grid.front().beat_number);
+    const double bpm = seconds > 0.0 ? beats / seconds * 60.0 : 0.0;
+    if (!(bpm > 0.0) || !std::isfinite(bpm)) {
+        return std::nullopt;
+    }
+    return bpm;
+}
+
 std::pair<std::vector<GridMarkerBlob>, int> convertedGrid(const std::vector<domain::Beat> &beats, double sampleRate,
                                                           double samples)
 {
@@ -744,15 +761,35 @@ struct RowFlags
     bool unreadable = false;
     // A lock that cannot be read counts as a lock.
     bool locked = true;
+    // The flag is up, but the row holds no analysis at all: no beat data,
+    // no overview, no analysis record and no overview file. Engine DJ 5.1
+    // left rows so on sticks it analysed (2026-11-23, 30 of 174). There is
+    // nothing of the player's to keep or misread, so the row counts as not
+    // analysed and is completed like one, with both parts or not at all.
+    bool analysedNothingStored = false;
 };
 
-RowFlags flagsOf(const EngineAnalysisColumns &c, const std::optional<BeatDataBlob> &existing)
+// A column with nothing in it: NULL, or a blob of no bytes.
+bool holdsNothing(const EngineSqlValue &v)
+{
+    return v.isNull() || (v.type == EngineSqlValue::Type::Blob && v.bytes.empty());
+}
+
+// overviewFileThere: whether the row's overview file is on the stick,
+// asked only of a row whose columns hold nothing; true when unsure.
+RowFlags flagsOf(const EngineAnalysisColumns &c, const std::optional<BeatDataBlob> &existing,
+                 const std::function<bool()> &overviewFileThere)
 {
     RowFlags flags;
     flags.locked = flagOf(c.isBeatGridLocked).value_or(true);
     const std::optional<bool> analysed = flagOf(c.isAnalyzed);
     if (!analysed) {
         flags.unreadable = true;
+        return flags;
+    }
+    if (*analysed && holdsNothing(c.beatData) && holdsNothing(c.overviewWaveFormData) && holdsNothing(c.trackData)
+        && !overviewFileThere()) {
+        flags.analysedNothingStored = true;
         return flags;
     }
     const bool usableGrid = existing && usable(existing->sample_rate, existing->samples);
@@ -962,6 +999,19 @@ LibdjinteropEngineCueWriter::RowNow LibdjinteropEngineCueWriter::readRowNow(std:
     return now;
 }
 
+bool LibdjinteropEngineCueWriter::overviewFileThere(const RowNow &now, std::int64_t id)
+{
+    try {
+        std::error_code ec;
+        const bool there = std::filesystem::exists(
+            pathFromUtf8(overviewFileRoot()) / pathFromUtf8(overviewFileRelativePath(now.libraryUuid, id)), ec);
+        return there || ec;
+    } catch (const std::exception &) {
+        // No folder to name: unsure, so taken to be there.
+        return true;
+    }
+}
+
 struct LibdjinteropEngineCueWriter::GridMarkPlan
 {
     bool takeOffMark = false;
@@ -1121,7 +1171,7 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
     // write below is one transaction over the row's columns.
     const RowNow now = readRowNow(id, false);
     const std::optional<BeatDataBlob> existing = decoded<BeatDataBlob>(now.columns.beatData);
-    const RowFlags flags = flagsOf(now.columns, existing);
+    const RowFlags flags = flagsOf(now.columns, existing, [&] { return overviewFileThere(now, id); });
     if (flags.unreadable) {
         return {Outcome::RowUnreadable};
     }
@@ -1155,8 +1205,13 @@ BeatGridWriteResult LibdjinteropEngineCueWriter::writeBeatGrid(const std::string
         return plan.result;
     }
 
-    if (options.unanalysed == UnanalysedRowGrid::Skip) {
-        return {Outcome::RowNotAnalysed};
+    // A row marked analysed with nothing stored is completed with both
+    // parts or not at all: a grid alone under its raised flag would pass
+    // for the player's own analysis later.
+    if (options.unanalysed == UnanalysedRowGrid::Skip || flags.analysedNothingStored) {
+        BeatGridWriteResult left{Outcome::RowNotAnalysed};
+        left.analysedNothingStored = flags.analysedNothingStored;
+        return left;
     }
     const double rate = options.fileSampleRateHz.value_or(0.0);
     const double durationMs = options.fileDurationMs.value_or(0.0);
@@ -1312,7 +1367,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     // The row as stored, read once, flags as writeBeatGrid() reads them.
     const RowNow now = readRowNow(id, false);
     const std::optional<BeatDataBlob> existing = decoded<BeatDataBlob>(now.columns.beatData);
-    const RowFlags flags = flagsOf(now.columns, existing);
+    const RowFlags flags = flagsOf(now.columns, existing, [&] { return overviewFileThere(now, id); });
     if (flags.unreadable) {
         if (options.grids) {
             result.grid.outcome = Outcome::RowUnreadable;
@@ -1322,6 +1377,8 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         }
         return result;
     }
+    result.analysedNothingStored = flags.analysedNothingStored;
+    result.grid.analysedNothingStored = flags.analysedNothingStored;
     const bool locked = flags.locked;
     const std::filesystem::path fileRoot = pathFromUtf8(overviewFileRoot());
 
@@ -1440,7 +1497,8 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         return result;
     }
 
-    // A row the player has not analysed. Each part says what it lacks;
+    // A row the player has not analysed, or one marked analysed with
+    // nothing stored (RowFlags). Each part says what it lacks;
     // a part that lacks nothing is RowNotAnalysed when the other part
     // keeps the row from being completed.
     // The row's length in samples, as the player's own analysis would
@@ -1511,6 +1569,13 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         return result;
     }
     const auto [grid, barBreaks] = convertedGrid(beats, rate, samples);
+    // rekordbox's tempo; with none, a row Engine marked analysed takes the
+    // grid's own, so its old tempo never sits beside rekordbox's grid. A
+    // row the player never analysed keeps its own, as before.
+    const std::optional<double> tempo = analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)
+        ? analysis.bpm
+        : flags.analysedNothingStored ? gridTempo(grid, rate)
+                                      : std::nullopt;
 
     // The analysis record as the player writes it: rate, length, key (0
     // for none, as libdjinterop writes no key) and the three loudness
@@ -1519,7 +1584,12 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     TrackDataBlob record{};
     record.sample_rate = rate;
     record.samples = static_cast<std::int64_t>(sampleCount);
-    record.key = analysis.key.value_or(0);
+    // With no key from rekordbox a row Engine marked analysed keeps its own,
+    // and the record says the same; otherwise 0, as libdjinterop writes.
+    record.key = analysis.key ? *analysis.key
+        : flags.analysedNothingStored && now.columns.key.type == EngineSqlValue::Type::Integer
+        ? static_cast<int>(now.columns.key.integer)
+        : 0;
     const std::array<double, 3> loudness =
         options.zeroLoudness ? std::array<double, 3>{0.0, 0.0, 0.0} : domain::loudnessFromOverview(overview);
     record.average_loudness_low = loudness[0];
@@ -1559,9 +1629,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         if (!options.skipOverviewFile) {
             after.overviewFile = file;
         }
-        if (analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)) {
-            after.bpm = EngineSqlValue::ofInteger(std::llround(*analysis.bpm));
-            after.bpmAnalyzed = EngineSqlValue::ofReal(*analysis.bpm);
+        // The tempo worked out above; none leaves the row's.
+        if (tempo) {
+            after.bpm = EngineSqlValue::ofInteger(std::llround(*tempo));
+            after.bpmAnalyzed = EngineSqlValue::ofReal(*tempo);
         }
         if (analysis.key) {
             after.key = EngineSqlValue::ofInteger(*analysis.key);
@@ -1573,12 +1644,28 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     // transaction: until the flag is up the player takes the row for one
     // it is still to analyse, so a failure anywhere leaves a row that
     // plays, never one flagged analysed with a piece missing.
+    // Taken off again on a failure below only when this call put it there,
+    // on the stick itself: a sink (the GUI's save) undoes its own.
+    const bool fileWasNew = !options.skipOverviewFile && !m_overviewFileSink && !overviewFileThere(now, id);
     if (!options.skipOverviewFile) {
         putOverviewFile(result.overviewFileRelativePath, file);
     }
     EngineAnalysisColumns after = now.columns;
     apply(after);
-    writeColumns(id, now.columns, after, knownShiftMs);
+    try {
+        writeColumns(id, now.columns, after, knownShiftMs);
+    } catch (...) {
+        // The columns did not land: the file goes again, or the row would
+        // hold an overview file and nothing else, unreadable from then on.
+        // A failure to remove it does not hide the write's.
+        if (fileWasNew) {
+            try {
+                putOverviewFile(result.overviewFileRelativePath, std::nullopt);
+            } catch (const std::exception &) {
+            }
+        }
+        throw;
+    }
     return result;
 }
 

@@ -39,6 +39,11 @@
 //    waveform: a copy of the waveform keeps the row first.
 // 11. A grid the DJ moved after Seabass wrote the row, replaced with
 //    overwriteEngineEdits: the kept original takes the DJ's grid.
+// 13. Marked analysed with no analysis stored (Engine DJ 5.1): completed
+//    from rekordbox with its tempo and key (the grid's own tempo, the
+//    row's key, where rekordbox has none), cues left as they are; left as
+//    it is for grids alone or with no length; a row holding a record, an
+//    overview file or beat data that does not decode is still unreadable.
 //
 // usage: engine_analysis_keep_test <tests/fixtures>
 
@@ -139,6 +144,27 @@ EngineAnalysisColumns snapshot(const Stick &stick, std::int64_t id)
         c.overviewFile = std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
     return c;
+}
+
+// The row's cue columns as stored, as one string to compare.
+std::string cueColumns(const std::string &mdb, std::int64_t id)
+{
+    sqlite3 *db = nullptr;
+    sqlite3_open_v2(mdb.c_str(), &db, SQLITE_OPEN_READONLY, nullptr);
+    sqlite3_stmt *stmt = nullptr;
+    std::string out;
+    if (sqlite3_prepare_v2(db, "SELECT quote(quickCues), quote(loops) FROM PerformanceData WHERE trackId = ?", -1,
+                           &stmt, nullptr)
+        == SQLITE_OK) {
+        sqlite3_bind_int64(stmt, 1, id);
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            out = std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0))) + "|"
+                + reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+        }
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return out;
 }
 
 std::string synthetic(std::size_t bytes, unsigned seed)
@@ -812,6 +838,207 @@ int main(int argc, char **argv)
                   && afterFill.overviewWaveFormData == before.overviewWaveFormData
                   && snapshot(stick, 15).overviewFile == before.overviewFile,
               "12c. N2's overview column and file byte for byte the player's");
+    }
+
+    // 13. Marked analysed with nothing stored: the flag up, and no beat
+    //     data, overview or analysis record (NULL or an empty blob) and no
+    //     overview file; cues there. Engine DJ 5.1 left 30 such rows on two
+    //     sticks it analysed (2026-11-23). Nothing of the player's is there
+    //     to keep, so the row is completed from rekordbox exactly like one
+    //     the player never analysed: tempo and key rekordbox's too, cues
+    //     and loops as they were. Only with both parts: asked for the grid
+    //     alone, or with no length to go by, it is left as it is. A row
+    //     holding anything of an analysis (a record, an overview file, beat
+    //     data that does not decode) is still unreadable and left alone.
+    struct Shape
+    {
+        std::string beatData, overview, key, tag;
+    };
+    for (const Shape &shape : {Shape{"NULL", "NULL", "7", "NULL columns"}, Shape{"x''", "x''", "7", "empty blobs"},
+                               Shape{"NULL", "x''", "NULL", "an empty overview, no key"}}) {
+        const std::string tag = " (" + shape.tag + ")";
+        const Stick stick = freshStick("analysed-nothing-stored");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        // Row 9 (B01, FLAC 44.1 kHz) as Engine DJ left those rows.
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 1, bpm = 85, bpmAnalyzed = 85.0, key = " + shape.key
+                            + " WHERE id = 9");
+        exec(stick.mdb, "UPDATE PerformanceData SET beatData = " + shape.beatData + ", overviewWaveFormData = "
+                            + shape.overview + ", trackData = NULL WHERE trackId = 9");
+        const EngineAnalysisColumns before = snapshot(stick, 9);
+        const std::string cuesBefore = cueColumns(stick.mdb, 9);
+        check(before.isAnalyzed.integer == 1 && cuesBefore.size() > 2 && !before.overviewFile,
+              "13. the row's shape" + tag);
+
+        AnalysisImportOptions options = keyed("k9");
+        options.overwritePlayerWaveforms = false;
+        options.fileSampleRateHz = 44100.0;
+        options.fileSampleCount = 7938000;
+        options.previewOnly = true;
+        const RekordboxAnalysis rekordbox = analysisOf(180.0, 102.0, 3);
+        const auto preview = writer.importAnalysis("9", rekordbox, options);
+        check(preview.grid.outcome == Outcome::Written && preview.waveform == Waveform::Written && preview.completedRow
+                  && preview.analysedNothingStored,
+              "13. a preview completes it" + tag);
+        check(snapshot(stick, 9) == before, "13. and writes nothing" + tag);
+
+        options.previewOnly = false;
+        const auto written = writer.importAnalysis("9", rekordbox, options);
+        check(written.grid.outcome == Outcome::Written && written.waveform == Waveform::Written && written.completedRow
+                  && written.analysedNothingStored && !written.keptEngineAnalysis,
+              "13. the write completes it, nothing to keep" + tag);
+        const EngineAnalysisColumns after = snapshot(stick, 9);
+        check(!after.beatData.isNull() && !after.overviewWaveFormData.isNull() && !after.trackData.isNull()
+                  && after.overviewFile.has_value() && after.isAnalyzed.integer == 1,
+              "13. grid, waveform, record and overview file are rekordbox's" + tag);
+        check(after.bpm.integer == 102 && std::abs(after.bpmAnalyzed.real - 102.0) < 1e-9 && after.key.integer == 5,
+              "13. tempo and key rekordbox's, as its grid" + tag);
+        const auto *start = reinterpret_cast<const std::byte *>(after.trackData.bytes.data());
+        const auto record = djinterop::engine::v3::track_data_blob::from_blob(
+            std::vector<std::byte>(start, start + after.trackData.bytes.size()));
+        check(record.key == 5, "13. the record's key is the row's" + tag);
+        check(cueColumns(stick.mdb, 9) == cuesBefore, "13. cues and loops byte for byte" + tag);
+        check(store.find("k9").status == Status::None, "13. nothing kept" + tag);
+
+        options.previewOnly = true;
+        const auto again = writer.importAnalysis("9", rekordbox, options);
+        check(again.grid.outcome == Outcome::AlreadySame && !again.analysedNothingStored, "13. then it is the same" + tag);
+    }
+    // rekordbox with no tempo or no key: the tempo is the grid's own and
+    // the key stays the row's, the record saying the same.
+    {
+        const Stick stick = freshStick("analysed-nothing-stored-no-tempo-key");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 1, bpm = 85, bpmAnalyzed = 85.0, key = 7 WHERE id = 9");
+        AnalysisImportOptions options = keyed("k9");
+        options.overwritePlayerWaveforms = false;
+        options.fileSampleRateHz = 44100.0;
+        options.fileSampleCount = 7938000;
+        RekordboxAnalysis bare = analysisOf(180.0, 102.0, 3);
+        bare.bpm.reset();
+        bare.key.reset();
+        const auto r = writer.importAnalysis("9", bare, options);
+        check(r.completedRow && r.analysedNothingStored, "13. completed without rekordbox's tempo and key");
+        const EngineAnalysisColumns after = snapshot(stick, 9);
+        check(std::abs(after.bpmAnalyzed.real - 102.0) < 0.05 && after.bpm.integer == 102,
+              "13. the tempo is the grid's: " + std::to_string(after.bpmAnalyzed.real));
+        const auto *start = reinterpret_cast<const std::byte *>(after.trackData.bytes.data());
+        const auto record = djinterop::engine::v3::track_data_blob::from_blob(
+            std::vector<std::byte>(start, start + after.trackData.bytes.size()));
+        check(after.key.integer == 7 && record.key == 7, "13. the key stays the row's, in the record too");
+    }
+    // The row's write failing after the overview file went down: the file
+    // goes again, so the row is not left holding a file and nothing else.
+    {
+        const Stick stick = freshStick("analysed-nothing-stored-write-fails");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 1 WHERE id = 9");
+        exec(stick.mdb, "CREATE TRIGGER refuse BEFORE UPDATE ON PerformanceData BEGIN SELECT RAISE(ABORT, 'refused'); END");
+        const EngineAnalysisColumns before = snapshot(stick, 9);
+        AnalysisImportOptions options = keyed("k9");
+        options.overwritePlayerWaveforms = false;
+        options.fileSampleRateHz = 44100.0;
+        options.fileSampleCount = 7938000;
+        bool threw = false;
+        try {
+            writer.importAnalysis("9", analysisOf(180.0, 102.0, 3), options);
+        } catch (const std::exception &) {
+            threw = true;
+        }
+        check(threw, "13. the refused write throws");
+        check(!fs::exists(stick.library / pathFromUtf8(overviewPath(9))), "13. and its overview file is gone again");
+        check(snapshot(stick, 9) == before, "13. the row as it was");
+    }
+    // Left as it is: no length to go by, or the grid alone asked for.
+    {
+        const Stick stick = freshStick("analysed-nothing-stored-left");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 1 WHERE id = 9");
+        const EngineAnalysisColumns before = snapshot(stick, 9);
+        AnalysisImportOptions options = keyed("k9");
+        options.overwritePlayerWaveforms = false;  // no file rate: its length cannot be known
+        const auto r = writer.importAnalysis("9", analysisOf(180.0, 102.0, 3), options);
+        check(r.grid.outcome == Outcome::RowNotAnalysed && r.waveform == Waveform::NoSampleCount && !r.completedRow
+                  && r.analysedNothingStored,
+              "13. no length: left, not unreadable");
+        options.fileSampleRateHz = 44100.0;
+        options.fileSampleCount = 7938000;
+        options.waveforms = false;
+        const auto gridOnly = writer.importAnalysis("9", analysisOf(180.0, 102.0, 3), options);
+        check(gridOnly.grid.outcome == Outcome::RowNotAnalysed && !gridOnly.completedRow && gridOnly.analysedNothingStored,
+              "13. grids only: left, not completed");
+        BeatGridWriteOptions grid;
+        grid.unanalysed = UnanalysedRowGrid::Fill;
+        grid.fileSampleRateHz = 44100.0;
+        grid.fileDurationMs = 180000.0;
+        grid.keepKey = "k9";
+        const auto fill = writer.writeBeatGrid("9", analysisOf(180.0, 102.0, 3).beats, grid);
+        check(fill.outcome == Outcome::RowNotAnalysed && fill.analysedNothingStored,
+              "13. a grid-only fill leaves it: a grid under the raised flag would pass for the player's");
+        check(snapshot(stick, 9) == before, "13. left: the row is untouched");
+    }
+    // Anything of an analysis there: not this shape, unreadable as before.
+    for (const std::string what : {"a record", "an overview file", "beat data that does not decode"}) {
+        const Stick stick = freshStick("analysed-not-nothing");
+        StickKeptEngineAnalysisStore store(stick.root);
+        auto writer = writerFor(stick, store);
+        exec(stick.mdb, "UPDATE Track SET isAnalyzed = 1 WHERE id = 9");
+        if (what == "a record") {
+            exec(stick.mdb, "UPDATE PerformanceData SET trackData = (SELECT trackData FROM PerformanceData WHERE "
+                            "trackId = 14) WHERE trackId = 9");
+        } else if (what == "an overview file") {
+            const fs::path file = stick.library / pathFromUtf8(overviewPath(9));
+            fs::create_directories(file.parent_path());
+            std::ofstream(file, std::ios::binary) << synthetic(3000, 4);
+        } else {
+            exec(stick.mdb, "UPDATE PerformanceData SET beatData = x'00010203' WHERE trackId = 9");
+        }
+        const EngineAnalysisColumns before = snapshot(stick, 9);
+        AnalysisImportOptions options = keyed("k9");
+        options.fileSampleRateHz = 44100.0;
+        options.fileSampleCount = 7938000;
+        const auto r = writer.importAnalysis("9", analysisOf(180.0, 102.0, 3), options);
+        check(r.grid.outcome == Outcome::RowUnreadable && r.waveform == Waveform::RowUnreadable
+                  && !r.analysedNothingStored,
+              "13. " + what + ": still unreadable");
+        check(snapshot(stick, 9) == before, "13. " + what + ": left alone");
+    }
+    // An MP3 carrying rekordbox's import mark: the cues and the mark are
+    // handled exactly as on the same row the player never analysed.
+    {
+        std::vector<std::string> outcomes;
+        for (const std::string flag : {"1", "0"}) {
+            const Stick stick = freshStick("analysed-nothing-stored-mp3-" + flag);
+            StickKeptEngineAnalysisStore store(stick.root);
+            auto writer = writerFor(stick, store);
+            exec(stick.mdb, "UPDATE Track SET isAnalyzed = " + flag + " WHERE id = 12");
+            exec(stick.mdb, "UPDATE PerformanceData SET beatData = NULL, overviewWaveFormData = NULL, trackData = NULL,"
+                            " thirdPartySourceId = 1 WHERE trackId = 12");
+            AnalysisImportOptions options = keyed("k12");
+            options.overwritePlayerWaveforms = false;
+            options.fileSampleRateHz = 44100.0;
+            options.fileSampleCount = 7938000;
+            options.fileIsMp3 = true;
+            const auto r = writer.importAnalysis("12", analysisOf(180.0, 108.0, 5), options);
+            check(r.completedRow && r.analysedNothingStored == (flag == "1"), "13. the MP3 completed, flag " + flag);
+            sqlite3 *db = nullptr;
+            sqlite3_open_v2(stick.mdb.c_str(), &db, SQLITE_OPEN_READONLY, nullptr);
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(db, "SELECT quote(thirdPartySourceId) FROM PerformanceData WHERE trackId = 12", -1, &stmt,
+                               nullptr);
+            std::string mark;
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                mark = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+            }
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            outcomes.push_back(cueColumns(stick.mdb, 12) + "|" + mark);
+        }
+        check(outcomes.size() == 2 && outcomes[0] == outcomes[1],
+              "13. the marked MP3's cues and mark come out as on an unanalysed row");
     }
 
     if (failures > 0) {
