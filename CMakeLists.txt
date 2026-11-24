@@ -4166,6 +4166,14 @@ if(TARGET seabass_edit)
     set_tests_properties(add_engine_track_change_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
+    add_executable(artwork_repair_left_rows_test tests/artwork_repair_left_rows_test.cpp)
+    target_include_directories(artwork_repair_left_rows_test PRIVATE src tests)
+    target_link_libraries(artwork_repair_left_rows_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME artwork_repair_left_rows_test COMMAND artwork_repair_left_rows_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(artwork_repair_left_rows_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
     add_executable(remove_engine_track_change_test tests/remove_engine_track_change_test.cpp)
     target_include_directories(remove_engine_track_change_test PRIVATE src tests)
     target_link_libraries(remove_engine_track_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
