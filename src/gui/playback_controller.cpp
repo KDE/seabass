@@ -28,6 +28,7 @@
 #include "mpris_service.hpp"
 #endif
 #include "infrastructure/audio/playback_timeline.hpp"
+#include "infrastructure/audio/player_start_guard.hpp"
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include "infrastructure/audio/qt_multimedia_detail_waveform.hpp"
 #endif
@@ -148,6 +149,9 @@ QMediaPlayer *PlaybackController::player()
     m_audioOutput = new QAudioOutput(this);
     m_audioOutput->setVolume(static_cast<float>(m_volume));
     m_player->setAudioOutput(m_audioOutput);
+    // First on the player's signals: a file is moved past its cut first
+    // frame before anything else hears it has loaded (#109).
+    m_startGuard = new infrastructure::audio::PlayerStartGuard(m_player, this);
 
     connect(m_player, &QMediaPlayer::durationChanged, this, &PlaybackController::durationChanged);
     // The loaded track's length has been reported: a length, or a file
@@ -195,7 +199,7 @@ QMediaPlayer *PlaybackController::player()
         // has not reported play() back yet, and a seek in place changes
         // nothing for a paused one.
         if (status == QMediaPlayer::LoadedMedia) {
-            m_player->setPosition(m_player->position());
+            m_startGuard->seek(m_player->position());
         }
     });
 #endif
@@ -333,6 +337,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
         }
         const QUrl source = QUrl::fromLocalFile(filePath);
         const bool sameFile = player()->source() == source;
+        m_startGuard->setFile(filePath);
         player()->setSource(source);
         // The same file again: setSource() changes nothing and no length
         // is reported again; the one it has is this track's. Only then:
@@ -348,7 +353,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
             markDurationKnown();
         }
         if (startPlaying) {
-            m_player->play();
+            m_startGuard->play();
         } else {
             m_player->pause();
         }
@@ -445,8 +450,10 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
         }
         markDurationKnown();
     } else {
-        player()->setSource(QUrl::fromLocalFile(filePath));
-        m_player->play();
+        player();
+        m_startGuard->setFile(filePath);
+        m_player->setSource(QUrl::fromLocalFile(filePath));
+        m_startGuard->play();
     }
 
     emit loadedAnalysisChanged();
@@ -1040,7 +1047,7 @@ void PlaybackController::setDesktopMediaControls(bool enabled)
 void PlaybackController::play()
 {
     if (m_hasTrack && m_player) {
-        m_player->play();
+        m_startGuard->play();
     }
 }
 
@@ -1059,14 +1066,17 @@ void PlaybackController::togglePlay()
     if (playing()) {
         m_player->pause();
     } else {
-        m_player->play();
+        m_startGuard->play();
     }
 }
 
 void PlaybackController::seek(qint64 positionMs)
 {
+    // Not before the file's start on the player's timeline (#109): just
+    // past the frame FFmpeg's trim cuts, 2 ms into a usual 44.1 kHz LAME
+    // or Lavc MP3, 0 for anything without one (PlayerStartGuard).
     if (m_player) {
-        m_player->setPosition(positionMs);
+        positionMs = m_startGuard->seek(positionMs);
     }
     emit seeked(positionMs);
 }

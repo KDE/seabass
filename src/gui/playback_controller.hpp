@@ -29,6 +29,11 @@ namespace seabass::infrastructure::rekordbox
 class AnlzPathIndex;
 }
 
+namespace seabass::infrastructure::audio
+{
+class PlayerStartGuard;
+}
+
 class QAudioBuffer;
 class QAudioBufferOutput;
 class QAudioOutput;
@@ -383,6 +388,9 @@ private:
     QMediaPlayer *player();
     QMediaPlayer *m_player = nullptr;
     QAudioOutput *m_audioOutput = nullptr;
+    // Made with the player: keeps it past an MP3's cut first frame, where
+    // its timeline is the decoder's (#109).
+    infrastructure::audio::PlayerStartGuard *m_startGuard = nullptr;
     // Kept here, so it can be set (MPRIS, a test) before there is an
     // output to hand it to. 1.0 is QAudioOutput's own default.
     qreal m_volume = 1.0;

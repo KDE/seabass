@@ -25,6 +25,8 @@ audio instant can be found in every decoder's output:
      zeroed
   D  the LAME file with its encoder string "L3.99r", which FFmpeg does
      not trim for
+  D  the LAME file with its tag stating a 1200-sample delay, so FFmpeg's
+     trim runs past the first frame
 
 LAME files come from libmp3lame through lame_encode.encode(), the Lavc
 file from the ffmpeg command line over a WAV of the same samples. Every
@@ -131,6 +133,7 @@ def main():
     variant("click-D-lame-44100.mp3", "click-D-lame-nocounts-44100.mp3", "nocounts")
     variant("click-VBRI-44100.mp3", "click-VBRI-nocounts-44100.mp3", "nocounts")
     variant("click-D-lame-44100.mp3", "click-D-l399-44100.mp3", "l399")
+    variant("click-D-lame-44100.mp3", "click-D-lame-delay1200-44100.mp3", "delay1200")
 
     with tempfile.TemporaryDirectory() as tmp:
         wav = os.path.join(tmp, "click-44100.wav")
