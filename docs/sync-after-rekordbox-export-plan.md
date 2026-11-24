@@ -458,6 +458,25 @@ What it reuses, and what it must not:
   into one not made for a dependency the delete does not have, and come
   back at every sync while the rename stays out. The row still shows the
   path after every rename of the plan, as the plan reads with all ticked.
+  **Decision (#137, 2026-11-24):** Engine's delete of a folder takes
+  everything below it, so a delete never goes while Engine has something
+  below it the save does not take out first. The delete depends on the
+  rows that do: the deletes of what rekordbox deleted inside it and the
+  moves of what rekordbox moved out of it (each with what that row
+  needs). Unticking one takes the folder's delete with it, neither
+  applied nor declined, so the record keeps the folder. At the next sync
+  a declined move keeps the delete out with it, shown as a row held back
+  under the delete's key, no tick, that names the move it waits on (the
+  record keeps the folder, as for any refusal); a row waiting on a
+  conflict holds it (#128). A move counts only as a row of the item's own
+  (a rename, or a conflict under its key): an item rekordbox put where it
+  spells the path twice, or where Engine spells it twice or already has
+  it, is moved by no row. Anything below it that no row takes out (a
+  playlist made on the player, an item rekordbox moved out that no row
+  moves) makes the delete a refusal under its key that names it and says
+  to delete or move it in Engine DJ first. At save time the delete checks
+  Engine's write root: anything still below the path fails the save (it
+  goes back whole), naming it, rather than go with the folder.
   **Decision (#99, 2026-11-21):** the delete and the create are two
   items, ticked apart. The create is `playlist:<id>` as always; the
   delete has a key of the plan's own, `reused:<id>:<old path>`, outside

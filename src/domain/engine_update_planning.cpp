@@ -1882,6 +1882,30 @@ private:
             std::stable_sort(gone.begin(), gone.end(), [](const BaselinePlaylist *a, const BaselinePlaylist *b) {
                 return depth(a->path) > depth(b->path);
             });
+            const auto below = [](const std::string &path, const std::string &folder) {
+                return path.size() > folder.size() && path.compare(0, folder.size(), folder) == 0
+                    && path[folder.size()] == '/';
+            };
+            // Engine's delete of a path takes everything below it (#137).
+            // What this plan takes out from below a deleted item first, by
+            // Engine's path now: the deletes of the items below it (deepest
+            // first, so already planned) and the moves of what rekordbox
+            // took out of it, each under the keys that row needs. Moved
+            // means a row of the item's own (a rename, or a conflict under
+            // its key): what it depends on starts as its parent's, and the
+            // branches that move nothing (a path rekordbox spells twice,
+            // one Engine spells twice or already has) leave it at that.
+            std::map<std::string, std::vector<std::string>> takenOutAt;
+            for (const auto &p : now.playlists) {
+                const BaselinePlaylist *bp = base->findPlaylist(p.id);
+                const auto st = status.find(p.id);
+                if (bp && !idsReused.count(p.id) && bp->path != p.path && st != status.end()
+                    && std::find(st->second.deps.begin(), st->second.deps.end(), playlistItemKey(p.id))
+                        != st->second.deps.end()
+                    && countAt(bp->path) == 1) {
+                    takenOutAt[bp->path] = st->second.deps;
+                }
+            }
             for (const BaselinePlaylist *b : gone) {
                 // An id rekordbox reused: the old item under a key of the
                 // plan's own (reusedForAnother).
@@ -1891,6 +1915,54 @@ private:
                 claimedEnginePaths.insert(b->path);
                 if (countAt(b->path) > 1) {
                     ambiguous(b->id, b->path, state);
+                    takenOutAt[b->path] = {playlistItemKey(b->id)};
+                    continue;
+                }
+                // Everything Engine has below it must go first, by a row of
+                // this plan the delete then depends on: unticking that row
+                // takes the delete with it, and a row waiting on a conflict
+                // holds it (#128). What no row takes out (a playlist made on
+                // the player, one rekordbox moved out that no row moves) the
+                // delete would take along: a refusal that names it.
+                std::vector<std::string> deleteDeps;
+                std::vector<std::string> leftInside;
+                for (const auto &playlist : in.enginePlaylists) {
+                    if (!below(playlist.path, b->path)) {
+                        continue;
+                    }
+                    bool takenOut = false;
+                    for (std::string at = playlist.path; at != b->path; at = parentPath(at)) {
+                        if (const auto taken = takenOutAt.find(at); taken != takenOutAt.end()) {
+                            takenOut = true;
+                            for (const auto &dep : taken->second) {
+                                if (std::find(deleteDeps.begin(), deleteDeps.end(), dep) == deleteDeps.end()) {
+                                    deleteDeps.push_back(dep);
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    if (!takenOut && std::find(leftInside.begin(), leftInside.end(), playlist.path) == leftInside.end()) {
+                        leftInside.push_back(playlist.path);
+                    }
+                }
+                takenOutAt[b->path] = {key};
+                if (!leftInside.empty()) {
+                    std::string names;
+                    for (const auto &path : leftInside) {
+                        names += (names.empty() ? "" : ", ") + quoted(path);
+                    }
+                    EngineUpdateConflict conflict;
+                    conflict.header = makeHeader(
+                        key, false, true, EngineUpdateReason::BothChanged,
+                        std::string("rekordbox deleted this ") + (b->folder ? "folder" : "playlist") + ", and "
+                            + engineName + "'s copy holds " + names
+                            + ", which this sync does not delete or move out of it; deleting it would take "
+                            + (leftInside.size() == 1 ? "that" : "them") + " along. Delete or move "
+                            + (leftInside.size() == 1 ? "it" : "them") + " in " + engineName + " DJ first",
+                        state);
+                    // A refusal: no buttons, the reason says what to do.
+                    out.conflicts.push_back(std::move(conflict));
                     continue;
                 }
                 PlaylistDelete del;
@@ -1906,12 +1978,12 @@ private:
                 const std::set<std::string> baseSet(b->members.begin(), b->members.end());
                 if (!b->folder && engineSet != baseSet) {
                     del.header = makeHeader(key, true, false, EngineUpdateReason::BothChanged,
-                                            "Delete " + quoted(b->path) + " from " + engineName, state);
+                                            "Delete " + quoted(b->path) + " from " + engineName, state, deleteDeps);
                     EngineUpdateConflict conflict;
                     conflict.header = makeHeader(key, false, true, EngineUpdateReason::BothChanged,
                                                  "rekordbox deleted this playlist and " + engineName
                                                      + "'s copy changed since Seabass last recorded the stick",
-                                                 state);
+                                                 state, deleteDeps);
                     conflict.rekordboxSide = "Delete " + quoted(b->path) + " from " + engineName;
                     conflict.engineSide = "Keep " + quoted(b->path) + " in " + engineName;
                     conflict.rekordboxChoice.emplace_back(std::move(del));
@@ -1920,8 +1992,11 @@ private:
                 }
                 del.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxRemoved,
                                         std::string("rekordbox deleted this ") + (b->folder ? "folder" : "playlist")
-                                            + since(),
-                                        state);
+                                            + since()
+                                            + (deleteDeps.empty() ? std::string()
+                                                                  : "; what it holds is deleted or moved out first, "
+                                                                    "and leaving one of those out keeps it"),
+                                        state, deleteDeps);
                 out.playlistsToDelete.push_back(std::move(del));
             }
         }
@@ -3156,6 +3231,7 @@ private:
             record(suppressed);
             return;
         }
+        const std::set<std::string> declinedThemselves = suppressed;
         bool grew = true;
         while (grew) {
             grew = false;
@@ -3174,12 +3250,66 @@ private:
                 }
             });
         }
-        record(suppressed);
+        // A delete held out only by what it depends on (#137: a move out
+        // of the folder, or a delete inside it, left out at an earlier
+        // sync) is shown, not dropped: a row held back with no buttons
+        // that names what it waits on. Engine keeps the folder, and the
+        // record keeps it as it was (a refusal answers nothing).
+        std::vector<EngineUpdateConflict> heldDeletes;
+        std::set<std::string> heldKeys;
+        for (const auto &del : out.playlistsToDelete) {
+            if (!suppressed.count(del.header.key) || declinedThemselves.count(del.header.key)) {
+                continue;
+            }
+            std::string waitsOn;
+            for (const auto &dep : del.header.dependsOn) {
+                if (!suppressed.count(dep)) {
+                    continue;
+                }
+                std::string what;
+                for (const auto &rename : out.playlistsToRename) {
+                    if (rename.header.key == dep) {
+                        what = "the move of " + quoted(rename.fromPath) + " out of it";
+                    }
+                }
+                for (const auto &inner : out.playlistsToDelete) {
+                    if (inner.header.key == dep) {
+                        what = "the delete of " + quoted(inner.pathNow.empty() ? inner.path : inner.pathNow);
+                    }
+                }
+                if (!what.empty() && waitsOn.find(what) == std::string::npos) {
+                    waitsOn += (waitsOn.empty() ? "" : " and ") + what;
+                }
+            }
+            if (waitsOn.empty()) {
+                waitsOn = "a row about what it holds";
+            }
+            EngineUpdateConflict held;
+            held.header = makeHeader(del.header.key, false, true, EngineUpdateReason::BothChanged,
+                                     std::string("rekordbox deleted this ") + (del.folder ? "folder" : "playlist")
+                                         + ", which waits on " + waitsOn
+                                         + ", left out at an earlier sync; deleting it now would take that along, "
+                                           "so "
+                                         + catalogDisplayName("engine") + " keeps it while that stays out",
+                                     del.header.rekordboxState);
+            heldKeys.insert(del.header.key);
+            heldDeletes.push_back(std::move(held));
+        }
+        std::set<std::string> recorded;
+        for (const auto &key : suppressed) {
+            if (!heldKeys.count(key)) {
+                recorded.insert(key);
+            }
+        }
+        record(recorded);
         eachDecidable(out, [&](auto &rows) {
             rows.erase(std::remove_if(rows.begin(), rows.end(),
                                       [&](const auto &row) { return suppressed.count(row.header.key) > 0; }),
                        rows.end());
         });
+        for (auto &held : heldDeletes) {
+            out.conflicts.push_back(std::move(held));
+        }
     }
 };
 
