@@ -730,6 +730,32 @@ stands at 732 of 751 again, 73 of them approved, and what is left is
 the 19 tracks of before (rekordbox right on 11, neither on 6, undecided
 on 2).
 
+### The second playlist
+
+The same evening, the same pictures, for all 36 tracks of the second
+playlist's tuning half at another tempo than rekordbox's (31) or half
+a beat out (5).
+
+| How our grid stands to rekordbox's | Ours is right | rekordbox is right | He could not tell |
+|---|---|---|---|
+| Half its tempo | 14 | 4 | 0 |
+| Double its tempo | 2 | 0 | 0 |
+| Two thirds | 2 | 2 | 0 |
+| One and a half times | 1 | 0 | 0 |
+| Four thirds | 0 | 1 | 0 |
+| A few percent apart | 0 | 0 | 1 |
+| No simple relation | 1 | 2 | 1 |
+| The same tempo, half a beat out | 2 | 2 | 1 |
+| All | 22 | 11 | 3 |
+
+With rekordbox or approved the analyser is right on 86 of the 126
+tracks (64 within 10 ms and steady, 22 approved); rekordbox itself,
+taken as right wherever he did not say otherwise, on 101. Where one
+tempo is double the other he again chose the slower one, between 80
+and 89 BPM, on 14 of 20 tracks. Left for the analyser: 9 tracks at a
+wrong tempo (4 at half, 2 at two thirds, 1 at four thirds, 2 other)
+and 2 half a beat out.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
