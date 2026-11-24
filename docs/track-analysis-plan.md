@@ -756,6 +756,20 @@ and 89 BPM, on 14 of 20 tracks. Left for the analyser: 9 tracks at a
 wrong tempo (4 at half, 2 at two thirds, 1 at four thirds, 2 other)
 and 2 half a beat out.
 
+### The first variety list
+
+And all 27 tracks of the first variety list at another tempo than
+rekordbox's (26) or half a beat out (1): ours is right on 15, both
+grids are fine on 3, rekordbox's is right on 5, undecided on 4. With
+rekordbox or approved the analyser is right on 72 of the 110 tracks
+(54 within 10 ms and steady, 18 approved); rekordbox itself on 91.
+Left for the analyser: 5 tracks at a wrong tempo (2 at half, 1 at
+double, 2 with no simple relation).
+
+Over the three sets of varied music that makes 160 tracks looked at,
+of which ours is right or as good on 103, rekordbox's on 38, and 17
+undecided; two were not answered.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
