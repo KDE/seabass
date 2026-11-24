@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -1384,7 +1385,62 @@ bool isIsoDate(const std::string &text)
             return false;
         }
     }
-    return true;
+    const int month = (text[5] - '0') * 10 + (text[6] - '0');
+    const int day = (text[8] - '0') * 10 + (text[9] - '0');
+    return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+// The columns of `table`, as the database names them.
+std::set<std::string> columnsOf(SqlCipherDb &db, const std::string &table)
+{
+    SqlCipherStatement columns(db, "SELECT name FROM pragma_table_info(?)");
+    columns.bindText(1, table);
+    std::set<std::string> found;
+    while (columns.step()) {
+        found.insert(columns.columnText(0));
+    }
+    return found;
+}
+
+// Throws unless `table` has exactly the columns `known`: a table with
+// one more, one fewer or one renamed is a schema this build has not
+// seen, and a row is not added to it on a guess.
+void requireColumns(SqlCipherDb &db, const std::string &table, const std::set<std::string> &known)
+{
+    const std::set<std::string> found = columnsOf(db, table);
+    if (found == known) {
+        return;
+    }
+    std::string strange;
+    for (const std::string &name : found) {
+        if (known.count(name) == 0) {
+            strange += (strange.empty() ? " (it has \"" : ", \"") + name + "\"";
+        }
+    }
+    throw std::runtime_error("onelibrary: the " + table + " table is not the one this build knows"
+                             + (strange.empty() ? std::string() : strange + ")") + "; not adding a row");
+}
+
+// One above the highest content id anything in the database names: the
+// content table, and every table that points into it. A removed row's
+// id may live on in the player's history, in My Tags or in a playlist
+// row something left behind, and a new track given that id would
+// inherit them.
+int64_t nextContentId(SqlCipherDb &db)
+{
+    SqlCipherStatement highest(
+        db,
+        "SELECT max(id) + 1 FROM (SELECT coalesce(max(content_id), 0) AS id FROM content "
+        "UNION ALL SELECT coalesce(max(content_id), 0) FROM playlist_content "
+        "UNION ALL SELECT coalesce(max(content_id), 0) FROM cue "
+        "UNION ALL SELECT coalesce(max(content_id), 0) FROM history_content "
+        "UNION ALL SELECT coalesce(max(content_id), 0) FROM myTag_content "
+        "UNION ALL SELECT coalesce(max(content_id_1), 0) FROM recommendedLike "
+        "UNION ALL SELECT coalesce(max(content_id_2), 0) FROM recommendedLike)");
+    if (!highest.step()) {
+        throw std::runtime_error("onelibrary: could not read the highest content id");
+    }
+    return highest.columnInt64(0);
 }
 
 int64_t nextId(SqlCipherDb &db, const std::string &table, const std::string &idColumn)
@@ -1476,7 +1532,35 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
     if (!isIsoDate(track.date)) {
         throw std::invalid_argument("onelibrary: \"" + track.date + "\" is not a date as YYYY-MM-DD");
     }
+    // Not clamped: a number the row cannot hold is the caller's mistake,
+    // and a row quietly given 0 for it would say something else.
+    if (!(track.bpm >= 0.0) || track.bpm >= 1000.0) {
+        throw std::invalid_argument("onelibrary: not a tempo a track row holds");
+    }
+    if (track.lengthSeconds < 0 || track.trackNumber < 0 || track.discNumber < 0 || track.year < 0 || track.bitrate < 0
+        || track.bitDepth < 0 || track.sampleRateHz < 0) {
+        throw std::invalid_argument("onelibrary: a negative number for " + track.filePath);
+    }
+    if (track.fileSizeBytes > static_cast<std::uint64_t>(std::numeric_limits<int64_t>::max())) {
+        throw std::invalid_argument("onelibrary: not a file size a track row holds");
+    }
+    for (const std::string *onStick : {&track.analysisDataFilePath, &track.imagePath}) {
+        if (!onStick->empty() && onStick->rfind("/PIONEER/", 0) != 0) {
+            throw std::invalid_argument("onelibrary: " + *onStick + " is not a path under the stick's /PIONEER/");
+        }
+    }
     const std::string contentPath = toContentPath(m_stickRoot, track.filePath);
+    // A file beside the stick comes out of toContentPath() as
+    // "/../somewhere": a row no player can follow.
+    if (("/" + contentPath + "/").find("/../") != std::string::npos) {
+        throw std::invalid_argument("onelibrary: " + track.filePath + " is not on the stick");
+    }
+    {
+        std::error_code ec;
+        if (!fs::is_regular_file(pathFromUtf8(track.filePath), ec)) {
+            throw std::invalid_argument("onelibrary: " + track.filePath + " is not there; a row for it would name nothing");
+        }
+    }
     const size_t slash = contentPath.rfind('/');
     const std::string fileName = slash == std::string::npos ? contentPath : contentPath.substr(slash + 1);
     const int fileType = contentFileType(fileName);
@@ -1485,26 +1569,45 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
     }
     checkNotStale();
     SqlCipherDb &db = writeConnection();
-    if (!contentIdsMatching(db, contentPath).empty()) {
-        throw std::invalid_argument("onelibrary: a content row already names " + contentPath);
-    }
     {
-        SqlCipherStatement columns(db, "SELECT name FROM pragma_table_info('content')");
-        std::set<std::string> found;
-        while (columns.step()) {
-            found.insert(columns.columnText(0));
-        }
-        const std::set<std::string> known(std::begin(KnownContentColumns), std::end(KnownContentColumns));
-        if (found != known) {
-            std::string strange;
-            for (const std::string &name : found) {
-                if (known.count(name) == 0) {
-                    strange += (strange.empty() ? " (it has \"" : ", \"") + name + "\"";
+        // Every row, by the name the stick's filesystem would know the
+        // file under. Not contentIdsMatching(): that answers "none" for a
+        // file two rows name in two other spellings, which is the right
+        // answer to "which row" and the wrong one to "is there a row".
+        const std::string wanted = application::normalizedPathKey(contentPath);
+        SqlCipherStatement scan(db, "SELECT path, analysisDataFilePath FROM content");
+        while (scan.step()) {
+            if (!scan.columnIsNull(0)) {
+                const std::string path = scan.columnText(0);
+                if (path == contentPath || application::normalizedPathKey(path) == wanted) {
+                    throw std::invalid_argument("onelibrary: a content row already names " + path);
                 }
             }
-            throw std::runtime_error("onelibrary: the content table is not the one this build knows"
-                                     + (strange.empty() ? std::string() : strange + ")") + "; not adding a row to it");
+            if (!track.analysisDataFilePath.empty() && !scan.columnIsNull(1)
+                && scan.columnText(1) == track.analysisDataFilePath) {
+                // Two rows on one analysis file share its cues: a cue
+                // written for either lands on both.
+                throw std::invalid_argument("onelibrary: another track's row already names the analysis file "
+                                            + track.analysisDataFilePath);
+            }
         }
+    }
+    requireColumns(db, "content", std::set<std::string>(std::begin(KnownContentColumns), std::end(KnownContentColumns)));
+    requireColumns(db, "artist", {"artist_id", "name", "nameForSearch"});
+    requireColumns(db, "album", {"album_id", "name", "artist_id", "image_id", "isComplation", "nameForSearch"});
+    requireColumns(db, "genre", {"genre_id", "name"});
+    requireColumns(db, "label", {"label_id", "name"});
+    requireColumns(db, "key", {"key_id", "name"});
+    requireColumns(db, "image", {"image_id", "path"});
+    // The library's count of its tracks: one row, holding a number.
+    int64_t countBefore = 0;
+    {
+        SqlCipherStatement count(db, "SELECT count(*), count(numberOfContents), max(numberOfContents) FROM property");
+        if (!count.step() || count.columnInt64(0) != 1 || count.columnInt64(1) != 1) {
+            throw std::runtime_error("onelibrary: the property table does not hold its one row with a track count; "
+                                     "not adding a row");
+        }
+        countBefore = count.columnInt64(2);
     }
 
     int64_t id = 0;
@@ -1519,7 +1622,7 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
         const std::optional<int64_t> label = lookupRow(db, "label", "label_id", "name", track.label);
         const std::optional<int64_t> key = lookupRow(db, "key", "key_id", "name", track.key);
         const std::optional<int64_t> image = lookupRow(db, "image", "image_id", "path", track.imagePath);
-        id = nextId(db, "content", "content_id");
+        id = nextContentId(db);
 
         SqlCipherStatement insert(
             db,
@@ -1534,10 +1637,10 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
             "?17, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, '', 0, 1, 1, '', 0, 0, ?25, 0, 0, 0, NULL, NULL, NULL)");
         insert.bindInt64(1, id);
         insert.bindText(2, track.title);
-        insert.bindInt64(3, track.bpm > 0.0 ? static_cast<int64_t>(track.bpm * 100.0 + 0.5) : 0);
-        insert.bindInt64(4, std::max(track.lengthSeconds, 0));
-        insert.bindInt64(5, std::max(track.trackNumber, 0));
-        insert.bindInt64(6, std::max(track.discNumber, 0));
+        insert.bindInt64(3, static_cast<int64_t>(track.bpm * 100.0 + 0.5));
+        insert.bindInt64(4, track.lengthSeconds);
+        insert.bindInt64(5, track.trackNumber);
+        insert.bindInt64(6, track.discNumber);
         bindOptional(insert, 7, artist);
         bindOptional(insert, 8, remixer);
         bindOptional(insert, 9, composer);
@@ -1547,18 +1650,18 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
         bindOptional(insert, 13, key);
         bindOptional(insert, 14, image);
         insert.bindText(15, track.comment);
-        insert.bindInt64(16, std::max(track.year, 0));
+        insert.bindInt64(16, track.year);
         insert.bindText(17, track.date);
         insert.bindText(18, contentPath);
         insert.bindText(19, fileName);
         insert.bindInt64(20, static_cast<int64_t>(track.fileSizeBytes));
         insert.bindInt64(21, fileType);
-        insert.bindInt64(22, std::max(track.bitrate, 0));
-        insert.bindInt64(23, std::max(track.bitDepth, 0));
-        insert.bindInt64(24, std::max(track.sampleRateHz, 0));
+        insert.bindInt64(22, track.bitrate);
+        insert.bindInt64(23, track.bitDepth);
+        insert.bindInt64(24, track.sampleRateHz);
         insert.bindText(25, track.analysisDataFilePath);
         insert.run();
-        db.exec("UPDATE property SET numberOfContents = numberOfContents + 1 WHERE numberOfContents IS NOT NULL;");
+        db.exec("UPDATE property SET numberOfContents = numberOfContents + 1;");
         db.exec("COMMIT;");
     } catch (...) {
         try {
@@ -1568,24 +1671,80 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
         throw;
     }
 
+    // Everything this call bound, read back through the other connection
+    // as text, with the names the ids lead to.
+    const std::vector<std::string> written = {
+        track.title,
+        contentPath,
+        fileName,
+        std::to_string(static_cast<int64_t>(track.bpm * 100.0 + 0.5)),
+        std::to_string(track.lengthSeconds),
+        std::to_string(track.trackNumber),
+        std::to_string(track.discNumber),
+        std::to_string(track.year),
+        track.comment,
+        track.date,
+        track.date,
+        std::to_string(track.fileSizeBytes),
+        std::to_string(fileType),
+        std::to_string(track.bitrate),
+        std::to_string(track.bitDepth),
+        std::to_string(track.sampleRateHz),
+        track.analysisDataFilePath,
+        track.artist,
+        track.remixer,
+        track.composer,
+        track.album,
+        track.album.empty() ? std::string() : track.albumArtist,
+        track.genre,
+        track.label,
+        track.key,
+        track.imagePath,
+        std::to_string(countBefore + 1),
+    };
+    bool asWritten = false;
     {
         SqlCipherStatement readBack(
             verifyConnection(),
-            "SELECT c.title, c.path, coalesce(a.name, ''), coalesce(al.name, ''), coalesce(g.name, ''), "
-            "coalesce(l.name, ''), coalesce(k.name, ''), coalesce(i.path, '') FROM content c "
-            "LEFT JOIN artist a ON a.artist_id = c.artist_id_artist LEFT JOIN album al ON al.album_id = c.album_id "
-            "LEFT JOIN genre g ON g.genre_id = c.genre_id LEFT JOIN label l ON l.label_id = c.label_id "
-            "LEFT JOIN key k ON k.key_id = c.key_id LEFT JOIN image i ON i.image_id = c.image_id "
-            "WHERE c.content_id = ?");
+            "SELECT c.title, c.path, c.fileName, c.bpmx100, c.length, c.trackNo, c.discNo, c.releaseYear, c.djComment, "
+            "c.dateCreated, c.dateAdded, c.fileSize, c.fileType, c.bitrate, c.bitDepth, c.samplingRate, "
+            "c.analysisDataFilePath, coalesce(a.name, ''), coalesce(r.name, ''), coalesce(co.name, ''), "
+            "coalesce(al.name, ''), coalesce(aa.name, ''), coalesce(g.name, ''), coalesce(l.name, ''), "
+            "coalesce(k.name, ''), coalesce(i.path, ''), (SELECT numberOfContents FROM property) FROM content c "
+            "LEFT JOIN artist a ON a.artist_id = c.artist_id_artist LEFT JOIN artist r ON r.artist_id = c.artist_id_remixer "
+            "LEFT JOIN artist co ON co.artist_id = c.artist_id_composer LEFT JOIN album al ON al.album_id = c.album_id "
+            "LEFT JOIN artist aa ON aa.artist_id = al.artist_id LEFT JOIN genre g ON g.genre_id = c.genre_id "
+            "LEFT JOIN label l ON l.label_id = c.label_id LEFT JOIN key k ON k.key_id = c.key_id "
+            "LEFT JOIN image i ON i.image_id = c.image_id WHERE c.content_id = ?");
         readBack.bindInt64(1, id);
-        const bool there = readBack.step();
-        if (!there || readBack.columnText(0) != track.title || readBack.columnText(1) != contentPath
-            || readBack.columnText(2) != track.artist || readBack.columnText(3) != track.album
-            || readBack.columnText(4) != track.genre || readBack.columnText(5) != track.label
-            || readBack.columnText(6) != track.key || readBack.columnText(7) != track.imagePath) {
-            throw std::runtime_error("onelibrary: post-write verification failed, the row for " + contentPath
-                                     + " is not as written");
+        asWritten = readBack.step();
+        for (size_t i = 0; asWritten && i < written.size(); ++i) {
+            asWritten = readBack.columnText(static_cast<int>(i)) == written[i];
         }
+    }
+    if (!asWritten) {
+        // Not left for a player to find: the row goes again, and the
+        // count with it. Lookup rows it made stay; nothing names them.
+        std::string undone = "; the row was taken out again";
+        try {
+            db.exec("BEGIN IMMEDIATE;");
+            SqlCipherStatement remove(db, "DELETE FROM content WHERE content_id = ?");
+            remove.bindInt64(1, id);
+            remove.run();
+            SqlCipherStatement count(db, "UPDATE property SET numberOfContents = ?");
+            count.bindInt64(1, countBefore);
+            count.run();
+            db.exec("COMMIT;");
+            refreshStalenessBaseline();
+        } catch (const std::exception &e) {
+            try {
+                db.exec("ROLLBACK;");
+            } catch (...) {
+            }
+            undone = std::string("; and taking the row out again failed: ") + e.what();
+        }
+        throw std::runtime_error("onelibrary: post-write verification failed, the row for " + contentPath
+                                 + " is not as written" + undone);
     }
     refreshStalenessBaseline();
     return id;

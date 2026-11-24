@@ -11,7 +11,10 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <functional>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -90,8 +93,15 @@ int main(int argc, char **argv)
     };
     const fs::path stick = stickAt("stick");
     const std::string db = pathToUtf8(stick / "PIONEER" / "rekordbox" / "exportLibrary.db");
+    // A file on the stick, made on the way: a row is only added for one
+    // that is there.
+    const auto touch = [](const fs::path &path) {
+        fs::create_directories(path.parent_path());
+        std::ofstream(path, std::ios::binary) << "audio";
+        return pathToUtf8(path);
+    };
     const auto file = [&](const fs::path &root, const char *name) {
-        return pathToUtf8(root / "Contents" / "An Artist" / "An Album" / name);
+        return touch(root / "Contents" / "An Artist" / "An Album" / name);
     };
 
     // The fixture as committed.
@@ -223,6 +233,7 @@ int main(int argc, char **argv)
         second.filePath = file(stick, "02 Second.mp3");
         second.title = "Second";
         second.imagePath = "/PIONEER/Artwork/00001/a2.jpg";
+        second.analysisDataFilePath = "/PIONEER/USBANLZ/P0AB/0000BEEF/ANLZ0000.DAT";
         second.bitrate = 320;
         assert(w.addTrack(second) == 17);
         assert(one(db, "SELECT count(*) FROM artist") == "5" && one(db, "SELECT count(*) FROM album") == "3");
@@ -236,6 +247,7 @@ int main(int argc, char **argv)
         other.title = "Other";
         other.albumArtist = "Somebody Else";
         other.imagePath.clear();
+        other.analysisDataFilePath.clear();
         assert(w.addTrack(other) == 18);
         assert(one(db, "SELECT count(*) FROM album WHERE name = 'An Album'") == "2");
         assert(one(db, "SELECT count(DISTINCT album_id) FROM content WHERE content_id IN (16, 18)") == "2");
@@ -244,7 +256,7 @@ int main(int argc, char **argv)
         // rekordbox's own lookup rows are found, not doubled: its artist,
         // its album without an artist, its key.
         OneLibraryCueWriter::NewTrack theirs;
-        theirs.filePath = pathToUtf8(stick / "Contents" / "Seabass Test" / "T73" / "new.aiff");
+        theirs.filePath = touch(stick / "Contents" / "Seabass Test" / "T73" / "new.aiff");
         theirs.title = "Theirs";
         theirs.artist = "Seabass Test";
         theirs.album = "T73";
@@ -265,7 +277,7 @@ int main(int argc, char **argv)
                                             "(SELECT count(*) FROM genre) + (SELECT count(*) FROM label) + "
                                             "(SELECT count(*) FROM key) + (SELECT count(*) FROM image)");
         OneLibraryCueWriter::NewTrack bare;
-        bare.filePath = pathToUtf8(stick / "Contents" / "UnknownArtist" / "UnknownAlbum" / "bare.wav");
+        bare.filePath = touch(stick / "Contents" / "UnknownArtist" / "UnknownAlbum" / "bare.wav");
         bare.title = "bare";
         bare.date = "2026-11-24";
         assert(w.addTrack(bare) == 20);
@@ -295,11 +307,14 @@ int main(int argc, char **argv)
         again.filePath = file(stick, "01 TAGGED.FLAC");
         assert(throws<std::invalid_argument>([&] { (void)w.addTrack(again); }));
         // rekordbox's own row for that file.
-        again.filePath = pathToUtf8(stick / "Contents" / "Seabass Test" / "T73 Base" / "T73-B07-click-44k-114bpm.flac");
+        again.filePath = touch(stick / "Contents" / "Seabass Test" / "T73 Base" / "T73-B07-click-44k-114bpm.flac");
         assert(throws<std::invalid_argument>([&] { (void)w.addTrack(again); }));
         OneLibraryCueWriter::NewTrack bad = full;
         bad.artist = "Never Made";
         bad.filePath = file(stick, "04 Fresh.flac");
+        // Its own analysis file, so that each refusal below is for the
+        // one thing wrong with it.
+        bad.analysisDataFilePath = "/PIONEER/USBANLZ/P0AC/0000BEEF/ANLZ0000.DAT";
         bad.title.clear();
         assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
         bad.title = "Fresh";
@@ -308,7 +323,38 @@ int main(int argc, char **argv)
             bad.date = date;
             assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
         }
+        for (const char *date : {"2026-13-01", "2026-00-10", "2026-01-32", "2026-01-00"}) {
+            bad.date = date;
+            assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }) && "not a day on a calendar");
+        }
         bad.date = "2026-11-24";
+        // Numbers the row cannot hold are not clamped into it.
+        {
+            const auto refused = [&](const std::function<void(OneLibraryCueWriter::NewTrack &)> &spoil) {
+                OneLibraryCueWriter::NewTrack t = bad;
+                spoil(t);
+                return throws<std::invalid_argument>([&] { (void)w.addTrack(t); });
+            };
+            assert(refused([](auto &t) { t.bpm = -1.0; }) && refused([](auto &t) { t.bpm = 1000.0; }));
+            assert(refused([](auto &t) { t.bpm = std::numeric_limits<double>::quiet_NaN(); }));
+            assert(refused([](auto &t) { t.bpm = std::numeric_limits<double>::infinity(); }));
+            assert(refused([](auto &t) { t.lengthSeconds = -1; }) && refused([](auto &t) { t.trackNumber = -1; }));
+            assert(refused([](auto &t) { t.discNumber = -1; }) && refused([](auto &t) { t.year = -1; }));
+            assert(refused([](auto &t) { t.bitrate = -1; }) && refused([](auto &t) { t.bitDepth = -1; }));
+            assert(refused([](auto &t) { t.sampleRateHz = -1; }));
+            assert(refused([](auto &t) { t.fileSizeBytes = std::numeric_limits<std::uint64_t>::max(); }));
+            // An analysis file another row names (rekordbox's, and one of
+            // this test's), and paths that are not under /PIONEER/.
+            assert(refused([](auto &t) { t.analysisDataFilePath = "/PIONEER/USBANLZ/P01E/00009ECC/ANLZ0000.DAT"; }));
+            assert(refused([](auto &t) { t.analysisDataFilePath = "/PIONEER/USBANLZ/P0AA/0000BEEF/ANLZ0000.DAT"; }));
+            assert(refused([](auto &t) { t.analysisDataFilePath = "USBANLZ/P0AA/0000BEEF/ANLZ0000.DAT"; }));
+            assert(refused([](auto &t) { t.imagePath = "/Contents/cover.jpg"; }));
+        }
+        // A file that is not there, and one that is not on this stick.
+        bad.filePath = pathToUtf8(stick / "Contents" / "An Artist" / "An Album" / "never copied.flac");
+        assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
+        bad.filePath = touch(scratch / "beside the stick.flac");
+        assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
         for (const char *name : {"05 Fresh.ogg", "06 Fresh", "07 Fresh.flac.txt"}) {
             bad.filePath = file(stick, name);
             assert(throws<std::invalid_argument>([&] { (void)w.addTrack(bad); }));
@@ -321,7 +367,8 @@ int main(int argc, char **argv)
         assert(w.addTrack(bad) == 21);
         assert(one(db, "SELECT fileType FROM content WHERE content_id = 21") == "5");
     }
-    std::cout << "case 5 (a named file, no title, a misspelled date, an unknown type: refused, nothing written) OK\n";
+    std::cout << "case 5 (a named file, a missing one, one off the stick, no title, impossible dates and numbers, a shared "
+                 "analysis file, an unknown type: refused, nothing written) OK\n";
 
     // 6. Read back as Seabass reads a stick.
     {
@@ -367,11 +414,35 @@ int main(int argc, char **argv)
         strange.finishWriting();
         assert(one(otherDb, "SELECT count(*) || '/' || (SELECT count(*) FROM artist) FROM content") == "11/1");
     }
-    std::cout << "case 7 (an unknown content schema is refused) OK\n";
+    for (const char *change :
+         {"ALTER TABLE artist ADD COLUMN sortName varchar;", "ALTER TABLE album ADD COLUMN year integer;",
+          "ALTER TABLE genre ADD COLUMN x integer;", "ALTER TABLE label ADD COLUMN x integer;",
+          "ALTER TABLE key ADD COLUMN x integer;", "ALTER TABLE image ADD COLUMN x integer;",
+          "ALTER TABLE property DROP COLUMN numberOfContents;", "UPDATE property SET numberOfContents = NULL;",
+          "INSERT INTO property (numberOfContents) VALUES (3);", "INSERT INTO property (numberOfContents) VALUES (NULL);",
+          "DELETE FROM property;"}) {
+        const fs::path other = stickAt("schema" + std::to_string(++schema));
+        const std::string otherDb = pathToUtf8(other / "PIONEER" / "rekordbox" / "exportLibrary.db");
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb raw(lib, otherDb, false);
+            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec(change);
+        }
+        OneLibraryCueWriter strange(pathToUtf8(other / "PIONEER"));
+        OneLibraryCueWriter::NewTrack t = full;
+        t.filePath = file(other, "01 Tagged.flac");
+        if (!throws<std::runtime_error>([&] { (void)strange.addTrack(t); })) {
+            std::cerr << "not refused after: " << change << "\n";
+            assert(false);
+        }
+        strange.finishWriting();
+        assert(one(otherDb, "SELECT count(*) || '/' || (SELECT count(*) FROM artist) FROM content") == "11/1");
+    }
+    std::cout << "case 7 (an unknown content or lookup schema, and a property table without its one count, are refused) OK\n";
 
-    // 8. A failure after the lookup rows were made takes them back: the
-    //    property table gone, so the last statement of the transaction
-    //    fails.
+    // 8. A failure after the lookup rows were made takes them back:
+    //    something in the database refuses the content row itself.
     {
         const fs::path broken = stickAt("broken");
         const std::string brokenDb = pathToUtf8(broken / "PIONEER" / "rekordbox" / "exportLibrary.db");
@@ -379,7 +450,7 @@ int main(int argc, char **argv)
             SqlCipherLibrary lib;
             SqlCipherDb raw(lib, brokenDb, false);
             raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
-            raw.exec("DROP TABLE property;");
+            raw.exec("CREATE TRIGGER refuse BEFORE INSERT ON content BEGIN SELECT RAISE(ABORT, 'refused'); END;");
         }
         OneLibraryCueWriter half(pathToUtf8(broken / "PIONEER"));
         OneLibraryCueWriter::NewTrack t = full;
@@ -387,10 +458,101 @@ int main(int argc, char **argv)
         assert(throws<std::runtime_error>([&] { (void)half.addTrack(t); }));
         half.finishWriting();
         assert(one(brokenDb, "SELECT count(*) || '/' || (SELECT count(*) FROM artist) || '/' || "
-                             "(SELECT count(*) FROM genre) || '/' || (SELECT count(*) FROM image) FROM content")
-               == "11/1/0/0");
+                             "(SELECT count(*) FROM genre) || '/' || (SELECT count(*) FROM image) || '/' || "
+                             "(SELECT numberOfContents FROM property) FROM content")
+               == "11/1/0/0/11");
     }
     std::cout << "case 8 (a failed insert leaves no row and no lookup row) OK\n";
+
+    // 9. An id something still names is not given out again: the
+    //    player's history, a My Tag, a recommendation, a cue or a
+    //    playlist row left behind by a removed track (rekordbox's rows
+    //    end at 15).
+    {
+        int n = 0;
+        for (const char *leftover :
+             {"INSERT INTO history_content (history_id, content_id, sequenceNo) VALUES (1, 40, 1);",
+              "INSERT INTO myTag_content (myTag_id, content_id) VALUES (1, 40);",
+              "INSERT INTO recommendedLike (content_id_1, content_id_2, rating, createdDate) VALUES (40, 2, 1, 0);",
+              "INSERT INTO recommendedLike (content_id_1, content_id_2, rating, createdDate) VALUES (2, 40, 1, 0);",
+              "INSERT INTO cue (cue_id, content_id, kind) VALUES (900, 40, 0);",
+              "INSERT INTO playlist_content (playlist_id, content_id, sequenceNo) VALUES (9, 40, 9);",
+              "DELETE FROM content WHERE content_id = 15;"}) {
+            const fs::path other = stickAt("leftover" + std::to_string(++n));
+            const std::string otherDb = pathToUtf8(other / "PIONEER" / "rekordbox" / "exportLibrary.db");
+            {
+                SqlCipherLibrary lib;
+                SqlCipherDb raw(lib, otherDb, false);
+                raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+                raw.exec(leftover);
+            }
+            OneLibraryCueWriter after(pathToUtf8(other / "PIONEER"));
+            OneLibraryCueWriter::NewTrack t = full;
+            t.filePath = file(other, "01 Tagged.flac");
+            // The last: content 15 removed with its playlist row left,
+            // as this class's own removal never leaves it; 15 is named.
+            const int64_t expected = n == 7 ? 16 : 41;
+            const int64_t got = after.addTrack(t);
+            if (got != expected) {
+                std::cerr << "id " << got << " after: " << leftover << "\n";
+                assert(false);
+            }
+            after.finishWriting();
+        }
+    }
+    std::cout << "case 9 (an id the history, a tag, a recommendation, a cue or a playlist still names is not reused) OK\n";
+
+    // 10. A file two rows already name in two other spellings is named:
+    //     not a third row.
+    {
+        const fs::path other = stickAt("spellings");
+        const std::string otherDb = pathToUtf8(other / "PIONEER" / "rekordbox" / "exportLibrary.db");
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb raw(lib, otherDb, false);
+            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec("UPDATE content SET path = '/Contents/AN ARTIST/An Album/01 Tagged.flac' WHERE content_id = 1;");
+            raw.exec("UPDATE content SET path = '/Contents/an artist/An Album/01 Tagged.flac' WHERE content_id = 2;");
+        }
+        OneLibraryCueWriter twice(pathToUtf8(other / "PIONEER"));
+        OneLibraryCueWriter::NewTrack t = full;
+        t.filePath = file(other, "01 Tagged.flac");
+        assert(throws<std::invalid_argument>([&] { (void)twice.addTrack(t); }));
+        twice.finishWriting();
+        assert(one(otherDb, "SELECT count(*) FROM content") == "11");
+    }
+    std::cout << "case 10 (a file named by two rows in two other spellings is not given a third) OK\n";
+
+    // 11. A row that reads back other than it was written is taken out
+    //     again, the count with it, and the call fails. Something in the
+    //     database rewrites the title as it lands.
+    {
+        const fs::path other = stickAt("readback");
+        const std::string otherDb = pathToUtf8(other / "PIONEER" / "rekordbox" / "exportLibrary.db");
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb raw(lib, otherDb, false);
+            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec("CREATE TRIGGER rewrite AFTER INSERT ON content BEGIN "
+                     "UPDATE content SET fileSize = 1 WHERE content_id = NEW.content_id; END;");
+        }
+        OneLibraryCueWriter spoiled(pathToUtf8(other / "PIONEER"));
+        OneLibraryCueWriter::NewTrack t = full;
+        t.filePath = file(other, "01 Tagged.flac");
+        bool failed = false;
+        try {
+            (void)spoiled.addTrack(t);
+        } catch (const std::runtime_error &e) {
+            failed = std::string(e.what()).find("taken out again") != std::string::npos;
+        }
+        assert(failed);
+        // And the writer goes on working: its baseline is the file as the
+        // removal left it.
+        assert(!spoiled.hasTrackAtPath(t.filePath));
+        spoiled.finishWriting();
+        assert(one(otherDb, "SELECT count(*) || '/' || (SELECT numberOfContents FROM property) FROM content") == "11/11");
+    }
+    std::cout << "case 11 (a row that does not read back as written is removed again) OK\n";
 
     fs::remove_all(scratch);
     std::cout << "onelibrary_add_track_test: all cases passed\n";

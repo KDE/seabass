@@ -359,28 +359,39 @@ public:
         std::string date;
     };
 
-    // Adds one content row for `track` and returns its content_id, one
-    // above the highest (the ids have gaps; a removed row's is not
-    // reused, as rekordbox does not). In one transaction:
+    // Adds one content row for `track` and returns its content_id: one
+    // above the highest id anything in the database names, the tables
+    // that point into content included, so a removed track's history, My
+    // Tags or leftover playlist rows are never inherited. In one
+    // transaction:
     //   - the artist, album, genre, label, key and image rows the track
     //     names are looked up by their exact spelling and made where
-    //     missing (an album is the pair of its name and its album artist,
-    //     and has no artist when the file names no album artist: the
-    //     T73 export's albums have none, its files no such tag);
+    //     missing. An album is the pair of its name and its album artist,
+    //     and has no artist when the file names no album artist: the T73
+    //     export's files have no such tag and rekordbox gave their albums
+    //     none, so an album rekordbox filed under an artist is not the
+    //     album of a file that names none;
     //   - the content row, every column named. What rekordbox fills from
     //     its own collection and an imported file has no truth for is
     //     written as "none": masterDbId, masterContentId and contentLink
     //     0, analysedBits 0, the three update counters NULL (as on
     //     rekordbox's own rows that were never analysed);
     //   - property.numberOfContents goes up by one.
+    // Then everything bound is read back through the verify connection;
+    // a row that is not as written is removed again before the throw.
+    //
     // Refused with std::invalid_argument, nothing written: an empty
-    // title, a date not spelled YYYY-MM-DD, a file type rekordbox has no
-    // number for here (mp3, m4a, mp4, flac, wav, aif, aiff are known), a
-    // file some content row already names (compared as the stick's
-    // filesystem compares names). Refused with std::runtime_error: a
-    // content table with a column this does not know (a newer schema is
-    // not guessed at). Read back through the verify connection before it
-    // is trusted.
+    // title; a date that is not YYYY-MM-DD; a tempo outside 0 to 1000, a
+    // negative number, a size past what the column holds; a file type
+    // rekordbox has no number for here (mp3, m4a, mp4, flac, wav, aif,
+    // aiff are known); a file that is not there or not on this stick; a
+    // file some content row already names, compared as the stick's
+    // filesystem compares names; an analysis file another row already
+    // names; an analysis or image path not under /PIONEER/.
+    // Refused with std::runtime_error: a content, artist, album, genre,
+    // label, key or image table with other columns than rekordbox
+    // 7.2.18's (a newer schema is not guessed at), or a property table
+    // that is not one row with a track count.
     int64_t addTrack(const NewTrack &track);
 
     // A playlist's membership, by the playlist's full path ("Folder/List",
