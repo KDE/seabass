@@ -77,6 +77,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/MessageDialog.qml
     qml/common/MetadataListToolbar.qml
     qml/common/MetadataTrackDelegate.qml
+    qml/common/PlayableCover.qml
     qml/common/ProgressReport.qml
     qml/common/ProgressTrack.qml
     qml/common/RowHoverShade.qml

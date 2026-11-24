@@ -650,6 +650,51 @@ TestCase {
         tryCompare(undo, "visible", false, 5000, "and there is nothing left to undo");
     }
 
+    // A stray cue's row on a track with a file, and the row's delegate.
+    function playableRow(page) {
+        const controller = page.consistencyController;
+        for (let i = 0; i < controller.junkCues.count; ++i) {
+            const t = junkRow(controller.junkCues, i, testCase.junkTrackRole);
+            if ((t.filePath || "").length > 0 && (t.streamingSource || "").length === 0) {
+                return {index: i, track: t, item: rowItem(page, i)};
+            }
+        }
+        verify(false, "precondition: a stray cue on a track with a file");
+        return null;
+    }
+
+    // A track with no file to play: the key on its cover is disabled and
+    // the cover says why (#133).
+    function test_aCoverWithoutAFileSaysWhy() {
+        realPlayback.stop();
+        const page = openScanned();
+        const r = playableRow(page);
+        r.item.track = Object.assign({}, r.track, {filePath: ""});
+        const cover = findChild(r.item, "rowCell_artwork");
+        const key = findChild(r.item, "rowPlayButton");
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        tryCompare(key, "visible", true);
+        compare(key.enabled, false, "nothing to play");
+        tryVerify(() => cover.ToolTip.visible, 2000, "the cover says why");
+        compare(cover.ToolTip.text, "No audio file on the stick for this track");
+        mouseClick(key);
+        wait(100);
+        compare(realPlayback.hasTrack, false, "and nothing is loaded");
+    }
+
+    // The same track of another library (the same id under another path)
+    // is not this row's: neither the row nor its cover take it as playing.
+    function test_anotherLibrarysCopyIsNotThisRow() {
+        const page = openScanned();
+        const r = playableRow(page);
+        realPlayback.load(r.item.format, "/elsewhere/PIONEER", r.track.sourceId, r.track.filePath, r.track.title,
+                          r.track.artist, "", [], "", false);
+        compare(realPlayback.currentSourceId, r.track.sourceId);
+        compare(r.item.isPlaying, false, "not drawn as the track playing");
+        compare(findChild(r.item, "rowCell_artwork").isCurrentTrack, false, "and its key would load its own copy");
+        realPlayback.stop();
+    }
+
     // A row is drawn as Browse draws one: the cover, which plays the track
     // while the row is hovered and stays while it is the track playing, and
     // the key beside the title.

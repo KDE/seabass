@@ -1841,6 +1841,56 @@ TestCase {
         cleanupExperimental();
     }
 
+    // The cover of the track loaded pauses it, and a second click plays
+    // on: neither loads it again (#133).
+    function test_theLoadedTracksCoverPausesAndResumes() {
+        const t = makeDragPage();
+        const row = t.list.itemAtIndex(2);
+        const cover = findChild(row, "rowCell_artwork");
+        // The row's track loaded and playing, from a file that plays (the
+        // fixture's rows name files that are not there).
+        const wav = stickFixture.scratchDirectory() + "/cover-play.wav";
+        verify(artworkFixture.writeNoiseWav(wav, 20, 0, 7));
+        realPlayback.load(t.page.format, t.page.currentPath(), row.sourceId, wav, row.title, row.artist, "", [], "", true);
+        tryCompare(realPlayback, "playing", true, 5000);
+        verify(cover.isCurrentTrack, "the cover's track is the one loaded");
+        const serial = realPlayback.trackSerial;
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        mouseClick(cover);
+        tryCompare(realPlayback, "playing", false, 5000, "a click pauses it");
+        compare(realPlayback.trackSerial, serial, "without loading the track again");
+        mouseClick(cover);
+        tryCompare(realPlayback, "playing", true, 5000, "a second click plays on");
+        compare(realPlayback.trackSerial, serial, "still the same load");
+        compare(realPlayback.currentFilePath === undefined || realPlayback.currentFilePath === wav, true);
+        realPlayback.stop();
+        cleanupExperimental();
+    }
+
+    // A track without a file: the key on its cover is disabled and the
+    // cover says why, and a click there opens the details pane as one on
+    // the rest of the row does (#133).
+    function test_aCoverWithoutAFileSaysWhyAndOpensTheDetails() {
+        realPlayback.stop();
+        const t = makeDragPage(false);
+        const row = t.list.itemAtIndex(0);
+        compare(row.filePath, "");
+        compare(row.streamingSource, "");
+        const cover = findChild(row, "rowCell_artwork");
+        const key = findChild(cover, "rowPlayButton");
+        mouseMove(cover, cover.width / 2, cover.height / 2);
+        tryCompare(key, "visible", true);
+        compare(key.enabled, false, "nothing to play");
+        tryVerify(() => cover.ToolTip.visible, 2000, "the cover says why");
+        compare(cover.ToolTip.text, "No audio file for this track on the stick");
+        compare(t.page.trackPanelOpen, false);
+        mouseClick(cover);
+        compare(t.page.trackPanelOpen, true, "the click opens the details pane");
+        compare(findChild(t.page, "trackDetailPanel").trackSourceId, row.sourceId);
+        compare(realPlayback.hasTrack, false, "and plays nothing");
+        cleanupExperimental();
+    }
+
     // With drags on, a row still opens the details pane on a click and its
     // menu on a right click or a press and hold, and its cover still plays.
     function test_aDraggableRowStillClicks() {

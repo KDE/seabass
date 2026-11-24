@@ -590,17 +590,25 @@ HealthCheckPage {
                                     Layout.fillWidth: true
                                     spacing: 8
                                     // Same 40x40 thumbnail convention Browse Library
-                                    // uses for its own track rows (see ScanPage.qml).
-                                    Rectangle {
+                                    // uses for its own track rows (see ScanPage.qml),
+                                    // playing the copy as Play beside it does (#133).
+                                    PlayableCover {
                                         Layout.preferredWidth: Theme.iconSizeNormal
                                         Layout.preferredHeight: Theme.iconSizeNormal
-                                        color: Theme.surface
-                                        radius: Theme.coverRadius(Math.min(width, height))
-                                        ArtworkImage {
-                                            objectName: "issueTrackArtwork"
-                                            anchors.fill: parent
-                                            source: trackFrame.modelData.artworkPath || ""
-                                        }
+                                        artworkObjectName: "issueTrackArtwork"
+                                        source: trackFrame.modelData.artworkPath || ""
+                                        playbackController: root.playbackController
+                                        playSource: ({format: issueDelegate.format,
+                                                      libraryPath: root.pathForFormat(issueDelegate.format),
+                                                      sourceId: trackFrame.modelData.sourceId})
+                                        playFilePath: trackFrame.isSurvivor ? trackFrame.modelData.filePath || "" : ""
+                                        unavailableText: "No local file: this copy's file is missing"
+                                        playText: "Play this copy of the track"
+                                        onPlayRequested: root.playbackController.load(issueDelegate.format,
+                                            root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId,
+                                            trackFrame.modelData.filePath, trackFrame.modelData.title,
+                                            trackFrame.modelData.artist, trackFrame.modelData.artworkPath,
+                                            trackFrame.modelData.cues)
                                     }
                                     Label {
                                         text: (trackFrame.isSurvivor ? "Kept copy: " : "Broken copy: ")
