@@ -1504,6 +1504,198 @@ int main(int argc, char **argv)
         std::cout << "case 26 (a row that cannot be read to check it is counted apart) OK\n";
     }
 
+    // 27. #120: the row a repaired track leaves goes, in the repair's own
+    //     transaction, only when nothing references it any more. Kept:
+    //     row 1 (libdjinterop's ALBUM_ART_ID_NONE, where a track without
+    //     art points), a row another track still uses, a row another table
+    //     names through a declared foreign key, and a row nothing used
+    //     before the repair. Without LeftArtworkRows every row stays, as
+    //     before.
+    {
+        const auto build = [](Fixture &fixture) {
+            sqlite3 *db = fixture.open();
+            exec(db, "CREATE TABLE Cover (id INTEGER PRIMARY KEY, artId INTEGER REFERENCES AlbumArt (id));");
+            exec(db, "INSERT INTO AlbumArt (id, hash, albumArt) VALUES (1, '', NULL);");
+            for (int row = 2; row <= 6; ++row) {
+                exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (" + std::to_string(row)
+                             + ", 'image://fileart//media/OTHER/PIONEER/Artwork/00001/r" + std::to_string(row)
+                             + ".jpg');");
+            }
+            exec(db, "INSERT INTO Cover (id, artId) VALUES (1, 3);");
+            exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Alone', 'A', 2), "
+                     "(2, 'Named elsewhere', 'A', 3), (3, 'Shares', 'A', 4), (4, 'Not repaired', 'A', 4), "
+                     "(5, 'On the placeholder', 'A', 1);");
+            // Row 5: nothing used it before. Row 6 is the same.
+            sqlite3_close(db);
+        };
+        const auto rows = [](Fixture &fixture) {
+            sqlite3 *db = fixture.open();
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(db, "SELECT id FROM AlbumArt WHERE id <= 6 ORDER BY id;", -1, &stmt, nullptr);
+            std::vector<std::int64_t> out;
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                out.push_back(sqlite3_column_int64(stmt, 0));
+            }
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            return out;
+        };
+        std::vector<ArtworkEntry> entries;
+        for (const std::int64_t track : {1, 2, 3, 5}) {
+            ArtworkEntry entry;
+            entry.trackId = track;
+            entry.storage = ArtworkStorage::ImportedPath;
+            entry.imageOnStick = pathToUtf8(seabass::testing::scratchRoot() / "seabass_engine_artwork_left_rows"
+                                            / "PIONEER" / "Artwork" / "00001" / "a5_m.jpg");
+            entries.push_back(entry);
+        }
+
+        {
+            Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_left_rows");
+            build(fixture);
+            const ArtworkRepair kept = repairArtwork(pathToUtf8(fixture.library), entries);
+            assert(kept.error.empty() && kept.repaired == 4);
+            assert(kept.rowsRemoved == 0);
+            assert((rows(fixture) == std::vector<std::int64_t>{1, 2, 3, 4, 5, 6}) && "without the option, every row stays");
+        }
+        {
+            Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_left_rows");
+            build(fixture);
+            LeftArtworkRows left;
+            left.remove = true;
+            const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), entries, {}, {}, {}, left);
+            assert(repair.error.empty() && repair.repaired == 4);
+            assert(repair.rowsRemoved == 1);
+            assert((rows(fixture) == std::vector<std::int64_t>{1, 3, 4, 5, 6}) && "only row 2 went");
+            sqlite3 *db = fixture.open();
+            for (const std::int64_t track : {1, 2, 3, 5}) {
+                assert(hashOf(db, track).size() == 20 && "every repaired track is on its new row");
+            }
+            assert(hashOf(db, 4).starts_with("image://") && "the track not repaired is where it was");
+            sqlite3_close(db);
+        }
+        std::cout << "case 27 (the row a repair leaves goes only when nothing names it) OK\n";
+    }
+
+    // 28. #120: a file under Artwork/ that only the left row named goes
+    //     with it, after the commit; one another row names stays. A backup
+    //     that cannot be taken before the removal fails the repair with
+    //     nothing changed: the row, the track and the file as they were.
+    {
+        const std::vector<std::uint8_t> onlyHash(20, 0x11);
+        const std::vector<std::uint8_t> sharedHash(20, 0x22);
+        const auto blob = [](const std::vector<std::uint8_t> &hash) {
+            static const char *Hex = "0123456789abcdef";
+            std::string out = "x'";
+            for (const std::uint8_t b : hash) {
+                out += Hex[b >> 4];
+                out += Hex[b & 0xf];
+            }
+            return out + "'";
+        };
+        const auto build = [&](Fixture &fixture) {
+            sqlite3 *db = fixture.open();
+            exec(db, "INSERT INTO AlbumArt (id, hash) VALUES (1, ''), (2, " + blob(onlyHash) + "), (3, "
+                         + blob(sharedHash) + "), (4, " + blob(sharedHash) + ");");
+            exec(db, "INSERT INTO Track (id, title, artist, albumArtId) VALUES (1, 'Broken file', 'A', 2), "
+                     "(2, 'Broken shared file', 'A', 3);");
+            sqlite3_close(db);
+            // Files cut short by an unplug: the name a player looks for,
+            // no picture in it.
+            write(fixture.library / "Artwork" / (artworkFileName(onlyHash) + ".jpg"), "CUT");
+            write(fixture.library / "Artwork" / (artworkFileName(sharedHash) + ".jpg"), "CUT TOO");
+        };
+        std::vector<ArtworkEntry> entries;
+        for (const std::int64_t track : {1, 2}) {
+            ArtworkEntry entry;
+            entry.trackId = track;
+            entry.storage = ArtworkStorage::Cached;
+            entry.imageOnStick = pathToUtf8(seabass::testing::scratchRoot() / "seabass_engine_artwork_left_files"
+                                            / "PIONEER" / "Artwork" / "00001" / "a5_m.jpg");
+            entries.push_back(entry);
+        }
+        {
+            Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_left_files");
+            build(fixture);
+            std::vector<std::string> backedUp;
+            LeftArtworkRows left;
+            left.remove = true;
+            left.beforeRemove = [&](const std::string &file) { backedUp.push_back(file); };
+            const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), entries, {}, {}, {}, left);
+            assert(repair.error.empty() && repair.repaired == 2);
+            assert(repair.rowsRemoved == 2 && "rows 2 and 3: each left by its one track");
+            const fs::path only = fixture.library / "Artwork" / (artworkFileName(onlyHash) + ".jpg");
+            const fs::path shared = fixture.library / "Artwork" / (artworkFileName(sharedHash) + ".jpg");
+            assert(!fs::exists(only) && "the file only row 2 named went with it");
+            assert(fs::exists(shared) && "row 4 still names the other");
+            assert((backedUp == std::vector<std::string>{pathToUtf8(only)}) && "backed up before it went");
+            assert((repair.filesRemoved == std::vector<std::string>{pathToUtf8(only)}));
+            assert(repair.filesNotRemoved.empty());
+            sqlite3 *db = fixture.open();
+            sqlite3_stmt *stmt = nullptr;
+            sqlite3_prepare_v2(db, "SELECT group_concat(id) FROM AlbumArt WHERE id <= 4;", -1, &stmt, nullptr);
+            assert(sqlite3_step(stmt) == SQLITE_ROW);
+            assert(std::string(reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0))) == "1,4");
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+            for (const std::string &file : repair.artworkFiles) {
+                assert(fs::exists(pathFromUtf8(file)) && "the new cover is there");
+            }
+        }
+        {
+            Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_left_files");
+            build(fixture);
+            const std::string before = [&] {
+                std::ifstream in(fixture.library / "Database2" / "m.db", std::ios::binary);
+                return std::string(std::istreambuf_iterator<char>(in), {});
+            }();
+            LeftArtworkRows left;
+            left.remove = true;
+            left.beforeRemove = [](const std::string &) { throw std::runtime_error("no room for the backup"); };
+            const ArtworkRepair repair =
+                repairArtwork(pathToUtf8(fixture.library), {entries[0]}, {}, {}, {}, left);
+            assert(!repair.error.empty() && repair.error.find("no room for the backup") != std::string::npos);
+            assert(repair.repaired == 0 && repair.rowsRemoved == 0);
+            assert(fs::exists(fixture.library / "Artwork" / (artworkFileName(onlyHash) + ".jpg")));
+            sqlite3 *db = fixture.open();
+            assert(hashOf(db, 1) == std::string(onlyHash.begin(), onlyHash.end()) && "the track is where it was");
+            sqlite3_close(db);
+            std::ifstream in(fixture.library / "Database2" / "m.db", std::ios::binary);
+            assert(std::string(std::istreambuf_iterator<char>(in), {}) == before && "m.db as it was");
+        }
+        // Named elsewhere, the file stays while the row still goes: by
+        // hm.db's AlbumArt (another database beside m.db), and by a
+        // Track.albumArt text in m.db itself.
+        for (const bool byHistory : {true, false}) {
+            Fixture fixture(seabass::testing::scratchRoot() / "seabass_engine_artwork_left_files");
+            build(fixture);
+            if (byHistory) {
+                sqlite3 *hm = nullptr;
+                assert(sqlite3_open(pathToUtf8(fixture.library / "Database2" / "hm.db").c_str(), &hm) == SQLITE_OK);
+                exec(hm, "CREATE TABLE AlbumArt (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT, albumArt BLOB);");
+                exec(hm, "INSERT INTO AlbumArt (id, hash) VALUES (7, " + blob(onlyHash) + ");");
+                sqlite3_close(hm);
+            } else {
+                sqlite3 *db = fixture.open();
+                exec(db, "ALTER TABLE Track ADD COLUMN albumArt TEXT;");
+                exec(db, "UPDATE Track SET albumArt = '" + artworkFileName(onlyHash) + ".jpg' WHERE id = 2;");
+                sqlite3_close(db);
+            }
+            std::vector<std::string> backedUp;
+            LeftArtworkRows left;
+            left.remove = true;
+            left.beforeRemove = [&](const std::string &file) { backedUp.push_back(file); };
+            const ArtworkRepair repair = repairArtwork(pathToUtf8(fixture.library), {entries[0]}, {}, {}, {}, left);
+            assert(repair.error.empty() && repair.repaired == 1);
+            assert(repair.rowsRemoved == 1 && "the row no track uses still goes");
+            assert(fs::exists(fixture.library / "Artwork" / (artworkFileName(onlyHash) + ".jpg"))
+                   && "the file something else names stays");
+            assert(backedUp.empty() && repair.filesRemoved.empty() && repair.filesNotRemoved.empty());
+        }
+        std::cout << "case 28 (a file only the left row named goes with it, after a backup; one hm.db or a "
+                     "Track.albumArt names stays) OK\n";
+    }
+
     std::cout << "engine_artwork_test: all cases passed\n";
     return 0;
 }

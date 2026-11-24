@@ -9,7 +9,10 @@
 #include "gui/edit/save_context.hpp"
 #include "gui/artwork_rescue_sources.hpp"
 
+#include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace seabass::gui
 {
@@ -26,6 +29,53 @@ constexpr const char *Label = "artwork-repair";
 std::string databaseOf(const QString &enginePath)
 {
     return FormatWriteSession::databaseFileFor(Format, enginePath.toStdString());
+}
+
+// The cover rows each change of this save removed, and the files under
+// Artwork/ it could not remove, by change id, said once the save has
+// landed: counted from the changes that are on the stick then, so a change
+// rolled back takes its part out of the count with it.
+struct LeftRowsTally
+{
+    std::map<QString, int> rows;
+    std::map<QString, std::vector<std::string>> filesNotRemoved;
+};
+
+LeftRowsTally &leftRowsTally(SaveContext &ctx)
+{
+    // Held by the hook as well as by the save: a save that goes back whole
+    // clears its shared resources before the after-commit hooks run.
+    using Held = std::shared_ptr<LeftRowsTally>;
+    bool created = false;
+    Held &tally = ctx.sharedForWholeSave<Held>("artwork-repair:left-rows", [&]() {
+        created = true;
+        return std::make_unique<Held>(std::make_shared<LeftRowsTally>());
+    });
+    if (created) {
+        ctx.onAfterCommit([&ctx, counted = tally](const SaveContext::AfterCommit &after) {
+            int total = 0;
+            QStringList notRemoved;
+            for (const QString &applied : after.appliedIds) {
+                if (const auto it = counted->rows.find(applied); it != counted->rows.end()) {
+                    total += it->second;
+                }
+                if (const auto it = counted->filesNotRemoved.find(applied); it != counted->filesNotRemoved.end()) {
+                    for (const std::string &file : it->second) {
+                        notRemoved << QString::fromStdString(file);
+                    }
+                }
+            }
+            if (total > 0) {
+                ctx.addSummaryNote(QStringLiteral("Removed %1 cover row(s) that no track used any more.").arg(total));
+            }
+            if (!notRemoved.isEmpty()) {
+                ctx.addSummaryNote(QStringLiteral("Could not remove %1 cover file(s) that no row names any more: %2.")
+                                       .arg(notRemoved.size())
+                                       .arg(notRemoved.join(QStringLiteral(", "))));
+            }
+        });
+    }
+    return *tally;
 }
 }  // namespace
 
@@ -116,11 +166,31 @@ ChangeOutcome RepairArtworkChange::apply(SaveContext &ctx)
     // a save that fails afterwards takes the files back out with the rest.
     // The images are not redirected: they are new files under Artwork/, on
     // the stick, not the database the scratch copy stands in for.
+    //
+    // The row the track leaves goes in the same transaction once nothing
+    // uses it (#120), and a file only that row named is backed up into
+    // this save's record first, so Undo puts it back with the database.
+    infrastructure::engine::LeftArtworkRows leftRows;
+    leftRows.remove = true;
+    leftRows.beforeRemove = [&ctx](const std::string &file) { ctx.backupOnce(file, Label); };
     const auto repair = infrastructure::engine::repairArtwork(
         m_enginePath.toStdString(), {m_entry}, [&ctx](const std::string &file) { ctx.protectForThisChange(file); },
-        database, m_rescue ? m_rescue->reader() : infrastructure::engine::ArtworkSourceReader{});
+        database, m_rescue ? m_rescue->reader() : infrastructure::engine::ArtworkSourceReader{}, leftRows);
     if (!repair.error.empty()) {
         return ChangeOutcome::failure(QString::fromStdString(repair.error));
+    }
+    if (repair.rowsRemoved > 0) {
+        leftRowsTally(ctx).rows[id()] += repair.rowsRemoved;
+        ctx.log().record("artwork: removed " + std::to_string(repair.rowsRemoved)
+                         + " cover row(s) no track uses any more, left by track " + std::to_string(m_entry.trackId)
+                         + ", and " + std::to_string(repair.filesRemoved.size()) + " file(s) only they named");
+    }
+    if (!repair.filesNotRemoved.empty()) {
+        auto &files = leftRowsTally(ctx).filesNotRemoved[id()];
+        files.insert(files.end(), repair.filesNotRemoved.begin(), repair.filesNotRemoved.end());
+    }
+    for (const std::string &file : repair.filesNotRemoved) {
+        ctx.log().record("artwork: could not remove " + file + ", which no cover row names any more");
     }
     if (repair.repaired == 0) {
         // This one track could not be given art. That is a skip, not a

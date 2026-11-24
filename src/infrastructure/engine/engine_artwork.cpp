@@ -1035,10 +1035,183 @@ ArtworkBytes artworkBytesOnStick(const std::vector<domain::Track> &tracks, const
     return {bytes, false};
 }
 
+namespace
+{
+
+// The row libdjinterop writes for a track without art and Engine creates
+// with every library: AlbumArt (1, '', NULL), named by
+// djinterop::engine::v2/v3 ALBUM_ART_ID_NONE. A track added later is
+// pointed at it, so it must be there whether or not anything uses it now.
+constexpr std::int64_t AlbumArtIdNone = 1;
+
+// Every (table, column) of the database that holds an AlbumArt id: the
+// columns a foreign key declares onto AlbumArt, and any column called
+// albumArtId or idAlbumArt, declared or not (Engine 1.x's music.Track
+// names it so). Engine 2.x and 3.x have one, Track.albumArtId; reading the
+// schema rather than naming it means a table a later Engine adds is asked
+// too. No value when the schema cannot be read.
+std::optional<std::vector<std::pair<std::string, std::string>>> albumArtReferences(sqlite3 *handle)
+{
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "SELECT m.name, f.\"from\" FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f "
+                      "WHERE m.type = 'table' AND lower(f.\"table\") = 'albumart' "
+                      "UNION "
+                      "SELECT m.name, p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p "
+                      "WHERE m.type = 'table' AND lower(p.name) IN ('albumartid', 'idalbumart');";
+    if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return std::nullopt;
+    }
+    std::vector<std::pair<std::string, std::string>> out;
+    int step = SQLITE_ROW;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const auto *table = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0));
+        const auto *column = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+        if (table == nullptr || column == nullptr) {
+            sqlite3_finalize(stmt);
+            return std::nullopt;
+        }
+        out.emplace_back(table, column);
+    }
+    sqlite3_finalize(stmt);
+    if (step != SQLITE_DONE) {
+        return std::nullopt;
+    }
+    return out;
+}
+
+// Whether table `table` of `handle` has column `column`; no value when the
+// schema cannot be read. False for a table that is not there.
+std::optional<bool> columnExists(sqlite3 *handle, const char *table, const char *column)
+{
+    sqlite3_stmt *stmt = nullptr;
+    if (sqlite3_prepare_v2(handle, "SELECT count(*) FROM pragma_table_info(?) WHERE lower(name) = lower(?);", -1,
+                           &stmt, nullptr)
+        != SQLITE_OK) {
+        return std::nullopt;
+    }
+    sqlite3_bind_text(stmt, 1, table, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, column, -1, SQLITE_STATIC);
+    std::optional<bool> out;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        out = sqlite3_column_int64(stmt, 0) > 0;
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
+// Whether `handle` names the Artwork/ file of `hash` (`name` is its
+// artworkFileName(), without extension) anywhere but AlbumArt row
+// `exceptRow` (0 for none): an AlbumArt.hash equal to it, or a
+// Track.albumArt text holding the name. No value when it could not be read.
+std::optional<bool> namesArtworkFile(sqlite3 *handle, const std::vector<std::uint8_t> &hash, const std::string &name,
+                                     std::int64_t exceptRow)
+{
+    const auto asks = [&](const char *sql, const auto &bind) -> std::optional<bool> {
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return std::nullopt;
+        }
+        bind(stmt);
+        const int step = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (step == SQLITE_ROW) {
+            return true;
+        }
+        if (step == SQLITE_DONE) {
+            return false;
+        }
+        return std::nullopt;
+    };
+    const std::optional<bool> rows = columnExists(handle, "AlbumArt", "hash");
+    const std::optional<bool> tracks = columnExists(handle, "Track", "albumArt");
+    if (!rows || !tracks) {
+        return std::nullopt;
+    }
+    if (*rows) {
+        const auto named = asks("SELECT 1 FROM AlbumArt WHERE hash = ? AND id != ? LIMIT 1;", [&](sqlite3_stmt *stmt) {
+            sqlite3_bind_blob(stmt, 1, hash.data(), static_cast<int>(hash.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int64(stmt, 2, exceptRow);
+        });
+        if (!named || *named) {
+            return named;
+        }
+    }
+    if (*tracks) {
+        const auto named = asks("SELECT 1 FROM Track WHERE typeof(albumArt) = 'text' AND instr(albumArt, ?) > 0 "
+                                "LIMIT 1;",
+                                [&](sqlite3_stmt *stmt) { sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT); });
+        if (!named || *named) {
+            return named;
+        }
+    }
+    return false;
+}
+
+// Whether any other database beside the library's m.db (hm.db, or any
+// other *.db in Database2) names the Artwork/ file of `hash`. The live
+// m.db and `writing` are skipped: the repair's own handle answers for
+// them. A database that cannot be opened or read counts as naming it, so
+// the file stays.
+bool namedByAnotherDatabase(const fs::path &liveDatabase, const fs::path &writing,
+                            const std::vector<std::uint8_t> &hash, const std::string &name)
+{
+    std::error_code ec;
+    fs::directory_iterator it(liveDatabase.parent_path(), ec);
+    if (ec) {
+        return true;
+    }
+    for (; it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) {
+            return true;
+        }
+        const fs::path file = it->path();
+        if (file.extension() != ".db" || !it->is_regular_file(ec)) {
+            continue;
+        }
+        if (fs::equivalent(file, liveDatabase, ec) || (!writing.empty() && fs::equivalent(file, writing, ec))) {
+            continue;
+        }
+        sqlite3 *other = nullptr;
+        if (sqlite3_open_v2(pathToUtf8(file).c_str(), &other, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            sqlite3_close(other);
+            return true;
+        }
+        sqlite3_busy_timeout(other, 5000);
+        const std::optional<bool> named = namesArtworkFile(other, hash, name, 0);
+        sqlite3_close(other);
+        if (!named || *named) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string quotedIdentifier(const std::string &name)
+{
+    std::string out = "\"";
+    for (const char c : name) {
+        out += c;
+        if (c == '"') {
+            out += '"';
+        }
+    }
+    return out + "\"";
+}
+
+}  // namespace
+
 ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
                             const std::function<void(const std::string &)> &beforeWrite,
                             const std::string &databaseFileOverride,
                             const ArtworkSourceReader &readOtherSource)
+{
+    return repairArtwork(engineLibraryPath, entries, beforeWrite, databaseFileOverride, readOtherSource, {});
+}
+
+ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
+                            const std::function<void(const std::string &)> &beforeWrite,
+                            const std::string &databaseFileOverride,
+                            const ArtworkSourceReader &readOtherSource, const LeftArtworkRows &leftRows)
 {
     ArtworkRepair result;
     const fs::path db = databaseFileOverride.empty() ? databaseFile(engineLibraryPath) : pathFromUtf8(databaseFileOverride);
@@ -1097,6 +1270,133 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
     // the audit's, carried on each entry, so one repair of a save cannot
     // change what the next writes. Read here only for an entry without it.
     std::optional<bool> libraryNow;
+
+    // #120: the row a track was just pointed away from, deleted when
+    // nothing references it any more. Every check that cannot be read
+    // keeps the row: a leftover row costs a few bytes, a row deleted from
+    // under a reference is a broken library. Read once, when first needed.
+    std::optional<std::optional<std::vector<std::pair<std::string, std::string>>>> references;
+    // Files only a deleted row named, removed once the transaction has
+    // committed: before that the rows naming them may still come back.
+    std::vector<std::string> filesToRemove;
+    // Returns a message when the repair has to fail: only a backup that
+    // could not be taken, or a delete that half happened.
+    const auto removeIfLeftUnused = [&](std::int64_t row) -> std::optional<std::string> {
+        if (row == AlbumArtIdNone || row <= 0) {
+            return std::nullopt;
+        }
+        if (!references) {
+            references = albumArtReferences(handle);
+        }
+        // Not knowing what names a row is not knowing it is unused. And a
+        // schema where nothing seems to hold an AlbumArt id is not one
+        // this understands: the track just written holds one.
+        if (!*references || (*references)->empty()) {
+            return std::nullopt;
+        }
+        for (const auto &[table, column] : **references) {
+            sqlite3_stmt *uses = nullptr;
+            const std::string sql =
+                "SELECT 1 FROM " + quotedIdentifier(table) + " WHERE " + quotedIdentifier(column) + " = ? LIMIT 1;";
+            if (sqlite3_prepare_v2(handle, sql.c_str(), -1, &uses, nullptr) != SQLITE_OK) {
+                return std::nullopt;
+            }
+            sqlite3_bind_int64(uses, 1, row);
+            const int step = sqlite3_step(uses);
+            sqlite3_finalize(uses);
+            if (step != SQLITE_DONE) {
+                return std::nullopt;  // something uses it, or the answer could not be read
+            }
+        }
+        // The row itself: one with image bytes of its own is data, not a
+        // dead link, and stays used or not.
+        sqlite3_stmt *current = nullptr;
+        const std::string rowSql = "SELECT typeof(hash), hash, "
+            + (hasImageColumn ? "coalesce(" + byteLengthSql("albumArt") + ", 0)" : std::string("0"))
+            + " FROM AlbumArt WHERE id = ?;";
+        if (sqlite3_prepare_v2(handle, rowSql.c_str(), -1, &current, nullptr) != SQLITE_OK) {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(current, 1, row);
+        if (sqlite3_step(current) != SQLITE_ROW || sqlite3_column_int64(current, 2) != 0) {
+            sqlite3_finalize(current);
+            return std::nullopt;
+        }
+        const bool blobHash = sqlite3_column_type(current, 1) == SQLITE_BLOB;
+        const auto *hashBytes = static_cast<const std::uint8_t *>(sqlite3_column_blob(current, 1));
+        const std::vector<std::uint8_t> hash(hashBytes, hashBytes + sqlite3_column_bytes(current, 1));
+        sqlite3_finalize(current);
+
+        // A blob hash names a file under Artwork/ (cachedArtworkFile). It
+        // goes with the row only if nothing else names it, and never the
+        // file a track of this repair now points at. A link ("image://...")
+        // names a file outside the library, never touched.
+        //
+        // The invariant this rests on: a track only reaches the repair
+        // when the audit found its art missing or unreadable, so the file
+        // a left row names is one a player could not show anyway. Removing
+        // it loses no picture; a file still named elsewhere stays all the
+        // same, because "unreadable" was said of this row, not of theirs.
+        std::vector<std::string> files;
+        const std::string_view hashText(reinterpret_cast<const char *>(hash.data()), hash.size());
+        if (blobHash && !hash.empty() && !hashText.starts_with(ImportedPrefix)) {
+            const std::string name = artworkFileName(hash);
+            // This database (the one being written, which may be a scratch
+            // copy of m.db): another AlbumArt row with the hash, or a
+            // Track.albumArt text naming the file.
+            const std::optional<bool> namedHere = namesArtworkFile(handle, hash, name, row);
+            if (!namedHere) {
+                return std::nullopt;
+            }
+            if (!*namedHere && !namedByAnotherDatabase(databaseFile(engineLibraryPath), db, hash, name)) {
+                std::error_code ec;
+                for (const char *extension : {".jpg", ".jpeg", ".png"}) {
+                    const std::string file = pathToUtf8(artwork / pathFromUtf8(name + extension));
+                    if (fs::is_regular_file(pathFromUtf8(file), ec)
+                        && std::find(result.artworkFiles.begin(), result.artworkFiles.end(), file)
+                            == result.artworkFiles.end()) {
+                        files.push_back(file);
+                    }
+                }
+            }
+        }
+
+        // Backed up before the row goes, while the transaction can still
+        // take the delete back. A backup that cannot be taken fails the
+        // repair, as one before a write does.
+        for (const std::string &file : files) {
+            if (leftRows.beforeRemove) {
+                try {
+                    leftRows.beforeRemove(file);
+                } catch (const std::exception &e) {
+                    return "could not back up " + file + " before removing it: " + e.what();
+                }
+            }
+        }
+        // In a savepoint, so a delete that fails takes back nothing but
+        // itself: the track's own repair stands.
+        if (sqlite3_exec(handle, "SAVEPOINT left_row;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+            return std::nullopt;
+        }
+        sqlite3_stmt *remove = nullptr;
+        bool removed = false;
+        if (sqlite3_prepare_v2(handle, "DELETE FROM AlbumArt WHERE id = ?;", -1, &remove, nullptr) == SQLITE_OK) {
+            sqlite3_bind_int64(remove, 1, row);
+            removed = sqlite3_step(remove) == SQLITE_DONE && sqlite3_changes(handle) == 1;
+        }
+        sqlite3_finalize(remove);
+        if (!removed) {
+            sqlite3_exec(handle, "ROLLBACK TO left_row;", nullptr, nullptr, nullptr);
+        }
+        if (sqlite3_exec(handle, "RELEASE left_row;", nullptr, nullptr, nullptr) != SQLITE_OK) {
+            return std::string("could not finish removing an unused art row: ") + sqlite3_errmsg(handle);
+        }
+        if (removed) {
+            result.rowsRemoved++;
+            filesToRemove.insert(filesToRemove.end(), files.begin(), files.end());
+        }
+        return std::nullopt;
+    };
 
     // beforeWrite is SaveContext::protectForThisChange, which throws when
     // it cannot copy a file aside (no temporary space, say). Uncaught it
@@ -1357,6 +1657,21 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
                 }
             }
 
+            // The row the track leaves, read in the same transaction as
+            // the move. Unread, nothing is removed.
+            std::optional<std::int64_t> leftRow;
+            if (leftRows.remove) {
+                sqlite3_stmt *was = nullptr;
+                if (sqlite3_prepare_v2(handle, "SELECT albumArtId FROM Track WHERE id = ?;", -1, &was, nullptr)
+                    == SQLITE_OK) {
+                    sqlite3_bind_int64(was, 1, entry.trackId);
+                    if (sqlite3_step(was) == SQLITE_ROW && sqlite3_column_type(was, 0) == SQLITE_INTEGER) {
+                        leftRow = sqlite3_column_int64(was, 0);
+                    }
+                }
+                sqlite3_finalize(was);
+            }
+
             sqlite3_stmt *point = nullptr;
             if (sqlite3_prepare_v2(handle, "UPDATE Track SET albumArtId = ? WHERE id = ?;", -1, &point, nullptr)
                 != SQLITE_OK) {
@@ -1371,6 +1686,11 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
             sqlite3_finalize(point);
             if (sqlite3_changes(handle) > 0) {
                 result.repaired++;
+                if (leftRow && *leftRow != albumArtId) {
+                    if (const auto error = removeIfLeftUnused(*leftRow)) {
+                        return fail(*error);
+                    }
+                }
             } else {
                 // The image is in the library and the AlbumArt row is
                 // written, but the track itself went between the audit and
@@ -1388,6 +1708,19 @@ ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vec
         return fail(std::string("could not commit the art repair: ") + sqlite3_errmsg(handle));
     }
     sqlite3_close(handle);
+    // The rows naming these are gone for good now, so the files go too. One
+    // that will not go stays where it is, named, and fails nothing: no row
+    // names it any more.
+    for (const std::string &file : filesToRemove) {
+        std::error_code ec;
+        // false without an error is a file already gone: what was wanted.
+        fs::remove(pathFromUtf8(file), ec);
+        if (!ec) {
+            result.filesRemoved.push_back(file);
+        } else {
+            result.filesNotRemoved.push_back(file);
+        }
+    }
     return result;
 }
 

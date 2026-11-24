@@ -361,7 +361,29 @@ struct ArtworkRepair
     // nothing is written for them, whatever the check would have said.
     int failedReads = 0;
     std::vector<std::string> failureReasons;
+    // With LeftArtworkRows::remove: the AlbumArt rows the repaired tracks
+    // left and nothing references any more, deleted in the repair's own
+    // transaction, and the files under Artwork/ only those rows named,
+    // removed after it committed (one already gone counts as removed). A
+    // file that could not be removed stays, named in filesNotRemoved: no
+    // row names it, so it is only space. A file is kept, not listed, when
+    // anything else names it: another AlbumArt row or a Track.albumArt
+    // text, in m.db or in any other database in Database2 (hm.db).
+    int rowsRemoved = 0;
+    std::vector<std::string> filesRemoved;
+    std::vector<std::string> filesNotRemoved;
     std::string error;
+};
+
+// What repairArtwork() does with the AlbumArt row a track leaves.
+struct LeftArtworkRows
+{
+    bool remove = false;
+    // Called with each file under Artwork/ before it is removed, while the
+    // transaction that deletes its row is still open, so a save can back
+    // it up for Undo (SaveContext::backupOnce). It may throw, which fails
+    // the repair with the transaction rolled back and the file untouched.
+    std::function<void(const std::string &)> beforeRemove;
 };
 
 // The extension an Engine artwork file must carry, decided on the bytes
@@ -429,6 +451,20 @@ ArtworkBytes artworkBytesOnStick(const std::vector<domain::Track> &tracks, const
 // it exists, so a save can protect it and take it back out if the save
 // then fails (SaveContext::protectForThisChange). It may throw, which
 // fails the repair with the transaction rolled back.
+//
+// `leftRows`: what happens to the row a track is pointed away from (#120).
+// Off, it stays, as it always did. On, it is deleted in the same
+// transaction when, after the track moved, nothing references it: no
+// column of any table that names an AlbumArt id (Track.albumArtId and
+// every foreign key onto AlbumArt the schema declares) holds its id. Never
+// row 1, the row libdjinterop and Engine point a track without art at
+// (ALBUM_ART_ID_NONE), and never a row that keeps image bytes of its own.
+// Only the row a track of this call just left is looked at: a row nothing
+// used before the repair is not this repair's to judge, and is left alone.
+ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
+                            const std::function<void(const std::string &)> &beforeWrite,
+                            const std::string &databaseFile, const ArtworkSourceReader &readOtherSource,
+                            const LeftArtworkRows &leftRows);
 ArtworkRepair repairArtwork(const std::string &engineLibraryPath, const std::vector<ArtworkEntry> &entries,
                             const std::function<void(const std::string &)> &beforeWrite = {},
                             const std::string &databaseFile = {},
