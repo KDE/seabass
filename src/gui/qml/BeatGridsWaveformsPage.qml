@@ -15,9 +15,10 @@ import "common/SaveSummary.js" as SaveSummary
 //
 // Top to bottom: what the page does, what to copy (beat grids, waveforms,
 // and whether over grids set on the player and waveforms it drew), what the ticked tracks would
-// get and the action that stages it; then rekordbox's playlists, each with
-// a box that ticks all of it, beside the tracks of the one shown, in its
-// order, each with a box of its own. Nothing is ticked at first.
+// get and the action that stages it; then a "Playlist:" combo of rekordbox's
+// playlists, each with a box that ticks all of it, picking the one whose
+// tracks the list below shows, in its order, each with a box of its own.
+// Nothing is ticked at first.
 //
 // A track's row says what copying would do to its grid and to its
 // waveform. That is worked out by a preview (BeatGridsController), which
@@ -119,6 +120,67 @@ Page {
     readonly property bool ticksEnabled: root.usable && !root.stickReadOnly && root.controller.stagedCount === 0
         && !root.controller.writing && !editHost.blockedByOtherPage
     readonly property bool staged: root.controller.stagedCount > 0
+
+    // Why a playlist's box is off, from what turns it off (ticksEnabled's
+    // parts, and the playlist's own tracks): each its own sentence, the
+    // playlist's first, since unstaging or waiting would not change it.
+    // "" when nothing does: the box then says what it shows.
+    function boxOffReason(tickable, writing, otherPage, staged, readOnly) {
+        if (tickable === 0) {
+            return "Nothing here to copy: only tracks in the Engine library can be ticked";
+        }
+        if (writing) {
+            return "Saving changes: wait until it is done";
+        }
+        if (otherPage.length > 0) {
+            return "Unsaved changes on " + otherPage + " for this stick: save or discard them there first";
+        }
+        if (staged) {
+            return "Unstage to change what is copied";
+        }
+        if (readOnly) {
+            return "This stick is mounted read-only";
+        }
+        return "";
+    }
+
+    // The playlist combo's rows: "All tracks", then rekordbox's playlists,
+    // each with its track count and small cover.
+    readonly property var playlistPickerModel: {
+        const c = root.controller;
+        const counts = c.playlistTrackCounts || {};
+        const covers = c.playlistThumbnails || {};
+        return [{name: "All tracks", count: c.totalTrackCount, thumbnail: covers[""] ?? ""}].concat(
+            c.playlistNames.map(n => ({name: n, count: counts[n] ?? 0, thumbnail: covers[n] ?? ""})));
+    }
+    // How many playlists are ticked, all of them or in part, for beside
+    // the closed combo; "" when none is.
+    readonly property string tickedPlaylistsText: {
+        if (root.controller.tickRevision < 0) {
+            return "";
+        }
+        let whole = 0;
+        let partly = 0;
+        for (const name of root.controller.playlistNames) {
+            const state = root.controller.playlistCheckState(name);
+            if (state === Qt.Checked) {
+                ++whole;
+            } else if (state === Qt.PartiallyChecked) {
+                ++partly;
+            }
+        }
+        const playlists = n => n + (n === 1 ? " playlist" : " playlists");
+        if (whole > 0 && partly > 0) {
+            return playlists(whole) + " ticked, " + partly + " in part";
+        }
+        if (whole > 0) {
+            return playlists(whole) + " ticked";
+        }
+        if (partly > 0) {
+            return playlists(partly) + " ticked in part";
+        }
+        return "";
+    }
 
     function formatBpm(bpm) {
         const oneDecimal = bpm.toFixed(1);
@@ -528,402 +590,419 @@ Page {
                 + " data to check what syncing would change..."
         }
 
+        // Which playlist's tracks are listed, picked as on Sync Cue Points
+        // and Clean Up Duplicates (#115), with a box on each playlist in
+        // the combo that ticks all of its tracks, half filled when some
+        // are. Beside it, how many playlists are ticked, which the closed
+        // combo cannot show.
         RowLayout {
-            objectName: "panes"
+            objectName: "playlistPickerRow"
             Layout.fillWidth: true
-            Layout.fillHeight: true
             visible: root.usable
-            spacing: Theme.rowSpacing
-
-            PlaylistListView {
-                id: playlistList
-                objectName: "playlistList"
-                // Narrower on a narrow page, down to a floor that still
-                // shows a playlist's name: the tracks beside it need the
-                // room more, their state marks most of all (on macOS, where
-                // Theme.scaled() is 1.3 and the small fonts are not small,
-                // the full width left the title column 86 px at 720).
-                Layout.preferredWidth: Math.min(Theme.scaled(240), Math.max(Theme.scaled(160), body.width * 0.3))
-                Layout.fillHeight: true
-                scanController: root.controller
-                summariesEnabled: false
-                shownPlaylist: root.controller.shownPlaylist
-                selectedIndex: root.controller.shownPlaylist.length === 0 ? 0
+            spacing: Theme.tightSpacing
+            Label {
+                objectName: "playlistPickerLabel"
+                text: "Playlist:"
+                color: Theme.textMuted
+            }
+            PlaylistPickerCombo {
+                id: playlistPicker
+                objectName: "playlistPicker"
+                Layout.preferredWidth: Theme.snap(Math.max(Theme.scaled(200), Math.min(Theme.scaled(320), body.width * 0.35)))
+                Layout.minimumWidth: 0
+                model: root.playlistPickerModel
+                currentIndex: root.controller.shownPlaylist.length === 0 ? 0
                     : root.controller.playlistNames.indexOf(root.controller.shownPlaylist) + 1
-                keyNotation: root.appSettingsController ? root.appSettingsController.keyNotation : "camelot"
                 checkable: true
                 checksEnabled: root.ticksEnabled
                 checkRevision: root.controller.tickRevision
                 checkStateOf: name => root.controller.playlistCheckState(name)
                 checkEnabledFor: name => root.controller.tickablePlaylistTracks(name) > 0
-                onPlaylistPicked: (index, name) => root.controller.shownPlaylist = index === 0 ? "" : name
+                checkOffReason: name => root.boxOffReason(root.controller.tickablePlaylistTracks(name),
+                    root.controller.writing,
+                    editHost.blockedByOtherPage ? editHost.pageNameFor(editHost.editorOwner) : "",
+                    root.staged, root.stickReadOnly)
+                ToolTip.visible: hovered && !popup.visible
+                ToolTip.delay: 400
+                ToolTip.text: "The playlist whose tracks are listed; a playlist's box ticks all of its tracks"
+                onPlaylistPicked: (index, modelData) => root.controller.shownPlaylist = index === 0 ? "" : modelData.name
                 onPlaylistCheckToggled: (name, checked) => root.controller.setPlaylistTicked(name, checked)
             }
-
-            ListView {
-                id: trackList
-                objectName: "trackList"
+            Label {
+                objectName: "tickedPlaylistsLabel"
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                model: root.controller.tracks
-                bottomMargin: editHost.saveClearance
-                spacing: 0
-                interactive: contentHeight > height
-                ScrollBar.vertical: BigScrollBar {}
+                Layout.leftMargin: Theme.rowSpacing - Theme.tightSpacing
+                elide: Text.ElideRight
+                color: Theme.textMuted
+                font.pointSize: Theme.fontSmall
+                text: root.tickedPlaylistsText
+            }
+        }
 
-                delegate: MetadataTrackDelegate {
-                    id: trackRow
-                    // The roles by name would shadow the delegate's own
-                    // title and artist, so the row reads them off `model`.
-                    required property var model
-                    readonly property string rekordboxId: trackRow.model.rekordboxId
-                    readonly property bool matched: trackRow.model.matched
-                    readonly property bool pending: trackRow.model.pending
-                    objectName: "trackRow_" + rekordboxId
-                    // BigScrollBar overlays the list: the row stops short of it.
-                    width: trackList.width - Theme.scaled(10)
-                    title: trackRow.model.title
-                    artist: trackRow.model.artist
-                    artworkUrl: trackRow.model.artworkUrl.length > 0 ? trackRow.model.artworkUrl
-                                                                     : trackRow.model.fallbackArtworkUrl
-                    selectable: trackRow.matched && root.ticksEnabled
-                    reserveSelectionSpace: true
-                    selected: trackRow.model.ticked
-                    selectTooltip: trackRow.matched ? "Copy this track's beat grid and waveform"
-                        : "Not in the Engine library yet: sync the libraries first"
-                    note: trackRow.model.note
-                    noteColor: root.toneColor(trackRow.model.noteTone)
-                    onSelectionToggled: selected => root.controller.setTicked(trackRow.rekordboxId, selected)
+        ListView {
+            id: trackList
+            objectName: "trackList"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.usable
+            clip: true
+            model: root.controller.tracks
+            bottomMargin: editHost.saveClearance
+            spacing: 0
+            interactive: contentHeight > height
+            ScrollBar.vertical: BigScrollBar {}
 
-                    // The cover plays rekordbox's copy of the track (#133),
-                    // as the row's waveform does when it opens it zoomed.
-                    // The track as it is loaded, so the cover and the
-                    // player name it by the same library path.
-                    readonly property var playTrack: trackRow.rekordboxId.length > 0
-                        ? root.controller.zoomTrack(trackRow.rekordboxId) : ({})
-                    playbackController: root.playbackController
-                    playSource: ({format: trackRow.playTrack.format || "", libraryPath: trackRow.playTrack.libraryPath || "",
-                                  sourceId: trackRow.playTrack.sourceId || ""})
-                    playFilePath: trackRow.analysis.playable === true ? trackRow.playTrack.filePath || "" : ""
-                    playUnavailableText: trackRow.analysis.ready === true ? "No audio file on the stick for this track" : ""
-                    onPlayRequested: {
-                        const t = trackRow.playTrack;
-                        root.playbackController.load(t.format, t.libraryPath, t.sourceId, t.filePath, t.title, t.artist,
-                                                     t.artworkPath || "", t.cues || [], t.fallbackArtworkPath || "", true);
-                    }
+            delegate: MetadataTrackDelegate {
+                id: trackRow
+                // The roles by name would shadow the delegate's own
+                // title and artist, so the row reads them off `model`.
+                required property var model
+                readonly property string rekordboxId: trackRow.model.rekordboxId
+                readonly property bool matched: trackRow.model.matched
+                readonly property bool pending: trackRow.model.pending
+                objectName: "trackRow_" + rekordboxId
+                // BigScrollBar overlays the list: the row stops short of it.
+                width: trackList.width - Theme.scaled(10)
+                title: trackRow.model.title
+                artist: trackRow.model.artist
+                artworkUrl: trackRow.model.artworkUrl.length > 0 ? trackRow.model.artworkUrl
+                                                                 : trackRow.model.fallbackArtworkUrl
+                selectable: trackRow.matched && root.ticksEnabled
+                reserveSelectionSpace: true
+                selected: trackRow.model.ticked
+                selectTooltip: trackRow.matched ? "Copy this track's beat grid and waveform"
+                    : "Not in the Engine library yet: sync the libraries first"
+                note: trackRow.model.note
+                noteColor: root.toneColor(trackRow.model.noteTone)
+                onSelectionToggled: selected => root.controller.setTicked(trackRow.rekordboxId, selected)
 
-                    // rekordbox's analysis of the track, for its small
-                    // waveform: asked for while the row is built, let go
-                    // when it goes, read off the GUI thread (see
-                    // requestRowAnalysis()). `analysisId` is the track
-                    // `analysis` is of: an answer for any other track is
-                    // never taken.
-                    property var analysis: ({ready: false})
-                    property string analysisId: ""
-                    property string askedFor: ""
-                    function takeAnalysis() {
-                        trackRow.analysisId = trackRow.rekordboxId;
-                        trackRow.analysis = root.controller.rowAnalysis(trackRow.rekordboxId);
-                    }
-                    function ask() {
-                        if (trackRow.askedFor !== trackRow.rekordboxId) {
-                            if (trackRow.askedFor.length > 0) {
-                                root.controller.releaseRowAnalysis(trackRow.askedFor);
-                            }
-                            trackRow.askedFor = trackRow.rekordboxId;
-                        }
-                        root.controller.requestRowAnalysis(trackRow.rekordboxId);
-                        trackRow.takeAnalysis();
-                    }
-                    onRekordboxIdChanged: {
-                        trackRow.ask();
-                        trackRow.askEngine();
-                    }
-                    // Built and holding what was already read: from now on
-                    // an answer arriving blends in (rowWaveform).
-                    property bool built: false
-                    Component.onCompleted: {
-                        trackRow.ask();
-                        trackRow.askEngine();
-                        trackRow.built = true;
-                    }
-                    Component.onDestruction: {
+                // The cover plays rekordbox's copy of the track (#133),
+                // as the row's waveform does when it opens it zoomed.
+                // The track as it is loaded, so the cover and the
+                // player name it by the same library path.
+                readonly property var playTrack: trackRow.rekordboxId.length > 0
+                    ? root.controller.zoomTrack(trackRow.rekordboxId) : ({})
+                playbackController: root.playbackController
+                playSource: ({format: trackRow.playTrack.format || "", libraryPath: trackRow.playTrack.libraryPath || "",
+                              sourceId: trackRow.playTrack.sourceId || ""})
+                playFilePath: trackRow.analysis.playable === true ? trackRow.playTrack.filePath || "" : ""
+                playUnavailableText: trackRow.analysis.ready === true ? "No audio file on the stick for this track" : ""
+                onPlayRequested: {
+                    const t = trackRow.playTrack;
+                    root.playbackController.load(t.format, t.libraryPath, t.sourceId, t.filePath, t.title, t.artist,
+                                                 t.artworkPath || "", t.cues || [], t.fallbackArtworkPath || "", true);
+                }
+
+                // rekordbox's analysis of the track, for its small
+                // waveform: asked for while the row is built, let go
+                // when it goes, read off the GUI thread (see
+                // requestRowAnalysis()). `analysisId` is the track
+                // `analysis` is of: an answer for any other track is
+                // never taken.
+                property var analysis: ({ready: false})
+                property string analysisId: ""
+                property string askedFor: ""
+                function takeAnalysis() {
+                    trackRow.analysisId = trackRow.rekordboxId;
+                    trackRow.analysis = root.controller.rowAnalysis(trackRow.rekordboxId);
+                }
+                function ask() {
+                    if (trackRow.askedFor !== trackRow.rekordboxId) {
                         if (trackRow.askedFor.length > 0) {
                             root.controller.releaseRowAnalysis(trackRow.askedFor);
                         }
-                        if (trackRow.engineAskedFor.length > 0) {
-                            root.controller.releaseEngineAnalysis(trackRow.engineAskedFor);
-                        }
+                        trackRow.askedFor = trackRow.rekordboxId;
                     }
-                    Connections {
-                        target: root.controller
-                        function onRowAnalysisReady(id) {
-                            if (id === trackRow.rekordboxId) {
-                                trackRow.takeAnalysis();
-                            }
-                        }
-                        function onRowAnalysesStale() { trackRow.ask(); }
-                    }
-
-                    // Opened by a click on the row: rekordbox's analysis
-                    // over the Engine library's, on one time axis, each
-                    // with its grid, and what differs between the grids in
-                    // words. One row open at a time. Engine's side is read
-                    // only for the open row (requestEngineAnalysis()).
-                    expanded: root.openTrackId.length > 0 && root.openTrackId === trackRow.rekordboxId
-                    onExpandToggled: root.openTrackId = trackRow.expanded ? "" : trackRow.rekordboxId
-                    property var engineSide: ({ready: false})
-                    property string engineAskedFor: ""
-                    function askEngine() {
-                        const want = trackRow.expanded ? trackRow.rekordboxId : "";
-                        if (trackRow.engineAskedFor !== want && trackRow.engineAskedFor.length > 0) {
-                            root.controller.releaseEngineAnalysis(trackRow.engineAskedFor);
-                        }
-                        trackRow.engineAskedFor = want;
-                        if (want.length > 0) {
-                            root.controller.requestEngineAnalysis(want);
-                        }
-                        trackRow.engineSide = want.length > 0 ? root.controller.engineAnalysis(want) : {ready: false};
-                    }
-                    onExpandedChanged: trackRow.askEngine()
-                    // A delegate built for the open row (scrolled back into
-                    // view, or the list rebuilt after a read) starts
-                    // expanded, and onExpandedChanged does not run for the
-                    // value it starts with; one reused for another track
-                    // asks for that one's.
-                    // (askEngine() is called from the row's own
-                    // onRekordboxIdChanged and Component.onCompleted above,
-                    // and let go in its Component.onDestruction.)
-                    Connections {
-                        target: root.controller
-                        function onEngineAnalysisReady(id) {
-                            if (id === trackRow.engineAskedFor) {
-                                trackRow.engineSide = root.controller.engineAnalysis(id);
-                            }
-                        }
-                        function onRowAnalysesStale() {
-                            if (trackRow.expanded) {
-                                trackRow.askEngine();
-                            }
-                        }
-                    }
-                    // rekordbox's grid in figures, on Engine's timeline: once
-                    // both sides are in (the shift comes with Engine's).
-                    readonly property var rekordboxGrid: trackRow.analysis.ready === true
-                        && trackRow.engineSide.ready === true
-                        ? root.controller.rowGridFacts(trackRow.analysisId) : ({ready: false})
-
-                    expandedItems: [
-                        ColumnLayout {
-                            id: comparison
-                            objectName: "analysisComparison"
-                            Layout.fillWidth: true
-                            spacing: Theme.tightSpacing
-                            readonly property real laneHeight: Math.round(Theme.scaled(56))
-
-                            Label {
-                                objectName: "comparisonSummary"
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                                color: Theme.text
-                                text: root.comparisonText(trackRow.matched, trackRow.rekordboxGrid, trackRow.engineSide)
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: "rekordbox" + root.gridFactsText(trackRow.rekordboxGrid)
-                                color: Theme.textMuted
-                                font.pointSize: Theme.fontSmall
-                            }
-                            WaveformView {
-                                id: rekordboxLane
-                                objectName: "comparisonRekordbox"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: comparison.laneHeight
-                                gridStyle: "lines"
-                                beatsSelected: true
-                                // On Engine's timeline, as Engine's lane: an
-                                // MP3's waveform and grid moved by its lead-in
-                                // (rowGridFacts().shiftMs), so a grid copied
-                                // across lines up with the copy.
-                                readonly property bool ready: trackRow.rekordboxGrid.ready === true
-                                readonly property int columnCount: rekordboxLane.ready && trackRow.analysis.columns
-                                    ? trackRow.analysis.columns.byteLength / 3 : 0
-                                columnBytes: rekordboxLane.ready ? trackRow.analysis.columns : null
-                                trackDurationMs: rekordboxLane.ready ? trackRow.analysis.durationMs : 0
-                                columnMs: rekordboxLane.columnCount > 0
-                                    ? trackRow.analysis.durationMs / rekordboxLane.columnCount : 0
-                                columnStartMs: rekordboxLane.ready ? trackRow.rekordboxGrid.shiftMs || 0 : 0
-                                beatData: rekordboxLane.ready && rekordboxLane.width > 0
-                                    ? root.controller.comparisonBeatTicks(trackRow.analysisId, rekordboxLane.width) : []
-                                // Drawn once both sides are in (the shift comes
-                                // with Engine's): until then it is reading,
-                                // not missing.
-                                missingText: trackRow.analysis.ready !== true || trackRow.engineSide.ready !== true
-                                    ? "Reading..." : "rekordbox has no analysis of this track"
-                                // A click opens rekordbox's waveform zoomed,
-                                // as the row's small one does.
-                                readonly property bool opensZoom: rekordboxLane.ready && rekordboxLane.hasWaveform
-                                    && trackRow.analysis.playable === true && rekordboxLane.trackDurationMs > 0
-                                    && root.playbackController !== null
-                                pointerShape: rekordboxLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onPositionClicked: {
-                                    if (rekordboxLane.opensZoom) {
-                                        root.openZoom(trackRow.analysisId, "rekordbox");
-                                    }
-                                }
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: "Engine" + root.gridFactsText(trackRow.engineSide)
-                                color: Theme.textMuted
-                                font.pointSize: Theme.fontSmall
-                            }
-                            WaveformView {
-                                id: engineLane
-                                objectName: "comparisonEngine"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: comparison.laneHeight
-                                gridStyle: "lines"
-                                beatsSelected: true
-                                // Drawn as Engine draws it, as the zoomed
-                                // popup does: Engine's colours, the bands as
-                                // one outline each, at full strength. The
-                                // grid's lines are the same in every scheme.
-                                colorScheme: "engine"
-                                unplayedOpacity: 1
-                                readonly property bool ready: trackRow.engineSide.ready === true
-                                columnBytes: engineLane.ready ? trackRow.engineSide.columns : null
-                                trackDurationMs: engineLane.ready ? trackRow.engineSide.durationMs : 0
-                                beatData: engineLane.ready && engineLane.width > 0
-                                    ? root.controller.engineBeatTicks(trackRow.engineAskedFor, engineLane.width) : []
-                                missingText: !engineLane.ready ? "Reading..."
-                                    : trackRow.engineSide.readFailed === true ? "Engine's analysis could not be read"
-                                    : trackRow.engineSide.hasEngineTrack !== true ? "Not in the Engine library"
-                                    : "Engine has no waveform for this track"
-                                // A click opens Engine's own copy of the track
-                                // zoomed: its waveform, grid and cues.
-                                readonly property var zoomTrack: engineLane.ready && engineLane.hasWaveform
-                                    ? root.controller.engineZoomTrack(trackRow.engineAskedFor) : ({})
-                                readonly property bool opensZoom: trackRow.engineSide.playable === true
-                                    && engineLane.zoomTrack.filePath !== undefined && engineLane.trackDurationMs > 0
-                                    && root.playbackController !== null
-                                pointerShape: engineLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onPositionClicked: {
-                                    if (engineLane.opensZoom) {
-                                        root.openZoom(trackRow.engineAskedFor, "engine");
-                                    }
-                                }
-                            }
-                        }
-                    ]
-
-                    // Two lines, the same on every row: the grid's state over
-                    // the waveform's, each badge after a caption column as
-                    // wide as the wider caption, so the badges line up from
-                    // row to row whatever they say. A row with no state yet
-                    // (Checking) or none at all (not in Engine) keeps them,
-                    // and the note under them is always one line.
-                    noteOnOneLine: true
-                    detailItems: [
-                        Column {
-                            id: stateMarks
-                            objectName: "stateMarks"
-                            // The title column's width: a badge with more to
-                            // say than that elides, never reaching the tempo.
-                            // The Flow fills that column and its width does not
-                            // follow the badges back: one width change of the
-                            // page moves it once (test_stateMarksSettleInOnePass).
-                            readonly property real room: parent ? parent.width : 0
-                            spacing: Theme.tightSpacing / 2
-                            StateMark {
-                                objectName: "gridMark"
-                                maxWidth: stateMarks.room
-                                caption: "Beat grid"
-                                pending: trackRow.pending
-                                value: trackRow.model.gridState
-                                tone: trackRow.model.gridTone
-                                tip: trackRow.model.gridTip
-                            }
-                            StateMark {
-                                objectName: "waveformMark"
-                                maxWidth: stateMarks.room
-                                caption: "Waveform"
-                                pending: trackRow.pending
-                                value: trackRow.model.waveformState
-                                tone: trackRow.model.waveformTone
-                                tip: trackRow.model.waveformTip
-                            }
-                        }
-                    ]
-                    actionItems: [
-                        // rekordbox's waveform and beat grid, what copying
-                        // would put on the player: as wide on every row
-                        // whether it has one or not, so the columns beside
-                        // it line up, and lower than the text beside it, so
-                        // the row is no taller. A click opens it zoomed in,
-                        // the track loaded into the player, where there is
-                        // a file to play.
-                        Item {
-                            objectName: "rowWaveformSlot"
-                            visible: root.rowWaveformWidth > 0
-                            Layout.preferredWidth: root.rowWaveformWidth
-                            Layout.preferredHeight: root.rowWaveformHeight
-                            Layout.alignment: Qt.AlignVCenter
-                            WaveformView {
-                                id: rowWaveform
-                                objectName: "rowSourceWaveform"
-                                anchors.fill: parent
-                                readonly property string trackId: trackRow.analysisId
-                                readonly property bool shown: trackRow.analysis.ready === true && rowWaveform.hasWaveform
-                                visible: rowWaveform.shown
-                                // Blended in when its read comes back, so a
-                                // page of rows filling in does not flicker.
-                                // A row built with its answer already there
-                                // (scrolled back to) shows it at once: the
-                                // fade is armed only once the row is built
-                                // and has taken what was there.
-                                opacity: rowWaveform.shown ? 1 : 0
-                                Behavior on opacity {
-                                    enabled: trackRow.built
-                                    NumberAnimation {
-                                        duration: Theme.arrivalTransitionDuration
-                                        easing.type: Easing.OutCubic
-                                    }
-                                }
-                                gridStyle: "lines"
-                                columnBytes: trackRow.analysis.ready === true ? trackRow.analysis.columns : null
-                                trackDurationMs: trackRow.analysis.ready === true ? trackRow.analysis.durationMs : 0
-                                beatsSelected: true
-                                beatData: trackRow.analysis.ready === true
-                                    ? root.controller.rowBeatTicks(trackRow.analysisId, rowWaveform.width) : []
-                                readonly property bool opensZoom: rowWaveform.visible
-                                    && trackRow.analysis.playable === true && rowWaveform.trackDurationMs > 0
-                                    && root.playbackController !== null
-                                pointerShape: rowWaveform.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onPositionClicked: {
-                                    if (rowWaveform.opensZoom) {
-                                        root.openZoom(trackRow.analysisId, "both");
-                                    }
-                                }
-                            }
-                        },
-                        Label {
-                            objectName: "bpmLabel"
-                            visible: trackRow.model.bpm > 0
-                            text: root.formatBpm(trackRow.model.bpm) + " BPM"
-                            color: Theme.textMuted
-                            font.family: Theme.dataFamily
-                            font.pointSize: Theme.fontSmall
-                        },
-                        KeyBadge {
-                            objectName: "keyBadge"
-                            visible: trackRow.model.keyName.length > 0
-                            keyName: trackRow.model.keyName
-                            notation: root.appSettingsController ? root.appSettingsController.keyNotation : "camelot"
-                        }
-                    ]
+                    root.controller.requestRowAnalysis(trackRow.rekordboxId);
+                    trackRow.takeAnalysis();
                 }
+                onRekordboxIdChanged: {
+                    trackRow.ask();
+                    trackRow.askEngine();
+                }
+                // Built and holding what was already read: from now on
+                // an answer arriving blends in (rowWaveform).
+                property bool built: false
+                Component.onCompleted: {
+                    trackRow.ask();
+                    trackRow.askEngine();
+                    trackRow.built = true;
+                }
+                Component.onDestruction: {
+                    if (trackRow.askedFor.length > 0) {
+                        root.controller.releaseRowAnalysis(trackRow.askedFor);
+                    }
+                    if (trackRow.engineAskedFor.length > 0) {
+                        root.controller.releaseEngineAnalysis(trackRow.engineAskedFor);
+                    }
+                }
+                Connections {
+                    target: root.controller
+                    function onRowAnalysisReady(id) {
+                        if (id === trackRow.rekordboxId) {
+                            trackRow.takeAnalysis();
+                        }
+                    }
+                    function onRowAnalysesStale() { trackRow.ask(); }
+                }
+
+                // Opened by a click on the row: rekordbox's analysis
+                // over the Engine library's, on one time axis, each
+                // with its grid, and what differs between the grids in
+                // words. One row open at a time. Engine's side is read
+                // only for the open row (requestEngineAnalysis()).
+                expanded: root.openTrackId.length > 0 && root.openTrackId === trackRow.rekordboxId
+                onExpandToggled: root.openTrackId = trackRow.expanded ? "" : trackRow.rekordboxId
+                property var engineSide: ({ready: false})
+                property string engineAskedFor: ""
+                function askEngine() {
+                    const want = trackRow.expanded ? trackRow.rekordboxId : "";
+                    if (trackRow.engineAskedFor !== want && trackRow.engineAskedFor.length > 0) {
+                        root.controller.releaseEngineAnalysis(trackRow.engineAskedFor);
+                    }
+                    trackRow.engineAskedFor = want;
+                    if (want.length > 0) {
+                        root.controller.requestEngineAnalysis(want);
+                    }
+                    trackRow.engineSide = want.length > 0 ? root.controller.engineAnalysis(want) : {ready: false};
+                }
+                onExpandedChanged: trackRow.askEngine()
+                // A delegate built for the open row (scrolled back into
+                // view, or the list rebuilt after a read) starts
+                // expanded, and onExpandedChanged does not run for the
+                // value it starts with; one reused for another track
+                // asks for that one's.
+                // (askEngine() is called from the row's own
+                // onRekordboxIdChanged and Component.onCompleted above,
+                // and let go in its Component.onDestruction.)
+                Connections {
+                    target: root.controller
+                    function onEngineAnalysisReady(id) {
+                        if (id === trackRow.engineAskedFor) {
+                            trackRow.engineSide = root.controller.engineAnalysis(id);
+                        }
+                    }
+                    function onRowAnalysesStale() {
+                        if (trackRow.expanded) {
+                            trackRow.askEngine();
+                        }
+                    }
+                }
+                // rekordbox's grid in figures, on Engine's timeline: once
+                // both sides are in (the shift comes with Engine's).
+                readonly property var rekordboxGrid: trackRow.analysis.ready === true
+                    && trackRow.engineSide.ready === true
+                    ? root.controller.rowGridFacts(trackRow.analysisId) : ({ready: false})
+
+                expandedItems: [
+                    ColumnLayout {
+                        id: comparison
+                        objectName: "analysisComparison"
+                        Layout.fillWidth: true
+                        spacing: Theme.tightSpacing
+                        readonly property real laneHeight: Math.round(Theme.scaled(56))
+
+                        Label {
+                            objectName: "comparisonSummary"
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            color: Theme.text
+                            text: root.comparisonText(trackRow.matched, trackRow.rekordboxGrid, trackRow.engineSide)
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "rekordbox" + root.gridFactsText(trackRow.rekordboxGrid)
+                            color: Theme.textMuted
+                            font.pointSize: Theme.fontSmall
+                        }
+                        WaveformView {
+                            id: rekordboxLane
+                            objectName: "comparisonRekordbox"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: comparison.laneHeight
+                            gridStyle: "lines"
+                            beatsSelected: true
+                            // On Engine's timeline, as Engine's lane: an
+                            // MP3's waveform and grid moved by its lead-in
+                            // (rowGridFacts().shiftMs), so a grid copied
+                            // across lines up with the copy.
+                            readonly property bool ready: trackRow.rekordboxGrid.ready === true
+                            readonly property int columnCount: rekordboxLane.ready && trackRow.analysis.columns
+                                ? trackRow.analysis.columns.byteLength / 3 : 0
+                            columnBytes: rekordboxLane.ready ? trackRow.analysis.columns : null
+                            trackDurationMs: rekordboxLane.ready ? trackRow.analysis.durationMs : 0
+                            columnMs: rekordboxLane.columnCount > 0
+                                ? trackRow.analysis.durationMs / rekordboxLane.columnCount : 0
+                            columnStartMs: rekordboxLane.ready ? trackRow.rekordboxGrid.shiftMs || 0 : 0
+                            beatData: rekordboxLane.ready && rekordboxLane.width > 0
+                                ? root.controller.comparisonBeatTicks(trackRow.analysisId, rekordboxLane.width) : []
+                            // Drawn once both sides are in (the shift comes
+                            // with Engine's): until then it is reading,
+                            // not missing.
+                            missingText: trackRow.analysis.ready !== true || trackRow.engineSide.ready !== true
+                                ? "Reading..." : "rekordbox has no analysis of this track"
+                            // A click opens rekordbox's waveform zoomed,
+                            // as the row's small one does.
+                            readonly property bool opensZoom: rekordboxLane.ready && rekordboxLane.hasWaveform
+                                && trackRow.analysis.playable === true && rekordboxLane.trackDurationMs > 0
+                                && root.playbackController !== null
+                            pointerShape: rekordboxLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onPositionClicked: {
+                                if (rekordboxLane.opensZoom) {
+                                    root.openZoom(trackRow.analysisId, "rekordbox");
+                                }
+                            }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Engine" + root.gridFactsText(trackRow.engineSide)
+                            color: Theme.textMuted
+                            font.pointSize: Theme.fontSmall
+                        }
+                        WaveformView {
+                            id: engineLane
+                            objectName: "comparisonEngine"
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: comparison.laneHeight
+                            gridStyle: "lines"
+                            beatsSelected: true
+                            // Drawn as Engine draws it, as the zoomed
+                            // popup does: Engine's colours, the bands as
+                            // one outline each, at full strength. The
+                            // grid's lines are the same in every scheme.
+                            colorScheme: "engine"
+                            unplayedOpacity: 1
+                            readonly property bool ready: trackRow.engineSide.ready === true
+                            columnBytes: engineLane.ready ? trackRow.engineSide.columns : null
+                            trackDurationMs: engineLane.ready ? trackRow.engineSide.durationMs : 0
+                            beatData: engineLane.ready && engineLane.width > 0
+                                ? root.controller.engineBeatTicks(trackRow.engineAskedFor, engineLane.width) : []
+                            missingText: !engineLane.ready ? "Reading..."
+                                : trackRow.engineSide.readFailed === true ? "Engine's analysis could not be read"
+                                : trackRow.engineSide.hasEngineTrack !== true ? "Not in the Engine library"
+                                : "Engine has no waveform for this track"
+                            // A click opens Engine's own copy of the track
+                            // zoomed: its waveform, grid and cues.
+                            readonly property var zoomTrack: engineLane.ready && engineLane.hasWaveform
+                                ? root.controller.engineZoomTrack(trackRow.engineAskedFor) : ({})
+                            readonly property bool opensZoom: trackRow.engineSide.playable === true
+                                && engineLane.zoomTrack.filePath !== undefined && engineLane.trackDurationMs > 0
+                                && root.playbackController !== null
+                            pointerShape: engineLane.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onPositionClicked: {
+                                if (engineLane.opensZoom) {
+                                    root.openZoom(trackRow.engineAskedFor, "engine");
+                                }
+                            }
+                        }
+                    }
+                ]
+
+                // Two lines, the same on every row: the grid's state over
+                // the waveform's, each badge after a caption column as
+                // wide as the wider caption, so the badges line up from
+                // row to row whatever they say. A row with no state yet
+                // (Checking) or none at all (not in Engine) keeps them,
+                // and the note under them is always one line.
+                noteOnOneLine: true
+                detailItems: [
+                    Column {
+                        id: stateMarks
+                        objectName: "stateMarks"
+                        // The title column's width: a badge with more to
+                        // say than that elides, never reaching the tempo.
+                        // The Flow fills that column and its width does not
+                        // follow the badges back: one width change of the
+                        // page moves it once (test_stateMarksSettleInOnePass).
+                        readonly property real room: parent ? parent.width : 0
+                        spacing: Theme.tightSpacing / 2
+                        StateMark {
+                            objectName: "gridMark"
+                            maxWidth: stateMarks.room
+                            caption: "Beat grid"
+                            pending: trackRow.pending
+                            value: trackRow.model.gridState
+                            tone: trackRow.model.gridTone
+                            tip: trackRow.model.gridTip
+                        }
+                        StateMark {
+                            objectName: "waveformMark"
+                            maxWidth: stateMarks.room
+                            caption: "Waveform"
+                            pending: trackRow.pending
+                            value: trackRow.model.waveformState
+                            tone: trackRow.model.waveformTone
+                            tip: trackRow.model.waveformTip
+                        }
+                    }
+                ]
+                actionItems: [
+                    // rekordbox's waveform and beat grid, what copying
+                    // would put on the player: as wide on every row
+                    // whether it has one or not, so the columns beside
+                    // it line up, and lower than the text beside it, so
+                    // the row is no taller. A click opens it zoomed in,
+                    // the track loaded into the player, where there is
+                    // a file to play.
+                    Item {
+                        objectName: "rowWaveformSlot"
+                        visible: root.rowWaveformWidth > 0
+                        Layout.preferredWidth: root.rowWaveformWidth
+                        Layout.preferredHeight: root.rowWaveformHeight
+                        Layout.alignment: Qt.AlignVCenter
+                        WaveformView {
+                            id: rowWaveform
+                            objectName: "rowSourceWaveform"
+                            anchors.fill: parent
+                            readonly property string trackId: trackRow.analysisId
+                            readonly property bool shown: trackRow.analysis.ready === true && rowWaveform.hasWaveform
+                            visible: rowWaveform.shown
+                            // Blended in when its read comes back, so a
+                            // page of rows filling in does not flicker.
+                            // A row built with its answer already there
+                            // (scrolled back to) shows it at once: the
+                            // fade is armed only once the row is built
+                            // and has taken what was there.
+                            opacity: rowWaveform.shown ? 1 : 0
+                            Behavior on opacity {
+                                enabled: trackRow.built
+                                NumberAnimation {
+                                    duration: Theme.arrivalTransitionDuration
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                            gridStyle: "lines"
+                            columnBytes: trackRow.analysis.ready === true ? trackRow.analysis.columns : null
+                            trackDurationMs: trackRow.analysis.ready === true ? trackRow.analysis.durationMs : 0
+                            beatsSelected: true
+                            beatData: trackRow.analysis.ready === true
+                                ? root.controller.rowBeatTicks(trackRow.analysisId, rowWaveform.width) : []
+                            readonly property bool opensZoom: rowWaveform.visible
+                                && trackRow.analysis.playable === true && rowWaveform.trackDurationMs > 0
+                                && root.playbackController !== null
+                            pointerShape: rowWaveform.opensZoom ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onPositionClicked: {
+                                if (rowWaveform.opensZoom) {
+                                    root.openZoom(trackRow.analysisId, "both");
+                                }
+                            }
+                        }
+                    },
+                    Label {
+                        objectName: "bpmLabel"
+                        visible: trackRow.model.bpm > 0
+                        text: root.formatBpm(trackRow.model.bpm) + " BPM"
+                        color: Theme.textMuted
+                        font.family: Theme.dataFamily
+                        font.pointSize: Theme.fontSmall
+                    },
+                    KeyBadge {
+                        objectName: "keyBadge"
+                        visible: trackRow.model.keyName.length > 0
+                        keyName: trackRow.model.keyName
+                        notation: root.appSettingsController ? root.appSettingsController.keyNotation : "camelot"
+                    }
+                ]
             }
         }
     }

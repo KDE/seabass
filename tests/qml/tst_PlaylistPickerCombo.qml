@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 import "PixelScale.js" as PixelScale
@@ -309,6 +310,237 @@ TestCase {
         compare(combo.popup.contentItem.count, 10);
         compare(combo.displayText, "All tracks");
         combo.popup.close();
+    }
+
+    // ---- Boxes on the rows (checkable, Beat Grids & Waveforms) ----
+
+    // A host keeping the ticks, as the page's controller does: a set of
+    // names ("" for All tracks), and some boxes off.
+    property var ticked: ({})
+    property var offBoxes: []
+    property int tickRevision: 0
+    SignalSpy {
+        id: toggledSpy
+        signalName: "playlistCheckToggled"
+    }
+    function openCheckable(props) {
+        testCase.ticked = {};
+        testCase.offBoxes = [];
+        const combo = openCrates(Object.assign({
+            checkable: true,
+            checkStateOf: name => testCase.tickRevision >= 0 && testCase.ticked[name] ? Qt.Checked : Qt.Unchecked,
+            checkEnabledFor: name => testCase.offBoxes.indexOf(name) < 0,
+        }, props || {}));
+        combo.checkRevision = Qt.binding(() => testCase.tickRevision);
+        combo.playlistCheckToggled.connect((name, checked) => {
+            testCase.ticked[name] = checked;
+            ++testCase.tickRevision;
+        });
+        toggledSpy.target = combo;
+        toggledSpy.clear();
+        pickedSpy.target = combo;
+        pickedSpy.clear();
+        return combo;
+    }
+    function rowNamed(combo, name) {
+        const list = combo.popup.contentItem;
+        let found = null;
+        tryVerify(() => {
+            for (let i = 0; i < list.count; ++i) {
+                const row = list.itemAtIndex(i);
+                if (row !== null && row.name === name) {
+                    found = row;
+                    return true;
+                }
+            }
+            return false;
+        }, 3000, "a row " + name);
+        return found;
+    }
+
+    // Space ticks the current row's box, as a click on it does, and again
+    // unticks it; the popup stays open and nothing is picked. Letters
+    // still move the current row.
+    function test_spaceTicksTheCurrentRowsBox() {
+        const combo = openCheckable();
+        keyClick(Qt.Key_Down);
+        compare(currentName(combo), "Peak Time");
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.count, 1);
+        compare(toggledSpy.signalArguments[0][0], "Peak Time");
+        compare(toggledSpy.signalArguments[0][1], true);
+        compare(rowNamed(combo, "Peak Time").checkState, Qt.Checked);
+        compare(findChild(rowNamed(combo, "Peak Time"), "playlistRowCheck").checkState, Qt.Checked);
+        compare(combo.typedFilter, "", "Space typed nothing");
+        verify(combo.popup.visible, "still open");
+        compare(pickedSpy.count, 0, "and picked nothing");
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.signalArguments[1][1], false, "Space again unticks");
+        compare(rowNamed(combo, "Peak Time").checkState, Qt.Unchecked);
+        // A letter still jumps, and Space right after it ticks that row:
+        // one letter is no word to type a space into.
+        type("w");
+        compare(currentName(combo), "Warmup");
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.signalArguments[2][0], "Warmup");
+        compare(combo.typedFilter, "", "the letter alone filters nothing, and Space added nothing");
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.count, 4, "the next Space ticks too");
+        compare(toggledSpy.signalArguments[3][0], "Warmup");
+        compare(toggledSpy.signalArguments[3][1], false);
+        // All tracks' box stands for "".
+        keyClick(Qt.Key_Escape);
+        combo.popup.close();
+        tryVerify(() => !combo.popup.visible);
+        mouseClick(combo);
+        tryVerify(() => combo.popup.opened, 3000);
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.signalArguments[4][0], "", "the first row's box is All tracks'");
+        combo.popup.close();
+    }
+
+    // Without boxes, Space is the type-ahead's, as before.
+    function test_spaceTypesWithoutBoxes() {
+        const combo = openCrates({typeAheadInterval: 2000});
+        toggledSpy.target = combo;
+        toggledSpy.clear();
+        type("p");
+        keyClick(Qt.Key_Space);
+        type("t");
+        compare(combo.typedFilter, "p t");
+        compare(toggledSpy.count, 0);
+        combo.popup.close();
+    }
+
+    // Space on a row whose box is off does nothing, and neither does a
+    // click on that box: it does not pick the row or close the popup.
+    function test_aBoxThatIsOffTakesNoClickOrSpace() {
+        const combo = openCheckable({checksEnabled: false});
+        const row = rowNamed(combo, "Warmup");
+        const box = findChild(row, "playlistRowCheck");
+        verify(box.visible && !box.enabled);
+        mouseClick(box);
+        wait(50);
+        compare(pickedSpy.count, 0, "the click picks nothing");
+        verify(combo.popup.visible, "and leaves the combo open");
+        compare(toggledSpy.count, 0);
+        keyClick(Qt.Key_Down);
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.count, 0, "Space ticks nothing");
+        // One playlist's box off, the others on.
+        combo.checksEnabled = true;
+        testCase.offBoxes = ["Warmup"];
+        combo.checkEnabledFor = name => testCase.offBoxes.indexOf(name) < 0;
+        compare(findChild(rowNamed(combo, "Warmup"), "playlistRowCheck").enabled, false);
+        mouseClick(findChild(rowNamed(combo, "Warmup"), "playlistRowCheck"));
+        wait(50);
+        compare(pickedSpy.count, 0);
+        compare(toggledSpy.count, 0);
+        // The name still picks.
+        mouseClick(findChild(rowNamed(combo, "Warmup"), "pickerRowName"));
+        tryVerify(() => pickedSpy.count === 1, 3000);
+        tryVerify(() => !combo.popup.visible, 3000);
+    }
+
+    // A screen reader hears the playlist a box ticks and how much of it.
+    function test_aBoxSaysItsPlaylistAndState() {
+        const combo = openCheckable();
+        const box = () => findChild(rowNamed(combo, "Deep House"), "playlistRowCheck");
+        compare(box().Accessible.name, "Deep House: no tracks ticked");
+        mouseClick(box());
+        compare(box().Accessible.name, "Deep House: all tracks ticked");
+        compare(findChild(rowNamed(combo, "All tracks"), "playlistRowCheck").Accessible.name,
+                "All tracks: no tracks ticked");
+        combo.checkStateOf = name => name === "" ? Qt.PartiallyChecked : Qt.Unchecked;
+        compare(findChild(rowNamed(combo, "All tracks"), "playlistRowCheck").Accessible.name,
+                "All tracks: some tracks ticked");
+        combo.popup.close();
+    }
+
+    // A box clicked keeps the keys the combo's: typing still filters,
+    // Space ticks the current row, Enter picks it, and Escape closes with
+    // the focus back on the combo.
+    function test_aClickedBoxLeavesTheKeysToTheCombo() {
+        const combo = openCheckable({typeAheadInterval: 300});
+        const box = findChild(rowNamed(combo, "Deep House"), "playlistRowCheck");
+        mouseClick(box);
+        compare(toggledSpy.count, 1);
+        verify(!box.activeFocus, "the box took no focus");
+        type("wa");
+        compare(combo.typedFilter, "wa", "the letters reach the combo");
+        compare(shownNames(combo), "Warmup, Warehouse");
+        compare(currentName(combo), "Warmup");
+        wait(450);  // past the type-ahead's pause: Space ticks
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.count, 2);
+        compare(toggledSpy.signalArguments[1][0], "Warmup", "Space ticks the current row");
+        keyClick(Qt.Key_Return);
+        compare(pickedSpy.count, 1);
+        compare(pickedSpy.signalArguments[0][1].name, "Warmup", "Enter picks it");
+        tryVerify(() => !combo.popup.visible, 2000);
+
+        mouseClick(combo);
+        tryVerify(() => combo.popup.opened, 3000);
+        mouseClick(findChild(rowNamed(combo, "Peak Time"), "playlistRowCheck"));
+        keyClick(Qt.Key_Escape);
+        tryVerify(() => !combo.popup.visible, 2000, "Escape closes");
+        verify(combo.activeFocus, "the focus is the combo's again");
+    }
+
+    // With boxes, Space in the middle of a name is typed; after the pause
+    // it ticks again.
+    function test_spaceInANameIsTyped() {
+        const combo = openCheckable({typeAheadInterval: 2000});
+        type("deep");
+        keyClick(Qt.Key_Space);
+        type("house");
+        compare(combo.typedFilter, "deep house");
+        compare(shownNames(combo), "Deep House");
+        compare(currentName(combo), "Deep House");
+        compare(toggledSpy.count, 0, "nothing ticked");
+        combo.typeAheadInterval = 100;
+        type("x");  // restarts the pause at the shorter interval
+        keyClick(Qt.Key_Backspace);
+        wait(250);
+        keyClick(Qt.Key_Space);
+        compare(toggledSpy.count, 1, "after the pause, Space ticks");
+        compare(toggledSpy.signalArguments[0][0], "Deep House");
+        combo.popup.close();
+    }
+
+    // A box that is off says why, on hover, though it hears no hover of
+    // its own; without a reason it says its state.
+    function test_aBoxThatIsOffSaysWhy() {
+        const combo = openCheckable({checksEnabled: false, checkOffReason: name => "Unstage first: " + name});
+        const box = findChild(rowNamed(combo, "Warmup"), "playlistRowCheck");
+        verify(!box.enabled);
+        compare(box.ToolTip.text, "Unstage first: Warmup");
+        mouseMove(box, box.width / 2, box.height / 2);
+        tryVerify(() => box.ToolTip.visible, 3000, "the reason shows on hover");
+        tryVerify(() => box.ToolTip.toolTip.visible && box.ToolTip.toolTip.text === "Unstage first: Warmup", 3000);
+        mouseMove(findChild(rowNamed(combo, "Warmup"), "pickerRowName"), 5, 5);
+        tryVerify(() => !box.ToolTip.visible, 3000, "and goes off the box");
+        combo.checkOffReason = name => "";
+        compare(box.ToolTip.text, "No tracks of this playlist are ticked. Click to tick them all.");
+        combo.checksEnabled = true;
+        compare(box.ToolTip.text, "No tracks of this playlist are ticked. Click to tick them all.");
+        combo.popup.close();
+    }
+
+    // A press on a box that is off does not shade the row as a press on
+    // the row does.
+    function test_aBoxThatIsOffDoesNotFlash() {
+        const combo = openCheckable({checksEnabled: false});
+        const row = rowNamed(combo, "Warmup");
+        const box = findChild(row, "playlistRowCheck");
+        mousePress(box);
+        verify(!Qt.colorEqual(row.color, Theme.rowPressed), "no pressed shade on the box's press");
+        mouseRelease(box);
+        const name = findChild(row, "pickerRowName");
+        mousePress(name, 5, 5);
+        verify(Qt.colorEqual(row.color, Theme.rowPressed), "the name's press shades, as before");
+        mouseRelease(name, 5, 5);
+        tryVerify(() => !combo.popup.visible, 2000);
     }
 
     // The text of every row in sight, as drawn: the window's own frame
