@@ -713,6 +713,49 @@ Denon's grid sits +0.06 ms from rekordbox's at the median, half of the
 tracks between -1.9 and +1.8 ms. No track at another tempo: on techno
 the players' tempo is not in question.
 
+## The held-back halves, run once
+
+The collection, the second playlist and the CD rips were each split in
+two before any tuning; the analyser was tuned on one half only. On 24
+November the other halves were run once, with the analyser of commit
+373e328e. Only the totals below were read off these runs: no track of
+a held-back half was opened, so they can judge a later version too.
+
+| Set | Analyser | Half | Tracks | Within 3 ms, steady | Within 10 ms, steady | Half a beat out | Another tempo | 3 in 4 beats within 10 ms |
+|---|---|---|---|---|---|---|---|---|
+| Collection | Mixxx method | tuning | 751 | 163 | 361 | 317 | 18 | |
+| Collection | Mixxx method | held back | 724 | 188 | 371 | 289 | 11 | |
+| Collection | Seabass | tuning | 751 | 591 | 659 | 34 | 6 | |
+| Collection | Seabass | held back | 724 | 566 | 627 | 36 | 6 | |
+| Second playlist | Mixxx method | tuning | 126 | 17 | 38 | 6 | 30 | 19.8 % |
+| Second playlist | Mixxx method | held back | 105 | 12 | 22 | 7 | 25 | 20.0 % |
+| Second playlist | Mixxx raw tracker | tuning | 126 | 28 | 57 | 5 | 25 | 25.4 % |
+| Second playlist | Mixxx raw tracker | held back | 105 | 18 | 43 | 6 | 21 | 22.9 % |
+| Second playlist | Seabass | tuning | 126 | 43 | 64 | 5 | 31 | 33.3 % |
+| Second playlist | Seabass | held back | 105 | 31 | 48 | 3 | 18 | 36.2 % |
+| CD rips | Mixxx method | tuning | 368 | 27 | 55 | 20 | 80 | 13.6 % |
+| CD rips | Mixxx method | held back | 362 | 30 | 67 | 12 | 68 | 13.5 % |
+| CD rips | Mixxx raw tracker | tuning | 368 | 84 | 150 | 21 | 60 | 25.5 % |
+| CD rips | Mixxx raw tracker | held back | 362 | 79 | 162 | 12 | 61 | 25.4 % |
+| CD rips | Seabass | tuning | 368 | 111 | 144 | 11 | 86 | 32.9 % |
+| CD rips | Seabass | held back | 362 | 107 | 151 | 9 | 79 | 31.8 % |
+
+The tuning holds on music the analyser has not seen. On the collection
+it is within 3 ms of rekordbox on 78.7 % of the tuning half and 78.2 %
+of the held-back half, within 10 ms on 87.7 % and 86.6 %, at another
+tempo on six tracks of each. On the CD rips the held-back half comes
+out a little better than the tuning half (within 10 ms 41.7 % for
+39.1 %, another tempo 21.8 % for 23.4 %), on the second playlist a
+little worse within 10 ms (45.7 % for 50.8 %) and better on tempo
+(17.1 % for 24.6 %); the baseline's rows move the same way there, so
+that is the music of the half and not the tuning.
+
+What the held-back halves confirm as well: on the CD rips the raw
+tracker of the Mixxx baseline still has rekordbox's tempo on more
+tracks than we have (another tempo on 61 for our 79) and is within
+10 ms on more (162 for 151), while beat by beat ours is ahead (three
+in four beats on 31.8 % of the tracks for 25.4 %).
+
 ## Phase 3, in order
 
 1. Done: who is right on the tracks half a beat apart (above). The
