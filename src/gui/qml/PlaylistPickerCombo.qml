@@ -27,6 +27,47 @@ ComboBox {
     // would on a plain ComboBox.
     signal playlistPicked(int index, var modelData)
 
+    // A tick box on every row (Beat Grids & Waveforms), as PlaylistListView
+    // has them: checkStateOf(name) gives a row's state ("" for the row at
+    // index 0, "All tracks"), read again when checkRevision moves; a click
+    // on a box asks with playlistCheckToggled and leaves the popup open, so
+    // several playlists can be ticked in one go; Space does the same for
+    // the current row. A click on the name still picks the row, and one on
+    // a box that is off does nothing.
+    property bool checkable: false
+    property var checkStateOf: name => Qt.Unchecked
+    property var checkEnabledFor: name => true
+    // Every box at once: off while what is ticked cannot change.
+    property bool checksEnabled: true
+    property int checkRevision: 0
+    // Why a row's box is off, shown on it in place of its state: "" for
+    // the box's own words.
+    property var checkOffReason: name => ""
+    signal playlistCheckToggled(string name, bool checked)
+    // The name a row's box stands for: "" for "All tracks".
+    function checkNameAt(index) {
+        return index === 0 ? "" : root.textAt(index);
+    }
+    // Whether the box of the row at model index `index` can be ticked now.
+    function checkEnabledAt(index) {
+        return root.checkable && root.checksEnabled && root.checkRevision >= 0
+            && root.checkEnabledFor(root.checkNameAt(index));
+    }
+    // A click on (or Space for) the box of a row in the popup, by its
+    // place in shownRows: asks for all of its tracks ticked, or none when
+    // all are. Nothing where the box is off.
+    function toggleShown(place) {
+        if (place < 0 || place >= root.shownRows.length) {
+            return;
+        }
+        const index = root.shownRows[place];
+        if (!root.checkEnabledAt(index)) {
+            return;
+        }
+        const name = root.checkNameAt(index);
+        root.playlistCheckToggled(name, root.checkStateOf(name) !== Qt.Checked);
+    }
+
     textRole: "name"
     // A model whose entries carry a `thumbnail` (a playlist's small cover,
     // as ScanController.playlistThumbnails gives it) shows it on every
@@ -159,6 +200,15 @@ ComboBox {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
             root.pickShown(typeAhead.current);
             event.accepted = true;
+        } else if (event.key === Qt.Key_Space && root.checkable && !(pause.running && typeAhead.filtering)) {
+            // With boxes on the rows, Space ticks the current row's box,
+            // as it would a focused box; the letters still type ahead. A
+            // Space in the middle of a name ("deep house") is typed: once
+            // two letters filter the list and while the typing goes on.
+            // After one letter it ticks the row that letter jumped to.
+            root.toggleShown(typeAhead.current);
+            typeAhead.keyed = true;
+            event.accepted = true;
         } else if (event.key === Qt.Key_Backspace) {
             typeAhead.backspace();
             event.accepted = true;
@@ -189,6 +239,33 @@ ComboBox {
         readonly property var entry: root.model[rowRoot.sourceIndex]
         // Where the keys have put the current row since the popup opened.
         readonly property bool keyCurrent: typeAhead.keyed && rowRoot.index === typeAhead.current
+        // The row's name, and its box (checkable only).
+        readonly property string name: root.textAt(rowRoot.sourceIndex)
+        readonly property int checkState: root.checkable && root.checkRevision >= 0
+            ? root.checkStateOf(root.checkNameAt(rowRoot.sourceIndex)) : Qt.Unchecked
+        readonly property bool checkEnabled: root.checkEnabledAt(rowRoot.sourceIndex)
+        // The pointer is on the box. Read from the row: a box that is off
+        // hears no hover of its own.
+        readonly property bool overCheck: rowCheck.visible && rowHover.hovered
+            && rowCheck.contains(rowCheck.mapFromItem(rowRoot, rowHover.point.position.x, rowHover.point.position.y))
+        // A press on a box that is off: the row neither picks nor shades.
+        property bool pressOnCheck: false
+        // What the box shows, in words, and what a click does next, as
+        // PlaylistListView's rows say it.
+        readonly property string checkTooltip: {
+            const why = rowRoot.checkEnabled ? "" : root.checkOffReason(root.checkNameAt(rowRoot.sourceIndex));
+            if (why.length > 0) {
+                return why;
+            }
+            const what = rowRoot.sourceIndex === 0 ? "tracks" : "tracks of this playlist";
+            if (rowRoot.checkState === Qt.Checked) {
+                return "All " + what + " are ticked. Click to untick them all.";
+            }
+            if (rowRoot.checkState === Qt.PartiallyChecked) {
+                return "Some " + what + " are ticked. Click to tick them all.";
+            }
+            return "No " + what + " are ticked. Click to tick them all.";
+        }
 
         // ListView.view first, then the item it was parented into, then
         // its own implicit width. The attached property is not always
@@ -202,7 +279,7 @@ ComboBox {
                              : (parent ? parent.width : implicitWidth)
         height: 32
 
-        color: rowMouseArea.pressed ? Theme.rowPressed
+        color: rowMouseArea.pressed && !rowRoot.pressOnCheck ? Theme.rowPressed
             : rowHover.hovered || rowRoot.keyCurrent ? Theme.rowHover
             : (rowRoot.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
         border.color: rowRoot.sourceIndex === root.currentIndex ? Theme.accent : "transparent"
@@ -218,7 +295,17 @@ ComboBox {
             id: rowMouseArea
             anchors.fill: parent
             hoverEnabled: true
-            onClicked: root.pickShown(rowRoot.index)
+            // A click on a box that is off (a batch staged) is the box's,
+            // not the row's: it neither picks, nor closes, nor shades.
+            onPressed: mouse => {
+                rowRoot.pressOnCheck = rowCheck.visible
+                    && rowCheck.contains(rowCheck.mapFromItem(rowMouseArea, mouse.x, mouse.y));
+            }
+            onClicked: mouse => {
+                if (!rowRoot.pressOnCheck) {
+                    root.pickShown(rowRoot.index);
+                }
+            }
         }
 
         RowLayout {
@@ -226,6 +313,34 @@ ComboBox {
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             spacing: 6
+            SeabassCheckBox {
+                id: rowCheck
+                objectName: "playlistRowCheck"
+                visible: root.checkable
+                Layout.alignment: Qt.AlignVCenter
+                // Every side, not `padding`: a style that sets a side itself
+                // (FluentWinUI3 does) wins over it.
+                leftPadding: 0
+                rightPadding: 0
+                topPadding: 0
+                bottomPadding: 0
+                enabled: rowRoot.checkEnabled
+                // The keys stay the combo's: a box clicked must not take
+                // the focus from its type-ahead, Space and Enter.
+                focusPolicy: Qt.NoFocus
+                checkState: rowRoot.checkState
+                ToolTip.visible: rowCheck.enabled ? rowCheck.hovered : rowRoot.overCheck
+                ToolTip.delay: 400
+                ToolTip.text: rowRoot.checkTooltip
+                // The playlist it ticks, and how much of it is ticked.
+                Accessible.name: rowRoot.name + ": " + (rowRoot.checkState === Qt.Checked ? "all tracks ticked"
+                    : rowRoot.checkState === Qt.PartiallyChecked ? "some tracks ticked" : "no tracks ticked")
+                onClicked: {
+                    // The host's state decides; the click only asks.
+                    rowCheck.checkState = Qt.binding(() => rowRoot.checkState);
+                    root.toggleShown(rowRoot.index);
+                }
+            }
             PlaylistThumbnail {
                 visible: root.showsThumbnails
                 Layout.preferredWidth: implicitWidth

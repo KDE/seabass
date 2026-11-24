@@ -74,7 +74,12 @@ TestCase {
         failOnWarning(/Unable to assign/);
     }
 
+    // The page's playlist combo last opened (openPicker()), so clickOn()
+    // can shut it before a click elsewhere.
+    property var openedPicker: null
+
     function cleanup() {
+        testCase.openedPicker = null;
         EditSessionRegistry.discardAll();
         SystemFontMetrics.generalPointSizeOverride = 0;
     }
@@ -140,6 +145,13 @@ TestCase {
         for (let p = item; p !== null && p !== undefined; p = p.parent) {
             ancestors.push(p);
         }
+        // A combo left open after ticking playlists in it is shut first,
+        // as a user does, when the click is for something outside it.
+        if (testCase.openedPicker !== null && testCase.openedPicker.popup.visible
+                && ancestors.indexOf(testCase.openedPicker.popup.contentItem) < 0) {
+            testCase.openedPicker.popup.close();
+            tryVerify(() => !testCase.openedPicker.popup.visible, 5000, "the playlist combo closes");
+        }
         // Until none of them is waiting, and the item has stayed where it
         // is over two looks (a sibling's polish can change its size and
         // move the item without any ancestor waiting yet): a parent's
@@ -159,18 +171,35 @@ TestCase {
         mouseClick(item);
     }
 
-    // A playlist's row in the list ("All tracks" for ""), and its box.
+    // The "Playlist:" combo (#115), opened.
+    function openPicker(page) {
+        const picker = findChild(page, "playlistPicker");
+        verify(picker !== null, "the page has a playlist combo");
+        testCase.openedPicker = picker;
+        if (!picker.popup.opened) {
+            clickOn(picker);
+            tryVerify(() => picker.popup.opened, 5000, "the playlist combo opens");
+        }
+        return picker;
+    }
+    function closePicker(page) {
+        const picker = findChild(page, "playlistPicker");
+        if (picker.popup.visible) {
+            picker.popup.close();
+            tryVerify(() => !picker.popup.visible, 5000, "the playlist combo closes");
+        }
+    }
+    // A playlist's row in the open combo ("All tracks" for ""), and its box.
     function playlistRow(page, name) {
-        const list = findChild(page, "playlistList");
-        verify(list !== null);
+        const list = openPicker(page).popup.contentItem;
         const wanted = name.length === 0 ? "All tracks" : name;
-        // The list builds its rows after the read lands and the page is
-        // laid out: on a loaded machine that is later than the caller.
+        // The popup builds its rows once it is open: on a loaded machine
+        // that is later than the caller.
         let found = null;
         tryVerify(() => {
-            for (let i = 0; i < list.contentItem.children.length; ++i) {
-                const item = list.contentItem.children[i];
-                if (item.name === wanted) {
+            for (let i = 0; i < list.count; ++i) {
+                const item = list.itemAtIndex(i);
+                if (item !== null && item.name === wanted) {
                     found = item;
                     return true;
                 }
@@ -185,7 +214,9 @@ TestCase {
         clickOn(box);
     }
     function showPlaylist(page, name) {
-        clickOn(findChild(playlistRow(page, name), "playlistRowName"));
+        const picker = findChild(page, "playlistPicker");
+        clickOn(findChild(playlistRow(page, name), "pickerRowName"));
+        tryVerify(() => !picker.popup.visible, 5000, "picking a playlist closes the combo");
         compare(page.controller.shownPlaylist, name);
     }
     // A track's row delegate, built because it is in view.
@@ -376,6 +407,85 @@ TestCase {
         compare(o.c.tickedCount, 0);
         compare(playlistRow(o.page, "").checkState, Qt.Unchecked);
         compare(findChild(o.page, "stageButton").enabled, false);
+    }
+
+    // The playlists are picked from a "Playlist:" combo, as on Sync Cue
+    // Points and Clean Up Duplicates, with a box per playlist inside it
+    // (#115): no column of playlists beside the tracks, which take the
+    // page's whole width. The combo shows the playlist listed; a box ticks
+    // its playlist's tracks and leaves the combo open for the next; the
+    // label beside the closed combo counts the playlists ticked.
+    function test_playlistsArePickedFromACombo() {
+        const o = openOn(t73());
+        waitSettled(o.c);
+        verify(waitForPolish(o.page.Window.window));
+        compare(findChild(o.page, "playlistList"), null, "no playlist column");
+        const body = findChild(o.page, "pageBody");
+        const list = findChild(o.page, "trackList");
+        compare(list.mapToItem(body, 0, 0).x, 0, "the tracks start on the page's left line");
+        compare(list.width, body.width, "and take its whole width");
+        const label = findChild(o.page, "playlistPickerLabel");
+        compare(label.text, "Playlist:");
+        compare(label.mapToItem(body, 0, 0).x, 0, "the combo's label is on the left line");
+        const picker = findChild(o.page, "playlistPicker");
+        compare(picker.displayText, "All tracks");
+        const ticked = findChild(o.page, "tickedPlaylistsLabel");
+        compare(ticked.text, "");
+
+        // Every row of the combo has its box, its count and its state.
+        const rows = ["", "T73 Folder/T73 New", "T73 Order", "T73 Renamed"];
+        for (const name of rows) {
+            const row = playlistRow(o.page, name);
+            const box = findChild(row, "playlistRowCheck");
+            verify(box.visible && box.enabled, (name || "All tracks") + " has a box to tick");
+            compare(row.checkState, Qt.Unchecked);
+        }
+        clickPlaylistBox(o.page, "T73 Renamed");
+        compare(o.c.tickedCount, 5);
+        verify(picker.popup.visible, "a box leaves the combo open, for the next playlist");
+        compare(findChild(playlistRow(o.page, "T73 Renamed"), "playlistRowCheck").checkState, Qt.Checked,
+                "the box shows its playlist ticked");
+        compare(playlistRow(o.page, "T73 Order").checkState, Qt.PartiallyChecked, "B12 is in T73 Order too");
+        compare(findChild(playlistRow(o.page, "T73 Order"), "playlistRowCheck").checkState, Qt.PartiallyChecked);
+        compare(playlistRow(o.page, "").checkState, Qt.PartiallyChecked);
+        compare(o.c.shownPlaylist, "", "a box does not change the playlist listed");
+        clickPlaylistBox(o.page, "T73 Folder/T73 New");
+        compare(o.c.tickedCount, 8);
+        closePicker(o.page);
+        compare(ticked.text, "2 playlists ticked, 1 in part");
+
+        // A name picks the playlist listed, and the closed combo says it.
+        showPlaylist(o.page, "T73 Order");
+        compare(picker.displayText, "T73 Order");
+        compare(o.c.tracks.count, 4);
+        compare(playlistRow(o.page, "T73 Order").checkState, Qt.PartiallyChecked);
+        closePicker(o.page);
+        // Select All ticks the playlist listed, as its box does.
+        clickOn(findChild(o.page, "selectAllButton"));
+        compare(o.c.tickedCount, 11, "B07, B08 and B11 too: every track");
+        compare(ticked.text, "3 playlists ticked");
+        clickOn(findChild(o.page, "selectNoneButton"));
+        compare(ticked.text, "");
+        showPlaylist(o.page, "");
+        compare(picker.displayText, "All tracks");
+        compare(o.c.tracks.count, 11);
+
+        // Staged, the boxes wait for the save; the names still pick.
+        clickPlaylistBox(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        clickOn(findChild(o.page, "stageButton"));
+        verify(o.c.stagedCount > 0);
+        verify(!findChild(playlistRow(o.page, "T73 Renamed"), "playlistRowCheck").enabled, "staged: no box ticks");
+        compare(findChild(playlistRow(o.page, "T73 Renamed"), "playlistRowCheck").ToolTip.text,
+                "Unstage to change what is copied", "and a box that is off says why");
+        showPlaylist(o.page, "T73 Renamed");
+        if (screenshotDir) {
+            openPicker(o.page);
+            wait(300);
+            waitForRendering(o.page);
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-playlist-combo.png");
+            closePicker(o.page);
+        }
     }
 
     // A tick is the track's, not the row's: B12 ticked in one playlist is
@@ -950,7 +1060,7 @@ TestCase {
         const body = findChild(o.page, "pageBody");
         const left = body.mapToItem(o.page, 0, 0).x;
         compare(left, Theme.pageMargin);
-        for (const name of ["introLabel", "summaryLabel", "playlistList", "breadcrumb"]) {
+        for (const name of ["introLabel", "summaryLabel", "playlistPickerLabel", "trackList", "breadcrumb"]) {
             compare(findChild(o.page, name).mapToItem(o.page, 0, 0).x, left, name + " is on the page's left line");
         }
         const box = findChild(findChild(o.page, "gridsCheckBox"), "seabassCheckIndicator");
@@ -1170,7 +1280,8 @@ TestCase {
         const o = openOn(stick);
         compare(o.c.engineTooOld, true);
         compare(findChild(o.page, "engineTooOldLabel").visible, true);
-        compare(findChild(o.page, "panes").visible, false, "nothing to tick");
+        compare(findChild(o.page, "playlistPickerRow").visible, false, "nothing to tick");
+        compare(findChild(o.page, "trackList").visible, false);
         compare(findChild(o.page, "optionsRow").visible, false);
         compare(findChild(o.page, "summaryRow").visible, false);
     }
@@ -1196,6 +1307,38 @@ TestCase {
         o.c.setPlaylistTicked("T73 Renamed", true);
         waitSettled(o.c);
         compare(findChild(o.page, "stageButton").enabled, false, "a read-only stick takes no copy");
+        compare(findChild(playlistRow(o.page, "T73 Renamed"), "playlistRowCheck").ToolTip.text,
+                "This stick is mounted read-only", "a playlist's box says why it is off");
+    }
+
+    // Each thing that turns a playlist's box off has its own sentence; a
+    // playlist with nothing to tick says so first, staged or not, since
+    // unstaging would not change it.
+    function test_aPlaylistBoxSaysWhyItIsOff() {
+        const o = openOn(t73());
+        waitSettled(o.c);
+        const nothing = "Nothing here to copy: only tracks in the Engine library can be ticked";
+        compare(o.page.boxOffReason(0, false, "", false, false), nothing);
+        compare(o.page.boxOffReason(0, false, "", true, false), nothing, "staged, still nothing here");
+        compare(o.page.boxOffReason(0, true, "Sync Cue Points", true, true), nothing);
+        compare(o.page.boxOffReason(3, true, "", true, false), "Saving changes: wait until it is done");
+        compare(o.page.boxOffReason(3, false, "Sync Cue Points", false, false),
+                "Unsaved changes on Sync Cue Points for this stick: save or discard them there first");
+        compare(o.page.boxOffReason(3, false, "", true, false), "Unstage to change what is copied");
+        compare(o.page.boxOffReason(3, false, "", false, true), "This stick is mounted read-only");
+        compare(o.page.boxOffReason(3, false, "", false, false), "", "nothing turns it off: its own words");
+        // Wired to the page: a box on, then off with a batch staged.
+        const box = () => findChild(playlistRow(o.page, "T73 Renamed"), "playlistRowCheck");
+        compare(box().ToolTip.text, "No tracks of this playlist are ticked. Click to tick them all.");
+        clickPlaylistBox(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        closePicker(o.page);
+        clickOn(findChild(o.page, "stageButton"));
+        verify(o.c.stagedCount > 0);
+        compare(box().ToolTip.text, "Unstage to change what is copied");
+        closePicker(o.page);
+        clickOn(findChild(o.page, "stageButton"));
+        compare(o.c.stagedCount, 0);
     }
 
     // ---- the rows' waveforms ---------------------------------------------
