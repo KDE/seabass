@@ -5244,6 +5244,11 @@ if(NOT WIN32)
 endif()
 add_test(NAME onelibrary_playlist_tree_test COMMAND onelibrary_playlist_tree_test ${CMAKE_SOURCE_DIR}/tests/fixtures/onelibrary_playlist_tree)
 
+add_executable(pdb_add_track_test tests/pdb_add_track_test.cpp)
+target_link_libraries(pdb_add_track_test PRIVATE seabass_core seabass_core_testing rekordbox_format ZLIB::ZLIB)
+target_include_directories(pdb_add_track_test PRIVATE src tests)
+add_test(NAME pdb_add_track_test COMMAND pdb_add_track_test ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73)
+
 add_executable(pdb_row_encoding_test tests/pdb_row_encoding_test.cpp)
 target_link_libraries(pdb_row_encoding_test PRIVATE seabass_core_testing)
 target_include_directories(pdb_row_encoding_test PRIVATE src tests)

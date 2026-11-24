@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -19,6 +20,7 @@
 #include <system_error>
 #include <vector>
 
+#include "application/path_key.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/little_endian.hpp"
@@ -2472,6 +2474,325 @@ std::vector<PdbRowWriter::TrackPathRow> PdbRowWriter::trackPathRows() const
         });
     }
     return rows;
+}
+
+namespace
+{
+
+constexpr uint32_t GenresTableType = 1;
+constexpr uint32_t ArtistsTableType = 2;
+constexpr uint32_t AlbumsTableType = 3;
+constexpr uint32_t LabelsTableType = 4;
+constexpr uint32_t KeysTableType = 5;
+constexpr uint32_t HistoryEntriesTableType = 12;
+constexpr uint32_t ArtworkTableType = 13;
+// Where a row keeps its id (or, for the two entry tables, the track's).
+constexpr size_t TrackIdOffset = 72;
+constexpr size_t ArtistIdOffset = 4;
+constexpr size_t AlbumIdOffset = 12;
+
+// The highest u32 at `idOffset` of any row the table of `tableType` has a
+// row offset for, present or marked deleted: an id is never given out
+// twice, as rekordbox does not (a deleted row's id may still be named
+// elsewhere, in exportExt.pdb's tags for one). 0 for a table without
+// rows or one the file does not have.
+uint32_t highestIdEverIn(const std::string &buffer, uint32_t tableType, size_t idOffset)
+{
+    uint32_t highest = 0;
+    const size_t lenPage = readU32LE(buffer, HeaderLenPageOffset);
+    const uint32_t numTables = readU32LE(buffer, HeaderNumTablesOffset);
+    for (uint32_t t = 0; t < numTables; ++t) {
+        const size_t entry = TablesOffset + TableEntrySize * t;
+        if (readU32LE(buffer, entry) != tableType) {
+            continue;
+        }
+        const uint32_t lastPage = readU32LE(buffer, entry + 12);
+        uint32_t page = readU32LE(buffer, entry + 8);
+        for (size_t guard = 0; guard < 100000; ++guard) {
+            const size_t base = lenPage * page;
+            if (base + lenPage > buffer.size()) {
+                break;
+            }
+            if ((static_cast<unsigned char>(buffer[base + 27]) & 0x40) == 0) {
+                const uint32_t numRowOffsets = readU32LE(buffer, base + 24) & 0x1FFFu;
+                for (uint32_t i = 0; i < numRowOffsets; ++i) {
+                    const size_t groupBase = base + lenPage - (i / 16) * RowGroupSizeBytes;
+                    const size_t at = base + PageHeaderSize + readU16LE(buffer, groupBase - 6 - 2 * (i % 16)) + idOffset;
+                    if (at + 4 <= base + lenPage) {
+                        highest = std::max(highest, readU32LE(buffer, at));
+                    }
+                }
+            }
+            if (page == lastPage) {
+                break;
+            }
+            page = readU32LE(buffer, base + 12);
+        }
+    }
+    return highest;
+}
+
+// Calls visit(body) for every present row of the table of `type`.
+void forEachPresentRow(const std::string &buffer, Pdb::page_type_t type, const std::function<void(kaitai::kstruct *)> &visit)
+{
+    std::istringstream iss(buffer);
+    kaitai::kstream ks(&iss);
+    Pdb pdb(false, &ks);
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != type) {
+            continue;
+        }
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    if (row->present()) {
+                        visit(row->body());
+                    }
+                }
+            }
+        });
+    }
+}
+
+// rekordbox's number for a file's type, by its extension; 0 for one it
+// has no number for here. As OneLibrary's fileType column: the two hold
+// the same number for the same track.
+uint16_t pdbFileType(const std::string &path)
+{
+    // After the last dot, whatever it is: a dot in a folder's name leaves
+    // an "extension" with a '/' in it, which is none of the ones below.
+    const size_t dot = path.rfind('.');
+    if (dot == std::string::npos) {
+        return 0;
+    }
+    std::string extension = path.substr(dot + 1);
+    for (char &ch : extension) {
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+    }
+    if (extension == "mp3") {
+        return 1;
+    }
+    if (extension == "m4a" || extension == "mp4") {
+        return 4;
+    }
+    if (extension == "flac") {
+        return 5;
+    }
+    if (extension == "wav") {
+        return 11;
+    }
+    if (extension == "aif" || extension == "aiff") {
+        return 12;
+    }
+    return 0;
+}
+
+bool isCalendarDate(const std::string &text)
+{
+    if (text.size() != 10 || text[4] != '-' || text[7] != '-') {
+        return false;
+    }
+    for (const size_t i : {0U, 1U, 2U, 3U, 5U, 6U, 8U, 9U}) {
+        if (text[i] < '0' || text[i] > '9') {
+            return false;
+        }
+    }
+    const int month = (text[5] - '0') * 10 + (text[6] - '0');
+    const int day = (text[8] - '0') * 10 + (text[9] - '0');
+    return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+
+}  // namespace
+
+void PdbRowWriter::addRow(uint32_t tableType, const std::function<std::string(uint32_t)> &rowAt)
+{
+    // Placed twice: the first time to learn the page, and with it the
+    // row's number there, which does not change the row's length.
+    const RowPlacement probe = placeRows(tableType, {rowAt(0)});
+    uint32_t rowIndex = 0;
+    if (probe.onLastPage > 0) {
+        const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+        rowIndex = readU32LE(m_buffer, lenPage * probe.lastPage + 24) & 0x1FFFu;
+    }
+    const std::vector<std::string> rows = {rowAt(rowIndex)};
+    writeRows(placeRows(tableType, rows), rows);
+}
+
+uint32_t PdbRowWriter::addTrack(const NewTrack &track)
+{
+    if (m_format != Format::Export) {
+        throw std::logic_error("tracks live in export.pdb");
+    }
+    if (track.title.empty()) {
+        throw std::invalid_argument("export.pdb: a track row needs a title");
+    }
+    if (!isCalendarDate(track.date)) {
+        throw std::invalid_argument("export.pdb: \"" + track.date + "\" is not a date as YYYY-MM-DD");
+    }
+    const std::string &path = track.pathOnStick;
+    if (path.size() < 2 || path[0] != '/' || ("/" + path + "/").find("/../") != std::string::npos
+        || path.find('\\') != std::string::npos) {
+        throw std::invalid_argument("export.pdb: " + path + " is not a path from the stick's root");
+    }
+    const uint16_t fileType = pdbFileType(path);
+    if (fileType == 0) {
+        throw std::invalid_argument("export.pdb: no file type known for " + path);
+    }
+    // Not clamped: a number its field cannot hold would be another
+    // number in the row.
+    if (!(track.bpm >= 0.0) || track.bpm >= 1000.0) {
+        throw std::invalid_argument("export.pdb: not a tempo a track row holds");
+    }
+    const auto fits = [](int value, int most) { return value >= 0 && value <= most; };
+    if (!fits(track.durationSeconds, 0xFFFF) || !fits(track.discNumber, 0xFFFF) || !fits(track.year, 0xFFFF)
+        || !fits(track.sampleDepth, 0xFFFF) || !fits(track.trackNumber, std::numeric_limits<int>::max())
+        || !fits(track.bitrate, std::numeric_limits<int>::max())
+        || !fits(track.sampleRateHz, std::numeric_limits<int>::max())) {
+        throw std::invalid_argument("export.pdb: a number of " + path + " does not fit its field");
+    }
+    if (track.fileSizeBytes > 0xFFFFFFFFull) {
+        throw std::invalid_argument("export.pdb: " + path + " is too large for a track row's file size");
+    }
+    for (const std::string *onStick : {&track.analyzePath, &track.artworkPath}) {
+        if (!onStick->empty() && onStick->rfind("/PIONEER/", 0) != 0) {
+            throw std::invalid_argument("export.pdb: " + *onStick + " is not a path under the stick's /PIONEER/");
+        }
+    }
+    {
+        const std::string wanted = application::normalizedPathKey(path);
+        std::string refusal;
+        forEachPresentRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+            auto *row = dynamic_cast<Pdb::track_row_t *>(body);
+            if (!row || !refusal.empty()) {
+                return;
+            }
+            const std::string existing = sqlText(row->file_path());
+            if (existing == path || application::normalizedPathKey(existing) == wanted) {
+                refusal = "export.pdb: track " + std::to_string(row->id()) + " already names " + existing;
+            } else if (!track.analyzePath.empty() && sqlText(row->analyze_path()) == track.analyzePath) {
+                // Two rows on one analysis file share its cues.
+                refusal = "export.pdb: track " + std::to_string(row->id()) + " already names the analysis file "
+                          + track.analyzePath;
+            }
+        });
+        if (!refusal.empty()) {
+            throw std::invalid_argument(refusal);
+        }
+    }
+
+    // All of it or none: a row that cannot be placed after its artist
+    // was leaves the buffer as it was.
+    const std::string bufferBefore = m_buffer;
+    const std::set<uint32_t> editedBefore = m_editedPageIndices;
+    const std::set<uint32_t> appendedBefore = m_appendedPages;
+    try {
+        // A one-name lookup row (genre, label, key, artwork, artist): the
+        // id of the present row spelled exactly `name`, made when there
+        // is none; 0, "none", for an empty name.
+        const auto named = [&](Pdb::page_type_t type, uint32_t tableType, size_t idOffset, const std::string &name) -> uint32_t {
+            if (name.empty()) {
+                return 0;
+            }
+            uint32_t found = 0;
+            forEachPresentRow(m_buffer, type, [&](kaitai::kstruct *body) {
+                uint32_t id = 0;
+                std::string text;
+                if (auto *artist = dynamic_cast<Pdb::artist_row_t *>(body)) {
+                    id = artist->id();
+                    text = sqlText(artist->name());
+                } else if (auto *genre = dynamic_cast<Pdb::genre_row_t *>(body)) {
+                    id = genre->id();
+                    text = sqlText(genre->name());
+                } else if (auto *label = dynamic_cast<Pdb::label_row_t *>(body)) {
+                    id = label->id();
+                    text = sqlText(label->name());
+                } else if (auto *key = dynamic_cast<Pdb::key_row_t *>(body)) {
+                    id = key->id();
+                    text = sqlText(key->name());
+                } else if (auto *artwork = dynamic_cast<Pdb::artwork_row_t *>(body)) {
+                    id = artwork->id();
+                    text = sqlText(artwork->path());
+                }
+                if (id != 0 && text == name && (found == 0 || id < found)) {
+                    found = id;
+                }
+            });
+            if (found != 0) {
+                return found;
+            }
+            const uint32_t id = highestIdEverIn(m_buffer, tableType, idOffset) + 1;
+            addRow(tableType, [&](uint32_t rowIndex) {
+                if (tableType == ArtistsTableType) {
+                    return encodePdbArtistRow(rowIndex, id, name);
+                }
+                return tableType == KeysTableType ? encodePdbKeyRow(id, name) : encodePdbNameRow(id, name);
+            });
+            return id;
+        };
+
+        PdbTrackRowFields row;
+        row.artistId = named(Pdb::PAGE_TYPE_ARTISTS, ArtistsTableType, ArtistIdOffset, track.artist);
+        row.remixerId = named(Pdb::PAGE_TYPE_ARTISTS, ArtistsTableType, ArtistIdOffset, track.remixer);
+        row.composerId = named(Pdb::PAGE_TYPE_ARTISTS, ArtistsTableType, ArtistIdOffset, track.composer);
+        const uint32_t albumArtistId = named(Pdb::PAGE_TYPE_ARTISTS, ArtistsTableType, ArtistIdOffset, track.albumArtist);
+        if (!track.album.empty()) {
+            forEachPresentRow(m_buffer, Pdb::PAGE_TYPE_ALBUMS, [&](kaitai::kstruct *body) {
+                auto *album = dynamic_cast<Pdb::album_row_t *>(body);
+                if (album && album->artist_id() == albumArtistId && sqlText(album->name()) == track.album
+                    && (row.albumId == 0 || album->id() < row.albumId)) {
+                    row.albumId = album->id();
+                }
+            });
+            if (row.albumId == 0) {
+                row.albumId = highestIdEverIn(m_buffer, AlbumsTableType, AlbumIdOffset) + 1;
+                addRow(AlbumsTableType, [&](uint32_t rowIndex) {
+                    return encodePdbAlbumRow(rowIndex, row.albumId, albumArtistId, track.album);
+                });
+            }
+        }
+        row.genreId = named(Pdb::PAGE_TYPE_GENRES, GenresTableType, 0, track.genre);
+        row.labelId = named(Pdb::PAGE_TYPE_LABELS, LabelsTableType, 0, track.label);
+        row.keyId = named(Pdb::PAGE_TYPE_KEYS, KeysTableType, 0, track.key);
+        row.artworkId = named(Pdb::PAGE_TYPE_ARTWORK, ArtworkTableType, 0, track.artworkPath);
+
+        row.id = std::max({highestIdEverIn(m_buffer, TracksTableType, TrackIdOffset),
+                           highestIdEverIn(m_buffer, PlaylistEntriesTableType, PlaylistEntryTrackIdOffset),
+                           highestIdEverIn(m_buffer, HistoryEntriesTableType, 0)})
+                 + 1;
+        row.sampleRate = static_cast<uint32_t>(track.sampleRateHz);
+        row.fileSize = static_cast<uint32_t>(track.fileSizeBytes);
+        row.bitrate = static_cast<uint32_t>(track.bitrate);
+        row.trackNumber = static_cast<uint32_t>(track.trackNumber);
+        row.tempo = static_cast<uint32_t>(track.bpm * 100.0 + 0.5);
+        row.discNumber = static_cast<uint16_t>(track.discNumber);
+        row.year = static_cast<uint16_t>(track.year);
+        row.sampleDepth = static_cast<uint16_t>(track.sampleDepth);
+        row.duration = static_cast<uint16_t>(track.durationSeconds);
+        row.fileType = fileType;
+        row.dateAdded = track.date;
+        row.analyzePath = track.analyzePath;
+        // rekordbox dates the analysis; a row without one has no date.
+        row.analyzeDate = track.analyzePath.empty() ? std::string() : track.date;
+        row.comment = track.comment;
+        row.title = track.title;
+        const size_t slash = path.rfind('/');
+        row.filename = path.substr(slash + 1);
+        row.filePath = path;
+        addRow(TracksTableType, [&](uint32_t rowIndex) {
+            row.rowIndex = rowIndex;
+            std::string bytes = encodePdbTrackRow(row);
+            bytes.resize(paddedRowSize(bytes.size() + TrackRowRoom), '\0');
+            return bytes;
+        });
+        return row.id;
+    } catch (...) {
+        m_buffer = bufferBefore;
+        m_editedPageIndices = editedBefore;
+        m_appendedPages = appendedBefore;
+        throw;
+    }
 }
 
 std::vector<uint32_t> PdbRowWriter::trackIdsWithFilePath(const std::string &pathOnStick) const

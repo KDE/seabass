@@ -406,6 +406,77 @@ public:
     // many rows were added.
     size_t appendPlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
 
+    // One track to add to export.pdb (the track import): a file that is
+    // on the stick already and that no track row names.
+    struct NewTrack
+    {
+        // As export.pdb spells it, from the stick's root:
+        // "/Contents/Artist/Album/track.mp3". Its extension decides the
+        // row's file type. That the file is there is the caller's to
+        // know: this class sees export.pdb, not the stick.
+        std::string pathOnStick;
+        // Never empty: rekordbox itself titles an untagged file by its
+        // name, and so must the caller.
+        std::string title;
+        // Each empty where the file says nothing; the row then names no
+        // lookup row for it. `key` goes in as it is spelled.
+        std::string artist;
+        std::string album;
+        std::string albumArtist;
+        std::string genre;
+        std::string label;
+        std::string remixer;
+        std::string composer;
+        std::string key;
+        std::string comment;
+        // "/PIONEER/USBANLZ/P01E/00009ECC/ANLZ0000.DAT" and
+        // "/PIONEER/Artwork/00001/a7.jpg"; empty: the track has none.
+        std::string analyzePath;
+        std::string artworkPath;
+        double bpm = 0.0;
+        int durationSeconds = 0;
+        int trackNumber = 0;
+        int discNumber = 0;
+        int year = 0;
+        // kbit/s as rekordbox writes it: 0 for FLAC.
+        int bitrate = 0;
+        int sampleDepth = 0;
+        int sampleRateHz = 0;
+        std::uint64_t fileSizeBytes = 0;
+        // The day of the import, "YYYY-MM-DD".
+        std::string date;
+    };
+
+    // Adds one track row for `track` and returns its id. Nothing reaches
+    // the file before commit().
+    //   - The artist, album, genre, label, key and artwork rows the track
+    //     names are looked up by their exact spelling and made where
+    //     missing, each on its table's last page or a new one
+    //     (appendPlaylistEntries() says how a page is started). An album
+    //     is the pair of its name and its album artist, and has no artist
+    //     when the file names no album artist, as in rekordbox's exports.
+    //   - Every new id is one above the highest its table has ever held,
+    //     rows marked deleted included; a track's also above every id a
+    //     playlist or history entry names. So nothing a removed row left
+    //     behind is inherited.
+    //   - The track row is rekordbox 7.2.18's, field for field
+    //     (pdb_row_encoding.hpp). What rekordbox takes from its own
+    //     collection is none: the collection's ids 0, the three update
+    //     counters empty. It is given the 48 bytes of room rekordbox
+    //     leaves after a track row, which is what a later edit of its
+    //     comment or path has to grow into.
+    // Refused with std::invalid_argument, the buffer as it was: an empty
+    // title; a date that is not YYYY-MM-DD; a path that does not start at
+    // the stick's root or climbs out of it; a file type with no number
+    // (mp3, m4a, mp4, flac, wav, aif, aiff are known); a tempo outside 0
+    // to 1000, a negative number, or one past what its field holds (a
+    // file of 4 GiB or more, a length over 65535 s); a file some present
+    // row already names, compared as the stick's filesystem compares
+    // names; an analysis file another row names; an analysis or artwork
+    // path not under /PIONEER/. Throws PdbPageFull, the buffer as it
+    // was, when a row cannot be placed.
+    uint32_t addTrack(const NewTrack &track);
+
     // The ids of the track rows whose file_path is `pathOnStick` as
     // export.pdb spells it ("/Contents/Artist/track.mp3"), space padding
     // ignored. More than one when the file was imported twice.
@@ -539,6 +610,10 @@ private:
     void writeRows(const RowPlacement &placement, const std::vector<std::string> &rows);
     uint32_t startPage(size_t tableEntry, uint32_t tableType);
     void appendRowsToPage(uint32_t pageIndex, const std::vector<std::string> &rows, size_t &next, size_t count);
+    // Places one row of `tableType`, built by `rowAt` from the number it
+    // will have on its page (which artist, album and track rows repeat
+    // inside themselves).
+    void addRow(uint32_t tableType, const std::function<std::string(uint32_t rowIndex)> &rowAt);
     void rewritePlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
     void rewriteTreeLevel(uint32_t parentId, const std::vector<TreeRowSlot> &level);
     static std::vector<TreeRowSlot> siblingsOf(const std::string &buffer, uint32_t parentId);
