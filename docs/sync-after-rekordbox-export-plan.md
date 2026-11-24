@@ -361,9 +361,47 @@ What it reuses, and what it must not:
   the same kind, a playlist there holding exactly B's tracks, each one
   Engine row, a folder nothing at all); the create at a path whose
   parent Engine already has, every track of a new playlist with a row.
-  Everywhere else the id pairs as before: a rename (also where the
-  lists share some tracks, or one is empty, or the delete would be a
-  conflict), or the conflict that raises. Two folders pair by id.
+  Everywhere else the id pairs as before: a rename where the members say
+  it is the same playlist, or the conflict that raises. Two folders pair
+  by id.
+  **Decision (#125, 2026-11-24):** a playlist under a renamed id is that
+  playlist renamed only where rekordbox's list keeps at least half of
+  the recorded one's tracks (a track the record declines as a member of
+  the id counts as one of them), or the recorded list is empty (a
+  rename then takes nothing out of Engine). Where it keeps fewer (the
+  House/Warmup case, a list sharing nothing whose delete is not plain,
+  rekordbox's list emptied) a rename would take most of Engine's
+  playlist out on a guess: one conflict under `playlist:<id>` names both
+  readings and the DJ picks. rekordbox's side: the old playlist deleted
+  and the new one created with its tracks (what the export shows), the
+  delete under #99's `reused:` key so the page stages it directly before
+  the create and a save that stops between them is recorded as #99's.
+  Engine's side: Engine's playlist kept, renamed and given rekordbox's
+  tracks (the id's reading). The question is raised only where the two
+  answers write differently: Engine's copy exactly as recorded, entry
+  for entry in its order (a track moved or doubled on the player is the
+  DJ's edit too), every entry one the plan can place. The numbers in
+  both texts are the decision's: the tracks the record holds and the
+  ones it declines for the playlist. Otherwise (the DJ's edits on the player,
+  a file with two Engine rows, a streaming track, a file not on the
+  stick) a delete could lose what only Engine's copy holds, so both
+  readings come to the same write and nothing is asked: a rename row of
+  the usual kind, ticked as any rename, with rekordbox's changes as
+  member rows, Engine's additions kept where they are and its removals
+  left out as Engine's own (the member rule for any playlist). Its
+  reason says what happens, names what stays and what Seabass cannot
+  match, and says why it is not asked. A member of rekordbox's list no
+  row can put into Engine stays out of the record under the id. Either
+  answer leaves Engine holding
+  rekordbox's list, so the record takes rekordbox's playlist under the
+  id, exactly its tracks in its order: the answer's rows all carry the
+  playlist's key, so the members and order are held only while the
+  conflict is open (`heldWhileOpen`), and go with the answer once it is
+  given; a save that stops before the answer lands puts them back.
+  Unanswered, the record keeps the old playlist whole, and the conflict
+  comes back.
+  The line at one half is a judgement: below it a rename removes more
+  of Engine's playlist than it keeps.
   Engine's reader gives an empty folder as a playlist holding nothing,
   so a recorded folder Engine has that way is a plain delete too.
   **Decision (#124, 2026-11-24):** an id that changed kind (a folder's

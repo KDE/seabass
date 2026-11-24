@@ -411,6 +411,9 @@ RekordboxBaseline recordAfterSave(const RekordboxBaseline &previous, const World
                                   const std::set<std::string> &unticked = {})
 {
     std::set<std::string> offered(p.declinedSuppressed.begin(), p.declinedSuppressed.end());
+    for (const auto &c : p.conflicts) {
+        offered.insert(c.heldWhileOpen.begin(), c.heldWhileOpen.end());  // open, so held
+    }
     std::set<std::string> applied;
     std::map<std::string, std::string> declined;
     eachRow(p, [&](const EngineUpdateItemHeader &h) {
@@ -1100,22 +1103,32 @@ int main()
                      "OK\n";
     }
 
-    // #99: Engine's "T73 Delete Me" changed since the record, so its delete
-    // would be a conflict: the id pairs them as before this rule, a
-    // rename; saved, the record and Engine agree and nothing is left to
-    // offer but Engine's own track.
+    // #99, then #125: Engine's "T73 Delete Me" changed since the record
+    // (E put in on the player), so its delete is not plain. The members
+    // share nothing, but both readings would keep E and so write the same:
+    // no question, one rename row, ticked as any rename, with rekordbox's
+    // changes as member rows and E Engine's own. Saved, the record and
+    // Engine agree.
     {
         const auto [w, base] = issueWorld(true, 1);
         const auto p = plan(w, base);
+        assert(p.conflicts.empty() && "both readings write the same: nothing to ask");
+        assert(p.playlistsToDelete.empty() && p.playlistsToCreate.empty());
         assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].fromPath == "T73 Delete Me"
-               && p.playlistsToRename[0].toPath == "T73 New");
-        assert(p.playlistsToDelete.empty() && p.playlistsToCreate.empty() && p.conflicts.empty());
+               && p.playlistsToRename[0].toPath == "T73 New" && p.playlistsToRename[0].header.checkedByDefault);
+        std::cout << "  #125 (E): " << p.playlistsToRename[0].header.reasonText << "\n";
         World after = w;
         apply(after, p);
+        assert(!hasPlaylist(after, "T73 Delete Me"));
+        assert(engineOrder(after, "T73 New") == (Deps{"music/c.mp3", "music/d.mp3", "music/e.mp3"}));
         const auto record = recordAfterSave(base, w, p);
+        assert(recorded(record, 2) && recorded(record, 2)->members == (Deps{"music/c.mp3", "music/d.mp3"}));
         const auto next = plan(after, record);
-        assert(next.empty() && next.conflicts.empty());
-        std::cout << "a reused id whose old playlist Engine changed: as before, a rename (#99) OK\n";
+        assert(next.conflicts.empty() && next.membership.empty() && next.playlistsToCreate.empty()
+               && next.playlistsToRename.empty() && next.playlistsToDelete.empty());
+        assert(next.engineOwnKept.size() == 1 && next.engineOwnKept[0].header.key == "member:2:music/e.mp3"
+               && "E is Engine's own, nothing to write");
+        std::cout << "a reused id whose old playlist Engine changed: no question, one rename that keeps E (#125) OK\n";
     }
 
     // #99: the old path is two playlists in Engine: as before, a refusal
@@ -1152,24 +1165,28 @@ int main()
         std::cout << "a folder renamed with an empty playlist in it: only the folder's rename (#99) OK\n";
     }
 
-    // #99: a recorded list and rekordbox's under its id that share tracks,
-    // or one with no tracks: as before this rule, a rename by id. The
-    // last is the House/Warmup case: a small new list borrowing from a
-    // big deleted one still reads as its rename, the reviewer's case, left
-    // as it was.
+    // #99, then #125: a recorded list and rekordbox's under its id that
+    // share tracks, or one with no tracks. A rename by id where rekordbox's
+    // keeps at least half of the recorded tracks, or the recorded list is
+    // empty (a rename then takes nothing out of Engine). Where it keeps
+    // fewer (the House/Warmup case, a small new list borrowing from a big
+    // deleted one, or rekordbox's list empty), the members do not say it
+    // is the same playlist: a conflict under the id, and either answer
+    // leaves Engine with rekordbox's list.
     {
         struct Case
         {
             const char *what;
             std::vector<std::string> before;
             std::vector<std::string> now;
+            bool unsure;
         };
         const std::vector<Case> cases = {
-            {"one of three in common", {"A", "B", "C", "D", "E"}, {"A", "F", "G"}},
-            {"two of three in common", {"A", "B", "C", "D"}, {"A", "B", "E"}},
-            {"the recorded list empty", {}, {"A", "B"}},
-            {"rekordbox's list empty", {"A", "B"}, {}},
-            {"House and Warmup", {"A", "B", "C", "D", "E", "F", "G"}, {"A", "B", "C", "H", "I", "J"}},
+            {"one of five kept", {"A", "B", "C", "D", "E"}, {"A", "F", "G"}, true},
+            {"two of four kept", {"A", "B", "C", "D"}, {"A", "B", "E"}, false},
+            {"the recorded list empty", {}, {"A", "B"}, false},
+            {"rekordbox's list empty", {"A", "B"}, {}, true},
+            {"House and Warmup", {"A", "B", "C", "D", "E", "F", "G"}, {"A", "B", "C", "H", "I", "J"}, true},
         };
         for (const auto &c : cases) {
             World w;
@@ -1198,6 +1215,32 @@ int main()
             place(w.rekordbox, "After", c.now);
             w.rekordboxPlaylists = {{"After", false, 9}};
             const auto p = plan(w, base);
+            std::vector<std::string> want;
+            for (const auto &name : c.now) {
+                want.push_back("music/" + lowerKey(name) + ".mp3");
+            }
+            if (c.unsure) {
+                if (!p.playlistsToRename.empty()) {
+                    std::cerr << "FAIL (" << c.what << "): planned as a rename\n";
+                }
+                assert(p.playlistsToRename.empty() && p.playlistsToCreate.empty() && p.playlistsToDelete.empty());
+                assert(p.membership.empty());
+                assert(p.conflicts.size() == 1 && p.conflicts[0].header.key == "playlist:9");
+                for (const bool rekordboxSide : {true, false}) {
+                    const auto q = answered(p, "playlist:9", rekordboxSide);
+                    World after = w;
+                    apply(after, q);
+                    assert(!hasPlaylist(after, "Before") && hasPlaylist(after, "After"));
+                    assert(engineOrder(after, "After") == want);
+                    const auto record = recordAfterSave(base, w, q);
+                    if (!recorded(record, 9) || recorded(record, 9)->members != want) {
+                        std::cerr << "FAIL (" << c.what << "): the record does not hold rekordbox's list\n";
+                    }
+                    assert(recorded(record, 9) && recorded(record, 9)->members == want);
+                    assert(plan(after, record).empty());
+                }
+                continue;
+            }
             if (p.playlistsToRename.size() != 1) {
                 std::cerr << "FAIL (" << c.what << "): not planned as a rename\n";
             }
@@ -1206,15 +1249,395 @@ int main()
             assert(p.playlistsToCreate.empty() && p.playlistsToDelete.empty() && p.conflicts.empty());
             World after = w;
             apply(after, p);
-            std::vector<std::string> want;
-            for (const auto &name : c.now) {
-                want.push_back("music/" + lowerKey(name) + ".mp3");
-            }
             assert(engineOrder(after, "After") == want);
             assert(plan(after, recordAfterSave(base, w, p)).empty());
         }
-        std::cout << "a reused id with tracks in common, or an empty list: as before, a rename (#99) OK\n";
+        std::cout << "a reused id: a rename where half the tracks or more stay, a conflict where fewer do (#125) OK\n";
     }
+
+    // #125, the issue's scenario: "House" (40 tracks) deleted in
+    // rekordbox, a new "Warmup" (6 tracks, 3 of them from House) given its
+    // id. Never a rename that takes 37 tracks out of Engine's House: one
+    // conflict under the id naming both readings. Unanswered, the record
+    // keeps House whole and the next analysis asks again. Answered either
+    // way and saved, Engine holds Warmup as rekordbox has it, no House, and
+    // nothing is left to offer.
+    {
+        World w;
+        std::vector<std::string> house;
+        for (int i = 1; i <= 40; ++i) {
+            const std::string name = (i < 10 ? "H0" : "H") + std::to_string(i);
+            w.rekordbox.push_back(rb(std::to_string(i), "Music/" + name + ".mp3", {{"House", i - 1}}));
+            w.engine.push_back(en("e" + std::to_string(i), "Music/" + name + ".mp3", {{"House", i - 1}}));
+            house.push_back("music/" + lowerKey(name) + ".mp3");
+        }
+        for (int i = 1; i <= 3; ++i) {
+            const std::string name = "W" + std::to_string(i);
+            w.rekordbox.push_back(rb(std::to_string(100 + i), "Music/" + name + ".mp3"));
+            w.engine.push_back(en("e" + std::to_string(100 + i), "Music/" + name + ".mp3"));
+        }
+        w.rekordboxPlaylists = {{"House", false, 7}};
+        w.enginePlaylists = {{"House", false, 1}};
+        const auto base = baselineOf(w);
+        for (auto &t : w.rekordbox) {
+            t.playlists.clear();
+        }
+        const std::vector<std::string> warmup = {"music/h01.mp3", "music/h02.mp3", "music/h03.mp3",
+                                                 "music/w1.mp3",  "music/w2.mp3",  "music/w3.mp3"};
+        for (std::size_t i = 0; i < warmup.size(); ++i) {
+            byKey(w.rekordbox, warmup[i])->playlists.push_back({"Warmup", static_cast<int>(i)});
+        }
+        w.rekordboxPlaylists = {{"Warmup", false, 7}};
+
+        const auto p = plan(w, base);
+        for (const auto &r : p.playlistsToRename) {
+            std::cerr << "FAIL: planned as the rename of " << r.fromPath << " to " << r.toPath << "\n";
+        }
+        assert(p.playlistsToRename.empty() && "never a silent rename");
+        assert(p.playlistsToCreate.empty() && p.playlistsToDelete.empty() && p.membership.empty());
+        assert(p.conflicts.size() == 1);
+        const auto &c = p.conflicts[0];
+        std::cout << "  #125: " << c.header.reasonText << "\n    [" << c.rekordboxSide << "] [" << c.engineSide << "]\n";
+        assert(c.header.key == "playlist:7" && c.header.conflict);
+        assert(c.header.reasonText.find("40 tracks") != std::string::npos
+               && c.header.reasonText.find("3 of them") != std::string::npos
+               && c.header.reasonText.find("lost 37 tracks") != std::string::npos);
+        assert(c.rekordboxSide == "Delete \"House\" and create \"Warmup\" in Engine");
+        assert(c.engineSide == "Rename \"House\" to \"Warmup\" and give it rekordbox's tracks");
+        assert(std::holds_alternative<PlaylistCreate>(c.rekordboxChoice.front()));
+        assert(std::holds_alternative<PlaylistDelete>(c.rekordboxChoice.back()));
+        assert(std::holds_alternative<PlaylistRename>(c.engineChoice.front()));
+        assert(c.rekordboxChoice.size() == 1 + 6 + 1 && c.engineChoice.size() == 1 + 37 + 3);
+        assert(p.engineOwnKept.empty() && "Engine's House is the conflict's");
+
+        // Unanswered: the record keeps House whole, and asks again.
+        const auto open = recordAfterSave(base, w, p);
+        assert(recorded(open, 7) && recorded(open, 7)->path == "House" && recorded(open, 7)->members == house);
+        const auto again = plan(w, open);
+        assert(again.playlistsToRename.empty() && again.conflicts.size() == 1
+               && again.conflicts[0].header.key == "playlist:7");
+
+        for (const bool rekordboxSide : {true, false}) {
+            const auto q = answered(p, "playlist:7", rekordboxSide);
+            if (rekordboxSide) {
+                // The delete keeps its reused: key, so the page stages it
+                // first, as #99's.
+                bool keyed = false;
+                for (const auto &d : q.playlistsToDelete) {
+                    keyed = keyed || (d.path == "House" && d.header.key == "reused:7:House");
+                }
+                assert(keyed && "House's delete under the plan's own key");
+            }
+            World after = w;
+            apply(after, q);
+            assert(!hasPlaylist(after, "House"));
+            assert(engineOrder(after, "Warmup") == warmup);
+            const auto record = recordAfterSave(base, w, q);
+            assert(recorded(record, 7) && recorded(record, 7)->path == "Warmup");
+            // Exactly what was applied: rekordbox's Warmup, never House's
+            // tracks under Warmup's id.
+            if (recorded(record, 7)->members != warmup) {
+                std::cerr << "FAIL (" << (rekordboxSide ? "rekordbox's" : "Engine's") << " side): the record holds "
+                          << recorded(record, 7)->members.size() << " tracks under Warmup, not its 6\n";
+            }
+            assert(recorded(record, 7)->members == warmup);
+            assert(keysOfTheFileGrammar(record));
+            const auto next = plan(after, record);
+            assert(next.empty() && next.conflicts.empty() && next.engineOwnKept.empty());
+            // rekordbox then puts H05 into Warmup and takes W1 out: both
+            // offered as rekordbox's, ticked, and nothing else.
+            World later = after;
+            for (auto &t : later.rekordbox) {
+                t.playlists.clear();
+            }
+            const std::vector<std::string> warmup2 = {"music/h01.mp3", "music/h02.mp3", "music/h03.mp3",
+                                                      "music/w2.mp3",  "music/w3.mp3",  "music/h05.mp3"};
+            for (std::size_t i = 0; i < warmup2.size(); ++i) {
+                byKey(later.rekordbox, warmup2[i])->playlists.push_back({"Warmup", static_cast<int>(i)});
+            }
+            const auto edit = plan(later, record);
+            std::multiset<std::string> edits;
+            for (const auto &m : edit.membership) {
+                assert(m.header.checkedByDefault
+                       && (m.header.reason == EngineUpdateReason::RekordboxRemoved
+                           || m.header.reason == EngineUpdateReason::RekordboxAdded));
+                edits.insert((m.kind == MembershipEdit::Kind::Add ? "+" : "-") + m.pathKey);
+            }
+            for (const auto &c2 : edit.conflicts) {
+                std::cerr << "FAIL: after rekordbox's edit, \"" << c2.header.reasonText << "\"\n";
+            }
+            assert(edit.conflicts.empty() && edit.playlistsToRename.empty() && edit.playlistsToCreate.empty()
+                   && edit.playlistsToDelete.empty());
+            assert((edits == std::multiset<std::string>{"+music/h05.mp3", "-music/w1.mp3"}));
+            World edited = later;
+            apply(edited, edit);
+            assert(engineOrder(edited, "Warmup") == warmup2);
+        }
+        std::cout << "a reused id keeping 3 of 40 tracks: a conflict with both readings, never a rename (#125) OK\n";
+    }
+
+    // #125 and the DJ's own edits on the player: the record's "House" (id
+    // 7) holds A, B and C; on the player X went into House since, and (b)
+    // A came out; rekordbox gives 7 to "Warmup" with A and D. No question:
+    // one rename keeps X in Warmup and leaves A out where Engine took it
+    // out, and its text says so with the right counts; the record holds
+    // rekordbox's Warmup, and the next analysis lists X (and A) as
+    // Engine's own, nothing to write.
+    for (const bool engineTookA : {false, true}) {
+        World w;
+        for (const char *name : {"A", "B", "C", "D", "X"}) {
+            const std::string relative = std::string("Music/") + name + ".mp3";
+            w.rekordbox.push_back(rb(name, relative));
+            w.engine.push_back(en(std::string("e") + name, relative));
+        }
+        const auto key = [](const char *name) { return "music/" + lowerKey(name) + ".mp3"; };
+        int at = 0;
+        for (const char *name : {"A", "B", "C"}) {
+            byKey(w.rekordbox, key(name))->playlists.push_back({"House", at});
+            byKey(w.engine, key(name))->playlists.push_back({"House", at++});
+        }
+        w.rekordboxPlaylists = {{"House", false, 7}};
+        w.enginePlaylists = {{"House", false, 1}};
+        const auto base = baselineOf(w);
+        byKey(w.engine, key("X"))->playlists.push_back({"House", 3});  // put in on the player
+        if (engineTookA) {
+            byKey(w.engine, key("A"))->playlists.clear();  // taken out on the player
+        }
+        for (auto &t : w.rekordbox) {
+            t.playlists.clear();
+        }
+        byKey(w.rekordbox, key("A"))->playlists.push_back({"Warmup", 0});
+        byKey(w.rekordbox, key("D"))->playlists.push_back({"Warmup", 1});
+        w.rekordboxPlaylists = {{"Warmup", false, 7}};
+
+        const auto p = plan(w, base);
+        // Engine's copy is not as recorded: both readings would keep X and
+        // leave A out, so they write the same. No question, no delete (no
+        // stop between a delete and the adds can lose X): one rename row,
+        // ticked as any rename, saying what happens and why nothing is asked.
+        for (const auto &c : p.conflicts) {
+            std::cerr << "FAIL: asked \"" << c.header.reasonText << "\"\n";
+        }
+        assert(p.conflicts.empty() && p.playlistsToCreate.empty() && p.playlistsToDelete.empty());
+        assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].fromPath == "House"
+               && p.playlistsToRename[0].toPath == "Warmup" && p.playlistsToRename[0].header.key == "playlist:7"
+               && p.playlistsToRename[0].header.checkedByDefault);
+        const std::string &text = p.playlistsToRename[0].header.reasonText;
+        std::cout << "  #125 " << (engineTookA ? "b" : "a") << ": " << text << "\n";
+        const std::string tookOutText =
+            engineTookA ? "; the 1 track taken out on the player (\"Music/A.mp3\") stays out" : "";
+        assert(text
+               == "rekordbox gave \"House\"'s id to \"Warmup\", which keeps 1 of its 3 tracks: Engine's \"House\" "
+                  "becomes \"Warmup\" with rekordbox's tracks, each after the track before it in rekordbox's list; "
+                  "the 1 track added on the player (\"Music/X.mp3\") stays where it is"
+                   + tookOutText
+                   + ". \"House\" is not deleted, and this is not asked: a delete would lose what only Engine's "
+                     "copy holds, so either reading comes to this");
+        const Deps want = engineTookA ? Deps{key("D"), key("X")} : Deps{key("A"), key("D"), key("X")};
+        {
+            const auto &q = p;
+            World after = w;
+            apply(after, q);
+            const char *side = "the rename";
+            if (engineOrder(after, "Warmup") != want) {
+                std::cerr << "FAIL (" << side << " side): Warmup holds";
+                for (const auto &k : engineOrder(after, "Warmup")) {
+                    std::cerr << " " << k;
+                }
+                std::cerr << "\n";
+            }
+            assert(!hasPlaylist(after, "House") && engineOrder(after, "Warmup") == want);
+            const auto record = recordAfterSave(base, w, q);
+            assert(recorded(record, 7) && recorded(record, 7)->members == (Deps{key("A"), key("D")}));
+            const auto next = plan(after, record);
+            for (const auto &n : next.conflicts) {
+                std::cerr << "FAIL (" << side << " side): then \"" << n.header.reasonText << "\"\n";
+            }
+            assert(next.conflicts.empty() && next.membership.empty() && next.playlistsToCreate.empty()
+                   && next.playlistsToRename.empty() && next.playlistsToDelete.empty());
+            std::set<std::string> owns;
+            for (const auto &k : next.engineOwnKept) {
+                if (k.playlistPath == "Warmup") {
+                    owns.insert(k.header.key);
+                }
+            }
+            std::set<std::string> wantOwn{"member:7:" + key("X")};
+            if (engineTookA) {
+                wantOwn.insert("member:7:" + key("A"));
+            }
+            assert(owns == wantOwn && "Engine's own, nothing to write");
+        }
+    }
+    std::cout << "a reused id with the DJ's edits on Engine's copy: no question, one rename that keeps what was "
+                 "added on the player and leaves out what was taken out (#125) OK\n";
+
+    // #125 and what the plan cannot see in Engine's "House": (a) a file
+    // with two Engine rows (C, a recorded member), (b) a streaming track,
+    // (c) a file not on the stick. Each is in House on Engine only; no row
+    // can move it, so House is not deleted: no question, one rename whose
+    // text names it as staying where it is.
+    for (const char *shape : {"two rows", "streaming", "not on the stick"}) {
+        World w;
+        for (const char *name : {"A", "B", "C", "D"}) {
+            const std::string relative = std::string("Music/") + name + ".mp3";
+            w.rekordbox.push_back(rb(name, relative));
+            w.engine.push_back(en(std::string("e") + name, relative));
+        }
+        const auto key = [](const char *name) { return "music/" + lowerKey(name) + ".mp3"; };
+        int at = 0;
+        for (const char *name : {"A", "B", "C"}) {
+            byKey(w.rekordbox, key(name))->playlists.push_back({"House", at});
+            byKey(w.engine, key(name))->playlists.push_back({"House", at++});
+        }
+        w.rekordboxPlaylists = {{"House", false, 7}};
+        w.enginePlaylists = {{"House", false, 1}};
+        const auto base = baselineOf(w);
+        std::string name;
+        if (std::string(shape) == "two rows") {
+            w.engine.push_back(en("eC2", "Music/C.mp3"));  // a second Engine row for C's file
+            name = "music/c.mp3";
+        } else if (std::string(shape) == "streaming") {
+            Track s = en("eS", "Music/Stream.mp3", {{"House", 3}});
+            s.filePath = "tidal://track/1";
+            s.streamingSource = "tidal";
+            s.title = "Streamed Song";
+            w.engine.push_back(s);
+            name = "Streamed Song";
+        } else {
+            Track y = en("eY", "Music/Away.mp3", {{"House", 3}});
+            y.filePath = "/elsewhere/Away.mp3";
+            y.title = "Away Song";
+            w.engine.push_back(y);
+            name = "Away Song";
+        }
+        for (auto &t : w.rekordbox) {
+            t.playlists.clear();
+        }
+        byKey(w.rekordbox, key("A"))->playlists.push_back({"Warmup", 0});
+        byKey(w.rekordbox, key("D"))->playlists.push_back({"Warmup", 1});
+        w.rekordboxPlaylists = {{"Warmup", false, 7}};
+
+        const auto p = plan(w, base);
+        for (const auto &conflict : p.conflicts) {
+            if (conflict.header.key == "playlist:7") {
+                std::cerr << "FAIL (" << shape << "): asked \"" << conflict.header.reasonText << "\"\n";
+            } else {
+                std::cout << "  (" << shape << ") also: " << conflict.header.reasonText << "\n";
+            }
+            assert(conflict.header.key != "playlist:7" && "nothing to ask under the id");
+        }
+        for (const auto &d : p.playlistsToDelete) {
+            std::cerr << "FAIL (" << shape << "): \"" << d.path << "\" deleted with what the plan cannot see in it\n";
+        }
+        assert(p.playlistsToDelete.empty() && p.playlistsToCreate.empty());
+        assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].header.key == "playlist:7"
+               && p.playlistsToRename[0].header.checkedByDefault);
+        const std::string &text = p.playlistsToRename[0].header.reasonText;
+        std::cout << "  #125 (" << shape << "): " << text << "\n";
+        assert(text.find("; the 1 track Seabass cannot match (a file with two Engine rows, a streaming track, or a "
+                         "file not on the stick: \"" + name + "\") stays where it is")
+               != std::string::npos);
+        assert(text.find("added on the player") == std::string::npos && "nothing counted as the DJ's");
+    }
+    std::cout << "a reused id: what the plan cannot see keeps Engine's playlist from being deleted, and is named "
+                 "(#125) OK\n";
+
+    // #125 and order: the record's House holds A, B and C; rekordbox gives
+    // its id to Warmup with A and D. On the player House was (a) reordered
+    // to C, B, A, or (b) given A a second time. The same tracks, but not
+    // as recorded: a delete would lose the DJ's order or doubled entry, so
+    // nothing is asked, and the rename's text says they stay.
+    for (const bool doubled : {false, true}) {
+        World w;
+        for (const char *name : {"A", "B", "C", "D"}) {
+            const std::string relative = std::string("Music/") + name + ".mp3";
+            w.rekordbox.push_back(rb(name, relative));
+            w.engine.push_back(en(std::string("e") + name, relative));
+        }
+        const auto key = [](const char *name) { return "music/" + lowerKey(name) + ".mp3"; };
+        int at = 0;
+        for (const char *name : {"A", "B", "C"}) {
+            byKey(w.rekordbox, key(name))->playlists.push_back({"House", at});
+            byKey(w.engine, key(name))->playlists.push_back({"House", at++});
+        }
+        w.rekordboxPlaylists = {{"House", false, 7}};
+        w.enginePlaylists = {{"House", false, 1}};
+        const auto base = baselineOf(w);
+        if (doubled) {
+            byKey(w.engine, key("A"))->playlists.push_back({"House", 3});
+        } else {
+            byKey(w.engine, key("A"))->playlists = {{"House", 2}};
+            byKey(w.engine, key("C"))->playlists = {{"House", 0}};
+        }
+        for (auto &t : w.rekordbox) {
+            t.playlists.clear();
+        }
+        byKey(w.rekordbox, key("A"))->playlists.push_back({"Warmup", 0});
+        byKey(w.rekordbox, key("D"))->playlists.push_back({"Warmup", 1});
+        w.rekordboxPlaylists = {{"Warmup", false, 7}};
+        const auto p = plan(w, base);
+        for (const auto &c : p.conflicts) {
+            std::cerr << "FAIL (" << (doubled ? "doubled" : "reordered") << "): asked \"" << c.header.reasonText
+                      << "\"\n";
+        }
+        assert(p.conflicts.empty() && p.playlistsToDelete.empty() && p.playlistsToCreate.empty());
+        assert(p.playlistsToRename.size() == 1 && p.playlistsToRename[0].header.checkedByDefault);
+        const std::string &text = p.playlistsToRename[0].header.reasonText;
+        std::cout << "  #125 (" << (doubled ? "doubled" : "reordered") << "): " << text << "\n";
+        assert(text.find("; its tracks as moved or doubled on the player stay as they are") != std::string::npos);
+    }
+    std::cout << "a reused id: a reorder or a doubled entry on the player is the DJ's too, never lost to a delete "
+                 "(#125) OK\n";
+
+    // #125's numbers are the decision's: the record's House holds A to D,
+    // and declines E for it (so rekordbox's House held E too); rekordbox
+    // gives its id to Warmup with A, E and F: 2 of the 5 kept, under half.
+    // The question says 5 and 2, and the rename where Engine's copy holds
+    // X says "keeps 2 of its 5 tracks".
+    for (const bool withX : {false, true}) {
+        World w;
+        for (const char *name : {"A", "B", "C", "D", "E", "F", "X"}) {
+            const std::string relative = std::string("Music/") + name + ".mp3";
+            w.rekordbox.push_back(rb(name, relative));
+            w.engine.push_back(en(std::string("e") + name, relative));
+        }
+        const auto key = [](const char *name) { return "music/" + lowerKey(name) + ".mp3"; };
+        int at = 0;
+        for (const char *name : {"A", "B", "C", "D"}) {
+            byKey(w.rekordbox, key(name))->playlists.push_back({"House", at});
+            byKey(w.engine, key(name))->playlists.push_back({"House", at++});
+        }
+        w.rekordboxPlaylists = {{"House", false, 7}};
+        w.enginePlaylists = {{"House", false, 1}};
+        auto base = baselineOf(w);
+        base.declined["member:7:" + key("E")] = "declined for House";
+        if (withX) {
+            byKey(w.engine, key("X"))->playlists.push_back({"House", 4});
+        }
+        for (auto &t : w.rekordbox) {
+            t.playlists.clear();
+        }
+        at = 0;
+        for (const char *name : {"A", "E", "F"}) {
+            byKey(w.rekordbox, key(name))->playlists.push_back({"Warmup", at++});
+        }
+        w.rekordboxPlaylists = {{"Warmup", false, 7}};
+        const auto p = plan(w, base);
+        if (!withX) {
+            assert(p.conflicts.size() == 1 && p.conflicts[0].header.key == "playlist:7");
+            const std::string &text = p.conflicts[0].header.reasonText;
+            std::cout << "  #125 (declined E): " << text << "\n";
+            assert(text.find("\"House\" (5 tracks) to \"Warmup\" (3 tracks, 2 of them from \"House\")")
+                       != std::string::npos
+                   && text.find("lost 3 tracks") != std::string::npos);
+        } else {
+            assert(p.conflicts.empty() && p.playlistsToRename.size() == 1);
+            const std::string &text = p.playlistsToRename[0].header.reasonText;
+            std::cout << "  #125 (declined E, X): " << text << "\n";
+            assert(text.find("\"Warmup\", which keeps 2 of its 5 tracks:") != std::string::npos);
+        }
+    }
+    std::cout << "a reused id: the texts count what the decision counts, declined tracks too (#125) OK\n";
 
     // #99: an id rekordbox gave to an item of the other kind. A playlist's
     // id to a folder (with a playlist of its own inside), and a folder's to

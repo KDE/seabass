@@ -344,6 +344,13 @@ struct EngineUpdateConflict
     std::string engineSide;
     std::vector<EngineUpdateEdit> rekordboxChoice;
     std::vector<EngineUpdateEdit> engineChoice;
+    // Items the record keeps as they were while the conflict is open, and
+    // only then: an answer that writes something settles them with its
+    // own key, so a save of it advances them with the rest of rekordbox
+    // (a reused id's members and order, #125, whose answer rows all carry
+    // the playlist's key). A save that stops before that answer lands puts
+    // them back too (RekordboxExportSyncController::stageSelected).
+    std::vector<std::string> heldWhileOpen;
 };
 
 // Shown, never written.
@@ -390,7 +397,9 @@ struct EngineUpdateProposal
     // Keys left out because the user declined them and rekordbox has not
     // changed them since, or because a row they depend on was left out.
     // Also the member and order items of a recorded playlist moved into
-    // a refused new folder (#124): the record keeps them as they were.
+    // a refused new folder (#124): the record keeps them as they were. A
+    // conflict that holds items only while it is open lists them as its
+    // own (EngineUpdateConflict::heldWhileOpen), not here.
     std::vector<std::string> declinedSuppressed;
 
     // Nothing to write and nothing to decide. Engine's own, the refusals
