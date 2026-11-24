@@ -388,6 +388,119 @@ TestCase {
         verify(!findChild(page, "nothingToSyncLabel").visible, "rows are left, so no empty state");
     }
 
+    function findWhere(item, predicate) {
+        if (predicate(item)) {
+            return item;
+        }
+        const kids = item.children ? item.children : [];
+        for (let i = 0; i < kids.length; ++i) {
+            const found = findWhere(kids[i], predicate);
+            if (found) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    function rectIn(page, item) {
+        const p = item.mapToItem(page, 0, 0);
+        const q = item.mapToItem(page, item.width, item.height);
+        return {x: p.x, y: p.y, right: q.x, bottom: q.y};
+    }
+
+    function intersects(a, b) {
+        return a.x < b.right && b.x < a.right && a.y < b.bottom && b.y < a.bottom;
+    }
+
+    function describe(r) {
+        return "(" + Math.round(r.x) + "," + Math.round(r.y) + ")-(" + Math.round(r.right) + "," + Math.round(r.bottom) + ")";
+    }
+
+    // #122: the save's toast goes up in the same call that starts reading
+    // the stick again, and both were centred on the page: the toast sat on
+    // the very bar of the refresh it started, and for six seconds nobody
+    // could read it. They never share a place now, with the page's own
+    // words or a long text on a narrow window. A real save on a copy of the
+    // fixture stick; the refresh is held showing while the two are measured,
+    // since a small stick reads again faster than a test can look.
+    function test_theSavedToastStaysClearOfTheRefreshBar_data() {
+        return [
+            {tag: "wide", pageWidth: 1100, text: ""},
+            {tag: "narrow, long text", pageWidth: 480,
+             text: "12 cues synced, and the import prompt marked as already answered on this stick"},
+        ];
+    }
+
+    function test_theSavedToastStaysClearOfTheRefreshBar(row) {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 720, rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        verify(page !== null, "page did not instantiate");
+        const controller = findChild(page, "syncController");
+        tryCompare(controller, "busy", true, 5000);
+        tryCompare(controller, "busy", false, 300000);
+        const list = listOf(page);
+        let ready = null;
+        for (let r = 0; r < list.count && ready === null; ++r) {
+            const candidate = list.itemAtIndex(r);
+            if (candidate !== null && !candidate.needsDecision) {
+                ready = candidate;
+            }
+        }
+        verify(ready !== null, "precondition: a track ready to sync");
+        controller.setAllIncluded(false);
+        controller.setIncluded(ready.planIndex, true);
+        controller.stageSelected(false);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
+        tryCompare(session, "pendingCount", 1, 5000);
+        // Up for as long as the test needs, however slow the machine: the
+        // refresh below may take longer than the toast's six seconds.
+        const toast = findChild(page, "savedToast");
+        toast.duration = 600000;
+        compare(saveSession(session).error, "");
+
+        tryCompare(toast, "showing", true, 5000);
+        // The real refresh first, done, so it changes nothing under the
+        // measurement (its end takes Cancel away and the column shrinks).
+        tryCompare(controller, "busy", false, 300000);
+        verify(toast.showing, "precondition: the toast outlasts the refresh");
+        const overlay = findWhere(page, (item) => item.etaText !== undefined && item.cancelRequested !== undefined);
+        verify(overlay !== null, "the page's progress overlay was not found");
+        // Then held as the refresh looks a moment in: three of ten read,
+        // and cancellable, which a read of the stick is.
+        overlay.current = 3;
+        overlay.total = 10;
+        overlay.cancellable = true;
+        overlay.busy = true;
+        page.width = row.pageWidth;
+        if (row.text.length > 0) {
+            toast.show(row.text);
+        }
+        tryCompare(toast, "opacity", 1, 2000);
+        waitForPolish(page);
+
+        const panel = findChild(toast, "confirmationToastPanel");
+        const bar = findChild(overlay, "progressTrack");
+        const report = findChild(overlay, "progressReport");
+        verify(bar !== null && bar.visible && report !== null, "the refresh's bar shows");
+        // The toast may glide clear; give it the time to.
+        tryVerify(() => !intersects(rectIn(page, panel), rectIn(page, bar))
+                        && !intersects(rectIn(page, panel), rectIn(page, report)),
+                  2000, "the toast " + describe(rectIn(page, panel)) + " covers the refresh bar "
+                        + describe(rectIn(page, bar)) + " or its report " + describe(rectIn(page, report)));
+        if (screenshotDir) {
+            waitForRendering(page);
+            grabImage(page).save(screenshotDir + "/SyncPage-toast-over-refresh-" + row.pageWidth + ".png");
+        }
+        // Clear of it by staying on the page, not by leaving it, and still
+        // both up: nothing went away to make room.
+        const t = rectIn(page, panel);
+        verify(t.x >= -0.5 && t.y >= -0.5 && t.right <= page.width + 0.5 && t.bottom <= page.height + 0.5,
+               "the toast " + describe(t) + " stays on the " + page.width + "x" + page.height + " page");
+        verify(toast.showing && toast.opacity === 1 && overlay.visible && bar.visible, "both still showing");
+    }
+
     // Undo Last Save finishes through the same signal as a save, and
     // synced no cues: the toast says what the undo did, not this page's
     // "Marked as already imported", and no summary dialog opens.

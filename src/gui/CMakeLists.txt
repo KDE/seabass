@@ -59,6 +59,8 @@ set_source_files_properties(qml/FormatLabels.qml PROPERTIES QT_QML_SINGLETON_TYP
 # The app's one Camelot wheel, which every key badge opens.
 set_source_files_properties(qml/CamelotWheelHost.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set_source_files_properties(qml/CamelotWheelPosition.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+# Where progress is showing, which a toast stays clear of (#122).
+set_source_files_properties(qml/ProgressAreas.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 # The app's QML files and C++ sources, shared with seabass_qml_tests
 # (top-level CMakeLists.txt) so the test binary registers the very same
@@ -178,6 +180,7 @@ set(SEABASS_GUI_QML_FILES
     qml/BpmKeyHeatmap.qml
     qml/CamelotWheelPopup.qml
     qml/CamelotWheelHost.qml
+    qml/ProgressAreas.qml
     qml/AboutPage.qml
     qml/DonationPage.qml
     qml/PlayerBar.qml
