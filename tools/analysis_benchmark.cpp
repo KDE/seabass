@@ -216,8 +216,10 @@ private:
     // other entry is a link to the original.
     static bool isCatalogFolder(const fs::path &relative)
     {
-        const std::string r = relative.generic_string();
-        return r == "PIONEER" || r == "PIONEER/rekordbox" || r == "Engine Library" || r == "Engine Library/Database2";
+        // Paths compared as paths, element by element: no text of them is
+        // made, which on Windows would go through the code page.
+        return relative == fs::path("PIONEER") || relative == fs::path("PIONEER") / "rekordbox" || relative == fs::path("Engine Library")
+            || relative == fs::path("Engine Library") / "Database2";
     }
 
     void mirror(const fs::path &from, const fs::path &to, int depth)

@@ -234,8 +234,11 @@ int main(int argc, char **argv)
         std::cerr << "FAILED: no audio decoding backend\n";
         return 1;
     }
-    QDir().mkpath(QString::fromLocal8Bit(argv[3]));
-    QTemporaryDir scratch(QString::fromLocal8Bit(argv[3]) + "/pcm-source-XXXXXX");
+    // The arguments as Qt has them, which on Windows are the wide ones and
+    // not argv through the code page.
+    const QString scratchRoot = QCoreApplication::arguments().at(3);
+    QDir().mkpath(scratchRoot);
+    QTemporaryDir scratch(scratchRoot + "/pcm-source-XXXXXX");
     if (!scratch.isValid()) {
         std::cerr << "FAILED: no scratch directory\n";
         return 1;
