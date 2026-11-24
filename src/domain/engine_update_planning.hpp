@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -226,6 +227,12 @@ struct PlaylistDelete
     EngineUpdateItemHeader header;
     std::uint32_t pdbId = 0;
     std::string path;  // Engine's path at apply time, after the renames
+    // Engine's path before this save writes anything (#112). A delete
+    // does not depend on the renames above it, so the DJ may leave one of
+    // them out: the writer then finds the playlist by this path with only
+    // the renames it staged before the delete applied to it
+    // (pathAfterRenames), never by `path`, which assumes them all.
+    std::string pathNow;
     bool folder = false;
     int engineMembers = 0;
 };
@@ -450,5 +457,9 @@ public:
 // canonical spelling of rekordbox's state of it. Stable across runs and
 // builds, unlike std::hash.
 std::string engineUpdateStateHash(std::string_view canonicalState);
+
+// `path` where Engine has it after `renames` (from, to), applied in their
+// order: a rename of the path itself or of a folder above it moves it.
+std::string pathAfterRenames(std::string path, const std::vector<std::pair<std::string, std::string>> &renames);
 
 }  // namespace seabass::domain

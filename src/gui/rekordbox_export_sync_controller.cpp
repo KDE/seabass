@@ -1341,8 +1341,12 @@ void RekordboxExportSyncController::stageSelected()
     // rename's own dependencies are creates of folders above its new path,
     // shallower than the create that pulls it, so already staged.
     std::size_t renamesStaged = 0;
+    // Every rename staged, in its order: what a later delete's path has
+    // been through when it applies (#112).
+    std::vector<std::pair<std::string, std::string>> stagedRenames;
     const auto stageRename = [&](std::size_t i) {
         const auto e = std::get<PlaylistRename>(*rows[i].edit);
+        stagedRenames.emplace_back(e.fromPath, e.toPath);
         planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
                                return std::make_unique<RenameEnginePlaylistChange>(enginePath, e.fromPath, e.toPath,
                                                                                    hint);
@@ -1550,9 +1554,15 @@ void RekordboxExportSyncController::stageSelected()
         if (deletedEarly.count(i)) {
             continue;
         }
-        const auto e = std::get<PlaylistDelete>(*rows[i].edit);
-        planned.push_back({{i}, true, [enginePath, e](int hint) -> std::unique_ptr<PendingChange> {
-                               return deleteEnginePlaylistChange(enginePath, e.path, hint);
+        // Where Engine has the playlist when the delete applies: its path
+        // before the save through the renames staged before it, not the
+        // planner's path after every rename of the plan (#112). A rename
+        // left unticked above it leaves it where it is, and a delete there
+        // would find nothing and be skipped as if done.
+        const auto &e = std::get<PlaylistDelete>(*rows[i].edit);
+        const std::string path = domain::pathAfterRenames(e.pathNow.empty() ? e.path : e.pathNow, stagedRenames);
+        planned.push_back({{i}, true, [enginePath, path](int hint) -> std::unique_ptr<PendingChange> {
+                               return deleteEnginePlaylistChange(enginePath, path, hint);
                            }});
     }
     for (std::size_t i : removals) {

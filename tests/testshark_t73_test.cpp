@@ -66,6 +66,9 @@
 //           folder under an open conflict waits for its answer, and a
 //           folder left out of Engine is not made with it
 //           (testCreateInConflictedFolder).
+// deleteunderunticked  Not a hardware step (#112): a ticked delete of a
+//           playlist inside a folder whose rename is left out is made at
+//           the path Engine has (testDeleteUnderUntickedRename).
 // reusedpulled  Not a hardware step (#127 with #99): a reused id's delete
 //           stays before a rename a create pulls ahead
 //           (testReusedAfterPulledRename).
@@ -3838,6 +3841,111 @@ void testCreateInRenamedFolder()
     std::cout << "renamedparent: a new playlist in a folder renamed in the same export, saved whole OK\n";
 }
 
+// #112: rekordbox renames a folder and deletes a playlist inside it in the
+// same export; the DJ leaves the folder's rename out and keeps the delete.
+// The stick as the players left it (export 128, the record at 128), then:
+// "T73 Folder" renamed to "T73 Folder 2" and "T73 Folder/T73 New" deleted
+// in export.pdb. The page lists both, ticked; the rename is unticked, the
+// delete stays ticked (it does not need the rename). Saved: Engine still
+// has "T73 Folder", without "T73 New", and no "T73 Folder 2"; the summary
+// counts the delete as written, nothing skipped; the record has no "T73
+// New" and keeps the folder at its old name, its rename declined. The next
+// analysis lists nothing: the declined rename stays out, and "T73 New" is
+// in neither library (never Engine's own).
+void testDeleteUnderUntickedRename()
+{
+    const auto stick = makeStick("t73_deleteunderunticked", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+    std::string error;
+    const auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(record && error.empty());
+    const d::BaselinePlaylist *recordedNew = record->findPlaylistByPath("T73 Folder/T73 New");
+    assert(recordedNew && !recordedNew->folder && !recordedNew->members.empty());
+    const std::uint32_t newId = recordedNew->id;
+    std::uint32_t folderId = 0;
+    {
+        seabass::infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+        for (const auto &node : pdb.playlistTree()) {
+            if (node.name == "T73 Folder" && node.isFolder) {
+                folderId = node.id;
+            }
+        }
+        assert(folderId != 0);
+        assert(pdb.renamePlaylist(folderId, "T73 Folder 2"));
+        assert(pdb.deletePlaylist(newId) > 0);
+        assert(pdb.commit());
+    }
+    const auto engineNewMembers = testing::sqlScalar(stick.db, "SELECT count(*) FROM PlaylistEntity e JOIN Playlist p "
+                                                               "ON p.id = e.listId WHERE p.title = 'T73 New';");
+    assert(engineNewMembers > 0);
+    const std::string deleteRow =
+        "delete playlist T73 Folder 2/T73 New (" + std::to_string(engineNewMembers) + ")";
+
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    const auto got = listed(controller);
+    for (const auto &row : got) {
+        std::cout << "  lists: " << row << "\n";
+    }
+    const std::multiset<std::string> want{"[x] rename T73 Folder to T73 Folder 2", "[x] " + deleteRow};
+    assert(sameList(want, got));
+    int rename = -1;
+    int del = -1;
+    const auto &rows = controller.rows()->rows();
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (describe(rows[i]) == "rename T73 Folder to T73 Folder 2") {
+            rename = static_cast<int>(i);
+        } else if (describe(rows[i]) == deleteRow) {
+            del = static_cast<int>(i);
+        }
+    }
+    assert(rename >= 0 && del >= 0);
+    controller.setIncluded(rename, false);
+    assert(!controller.rows()->rows()[static_cast<std::size_t>(rename)].included);
+    assert(controller.rows()->rows()[static_cast<std::size_t>(del)].included && "the delete ticks apart");
+
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    LibraryEditSession *session = sessionOf(stick);
+    const auto &pending = session->pendingChanges();
+    for (std::size_t i = 0; i < pending.size(); ++i) {
+        std::cout << "    staged " << i << ": " << pending[i]->description().toStdString() << "\n";
+    }
+    const QVariantMap summary = waitForSave(session, controller, false);
+    for (const auto &row : testing::sqlRows(stick.db, "SELECT p.id, p.title, p.parentListId FROM Playlist p ORDER BY p.id;")) {
+        std::cout << "    Engine playlist " << row[0] << " \"" << row[1] << "\" in " << row[2] << "\n";
+    }
+    const auto newLeft = testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 New';");
+    if (newLeft != 0 || summary.value("skipped").toInt() != 0) {
+        std::cerr << "FAIL: the ticked delete of \"T73 Folder/T73 New\" was not made (" << newLeft
+                  << " left in Engine, " << summary.value("skipped").toInt() << " skipped)\n";
+    }
+    assert(newLeft == 0);
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Folder';") == 1);
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Folder 2';") == 0);
+    assert(summary.value("skipped").toInt() == 0);
+    assert(summary.value("written").toInt() == summary.value("total").toInt());
+    assert(summary.value("total").toInt() >= 1);
+
+    const auto after = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(after && error.empty());
+    assert(!after->findPlaylist(newId) && !after->findPlaylistByPath("T73 Folder/T73 New")
+           && !after->findPlaylistByPath("T73 Folder 2/T73 New") && "the record holds what was applied");
+    assert(after->findPlaylist(folderId) && after->findPlaylist(folderId)->path == "T73 Folder"
+           && "the folder's rename was left out");
+
+    // The next sync: nothing of "T73 New", nothing at all.
+    for (const Row &row : controller.rows()->rows()) {
+        std::cout << "  then lists: " << row.kind.toStdString() << " " << describe(row) << " \""
+                  << row.title.toStdString() << "\"\n";
+        assert(describe(row).find("T73 New") == std::string::npos);
+        assert(row.title.toStdString().find("T73 New") == std::string::npos);
+    }
+    assert(after->declined.count("playlist:" + std::to_string(folderId)) == 1 && "the rename left out is declined");
+    assert(after->declined.count("playlist:" + std::to_string(newId)) == 0);
+    assert(controller.rows()->rowCount() == 0 && "the declined rename stays out, nothing else is left");
+    std::cout << "deleteunderunticked: a ticked delete under a folder whose rename is left out is made OK\n";
+}
+
 // #128: a new playlist inside a folder under an open conflict. The stick
 // as the players left it (export 128, the record at 128), then: "T73
 // Folder" deleted in Engine DJ, and in rekordbox renamed to "T73 Folder
@@ -4240,7 +4348,7 @@ int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|renamedparent|conflictedparent|reusedpulled|reusedpath|kindrefused\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|renamedparent|conflictedparent|deleteunderunticked|reusedpulled|reusedpath|kindrefused\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -4288,6 +4396,8 @@ int main(int argc, char **argv)
         testCreateInRenamedFolder();
     } else if (which == "conflictedparent") {
         testCreateInConflictedFolder();
+    } else if (which == "deleteunderunticked") {
+        testDeleteUnderUntickedRename();
     } else if (which == "reusedpulled") {
         testReusedAfterPulledRename();
     } else if (which == "reusedpath") {
