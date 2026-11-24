@@ -3787,6 +3787,38 @@ if(TARGET seabass_edit)
             ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
     endforeach()
 
+    # Cues a few milliseconds off (#121) on tests/fixtures/cue-offsets:
+    # Sync Cue Points' section and its repair through the edit session.
+    add_executable(cue_offset_repair_test
+        src/gui/rekordbox_export_sync_controller.hpp
+        src/gui/rekordbox_export_sync_controller.cpp
+        src/gui/rekordbox_export_sync_list_model.hpp
+        src/gui/rekordbox_export_sync_list_model.cpp
+        src/gui/staged_cue_edit_controller.hpp
+        src/gui/staged_cue_edit_controller.cpp
+        src/gui/sync_plan_list_model.hpp
+        src/gui/sync_plan_list_model.cpp
+        src/gui/cue_offset_list_model.hpp
+        src/gui/cue_offset_list_model.cpp
+        src/gui/sync_controller.hpp
+        src/gui/sync_controller.cpp
+        src/gui/engine_library_creation_task.hpp
+        src/gui/engine_library_creation_task.cpp
+        tests/cue_offset_repair_test.cpp
+    )
+    target_include_directories(cue_offset_repair_test PRIVATE src tests)
+    target_link_libraries(cue_offset_repair_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core
+        Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+    if(TARGET seabass_taglib)
+        target_link_libraries(cue_offset_repair_test PRIVATE seabass_taglib)
+    endif()
+    foreach(_cue_offset_case classify repair unknown player loops order handles mixed pairing sync)
+        add_test(NAME cue_offset_repair_${_cue_offset_case}_test COMMAND cue_offset_repair_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/cue-offsets ${_cue_offset_case})
+        set_tests_properties(cue_offset_repair_${_cue_offset_case}_test PROPERTIES LABELS "integration"
+            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+    endforeach()
+
     # The catalog cache's prefetch worker at the end of the process: a
     # pass running then is waited for like any read, and no other starts.
     add_executable(prefetch_at_exit_test tests/prefetch_at_exit_test.cpp)
