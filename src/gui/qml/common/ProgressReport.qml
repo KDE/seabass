@@ -55,6 +55,13 @@ ColumnLayout {
     property string cancelButtonObjectName: "cancelButton"
     signal cancelRequested()
 
+    // How much longer, already worded ("~2m 10s remaining"), for a caller
+    // that works it out itself; said beside Cancel. Empty says nothing.
+    property string remainingText: ""
+    // Keep the line it goes on from the start even with no Cancel, so the
+    // time coming in does not grow the report.
+    property bool reserveRemainingLine: false
+
     // Bytes win when both are known: they are the finer measure, and a
     // file count jumps in steps a person can see stalling.
     readonly property bool hasBytes: report.bytesTotal > 0
@@ -152,12 +159,46 @@ ColumnLayout {
         text: report.currentItem
     }
 
-    Button {
-        objectName: report.cancelButtonObjectName
-        Layout.alignment: Qt.AlignRight
-        visible: report.cancellable
-        enabled: report.cancelEnabled
-        text: "Cancel"
-        onClicked: report.cancelRequested()
+    // The remaining time and Cancel share one line, the time on the left
+    // and the button on the right (#118). The line is there from the
+    // start, so the time coming in moves nothing; it used to be a line of
+    // its own under Cancel, and in a centred column its arrival pushed
+    // the title, the bar and the button up. A caller that will say a
+    // remaining time and has no Cancel sets reserveRemainingLine to keep
+    // the line's height from the start all the same.
+    RowLayout {
+        objectName: "cancelRow"
+        Layout.fillWidth: true
+        spacing: Theme.rowSpacing
+        visible: report.cancellable || report.reserveRemainingLine || report.remainingText.length > 0
+
+        Label {
+            id: remainingLabel
+            objectName: "remainingLabel"
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignLeft | Qt.AlignVCenter
+            // One line high even while empty: the reserved height.
+            Layout.minimumHeight: remainingMetrics.height
+            elide: Text.ElideRight
+            color: Theme.textMuted
+            font.pointSize: Theme.fontSmall
+            text: report.remainingText
+            Accessible.role: Accessible.StaticText
+            Accessible.name: text
+            Accessible.ignored: text.length === 0
+            FontMetrics {
+                id: remainingMetrics
+                font: remainingLabel.font
+            }
+        }
+
+        Button {
+            objectName: report.cancelButtonObjectName
+            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+            visible: report.cancellable
+            enabled: report.cancelEnabled
+            text: "Cancel"
+            onClicked: report.cancelRequested()
+        }
     }
 }

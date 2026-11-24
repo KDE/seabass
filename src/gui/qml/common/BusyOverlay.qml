@@ -147,16 +147,13 @@ Item {
             // ProgressReport does not need two ways to say the same
             // thing; see etaText above.
             etaSeconds: -1
+            // Beside Cancel, on a line that is there from the first
+            // moment, so the estimate coming in after ten seconds moves
+            // nothing in this centred column (#118).
+            remainingText: root.etaText
+            reserveRemainingLine: true
             cancellable: root.cancellable
             onCancelRequested: root.cancelRequested()
-        }
-
-        Label {
-            Layout.alignment: Qt.AlignHCenter
-            visible: root.etaText.length > 0
-            text: root.etaText
-            color: Theme.textMuted
-            font.pointSize: Theme.fontSmall
         }
     }
 }
