@@ -80,6 +80,16 @@
 // files and keys are in its own database (list it with any tool that
 // reads that). No Engine side then, so no agreed subset.
 //
+//   analysis_benchmark grids <dir> <name> <reference dir> --tsv out.tsv [--reference NAME]
+//
+// Beat lists against beat lists, with no audio: every <track>.<name>.tsv
+// in <dir> is compared with <track>.reference.tsv (or .NAME.tsv) in
+// <reference dir>, by the same measure and into the same TSV as the audio
+// mode (its columns about the file and the decode are "-" or 0, and
+// `half` says nothing: take it from an audio run's TSV). The lists are
+// what --beats writes. For grids that were not made here (Engine DJ's
+// own, another tracker's) and for one reference against another.
+//
 // The TSV is written as the tracks finish, in the order they finish, so
 // a run that is stopped keeps what it had. Next to the offset each track
 // has a drift (domain/beat_grid_comparison.hpp), and the summary counts
@@ -161,6 +171,7 @@ int usage()
                  "       analysis_benchmark audio <stick root|track list.tsv> --analyser NAME[,NAME]|all [--audio-root DIR]\n"
                  "                          [--limit N] [--half tuning|heldback|all] [--tsv out.tsv] [--jobs N]\n"
                  "                          [--scratch DIR] [--beats DIR] [--tempo-range LOW-HIGH]\n"
+                 "       analysis_benchmark grids <dir> <name> <reference dir> --tsv out.tsv [--reference NAME]\n"
 #endif
                  );
     return 2;
@@ -1640,6 +1651,99 @@ int audioMode(int argc, char **argv)
     }
     return 0;
 }
+
+// --- The grids mode ---
+
+// A beat list as --beats writes it: a beat a line, the time in ms and the
+// place in the bar. A line that does not start with a number is passed
+// over.
+std::vector<domain::Beat> readBeats(const fs::path &file)
+{
+    std::vector<domain::Beat> beats;
+    std::ifstream in(file);
+    std::string line;
+    while (std::getline(in, line)) {
+        char *end = nullptr;
+        const double ms = std::strtod(line.c_str(), &end);
+        if (end == line.c_str() || !std::isfinite(ms)) {
+            continue;
+        }
+        beats.push_back({ms, static_cast<int>(std::strtol(end, nullptr, 10))});
+    }
+    return beats;
+}
+
+int gridsMode(int argc, char **argv)
+{
+    if (argc < 5) {
+        return usage();
+    }
+    const fs::path candidateDir = pathFromUtf8(argv[2]);
+    const std::string candidateName = argv[3];
+    const fs::path referenceDir = pathFromUtf8(argv[4]);
+    std::string referenceName = "reference";
+    std::string tsvPath;
+    for (int i = 5; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (i + 1 >= argc) {
+            return usage();
+        }
+        const std::string value = argv[++i];
+        if (arg == "--tsv") {
+            tsvPath = value;
+        } else if (arg == "--reference") {
+            referenceName = value;
+        } else {
+            return usage();
+        }
+    }
+    if (tsvPath.empty() || candidateName.empty() || referenceName.empty()) {
+        return usage();
+    }
+    const std::string suffix = "." + candidateName + ".tsv";
+    std::vector<std::string> tracks;
+    std::error_code ec;
+    for (const fs::directory_entry &entry : fs::directory_iterator(candidateDir, ec)) {
+        const std::string name = pathToUtf8(entry.path().filename());
+        if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            tracks.push_back(name.substr(0, name.size() - suffix.size()));
+        }
+    }
+    if (ec) {
+        std::fprintf(stderr, "cannot list %s: %s\n", pathToUtf8(candidateDir).c_str(), ec.message().c_str());
+        return 1;
+    }
+    std::sort(tracks.begin(), tracks.end());
+    std::ofstream tsv(pathFromUtf8(tsvPath), std::ios::trunc);
+    if (!tsv) {
+        std::fprintf(stderr, "cannot write %s\n", tsvPath.c_str());
+        return 1;
+    }
+    writeAudioTsvHeader(tsv);
+    std::size_t compared = 0;
+    std::size_t withoutReference = 0;
+    for (const std::string &track : tracks) {
+        const fs::path reference = referenceDir / pathFromUtf8(track + "." + referenceName + ".tsv");
+        if (!fs::is_regular_file(reference, ec)) {
+            ++withoutReference;
+            continue;
+        }
+        AudioJob job;
+        job.rekordboxId = track;
+        job.format = "-";
+        job.shift.timeline = "as-given";
+        job.reference = readBeats(reference);
+        AudioResult result;
+        result.job = &job;
+        result.analyser = candidateName;
+        result.comparison = domain::compareBeatGrids(readBeats(candidateDir / pathFromUtf8(track + suffix)), job.reference);
+        writeAudioTsvRows(tsv, {result});
+        ++compared;
+    }
+    std::printf("%zu grid(s) named %s compared with %s; %zu without one to compare with; written to %s\n", compared,
+                candidateName.c_str(), referenceName.c_str(), withoutReference, tsvPath.c_str());
+    return tsv ? 0 : 1;
+}
 #endif
 
 }  // namespace
@@ -1666,6 +1770,9 @@ int main(int argc, char **argv)
         // fails says so through the source's error() instead.
         QLoggingCategory::setFilterRules(QStringLiteral("qt.multimedia.ffmpeg*=false"));
         return audioMode(argc, argv);
+    }
+    if (mode == "grids") {
+        return gridsMode(argc, argv);
     }
 #endif
     return usage();

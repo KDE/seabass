@@ -493,6 +493,42 @@ three others comes out at two thirds of its tempo. Real kicks are in
 every band, and of 751 collection tracks one comes out at two thirds;
 of the 110 varied ones, four.
 
+## Against Engine DJ
+
+Engine DJ Desktop analysed the same 114 files of varied music; its
+grids were read out of a copy of its database and scored with
+`analysis_benchmark grids`. It gave every one of them a single straight
+grid (two markers). Against rekordbox's Dynamic grids, 110 tracks, one
+outcome a track:
+
+| | Engine DJ | rekordbox Normal (101) | Seabass |
+|---|---|---|---|
+| Within 3 ms, steady | 10 | 10 | 33 |
+| 3 to 10 ms, steady | 18 | 16 | 15 |
+| Within 10 ms, drifts over 10 ms | 18 | 19 | 28 |
+| On the beat, over 10 ms off | 33 | 30 | 4 |
+| Half a beat out | 2 | 7 | 1 |
+| Another tempo | 29 | 19 | 29 |
+| Nine in ten of rekordbox's beats within 10 ms | 3 | 3 | 11 |
+| Half of rekordbox's beats within 10 ms | 36 | 36 | 62 |
+
+On the tracks at rekordbox's tempo and on its beat, Engine's grid is
+4.3 ms late at the median and anywhere between 26 ms early and 39 ms
+late (5th to 95th percentile); ours is 1.2 ms late, between 5 early and
+7 late. The tempo is where the two stand alike: 29 tracks each at
+another tempo than rekordbox's, 19 of them the same tracks (of the
+rest, Engine: six of seven in odd or triple metre; ours: four of seven
+hip-hop, four of six without drums).
+
+Against rekordbox's Normal grids (101 tracks), which are straight like
+Engine's: within 10 ms and steady Engine 18, Seabass 22; another tempo
+24 and 29; half a beat out 9 and 7. Seabass against Engine itself: the
+same tempo on 79 of 110, within 10 ms and steady on 34.
+
+Engine is a third opinion here and not a reference: what it shows is
+that on this music two commercial analysers agree with each other no
+better than ours agrees with either.
+
 ## Phase 3, in order
 
 1. Done: who is right on the tracks half a beat apart (above). The

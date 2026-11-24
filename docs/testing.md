@@ -1194,6 +1194,16 @@ compared against as `<track>.reference.tsv`, one beat a line (ms and the
 place in the bar), for looking at two grids side by side. A real track
 has its grid there: `DIR` is a scratch folder too.
 
+`analysis_benchmark grids <dir> <name> <reference dir> --tsv out.tsv
+[--reference NAME]` compares beat lists with beat lists, with no audio:
+every `<track>.<name>.tsv` in `<dir>` against `<track>.reference.tsv`
+(or `.NAME.tsv`) in `<reference dir>`, by the same measure and into the
+same TSV as the `audio` mode. It is how a grid that was not made here is
+scored (Engine DJ's own, read out of a copy of its database into such
+lists; another tracker's) and how one reference is held against another.
+Run on the lists an `audio` run wrote, it gives that run's numbers
+again, which is its check.
+
 The drift (`drift` in the `synth` table, `drift_ms` in the TSV) is how
 far a grid runs away from the reference over the track, which is what a
 tempo that is a little off adds up to; `domain/beat_grid_comparison.hpp`
