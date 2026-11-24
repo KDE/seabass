@@ -170,6 +170,7 @@ set(SEABASS_GUI_QML_FILES
     qml/TreemapView.qml
     qml/EngineLibraryCreatorPage.qml
     qml/SyncPage.qml
+    qml/CueOffsetsSection.qml
     qml/RekordboxExportSyncPage.qml
     qml/BackupsPage.qml
     qml/MetadataBackupPage.qml
