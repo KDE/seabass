@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-// engineBlobDecodable never refuses what a player wrote: every compressed
+// engineBlobDecodable never refuses what a player wrote: every
 // PerformanceData blob of the repo's real Engine fixtures (trackData,
-// beatData, overviewWaveFormData, quickCues; loops is not compressed) and
-// every overview file under Database2/OverviewData passes the check, and
+// beatData, overviewWaveFormData and quickCues, compressed; loops, stored
+// as they are, through their column's check alone) and every overview file
+// under Database2/OverviewData passes the check, column-blind and its
+// column's own (bounds, counts, the declared length), and
 // libdjinterop's own from_blob decodes the same bytes too. A refused
 // healthy blob would make Seabass take the row for unreadable and leave it
 // alone. The counts are printed, and a column a fixture has analysed rows
@@ -29,6 +31,7 @@
 #include <vector>
 
 #include <djinterop/engine/v3/beat_data_blob.hpp>
+#include <djinterop/engine/v3/loops_blob.hpp>
 #include <djinterop/engine/v3/overview_waveform_data_blob.hpp>
 #include <djinterop/engine/v3/quick_cues_blob.hpp>
 #include <djinterop/engine/v3/track_data_blob.hpp>
@@ -39,6 +42,7 @@
 #include "scratch_path.hpp"
 
 namespace fs = std::filesystem;
+using seabass::infrastructure::engine::EngineBlob;
 using seabass::infrastructure::engine::internal::engineBlobDecodable;
 using seabass::pathToUtf8;
 
@@ -98,28 +102,35 @@ struct Column
 {
     std::string name;
     Decoder decode;
+    EngineBlob blob;
 };
 
 const std::vector<Column> &columns()
 {
     static const std::vector<Column> c = {
-        {"trackData", libdjinteropDecodes<djinterop::engine::v3::track_data_blob>},
-        {"beatData", libdjinteropDecodes<djinterop::engine::v3::beat_data_blob>},
-        {"overviewWaveFormData", libdjinteropDecodes<djinterop::engine::v3::overview_waveform_data_blob>},
-        {"quickCues", libdjinteropDecodes<djinterop::engine::v3::quick_cues_blob>},
+        {"trackData", libdjinteropDecodes<djinterop::engine::v3::track_data_blob>, EngineBlob::TrackData},
+        {"beatData", libdjinteropDecodes<djinterop::engine::v3::beat_data_blob>, EngineBlob::BeatData},
+        {"overviewWaveFormData", libdjinteropDecodes<djinterop::engine::v3::overview_waveform_data_blob>,
+         EngineBlob::OverviewWaveFormData},
+        {"quickCues", libdjinteropDecodes<djinterop::engine::v3::quick_cues_blob>, EngineBlob::QuickCues},
+        {"loops", libdjinteropDecodes<djinterop::engine::v3::loops_blob>, EngineBlob::Loops},
     };
     return c;
 }
 
-// One blob through the check and through libdjinterop; true when it counts.
-bool run(const std::string &where, const std::string &bytes, const Decoder &decode)
+// One blob through the checks (its column's own, and the column-blind one
+// for a compressed column) and through libdjinterop; true when it counts.
+bool run(const std::string &where, const std::string &bytes, const Decoder &decode, EngineBlob blob)
 {
-    if (!compressed(bytes)) {
+    if (blob == EngineBlob::Loops ? bytes.empty() : !compressed(bytes)) {
         return false;
     }
-    const bool accepted = engineBlobDecodable(bytes);
-    check(accepted,
-          where + ": refused by engineBlobDecodable, " + std::to_string(bytes.size()) + " bytes, first 16: " + head(bytes));
+    if (blob != EngineBlob::Loops) {
+        check(engineBlobDecodable(bytes), where + ": refused by engineBlobDecodable, " + std::to_string(bytes.size())
+                                              + " bytes, first 16: " + head(bytes));
+    }
+    check(engineBlobDecodable(blob, bytes), where + ": refused by its column's engineBlobDecodable, "
+                                                + std::to_string(bytes.size()) + " bytes, first 16: " + head(bytes));
     check(decode(bytes), where + ": libdjinterop does not decode it, " + std::to_string(bytes.size()) + " bytes, first 16: " + head(bytes));
     return true;
 }
@@ -165,12 +176,12 @@ void checkDatabase(const fs::path &fixtures, const std::string &fixture, const s
             const auto id = sqlite3_column_int64(stmt, 0);
             const auto *data = static_cast<const char *>(sqlite3_column_blob(stmt, 1));
             const std::string bytes(data ? data : "", static_cast<std::size_t>(sqlite3_column_bytes(stmt, 1)));
-            if (run(fixture + " " + column.name + " row " + std::to_string(id), bytes, column.decode)) {
+            if (run(fixture + " " + column.name + " row " + std::to_string(id), bytes, column.decode, column.blob)) {
                 ++count;
             }
         }
         sqlite3_finalize(stmt);
-        std::cout << fixture << " " << column.name << ": " << count << " compressed blobs\n";
+        std::cout << fixture << " " << column.name << ": " << count << " blobs\n";
         for (const std::string &name : expected) {
             if (name == column.name) {
                 check(count > 0, fixture + " " + column.name + ": no compressed blobs read");
@@ -199,11 +210,14 @@ void checkOverviewFiles(const fs::path &fixtures, const std::string &library, in
             const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             if (pathToUtf8(entry.path().filename()) == inconsistent) {
                 check(engineBlobDecodable(bytes), inconsistent + ": refused by engineBlobDecodable");
+                check(engineBlobDecodable(EngineBlob::OverviewWaveFormData, bytes),
+                      inconsistent + ": refused by the overview's engineBlobDecodable");
                 check(!libdjinteropDecodes<djinterop::engine::v3::overview_waveform_data_blob>(bytes),
                       inconsistent + ": libdjinterop now decodes it; drop the exception");
                 continue;
             }
-            if (run(pathToUtf8(entry.path()), bytes, libdjinteropDecodes<djinterop::engine::v3::overview_waveform_data_blob>)) {
+            if (run(pathToUtf8(entry.path()), bytes, libdjinteropDecodes<djinterop::engine::v3::overview_waveform_data_blob>,
+                    EngineBlob::OverviewWaveFormData)) {
                 ++count;
             }
         }
@@ -224,7 +238,7 @@ int main(int argc, char **argv)
     const fs::path scratch = seabass::testing::scratchRoot() / "engine_blob_check_fixtures_test";
     fs::remove_all(scratch);
 
-    const std::vector<std::string> all = {"trackData", "beatData", "overviewWaveFormData", "quickCues"};
+    const std::vector<std::string> all = {"trackData", "beatData", "overviewWaveFormData", "quickCues", "loops"};
     checkDatabase(fixtures, "anonymized_library/engine/Database2/m.db", all, scratch);
     // No analysed rows: its three trackData blobs are x'000102', too short
     // to be compressed (the check refuses them, as it must).

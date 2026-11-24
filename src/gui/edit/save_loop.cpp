@@ -12,6 +12,7 @@
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/rekordbox_baseline_ledger.hpp"
 #include "gui/sleep_inhibitor.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
 #include "infrastructure/engine/engine_import_state.hpp"
 
 #include <algorithm>
@@ -248,6 +249,12 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // arrived, which of the changes still to come belong to a unit one of
     // them started (changesACancelLetsLand()).
     QStringList landedKeys;
+    // The unit keys of a change skipped over a damaged Engine row: the rest
+    // of its unit is skipped too.
+    QStringList skippedUnitKeys;
+    const auto sharesAKey = [](const QStringList &keys, const QStringList &in) {
+        return std::any_of(keys.begin(), keys.end(), [&](const QString &key) { return in.contains(key); });
+    };
     std::vector<bool> finishesAUnit;
     // Said only if the save's own rollback (below) does not put it right:
     // that one starts from the copies taken before the save, so a stick it
@@ -267,11 +274,54 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
                 continue;
             }
         }
+        // The rest of a unit whose change met a damaged Engine row (below)
+        // is not applied either: a unit lands whole or not at all.
+        if (sharesAKey(change->unitKeys(), skippedUnitKeys)) {
+            ctx.log().record("save: skipped \"" + change->description().toStdString()
+                             + "\": part of the same change as a damaged Engine row");
+            ctx.addSummaryNote(QStringLiteral("Not written either, part of the same change: %1")
+                                   .arg(change->description()));
+            result.appliedIds << change->id();
+            result.skippedIds << change->id();
+            ctx.progress().tick(backupUnits + ++done);
+            continue;
+        }
         ctx.status(change->subject());
         ChangeOutcome outcome;
+        bool damagedRowSkipped = false;
         try {
             ctx.beginChange(declaredByChange[index]);
             outcome = change->apply(ctx);
+        } catch (const infrastructure::engine::DamagedEngineRowError &e) {
+            // One Engine row with a damaged blob (#107): the writer left it
+            // alone before writing anything of it, and it is no reason to
+            // stop the save. Whatever else this change wrote goes back, so
+            // the change is skipped whole, the rest of its unit with it,
+            // and the rest of the save lands. Unless part of its unit has
+            // landed already: that part cannot be taken back alone, so the
+            // save fails and goes back whole, as before.
+            if (sharesAKey(change->unitKeys(), landedKeys)) {
+                outcome = ChangeOutcome::failure(
+                    QString::fromStdString(e.what())
+                    + QStringLiteral(". Other parts of the same change had been written already, so the save "
+                                     "puts everything back."));
+            } else {
+                const std::optional<QString> undoError = ctx.rollBackChange(true);
+                if (undoError) {
+                    // Already rolled back: the failure path below must not
+                    // roll back again.
+                    damagedRowSkipped = true;
+                    outcome = ChangeOutcome::failure(QString::fromStdString(e.what()) + QStringLiteral("; ")
+                                                     + *undoError);
+                } else {
+                    outcome = ChangeOutcome::skip();
+                    damagedRowSkipped = true;
+                    skippedUnitKeys << change->unitKeys();
+                    ctx.log().record("save: skipped \"" + change->description().toStdString() + "\": " + e.what());
+                    ctx.addSummaryNote(QStringLiteral("Not written, the Engine row is damaged: %1")
+                                           .arg(QString::fromStdString(e.what())));
+                }
+            }
         } catch (const std::exception &e) {
             outcome = ChangeOutcome::failure(QString::fromStdString(e.what()));
         }
@@ -288,14 +338,22 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             // Whatever the change had already written, in any catalog, goes
             // back: a file removed from Engine but still listed by rekordbox
             // is the one state a DJ cannot repair from the page.
-            changeUndoError = ctx.rollBackChange();
+            // (A change skipped over a damaged row whose put-back failed has
+            // been rolled back already; its error is in outcome.error.)
+            if (!damagedRowSkipped) {
+                changeUndoError = ctx.rollBackChange();
+            }
             // And the changes before it go back too: the save lands whole
             // or not at all (SaveContext::rollBackSave(), below, once the
             // finish hooks have closed what they hold).
             ctx.markSaveFailed();
             break;
         }
-        ctx.endChange();
+        // A change skipped over a damaged row was rolled back already, which
+        // ended it.
+        if (!damagedRowSkipped) {
+            ctx.endChange();
+        }
         landedKeys << change->unitKeys();
         result.appliedIds << change->id();
         if (outcome.skipped) {

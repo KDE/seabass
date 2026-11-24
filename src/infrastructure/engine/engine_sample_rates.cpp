@@ -4,12 +4,15 @@
 
 #include "infrastructure/engine/engine_sample_rates.hpp"
 #include "infrastructure/database_read_copy.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
 #include <exception>
 #include <filesystem>
 #include <set>
+#include <stdexcept>
+#include <unordered_map>
 
 #include <sqlite3.h>
 
@@ -81,6 +84,26 @@ std::set<std::int64_t> rowsWithoutTrackData(const std::string &engineLibraryPath
     return ids;
 }
 
+// The library's rows with a damaged blob (EngineBlobGuard). A database
+// still locked fails the run (the caller's catch says so); any other
+// failure to check leaves the rows read unchecked, as before, with a
+// warning.
+std::unordered_map<std::int64_t, EngineBlobs> damagedRows(const std::string &engineLibraryPath,
+                                                         application::ProgressReporter &progress)
+{
+    EngineBlobGuard guard(engineLibraryPath);
+    std::string error;
+    auto rows = guard.damagedRows(&error);
+    if (rows) {
+        return std::move(*rows);
+    }
+    if (!engineBlobGuardFailureReadsUnchecked(error)) {
+        throw std::runtime_error("the Engine Library is being written right now (" + error + ")");
+    }
+    progress.warn("the tracks' blobs could not be checked before they were read (" + error + ")");
+    return {};
+}
+
 std::string textOf(const std::optional<std::string> &value)
 {
     return value ? *value : std::string();
@@ -112,6 +135,9 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
         auto db = djinterop::engine::load_database(read.rootUtf8());
         const auto tracks = db.tracks();
         const std::set<std::int64_t> notAnalysed = rowsWithoutTrackData(read.rootUtf8());
+        // The blobs checked in the database the decodes below read: the
+        // read copy when there is one.
+        const std::unordered_map<std::int64_t, EngineBlobs> damaged = damagedRows(read.rootUtf8(), progress);
         progress.start("Checking sample rates", tracks.size());
         for (djinterop::track track : tracks) {
             cancel.throwIfCancelled();
@@ -120,6 +146,15 @@ SampleRateAudit auditSampleRates(const std::string &engineLibraryPath, const Sam
             audit.tracksChecked++;
             if (notAnalysed.contains(track.id())) {
                 audit.notYetAnalysed++;
+                continue;
+            }
+            // A damaged record is not decoded (it may never come back), and
+            // is no finding either, like one libdjinterop cannot decode.
+            if (const auto it = damaged.find(track.id());
+                it != damaged.end() && (it->second & engine_blobs_for::trackData) != 0) {
+                progress.warn("track id=" + std::to_string(track.id()) + ": damaged "
+                              + engineBlobNames(it->second & engine_blobs_for::trackData)
+                              + " blob, its sample rate was not checked");
                 continue;
             }
             bool unreadable = false;
@@ -172,9 +207,22 @@ SampleRateRepair repairSampleRates(const std::string &engineLibraryPath,
             beforeWrite(pathToUtf8(database));
         }
         // Same again: from <root>/Database2/m.db back up to <root>.
-        auto db = djinterop::engine::load_database(pathToUtf8(database.parent_path().parent_path()));
+        const std::string libraryPath = pathToUtf8(database.parent_path().parent_path());
+        auto db = djinterop::engine::load_database(libraryPath);
+        // set_sample_rate() decodes and rewrites every record the rate is
+        // in: not on a row where one is damaged (it may never come back),
+        // nor while the database is locked. Any other failure to check
+        // writes unchecked, as before.
+        EngineBlobGuard guard(libraryPath);
         for (const SampleRateEntry &entry : entries) {
             if (entry.sampleRateFromFile <= 0.0) {
+                result.skipped++;
+                continue;
+            }
+            std::string error;
+            const std::optional<EngineBlobs> damaged = guard.damaged(entry.trackId, &error);
+            if (damaged ? (*damaged & engine_blobs_for::setSampleRate) != 0
+                        : !engineBlobGuardFailureReadsUnchecked(error)) {
                 result.skipped++;
                 continue;
             }

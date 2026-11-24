@@ -264,8 +264,10 @@ public:
     std::string writeTargetFor(const std::string &liveFile) const;
     void endChange();
     // Closes every shared() writer, then puts back every file this change
-    // protected. Returns the first file that could not be put back.
-    std::optional<QString> rollBackChange();
+    // protected and moves back every file it moved. Returns the first file
+    // that could not be put back. `skipped`: the save goes on past this
+    // change (a damaged Engine row, #107), and the log says so.
+    std::optional<QString> rollBackChange(bool skipped = false);
     // hook(true) once a change has landed, hook(false) once it was rolled
     // back.
     void onChangeEnd(std::function<void(bool landed)> hook);

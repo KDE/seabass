@@ -568,6 +568,7 @@ add_library(seabass_core STATIC
     src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
     src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
+    src/infrastructure/engine/engine_blob_check.cpp
     src/infrastructure/engine/engine_playlists.cpp
     src/infrastructure/engine/engine_track_rows.cpp
     src/infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp
@@ -742,6 +743,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/engine/libdjinterop_beat_grid_reader.cpp
     src/infrastructure/engine/libdjinterop_waveform_reader.cpp
     src/infrastructure/engine/libdjinterop_engine_cue_writer.cpp
+    src/infrastructure/engine/engine_blob_check.cpp
     src/infrastructure/engine/engine_playlists.cpp
     src/infrastructure/engine/engine_track_rows.cpp
     src/infrastructure/engine/engine_artwork.cpp
@@ -4047,6 +4049,17 @@ if(TARGET seabass_edit)
     add_test(NAME engine_save_lead_in_test COMMAND engine_save_lead_in_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-lead-in)
 
+    # #107: one Engine row with a damaged blob is skipped, with a note,
+    # and the rest of the save lands. See the test's own header.
+    add_executable(engine_damaged_blob_save_test tests/engine_damaged_blob_save_test.cpp)
+    target_include_directories(engine_damaged_blob_save_test PRIVATE src tests)
+    target_link_libraries(engine_damaged_blob_save_test PRIVATE seabass_edit Qt6::Core DjInterop SQLite::SQLite3)
+    if(NOT WIN32)
+        target_link_libraries(engine_damaged_blob_save_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME engine_damaged_blob_save_test COMMAND engine_damaged_blob_save_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
+    set_tests_properties(engine_damaged_blob_save_test PROPERTIES TIMEOUT 300)
+
     add_executable(copy_cues_mirror_test tests/copy_cues_mirror_test.cpp)
     target_include_directories(copy_cues_mirror_test PRIVATE src)
     target_compile_definitions(copy_cues_mirror_test PRIVATE
@@ -4608,6 +4621,16 @@ add_executable(engine_blob_check_fixtures_test tests/engine_blob_check_fixtures_
 target_link_libraries(engine_blob_check_fixtures_test PRIVATE seabass_core_testing DjInterop SQLite::SQLite3)
 target_include_directories(engine_blob_check_fixtures_test PRIVATE src)
 add_test(NAME engine_blob_check_fixtures_test COMMAND engine_blob_check_fixtures_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
+
+# One damaged blob never hangs, crashes or stops a pass over an Engine
+# library (#107). See the test's own header. Each pass has its own limit
+# inside the test, which names the one that hangs; the TIMEOUT is the
+# backstop.
+add_executable(engine_damaged_blob_test tests/engine_damaged_blob_test.cpp)
+target_include_directories(engine_damaged_blob_test PRIVATE src tests)
+target_link_libraries(engine_damaged_blob_test PRIVATE seabass_core DjInterop SQLite::SQLite3 ZLIB::ZLIB)
+add_test(NAME engine_damaged_blob_test COMMAND engine_damaged_blob_test ${CMAKE_SOURCE_DIR}/tests/fixtures)
+set_tests_properties(engine_damaged_blob_test PROPERTIES TIMEOUT 600)
 
 add_test(NAME libdjinterop_engine_analysis_import_test COMMAND libdjinterop_engine_analysis_import_test
     ${CMAKE_SOURCE_DIR}/tests/fixtures)

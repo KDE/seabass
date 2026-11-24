@@ -41,51 +41,6 @@
 namespace seabass::infrastructure::engine
 {
 
-namespace internal
-{
-
-// See engine_blob_check.hpp.
-constexpr std::uint32_t MaxEngineBlobBytes = 64u * 1024u * 1024u;
-
-bool engineBlobDecodable(const std::string &bytes)
-{
-    if (bytes.empty()) {
-        return true;
-    }
-    if (bytes.size() < 4) {
-        return false;
-    }
-    const auto byte = [&](std::size_t i) { return static_cast<std::uint32_t>(static_cast<unsigned char>(bytes[i])); };
-    const std::uint32_t declared = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3);
-    if (declared == 0) {
-        return true;
-    }
-    if (declared > MaxEngineBlobBytes || bytes.size() < 5) {
-        return false;
-    }
-    z_stream strm{};
-    if (inflateInit(&strm) != Z_OK) {
-        return false;
-    }
-    strm.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(bytes.data() + 4));
-    strm.avail_in = static_cast<uInt>(bytes.size() - 4);
-    std::array<unsigned char, 16384> out{};
-    std::uint64_t inflated = 0;
-    int ret = Z_OK;
-    while (ret == Z_OK) {
-        strm.next_out = out.data();
-        strm.avail_out = static_cast<uInt>(out.size());
-        ret = inflate(&strm, Z_NO_FLUSH);
-        inflated += out.size() - strm.avail_out;
-        if (inflated > MaxEngineBlobBytes) {
-            ret = Z_DATA_ERROR;
-        }
-    }
-    inflateEnd(&strm);
-    return ret == Z_STREAM_END;
-}
-
-}  // namespace internal
 
 using internal::engineBlobDecodable;
 
@@ -348,17 +303,22 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     if (!track) {
         throw std::runtime_error("no Engine track with id=" + trackSourceId);
     }
+    // set_hot_cues() and set_main_cue() read the quick cues they replace,
+    // and the loops are read below before they are replaced.
+    const EngineBlobs damaged =
+        refuseDamagedBlobs(*track, engine_blobs_for::quickCues | engine_blobs_for::loops, "cues not written");
 
     // The caller's rate when it read one from the file. Otherwise the
     // row's: some tracks' sample_rate() throws even though set_hot_cues()
     // below works fine (same libdjinterop decoder quirk documented in the
     // Engine reader: it lives in a different blob than the one hot cues
     // use). Fall back to 44.1kHz; see libdjinterop_engine_reader.cpp
-    // for the same reasoning.
+    // for the same reasoning. A damaged trackData is not read at all, and
+    // falls back the same way.
     double sampleRate = 44100.0;
     if (knownSampleRate) {
         sampleRate = *knownSampleRate;
-    } else {
+    } else if (!contains(damaged, EngineBlob::TrackData)) {
         try {
             if (auto rate = track->sample_rate()) {
                 sampleRate = *rate;
@@ -511,6 +471,37 @@ void LibdjinteropEngineCueWriter::writeCues(const std::string &trackSourceId,
     }
 }
 
+EngineBlobs LibdjinteropEngineCueWriter::refuseDamagedBlobs(djinterop::track &track, EngineBlobs needed,
+                                                            const char *what)
+{
+    if (!m_blobGuard) {
+        m_blobGuard = std::make_shared<EngineBlobGuard>(m_engineLibraryPath);
+    }
+    const std::int64_t id = track.id();
+    // The row as a DJ knows it: its title (a column, not a blob).
+    const auto named = [&] {
+        std::string title;
+        try {
+            title = track.title().value_or("");
+        } catch (const std::exception &) {
+        }
+        return "track id=" + std::to_string(id) + (title.empty() ? std::string() : " (\"" + title + "\")");
+    };
+    std::string error;
+    const std::optional<EngineBlobs> damaged = m_blobGuard->damaged(id, &error);
+    if (!damaged) {
+        if (engineBlobGuardFailureReadsUnchecked(error)) {
+            return 0;
+        }
+        throw std::runtime_error(named() + ": " + what + ", its blobs could not be checked (" + error + ")");
+    }
+    if ((*damaged & needed) != 0) {
+        throw DamagedEngineRowError(named() + " has a damaged " + engineBlobNames(*damaged & needed) + " blob: "
+                                    + what);
+    }
+    return *damaged;
+}
+
 void LibdjinteropEngineCueWriter::takeOffRekordboxImportMark(std::int64_t id)
 {
     (void)database();
@@ -555,18 +546,22 @@ void LibdjinteropEngineCueWriter::propagateMissingFields(const std::string &trac
     if (!track) {
         throw std::runtime_error("no Engine track with id=" + trackSourceId);
     }
+    // Reuses the exact same string->musical_key parser
+    // EngineLibraryCreator already relies on, so a key propagated
+    // from a rekordbox-sourced donor round-trips through the same
+    // pitch-class/mode matching a fresh rekordbox->Engine sync
+    // would've used -- not a second, divergent parsing path.
+    const std::optional<djinterop::musical_key> parsed = key ? parseRekordboxKey(*key) : std::nullopt;
+    // set_key() rewrites the key in trackData too, read first. Asked before
+    // anything is written, so a refused row is left whole, its bpm too.
+    if (parsed) {
+        (void)refuseDamagedBlobs(*track, engine_blobs_for::trackData, "bpm and key not written");
+    }
     if (bpm) {
         track->set_bpm(*bpm);
     }
-    if (key) {
-        // Reuses the exact same string->musical_key parser
-        // EngineLibraryCreator already relies on, so a key propagated
-        // from a rekordbox-sourced donor round-trips through the same
-        // pitch-class/mode matching a fresh rekordbox->Engine sync
-        // would've used -- not a second, divergent parsing path.
-        if (auto parsed = parseRekordboxKey(*key)) {
-            track->set_key(*parsed);
-        }
+    if (parsed) {
+        track->set_key(*parsed);
     }
 }
 
@@ -755,12 +750,36 @@ std::string textOf(const std::vector<std::byte> &bytes)
     return std::string(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 }
 
+// The column each blob type is stored in, for its check.
+template<typename Blob>
+constexpr EngineBlob columnOf();
+template<>
+constexpr EngineBlob columnOf<TrackDataBlob>()
+{
+    return EngineBlob::TrackData;
+}
+template<>
+constexpr EngineBlob columnOf<OverviewBlob>()
+{
+    return EngineBlob::OverviewWaveFormData;
+}
+template<>
+constexpr EngineBlob columnOf<djinterop::engine::v3::beat_data_blob>()
+{
+    return EngineBlob::BeatData;
+}
+template<>
+constexpr EngineBlob columnOf<djinterop::engine::v3::quick_cues_blob>()
+{
+    return EngineBlob::QuickCues;
+}
+
 // Stored bytes through libdjinterop's decoder, nothing when they would not
 // decode, or are not safe to try (engineBlobDecodable).
 template<typename Blob>
 std::optional<Blob> fromEngineBlob(const std::string &bytes)
 {
-    if (!engineBlobDecodable(bytes)) {
+    if (!engineBlobDecodable(columnOf<Blob>(), bytes)) {
         return std::nullopt;
     }
     try {
@@ -860,10 +879,10 @@ bool holdsCues(const EngineSqlValue &value)
 }
 
 // The loops column decoded, nothing when it is not a blob or does not
-// decode. Not compressed, so decoded as it is.
+// decode. Not compressed, so decoded as it is, once its count is checked.
 std::optional<LoopsBlob> decodedLoops(const EngineSqlValue &value)
 {
-    if (value.type != EngineSqlValue::Type::Blob) {
+    if (value.type != EngineSqlValue::Type::Blob || !engineBlobDecodable(EngineBlob::Loops, value.bytes)) {
         return std::nullopt;
     }
     try {
