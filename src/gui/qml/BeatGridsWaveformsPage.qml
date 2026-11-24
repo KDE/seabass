@@ -691,6 +691,12 @@ Page {
                                 Layout.preferredHeight: comparison.laneHeight
                                 gridStyle: "lines"
                                 beatsSelected: true
+                                // Drawn as Engine draws it, as the zoomed
+                                // popup does: Engine's colours, the bands as
+                                // one outline each, at full strength. The
+                                // grid's lines are the same in every scheme.
+                                colorScheme: "engine"
+                                unplayedOpacity: 1
                                 readonly property bool ready: trackRow.engineSide.ready === true
                                 columnBytes: engineLane.ready ? trackRow.engineSide.columns : null
                                 trackDurationMs: engineLane.ready ? trackRow.engineSide.durationMs : 0
