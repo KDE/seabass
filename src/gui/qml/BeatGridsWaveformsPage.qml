@@ -312,6 +312,34 @@ Page {
                         ToolTip.text: "Revert the last save: restores every file it touched to what it was before"
                         onClicked: editHost.session.undoLastSave()
                     }
+                    // Every row the list shows ticked, as the shown
+                    // playlist's box (or All tracks') ticks them; and every
+                    // tick taken off. Each is off where it would change
+                    // nothing, and while a batch is staged, as the row
+                    // boxes are.
+                    Button {
+                        objectName: "selectAllButton"
+                        text: "Select All"
+                        // Asked again when the ticks move and when the
+                        // library is read again (playlistNames' signal),
+                        // which can change what can be ticked.
+                        enabled: root.ticksEnabled && root.controller.tickRevision >= 0
+                            && root.controller.playlistNames !== undefined
+                            && root.controller.tickablePlaylistTracks(root.controller.shownPlaylist) > 0
+                            && root.controller.playlistCheckState(root.controller.shownPlaylist) !== Qt.Checked
+                        ToolTip.visible: hovered
+                        ToolTip.text: root.controller.shownPlaylist.length > 0
+                            ? "Tick every track of this playlist" : "Tick every track"
+                        onClicked: root.controller.setPlaylistTicked(root.controller.shownPlaylist, true)
+                    }
+                    Button {
+                        objectName: "selectNoneButton"
+                        text: "Select None"
+                        enabled: root.ticksEnabled && root.controller.tickedCount > 0
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Untick every track, in every playlist"
+                        onClicked: root.controller.setPlaylistTicked("", false)
+                    }
                     Button {
                         objectName: "stageButton"
                         highlighted: !root.staged

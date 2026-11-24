@@ -1683,6 +1683,89 @@ TestCase {
                 "Where the beats fall is not compared: this MP3's lead-in could not be read.");
     }
 
+    // Select All beside Stage Selected ticks every row the list shows, as
+    // the playlist's own box does; Select None unticks every ticked track.
+    // Each is off where it would do nothing, and both are off while a
+    // batch is staged, as the row boxes are.
+    function test_selectAllAndSelectNoneButtons() {
+        const o = openOn(t73());
+        waitSettled(o.c);
+        const all = findChild(o.page, "selectAllButton");
+        const none = findChild(o.page, "selectNoneButton");
+        verify(all !== null && all.visible, "a Select All button");
+        verify(none !== null && none.visible, "a Select None button");
+        compare(all.text, "Select All");
+        compare(none.text, "Select None");
+        const stage = findChild(o.page, "stageButton");
+        compare(all.parent, stage.parent, "in the Stage Selected row");
+        compare(all.enabled, true);
+        compare(none.enabled, false, "nothing ticked: nothing to untick");
+
+        // A playlist shown: its rows, and only those.
+        showPlaylist(o.page, "T73 Renamed");
+        clickOn(all);
+        compare(o.c.tickedCount, 5);
+        for (let i = 0; i < o.c.tracks.count; ++i) {
+            compare(o.c.tracks.get(i).ticked, true, "row " + i + " is ticked");
+        }
+        compare(o.c.isTicked(b07), false, "a track of another playlist stays as it was");
+        compare(all.enabled, false, "every row ticked: nothing more to tick");
+        compare(none.enabled, true);
+        clickOn(none);
+        compare(o.c.tickedCount, 0);
+        for (let i = 0; i < o.c.tracks.count; ++i) {
+            compare(o.c.tracks.get(i).ticked, false, "row " + i + " is unticked");
+        }
+        compare(none.enabled, false);
+        compare(all.enabled, true);
+
+        // Every track, then staged: neither changes a tick.
+        showPlaylist(o.page, "");
+        clickOn(all);
+        compare(o.c.tickedCount, 11);
+        compare(playlistRow(o.page, "").checkState, Qt.Checked, "the same as All tracks' box");
+        waitSettled(o.c);
+        verify(stage.enabled);
+        clickOn(stage);
+        verify(o.c.stagedCount > 0, "staged");
+        compare(all.enabled, false, "staged: Select All waits for the save");
+        compare(none.enabled, false, "staged: Select None waits for the save");
+        clickOn(stage);
+        compare(o.c.stagedCount, 0);
+        compare(none.enabled, true, "unstaged: ticks can change again");
+        clickOn(none);
+        compare(o.c.tickedCount, 0);
+    }
+
+    // Select All follows what can be ticked when the stick is read again,
+    // also when no tick moves: two tracks back in the Engine library make
+    // it worth pressing again.
+    function test_selectAllAfterTheStickIsReadAgain() {
+        const stick = t73();
+        const db = stick + "/Engine Library/Database2/m.db";
+        verify(stickFixture.copyFile(db, db + ".all"));
+        compare(stickFixture.removeEngineTracks(stick, [1, 2]), 2, "B07 and B08 leave the Engine library");
+        const o = openOn(stick);
+        waitSettled(o.c);
+        const all = findChild(o.page, "selectAllButton");
+        compare(o.c.shownPlaylist, "");
+        clickOn(all);
+        compare(o.c.tickedCount, 9, "every track that can be ticked");
+        compare(all.enabled, false, "nothing more to tick");
+        const revision = o.c.tickRevision;
+
+        verify(stickFixture.copyFile(db + ".all", db), "B07 and B08 are back");
+        o.c.load(o.page.rekordboxPath, o.page.enginePath);
+        tryVerify(() => o.c.loaded && !o.c.loading, 120000, "the libraries are read again");
+        waitSettled(o.c);
+        compare(o.c.matchedCount, 11);
+        compare(o.c.tickRevision, revision, "no tick moved");
+        compare(o.c.tickedCount, 9);
+        compare(all.enabled, true, "two more tracks to tick");
+        clickOn(all);
+        compare(o.c.tickedCount, 11);
+    }
+
     // The open row draws Engine's side as Engine does, in Engine's
     // colours; rekordbox's side and the row's small waveform keep
     // rekordbox's look.
