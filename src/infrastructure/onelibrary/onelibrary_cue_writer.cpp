@@ -1324,6 +1324,273 @@ int64_t OneLibraryCueWriter::playlistContentRowsWithoutPlaylist()
     return count.columnInt64(0);
 }
 
+namespace
+{
+
+// The content columns of the schema rekordbox 7.2.18 writes (dbVersion
+// 1000): what addTrack() fills. A table with any other column is a
+// schema it has not seen.
+constexpr const char *KnownContentColumns[] = {
+    "content_id", "title", "titleForSearch", "subtitle", "bpmx100", "length", "trackNo", "discNo",
+    "artist_id_artist", "artist_id_remixer", "artist_id_originalArtist", "artist_id_composer",
+    "artist_id_lyricist", "album_id", "genre_id", "label_id", "key_id", "color_id", "image_id", "djComment",
+    "rating", "releaseYear", "releaseDate", "dateCreated", "dateAdded", "path", "fileName", "fileSize",
+    "fileType", "bitrate", "bitDepth", "samplingRate", "isrc", "djPlayCount", "isHotCueAutoLoadOn",
+    "isKuvoDeliverStatusOn", "kuvoDeliveryComment", "masterDbId", "masterContentId", "analysisDataFilePath",
+    "analysedBits", "contentLink", "hasModified", "cueUpdateCount", "analysisDataUpdateCount",
+    "informationUpdateCount",
+};
+
+// rekordbox's number for a file's type, by its extension; 0 for one it
+// has no number for here. 1, 4, 5 and 12 are read off rekordbox 7.2.18
+// exports; 11 (wav) is the documented value, not yet seen in one.
+int contentFileType(const std::string &fileName)
+{
+    const size_t dot = fileName.rfind('.');
+    if (dot == std::string::npos) {
+        return 0;
+    }
+    std::string extension = fileName.substr(dot + 1);
+    for (char &ch : extension) {
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+    }
+    if (extension == "mp3") {
+        return 1;
+    }
+    if (extension == "m4a" || extension == "mp4") {
+        return 4;
+    }
+    if (extension == "flac") {
+        return 5;
+    }
+    if (extension == "wav") {
+        return 11;
+    }
+    if (extension == "aif" || extension == "aiff") {
+        return 12;
+    }
+    return 0;
+}
+
+bool isIsoDate(const std::string &text)
+{
+    if (text.size() != 10 || text[4] != '-' || text[7] != '-') {
+        return false;
+    }
+    for (const size_t i : {0U, 1U, 2U, 3U, 5U, 6U, 8U, 9U}) {
+        if (text[i] < '0' || text[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+int64_t nextId(SqlCipherDb &db, const std::string &table, const std::string &idColumn)
+{
+    SqlCipherStatement highest(db, "SELECT coalesce(max(" + idColumn + "), 0) + 1 FROM " + table);
+    if (!highest.step()) {
+        throw std::runtime_error("onelibrary: could not read the highest " + idColumn);
+    }
+    return highest.columnInt64(0);
+}
+
+// The id of the row of a one-name lookup table (artist, genre, label,
+// key, image) spelled exactly `name`, made when there is none. nullopt
+// for an empty name: the track names no row.
+std::optional<int64_t> lookupRow(SqlCipherDb &db, const std::string &table, const std::string &idColumn,
+                                 const std::string &nameColumn, const std::string &name)
+{
+    if (name.empty()) {
+        return std::nullopt;
+    }
+    {
+        SqlCipherStatement find(db, "SELECT " + idColumn + " FROM " + table + " WHERE " + nameColumn + " = ? ORDER BY "
+                                        + idColumn + " LIMIT 1");
+        find.bindText(1, name);
+        if (find.step()) {
+            return find.columnInt64(0);
+        }
+    }
+    const int64_t id = nextId(db, table, idColumn);
+    const bool searchable = table == "artist";
+    SqlCipherStatement insert(db, "INSERT INTO " + table + " (" + idColumn + ", " + nameColumn
+                                      + (searchable ? ", nameForSearch) VALUES (?, ?, NULL)" : ") VALUES (?, ?)"));
+    insert.bindInt64(1, id);
+    insert.bindText(2, name);
+    insert.run();
+    return id;
+}
+
+// An album is its name with its artist: rekordbox keeps two albums of one
+// name apart by artist_id (36 names twice in a 1644-track export, never
+// with the same artist).
+std::optional<int64_t> albumRow(SqlCipherDb &db, const std::string &name, const std::optional<int64_t> &artistId)
+{
+    if (name.empty()) {
+        return std::nullopt;
+    }
+    {
+        SqlCipherStatement find(db, "SELECT album_id FROM album WHERE name = ?1 AND artist_id IS ?2 ORDER BY album_id LIMIT 1");
+        find.bindText(1, name);
+        if (artistId) {
+            find.bindInt64(2, *artistId);
+        } else {
+            find.bindNull(2);
+        }
+        if (find.step()) {
+            return find.columnInt64(0);
+        }
+    }
+    const int64_t id = nextId(db, "album", "album_id");
+    SqlCipherStatement insert(db, "INSERT INTO album (album_id, name, artist_id, image_id, isComplation, nameForSearch) "
+                                  "VALUES (?, ?, ?, NULL, 0, NULL)");
+    insert.bindInt64(1, id);
+    insert.bindText(2, name);
+    if (artistId) {
+        insert.bindInt64(3, *artistId);
+    } else {
+        insert.bindNull(3);
+    }
+    insert.run();
+    return id;
+}
+
+void bindOptional(SqlCipherStatement &statement, int index, const std::optional<int64_t> &value)
+{
+    if (value) {
+        statement.bindInt64(index, *value);
+    } else {
+        statement.bindNull(index);
+    }
+}
+
+}  // namespace
+
+int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
+{
+    if (track.title.empty()) {
+        throw std::invalid_argument("onelibrary: a track row needs a title");
+    }
+    if (!isIsoDate(track.date)) {
+        throw std::invalid_argument("onelibrary: \"" + track.date + "\" is not a date as YYYY-MM-DD");
+    }
+    const std::string contentPath = toContentPath(m_stickRoot, track.filePath);
+    const size_t slash = contentPath.rfind('/');
+    const std::string fileName = slash == std::string::npos ? contentPath : contentPath.substr(slash + 1);
+    const int fileType = contentFileType(fileName);
+    if (fileType == 0) {
+        throw std::invalid_argument("onelibrary: no file type known for " + fileName);
+    }
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    if (!contentIdsMatching(db, contentPath).empty()) {
+        throw std::invalid_argument("onelibrary: a content row already names " + contentPath);
+    }
+    {
+        SqlCipherStatement columns(db, "SELECT name FROM pragma_table_info('content')");
+        std::set<std::string> found;
+        while (columns.step()) {
+            found.insert(columns.columnText(0));
+        }
+        const std::set<std::string> known(std::begin(KnownContentColumns), std::end(KnownContentColumns));
+        if (found != known) {
+            std::string strange;
+            for (const std::string &name : found) {
+                if (known.count(name) == 0) {
+                    strange += (strange.empty() ? " (it has \"" : ", \"") + name + "\"";
+                }
+            }
+            throw std::runtime_error("onelibrary: the content table is not the one this build knows"
+                                     + (strange.empty() ? std::string() : strange + ")") + "; not adding a row to it");
+        }
+    }
+
+    int64_t id = 0;
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        const std::optional<int64_t> artist = lookupRow(db, "artist", "artist_id", "name", track.artist);
+        const std::optional<int64_t> remixer = lookupRow(db, "artist", "artist_id", "name", track.remixer);
+        const std::optional<int64_t> composer = lookupRow(db, "artist", "artist_id", "name", track.composer);
+        const std::optional<int64_t> albumArtist = lookupRow(db, "artist", "artist_id", "name", track.albumArtist);
+        const std::optional<int64_t> album = albumRow(db, track.album, albumArtist);
+        const std::optional<int64_t> genre = lookupRow(db, "genre", "genre_id", "name", track.genre);
+        const std::optional<int64_t> label = lookupRow(db, "label", "label_id", "name", track.label);
+        const std::optional<int64_t> key = lookupRow(db, "key", "key_id", "name", track.key);
+        const std::optional<int64_t> image = lookupRow(db, "image", "image_id", "path", track.imagePath);
+        id = nextId(db, "content", "content_id");
+
+        SqlCipherStatement insert(
+            db,
+            "INSERT INTO content (content_id, title, titleForSearch, subtitle, bpmx100, length, trackNo, discNo, "
+            "artist_id_artist, artist_id_remixer, artist_id_originalArtist, artist_id_composer, artist_id_lyricist, "
+            "album_id, genre_id, label_id, key_id, color_id, image_id, djComment, rating, releaseYear, releaseDate, "
+            "dateCreated, dateAdded, path, fileName, fileSize, fileType, bitrate, bitDepth, samplingRate, isrc, "
+            "djPlayCount, isHotCueAutoLoadOn, isKuvoDeliverStatusOn, kuvoDeliveryComment, masterDbId, "
+            "masterContentId, analysisDataFilePath, analysedBits, contentLink, hasModified, cueUpdateCount, "
+            "analysisDataUpdateCount, informationUpdateCount) VALUES ("
+            "?1, ?2, NULL, '', ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, 0, ?10, ?11, ?12, ?13, 0, ?14, ?15, 0, ?16, '', "
+            "?17, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, '', 0, 1, 1, '', 0, 0, ?25, 0, 0, 0, NULL, NULL, NULL)");
+        insert.bindInt64(1, id);
+        insert.bindText(2, track.title);
+        insert.bindInt64(3, track.bpm > 0.0 ? static_cast<int64_t>(track.bpm * 100.0 + 0.5) : 0);
+        insert.bindInt64(4, std::max(track.lengthSeconds, 0));
+        insert.bindInt64(5, std::max(track.trackNumber, 0));
+        insert.bindInt64(6, std::max(track.discNumber, 0));
+        bindOptional(insert, 7, artist);
+        bindOptional(insert, 8, remixer);
+        bindOptional(insert, 9, composer);
+        bindOptional(insert, 10, album);
+        bindOptional(insert, 11, genre);
+        bindOptional(insert, 12, label);
+        bindOptional(insert, 13, key);
+        bindOptional(insert, 14, image);
+        insert.bindText(15, track.comment);
+        insert.bindInt64(16, std::max(track.year, 0));
+        insert.bindText(17, track.date);
+        insert.bindText(18, contentPath);
+        insert.bindText(19, fileName);
+        insert.bindInt64(20, static_cast<int64_t>(track.fileSizeBytes));
+        insert.bindInt64(21, fileType);
+        insert.bindInt64(22, std::max(track.bitrate, 0));
+        insert.bindInt64(23, std::max(track.bitDepth, 0));
+        insert.bindInt64(24, std::max(track.sampleRateHz, 0));
+        insert.bindText(25, track.analysisDataFilePath);
+        insert.run();
+        db.exec("UPDATE property SET numberOfContents = numberOfContents + 1 WHERE numberOfContents IS NOT NULL;");
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+
+    {
+        SqlCipherStatement readBack(
+            verifyConnection(),
+            "SELECT c.title, c.path, coalesce(a.name, ''), coalesce(al.name, ''), coalesce(g.name, ''), "
+            "coalesce(l.name, ''), coalesce(k.name, ''), coalesce(i.path, '') FROM content c "
+            "LEFT JOIN artist a ON a.artist_id = c.artist_id_artist LEFT JOIN album al ON al.album_id = c.album_id "
+            "LEFT JOIN genre g ON g.genre_id = c.genre_id LEFT JOIN label l ON l.label_id = c.label_id "
+            "LEFT JOIN key k ON k.key_id = c.key_id LEFT JOIN image i ON i.image_id = c.image_id "
+            "WHERE c.content_id = ?");
+        readBack.bindInt64(1, id);
+        const bool there = readBack.step();
+        if (!there || readBack.columnText(0) != track.title || readBack.columnText(1) != contentPath
+            || readBack.columnText(2) != track.artist || readBack.columnText(3) != track.album
+            || readBack.columnText(4) != track.genre || readBack.columnText(5) != track.label
+            || readBack.columnText(6) != track.key || readBack.columnText(7) != track.imagePath) {
+            throw std::runtime_error("onelibrary: post-write verification failed, the row for " + contentPath
+                                     + " is not as written");
+        }
+    }
+    refreshStalenessBaseline();
+    return id;
+}
+
 int64_t OneLibraryCueWriter::createPlaylist(const std::string &parentPath, const std::string &name, bool isFolder,
                                             std::optional<size_t> position)
 {

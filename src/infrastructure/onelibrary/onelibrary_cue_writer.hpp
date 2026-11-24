@@ -318,6 +318,71 @@ public:
     // Returns how many rows were pointed.
     int setTrackPath(const std::string &filePath, const std::string &newFilePath);
 
+    // One track to add to the library (the track import): a file that
+    // is on the stick already and that no content row names.
+    struct NewTrack
+    {
+        // The audio file on the stick, as every other method here takes a
+        // file. Its extension decides the row's fileType.
+        std::string filePath;
+        // Never empty: rekordbox itself titles an untagged file by its
+        // name, and so must the caller.
+        std::string title;
+        // Each empty where the file says nothing; the row then names no
+        // lookup row for it. `key` goes in as it is spelled (rekordbox's
+        // own key table holds "Bm" beside "5A").
+        std::string artist;
+        std::string album;
+        std::string albumArtist;
+        std::string genre;
+        std::string label;
+        std::string remixer;
+        std::string composer;
+        std::string key;
+        std::string comment;
+        // As the row stores them, from the stick's root with a leading
+        // '/': "/PIONEER/USBANLZ/P01E/00009ECC/ANLZ0000.DAT" and
+        // "/PIONEER/Artwork/00001/b7.jpg". Empty: the track has none.
+        std::string analysisDataFilePath;
+        std::string imagePath;
+        double bpm = 0.0;
+        int lengthSeconds = 0;
+        int trackNumber = 0;
+        int discNumber = 0;
+        int year = 0;
+        // kbit/s as rekordbox writes it: 0 for FLAC.
+        int bitrate = 0;
+        int bitDepth = 0;
+        int sampleRateHz = 0;
+        std::uint64_t fileSizeBytes = 0;
+        // The day of the import, "YYYY-MM-DD": dateCreated and dateAdded.
+        std::string date;
+    };
+
+    // Adds one content row for `track` and returns its content_id, one
+    // above the highest (the ids have gaps; a removed row's is not
+    // reused, as rekordbox does not). In one transaction:
+    //   - the artist, album, genre, label, key and image rows the track
+    //     names are looked up by their exact spelling and made where
+    //     missing (an album is the pair of its name and its album artist,
+    //     and has no artist when the file names no album artist: the
+    //     T73 export's albums have none, its files no such tag);
+    //   - the content row, every column named. What rekordbox fills from
+    //     its own collection and an imported file has no truth for is
+    //     written as "none": masterDbId, masterContentId and contentLink
+    //     0, analysedBits 0, the three update counters NULL (as on
+    //     rekordbox's own rows that were never analysed);
+    //   - property.numberOfContents goes up by one.
+    // Refused with std::invalid_argument, nothing written: an empty
+    // title, a date not spelled YYYY-MM-DD, a file type rekordbox has no
+    // number for here (mp3, m4a, mp4, flac, wav, aif, aiff are known), a
+    // file some content row already names (compared as the stick's
+    // filesystem compares names). Refused with std::runtime_error: a
+    // content table with a column this does not know (a newer schema is
+    // not guessed at). Read back through the verify connection before it
+    // is trusted.
+    int64_t addTrack(const NewTrack &track);
+
     // A playlist's membership, by the playlist's full path ("Folder/List",
     // as the reader spells it) and the file's path. Add appends the file
     // at the end of the playlist (sequenceNo one past the last) unless it
