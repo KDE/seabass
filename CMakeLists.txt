@@ -5727,4 +5727,21 @@ foreach(_seabass_test IN LISTS _seabass_registered_tests)
     endif()
 endforeach()
 
+# Last, after every test (#111): tests/fixtures holds nothing git does not
+# track, so no test opened a committed fixture in place and left a -wal,
+# -shm or anything else beside it (tests/fixtures_left_clean.cmake). Every
+# test requires a fixture this one cleans up, which makes ctest run it
+# after all of them, and add it to a -R subset too. Only in a git checkout:
+# a source tarball has no record of what is tracked.
+find_package(Git QUIET)
+if(GIT_EXECUTABLE AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    foreach(_seabass_test IN LISTS _seabass_registered_tests)
+        set_property(TEST ${_seabass_test} APPEND PROPERTY FIXTURES_REQUIRED seabass_fixture_tree)
+    endforeach()
+    add_test(NAME fixtures_left_clean
+        COMMAND ${CMAKE_COMMAND} "-DGIT=${GIT_EXECUTABLE}" "-DSOURCE=${CMAKE_SOURCE_DIR}"
+                -P ${CMAKE_SOURCE_DIR}/tests/fixtures_left_clean.cmake)
+    set_tests_properties(fixtures_left_clean PROPERTIES FIXTURES_CLEANUP seabass_fixture_tree)
+endif()
+
 endif()  # SEABASS_TESTS
