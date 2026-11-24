@@ -770,6 +770,25 @@ Over the three sets of varied music that makes 160 tracks looked at,
 of which ours is right or as good on 103, rekordbox's on 38, and 17
 undecided; two were not answered.
 
+### Drum and bass, corrected
+
+The tables above are as he ticked them. Asked afterwards about the
+drum and bass tracks, which he had given to our 87 BPM, he said that
+drum and bass belongs at the faster tempo. Six tracks change to
+rekordbox's grid: four of the second playlist and two of the first
+variety list (one of them undecided before). That leaves the second
+playlist at ours 18, rekordbox 15, undecided 3 (with rekordbox or
+approved 82 of 126, rekordbox itself 105), and the first variety list
+at ours 14, both 3, rekordbox 7, undecided 3 (71 of 110, rekordbox
+itself 93); over the three sets ours is right or as good on 98 and
+rekordbox's on 44.
+
+Which of two tempos an octave apart he wants is not in the accents:
+on the 62 such tracks, how unlike the odd and the even beats of the
+faster grid are, and whether the pattern repeats every two or every
+four of them, in three bands, tell his choice apart no better than
+"always the slower one". What he wants goes by the music's kind.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
