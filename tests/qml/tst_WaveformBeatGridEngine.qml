@@ -30,6 +30,10 @@ TestCase {
         id: detailSpyComponent
         SignalSpy { signalName: "detailWaveformChanged" }
     }
+    Component {
+        id: analysisSpyComponent
+        SignalSpy { signalName: "loadedAnalysisChanged" }
+    }
     // Asks for the loaded track's popup detail and waits for the answer,
     // which comes off the GUI thread.
     function askForDetail(player) {
@@ -154,6 +158,53 @@ TestCase {
         player.libraryBusy = false;
         verify(player.analysisRevision > revision, "a binding is told to ask again");
         compare(player.beatGridFor("engine", other, otherId).length, 121, "and then it is read");
+    }
+
+    // A row's Play pressed during a write plays the audio but opens no
+    // library: load() reading Engine's analysis held m.db's lock the
+    // save's writer then failed on, as a row's waveform did. The loaded
+    // track's waveform and grid are read when the write ends, for the
+    // track loaded last when another one followed during the write.
+    function test_aTrackLoadedDuringAWriteGetsItsAnalysisAfter() {
+        const lib = library();
+        verify(engineGridFixture.setRow(lib.path, 44100, 120));
+        verify(engineGridFixture.setWaveform(lib.path, 1024, 128));
+        const other = engineGridFixture.library();
+        const otherId = engineGridFixture.trackId(other);
+        verify(engineGridFixture.setRow(other, 44100, 120));
+        verify(engineGridFixture.setWaveform(other, 1024, 64));
+        const player = createTemporaryObject(playerComponent, testCase);
+        player.libraryBusy = true;
+        player.load("engine", lib.path, lib.id, testCase.clickFile, "Grid", "An Artist", "", [], "", false);
+        verify(player.hasTrack, "the track is loaded");
+        compare(player.errorMessage, "", "and its audio with it");
+        compare(player.waveform.length, 0, "load() reads no waveform during a write");
+        compare(player.beatTimesMs.length, 0, "nor beats");
+        compare(player.beatTicksAt(60000, 1200).length, 0, "nor the grid it draws");
+        verify(player.analysisPending, "it waits for the write");
+        player.requestDetailWaveform();
+
+        // Another track before the write ends: its analysis is the one read.
+        player.load("engine", other, otherId, testCase.clickFile, "Other", "An Artist", "", [], "", false);
+        compare(player.waveform.length, 0, "nor for the next track");
+        verify(player.analysisPending);
+        player.requestDetailWaveform();
+
+        const spy = createTemporaryObject(analysisSpyComponent, testCase, {target: player});
+        player.libraryBusy = false;
+        verify(spy.count > 0, "the player bar is told");
+        verify(!player.analysisPending);
+        verify(player.waveform.length > 0, "the waveform once the write is over");
+        compare(JSON.stringify(player.waveform), JSON.stringify(player.waveformFor("engine", other, otherId)),
+                "the track loaded last's");
+        verify(JSON.stringify(player.waveform) !== JSON.stringify(player.waveformFor("engine", lib.path, lib.id)),
+               "not the first one's");
+        compare(player.beatTimesMs.length, 121, "its beats");
+        compare(player.beatTicksAt(60000, 1200).length, 121, "and its grid");
+        tryVerify(() => player.detailWaveform.columns && player.detailWaveform.columns.byteLength > 0,
+                  30000, "the popup's detail too");
+        player.stop();
+        verify(!player.analysisPending);
     }
 
     // A popup closed and opened again finds its detail already delivered;

@@ -472,6 +472,7 @@ Page {
                         beatsSelected: true
                         beatData: {
                             root.playbackController.trackSerial;
+                            root.playbackController.analysisPending;   // read after a write
                             return root.playbackController.beatTicksAt(root.playbackController.duration, width);
                         }
                         trackDurationMs: root.playbackController.duration
