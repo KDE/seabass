@@ -111,7 +111,12 @@ Item {
     // The overlay's own job is what is left: dimming the page, holding
     // the label above the report, and keeping it centred.
     ColumnLayout {
+        id: column
         anchors.centerIn: parent
+        // The whole column, title too, is what a toast keeps clear of
+        // (#122); the report inside it adds itself as well.
+        Component.onCompleted: ProgressAreas.add(column)
+        Component.onDestruction: ProgressAreas.remove(column)
         spacing: 12
         width: Math.min(parent.width - 64, 420)
 

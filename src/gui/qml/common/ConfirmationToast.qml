@@ -69,7 +69,78 @@ Item {
     visible: opacity > 0
     // How far it has floated up: nothing while shown, a little as it goes.
     property real lift: 0
-    transform: Translate { y: -toast.lift }
+
+    // Never over a progress bar (#122). A save's toast goes up in the same
+    // call that starts reading the stick again, and every page centres
+    // both: the toast sat on the bar of the very refresh it started. The
+    // page still places it; if that place covers an operation's progress
+    // (ProgressAreas), it steps to the nearest place above or below that
+    // covers none and stays on its parent. Up first, on a tie.
+    readonly property real clearance: {
+        const host = toast.parent;
+        const areas = ProgressAreas.items;
+        if (!host || areas.length === 0) {
+            return 0;
+        }
+        const top = toast.y;
+        const left = toast.x;
+        const right = toast.x + toast.width;
+        const h = toast.height;
+        const room = host.height;
+        const gap = Theme.sectionSpacing;
+        const ownWindow = toast.Window.window;
+        const blocks = [];
+        for (const area of areas) {
+            // x and y read here so the binding follows the area as it moves.
+            if (!area.visible || area.width <= 0 || area.height <= 0 || !isFinite(area.x + area.y)
+                    || area.Window.window !== ownWindow) {
+                continue;
+            }
+            const r = area.mapToItem(host, 0, 0, area.width, area.height);
+            if (r.x < right && left < r.x + r.width) {
+                blocks.push({top: r.y, bottom: r.y + r.height});
+            }
+        }
+        const free = (y) => blocks.every((b) => y + h <= b.top || y >= b.bottom);
+        if (free(top)) {
+            return 0;
+        }
+        let best = null;
+        for (const b of blocks) {
+            for (const y of [b.top - gap - h, b.bottom + gap]) {
+                if (y < 0 || y + h > room || !free(y)) {
+                    continue;
+                }
+                if (best === null || Math.abs(y - top) < Math.abs(best - top)
+                        || (Math.abs(y - top) === Math.abs(best - top) && y < best)) {
+                    best = y;
+                }
+            }
+        }
+        return best === null ? 0 : best - top;
+    }
+
+    transform: [
+        Translate { y: -toast.lift },
+        Translate {
+            y: toast.clearance
+            // A glide, not a jump, when a bar comes up under a toast that
+            // is on screen, fading out included; none while it is hidden.
+            Behavior on y {
+                enabled: toast.visible
+                NumberAnimation { duration: 2 * Theme.shortTransitionDuration; easing.type: Easing.OutCubic }
+            }
+        }
+    ]
+    // A long text wraps inside the page rather than running off both
+    // sides of a narrow one. The floor keeps a few words to a line; on a
+    // page narrower than even that, the toast itself is held to the
+    // page's width below.
+    readonly property real textRoom: toast.parent
+        ? Math.max(Theme.scaled(40), toast.parent.width - 2 * Theme.pageMargin - markBox.width
+                   - Theme.rowSpacing - panel.leftPadding - panel.rightPadding)
+        : Number.POSITIVE_INFINITY
+    width: toast.parent ? Math.min(implicitWidth, toast.parent.width) : implicitWidth
 
     // In: a quick pop with a touch of overshoot. Out: it lifts and
     // dissolves, slower, so the eye sees it leave rather than blink off.
@@ -102,6 +173,7 @@ Item {
     Pane {
         id: panel
         objectName: "confirmationToastPanel"
+        width: toast.width
         padding: Theme.rowSpacing
         topPadding: Theme.scaled(14)
         bottomPadding: Theme.scaled(14)
@@ -151,6 +223,8 @@ Item {
             Label {
                 objectName: "confirmationToastLabel"
                 anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, toast.textRoom)
+                wrapMode: Text.Wrap
                 text: toast.text
                 color: Theme.good
                 font.pointSize: Theme.fontLarge

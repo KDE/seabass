@@ -68,6 +68,10 @@ ColumnLayout {
 
     spacing: 8
 
+    // A toast keeps clear of it (#122).
+    Component.onCompleted: ProgressAreas.add(report)
+    Component.onDestruction: ProgressAreas.remove(report)
+
     // A Flow, not a row: four steps in a narrow dialog ran off its edge
     // ("Checking t..." on Restore onto a stick). They wrap instead.
     Flow {
