@@ -350,6 +350,9 @@ private:
         // What a row inside this playlist depends on: its create or
         // rename and its parents'; a conflict's key when it is undecided.
         std::vector<std::string> deps;
+        // A folder Engine does not have and no plain row of this plan
+        // makes: Engine deleted it, or the DJ left it out (#128).
+        bool engineLacks = false;
     };
     std::map<std::uint32_t, PlaylistStatus> status;
     std::vector<std::pair<std::string, std::string>> renamesInOrder;
@@ -1646,6 +1649,64 @@ private:
                 status[r.id] = st;
                 continue;
             }
+            // Moved by rekordbox into a folder Engine deleted since the
+            // record (#128): Engine refuses a move into a folder it does
+            // not have, so a ticked rename would fail the whole save, and
+            // making the folder again goes against Engine's delete. A
+            // conflict: rekordbox's side makes the folder and moves the
+            // playlist in, Engine's leaves it where it is. (A folder that
+            // waits on a conflict of its own holds the rename already,
+            // through its key.) Its members and order stay as recorded
+            // until it has moved, so the sync after plans them as for any
+            // playlist. Before #125's question below: whichever reading of
+            // a reused id, Engine cannot hold the playlist at its new path
+            // until the folder exists again, so that is what is asked.
+            if (const auto parentSt = r.parentId != 0 ? status.find(r.parentId) : status.end();
+                b && b->path != r.path && countAt(b->path) == 1 && parentSt != status.end()
+                && parentSt->second.engineLacks && countAt(parentPath(r.path)) == 0
+                && std::find(parentSt->second.deps.begin(), parentSt->second.deps.end(), playlistItemKey(r.parentId))
+                       == parentSt->second.deps.end()) {
+                const std::string parent = parentPath(r.path);
+                const std::string from = pathAfterRenames(b->path);
+                const std::string what = r.folder ? "folder" : "playlist";
+                claimedEnginePaths.insert(b->path);
+                EngineUpdateConflict conflict;
+                conflict.header = makeHeader(key, false, true, EngineUpdateReason::BothChanged,
+                                             "rekordbox moved this " + what + " from " + quoted(b->path) + " to "
+                                                 + quoted(r.path) + ", into " + quoted(parent) + ", which "
+                                                 + engineName
+                                                 + " deleted since Seabass last recorded the stick; moving it there "
+                                                   "makes the folder again",
+                                             state, parentDeps);
+                conflict.rekordboxSide = "Make " + quoted(parent) + " again and move " + quoted(from) + " into it"
+                    + (leafName(from) != leafName(r.path) ? " as " + quoted(leafName(r.path)) : std::string());
+                conflict.engineSide = "Leave " + quoted(from) + " where it is in " + engineName;
+                PlaylistCreate folder;
+                folder.pdbId = r.parentId;
+                folder.path = parent;
+                folder.folder = true;
+                folder.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxAdded,
+                                           "Create " + quoted(parent) + " in " + engineName, state, parentDeps);
+                conflict.rekordboxChoice.emplace_back(std::move(folder));
+                PlaylistRename move;
+                move.pdbId = r.id;
+                move.fromPath = from;
+                move.toPath = r.path;
+                move.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxRenamed,
+                                         "Move " + quoted(from) + " to " + quoted(r.path), state, parentDeps);
+                conflict.rekordboxChoice.emplace_back(std::move(move));
+                out.conflicts.push_back(std::move(conflict));
+                for (const auto &member : b->members) {
+                    heldBack.insert(memberItemKey(r.id, member));
+                }
+                for (const auto &member : r.members) {
+                    heldBack.insert(memberItemKey(r.id, member));
+                }
+                heldBack.insert(orderItemKey(r.id));
+                st.deps.push_back(key);
+                status[r.id] = st;
+                continue;
+            }
             // A playlist renamed under an id whose members do not say it
             // is the same one (#125): a conflict with both readings, never
             // a rename that empties Engine's playlist on a guess. Asked
@@ -1700,6 +1761,7 @@ private:
                                                    "rekordbox still has it",
                                              state);
                     out.engineOwnKept.push_back(std::move(kept));
+                    st.engineLacks = true;
                     status[r.id] = st;
                     continue;
                 }
@@ -1762,6 +1824,34 @@ private:
             if (!parent.empty() && countAt(parent) > 1) {
                 claimedEnginePaths.insert(parent);
                 ambiguous(r.id, parent, state);
+                status[r.id] = st;
+                continue;
+            }
+            // Inside a folder Engine does not have and no plain row makes
+            // (#128): Engine deleted it, or the DJ answered its conflict
+            // "Leave Engine without it". The create would make the folder
+            // with it, so it is the DJ's to decide, with its tracks.
+            if (const auto parentSt = r.parentId != 0 ? status.find(r.parentId) : status.end();
+                parentSt != status.end() && parentSt->second.engineLacks) {
+                create.header = makeHeader(key, true, false, EngineUpdateReason::RekordboxAdded,
+                                           "Create " + quoted(r.path) + " in " + engineName, state, parentDeps);
+                EngineUpdateConflict conflict;
+                conflict.header = makeHeader(key, false, true, EngineUpdateReason::BothChanged,
+                                             std::string("rekordbox created this ") + (r.folder ? "folder" : "playlist")
+                                                 + " inside " + quoted(parent) + ", which " + engineName
+                                                 + " does not have; creating it makes the folder too",
+                                             state, parentDeps);
+                conflict.rekordboxSide = "Create " + quoted(r.path) + " and its folder in " + engineName;
+                conflict.engineSide = "Leave " + engineName + " without " + quoted(r.path);
+                conflict.rekordboxChoice.emplace_back(std::move(create));
+                if (!r.folder) {
+                    for (auto &edit : addsInto(r, r.path, {}, parentDeps)) {
+                        conflict.rekordboxChoice.push_back(std::move(edit));
+                    }
+                }
+                out.conflicts.push_back(std::move(conflict));
+                st.deps.push_back(key);
+                st.engineLacks = true;
                 status[r.id] = st;
                 continue;
             }

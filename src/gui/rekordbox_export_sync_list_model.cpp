@@ -506,6 +506,9 @@ QVariant RekordboxExportSyncListModel::data(const QModelIndex &index, int role) 
         return row.stagedDescription;
     case DirectionRole:
         if (row.section == Section::Conflicts) {
+            if (answerWaitsOn(row)) {
+                return QStringLiteral("waits");  // answered, nothing of it written yet (#128)
+            }
             if (row.resolvedSide == QLatin1String("rekordbox")) {
                 return QStringLiteral("to Engine");
             }
@@ -710,6 +713,7 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
     beginResetModel();
     m_rows.clear();
     m_ordinals.clear();
+    m_leftOutByHand.clear();
     m_stickRoot = stickRoot;
     // The questions first (Section's order); a group where its first
     // conflict was.
@@ -835,6 +839,11 @@ void RekordboxExportSyncListModel::setProposal(const domain::EngineUpdateProposa
         assignPlanKey(row);
         m_rows.push_back(std::move(row));
     }
+    // Held back while the conflicts they depend on are open (#128).
+    m_bulk = true;
+    const std::set<std::string> open = openConflictKeys();
+    setKeysIncluded({open.begin(), open.end()}, false);
+    m_bulk = false;
     endResetModel();
     emit countsChanged();
 }
@@ -898,6 +907,7 @@ void RekordboxExportSyncListModel::clear()
 {
     beginResetModel();
     m_rows.clear();
+    m_leftOutByHand.clear();
     endResetModel();
     emit countsChanged();
 }
@@ -937,9 +947,60 @@ bool RekordboxExportSyncListModel::setIncluded(int rowIndex, bool included)
     if (!writable(start.section)) {
         return false;
     }
+    return setKeysIncluded({start.header.key}, included);
+}
+
+std::set<std::string> RekordboxExportSyncListModel::openConflictKeys() const
+{
+    std::set<std::string> keys;
+    for (const auto &row : m_rows) {
+        if (row.section == Section::Conflicts) {
+            for (const auto *conflict : conflictsOf(row)) {
+                keys.insert(conflict->header.key);
+            }
+        }
+    }
+    for (const auto &row : m_rows) {
+        if (writable(row.section) && row.included) {
+            keys.erase(row.header.key);
+        }
+    }
+    return keys;
+}
+
+bool RekordboxExportSyncListModel::setKeysIncluded(std::vector<std::string> keys, bool included)
+{
+    if (included) {
+        // What the tick would bring, by dependsOn: nothing of it while it
+        // waits on an open conflict, whose answer decides it (#128). An
+        // answer's own rows stand for the conflict's key.
+        std::set<std::string> open = openConflictKeys();
+        for (const auto &row : m_rows) {
+            if (writable(row.section)) {
+                open.erase(row.header.key);
+            }
+        }
+        std::vector<std::string> pending = keys;
+        std::set<std::string> seen;
+        while (!pending.empty()) {
+            const std::string key = std::move(pending.back());
+            pending.pop_back();
+            if (!seen.insert(key).second) {
+                continue;
+            }
+            if (open.count(key)) {
+                return false;
+            }
+            for (const auto &row : m_rows) {
+                if (writable(row.section) && row.header.key == key) {
+                    pending.insert(pending.end(), row.header.dependsOn.begin(), row.header.dependsOn.end());
+                }
+            }
+        }
+    }
 
     bool changed = false;
-    std::vector<std::string> pending{start.header.key};
+    std::vector<std::string> pending = std::move(keys);
     std::set<std::string> seen;
     while (!pending.empty()) {
         const std::string key = std::move(pending.back());
@@ -972,6 +1033,103 @@ bool RekordboxExportSyncListModel::setIncluded(int rowIndex, bool included)
         announceIncluded();
     }
     return changed;
+}
+
+std::vector<int> RekordboxExportSyncListModel::dependentsOfAnswer(int conflictUid,
+                                                                  const std::vector<std::string> &keys) const
+{
+    std::vector<int> uids;
+    for (const auto &row : m_rows) {
+        if (!writable(row.section) || row.fromConflictUid == conflictUid || !row.header.checkedByDefault
+            || row.header.conflict) {
+            continue;
+        }
+        if (std::any_of(row.header.dependsOn.begin(), row.header.dependsOn.end(), [&](const std::string &key) {
+                return std::find(keys.begin(), keys.end(), key) != keys.end();
+            })) {
+            uids.push_back(row.uid);
+        }
+    }
+    return uids;
+}
+
+void RekordboxExportSyncListModel::rememberLeftOutByHand(int conflictUid, const std::vector<std::string> &keys)
+{
+    const bool writingAnswer = std::any_of(m_rows.begin(), m_rows.end(), [&](const Row &row) {
+        return row.fromConflictUid == conflictUid && writable(row.section) && row.included;
+    });
+    if (!writingAnswer) {
+        return;  // what waits is unticked by the wait, not by the DJ
+    }
+    std::set<int> byHand;
+    for (int uid : dependentsOfAnswer(conflictUid, keys)) {
+        const int at = rowIndexOfUid(uid);
+        if (at >= 0 && !m_rows[static_cast<std::size_t>(at)].included) {
+            byHand.insert(uid);
+        }
+    }
+    m_leftOutByHand[conflictUid] = std::move(byHand);
+}
+
+const RekordboxExportSyncListModel::Row *RekordboxExportSyncListModel::answerWaitsOn(const Row &row) const
+{
+    if (row.section != Section::Conflicts || row.resolvedSide.isEmpty()) {
+        return nullptr;
+    }
+    bool writes = false;
+    std::vector<std::string> pending;
+    std::set<std::string> own;
+    for (const auto *conflict : conflictsOf(row)) {
+        own.insert(conflict->header.key);
+        pending.insert(pending.end(), conflict->header.dependsOn.begin(), conflict->header.dependsOn.end());
+    }
+    for (const auto &answer : m_rows) {
+        if (answer.fromConflictUid != row.uid || !writable(answer.section)) {
+            continue;
+        }
+        if (answer.included) {
+            return nullptr;  // something of it is written
+        }
+        writes = true;
+        pending.insert(pending.end(), answer.header.dependsOn.begin(), answer.header.dependsOn.end());
+    }
+    if (!writes) {
+        return nullptr;  // an answer that writes nothing is decided as it is
+    }
+    // What the answer's rows depend on, followed as a tick follows it
+    // (setKeysIncluded), to the first conflict still open.
+    std::set<std::string> open = openConflictKeys();
+    for (const auto &other : m_rows) {
+        if (writable(other.section)) {
+            open.erase(other.header.key);
+        }
+    }
+    std::set<std::string> seen;
+    while (!pending.empty()) {
+        const std::string key = std::move(pending.back());
+        pending.pop_back();
+        if (own.count(key) || !seen.insert(key).second) {
+            continue;
+        }
+        if (open.count(key)) {
+            for (const auto &other : m_rows) {
+                if (other.section != Section::Conflicts || other.uid == row.uid) {
+                    continue;
+                }
+                for (const auto *conflict : conflictsOf(other)) {
+                    if (conflict->header.key == key) {
+                        return &other;
+                    }
+                }
+            }
+        }
+        for (const auto &other : m_rows) {
+            if (writable(other.section) && other.header.key == key) {
+                pending.insert(pending.end(), other.header.dependsOn.begin(), other.header.dependsOn.end());
+            }
+        }
+    }
+    return nullptr;
 }
 
 void RekordboxExportSyncListModel::setSectionIncluded(Section section, bool included)
@@ -1095,7 +1253,14 @@ bool RekordboxExportSyncListModel::resolveConflict(int rowIndex, bool rekordboxS
         return false;  // a refusal: its reason says what to do instead
     }
     const int conflictUid = at.uid;
+    std::vector<std::string> keys;
+    for (const auto &conflict : conflicts) {
+        keys.push_back(conflict.header.key);
+    }
+    rememberLeftOutByHand(conflictUid, keys);
     removeAnswerRows(conflictUid);
+    // What waited on the answer taken back waits again (#128).
+    setKeysIncluded(keys, false);
 
     std::vector<int> added;
     for (const auto &conflict : conflicts) {
@@ -1107,6 +1272,18 @@ bool RekordboxExportSyncListModel::resolveConflict(int rowIndex, bool rekordboxS
     m_rows[static_cast<std::size_t>(conflictAt)].included = true;
     for (int uid : added) {
         setIncluded(rowIndexOfUid(uid), true);
+    }
+    // An answer that writes something: the rows held back for it take
+    // their default tick (#128), but not those the DJ unticked under an
+    // earlier answer. One that writes nothing leaves them out.
+    if (!added.empty()) {
+        const std::set<int> &byHand = m_leftOutByHand[conflictUid];
+        for (int uid : dependentsOfAnswer(conflictUid, keys)) {
+            const int row = rowIndexOfUid(uid);
+            if (!byHand.count(uid) && row >= 0 && !m_rows[static_cast<std::size_t>(row)].included) {
+                setIncluded(row, true);
+            }
+        }
     }
     announceIncluded();
     return true;
@@ -1122,9 +1299,16 @@ bool RekordboxExportSyncListModel::clearResolution(int rowIndex)
         return false;
     }
     const int uid = row.uid;
+    std::vector<std::string> keys;
+    for (const auto *conflict : conflictsOf(row)) {
+        keys.push_back(conflict->header.key);
+    }
+    rememberLeftOutByHand(uid, keys);
     row.resolvedSide.clear();
     row.included = false;
     removeAnswerRows(uid);
+    // What waited on the answer waits again (#128).
+    setKeysIncluded(keys, false);
     announceIncluded();
     return true;
 }
@@ -1433,6 +1617,10 @@ QStringList RekordboxExportSyncListModel::detailsOf(const Row &row) const
     }
     if (row.section == Section::Conflicts && row.conflict) {
         const auto &c = *row.conflict;
+        if (const Row *waitsOn = answerWaitsOn(row)) {
+            lines << QStringLiteral("Waits for an answer to ") + quotedText(waitsOn->title.toStdString())
+                    + QStringLiteral(" first: nothing of this answer is written until then");
+        }
         if (!why.isEmpty()) {
             lines << QStringLiteral("Why: ") + why;
         }

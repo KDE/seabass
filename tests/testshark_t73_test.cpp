@@ -62,6 +62,10 @@
 // renamedparent  Not a hardware step (#127): a new playlist inside a folder
 //           rekordbox renamed in the same export, staged after the
 //           rename and saved whole (testCreateInRenamedFolder).
+// conflictedparent  Not a hardware step (#128): a new playlist inside a
+//           folder under an open conflict waits for its answer, and a
+//           folder left out of Engine is not made with it
+//           (testCreateInConflictedFolder).
 // reusedpulled  Not a hardware step (#127 with #99): a reused id's delete
 //           stays before a rename a create pulls ahead
 //           (testReusedAfterPulledRename).
@@ -3834,6 +3838,137 @@ void testCreateInRenamedFolder()
     std::cout << "renamedparent: a new playlist in a folder renamed in the same export, saved whole OK\n";
 }
 
+// #128: a new playlist inside a folder under an open conflict. The stick
+// as the players left it (export 128, the record at 128), then: "T73
+// Folder" deleted in Engine DJ, and in rekordbox renamed to "T73 Folder
+// 2", with "T73 Folder 2/T73 Inner" made holding B07. The folder's rename
+// is a conflict ("Engine no longer has it"); the create of Inner and its
+// track wait on it, unticked, and cannot be ticked while it is open.
+// Answered "Create", they take their tick; that answer taken back, they
+// wait again. Answered "Leave Engine without it" and saved: Engine has
+// neither the folder nor Inner. The next analysis does not make them
+// behind the DJ's back: Inner is a conflict of its own that says the
+// folder would come with it, its create unticked.
+const d::BaselineTrack *recordedTrack(const d::RekordboxBaseline &record, const std::string &name);
+void testCreateInConflictedFolder()
+{
+    const auto stick = makeStick("t73_conflictedparent", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+    std::string error;
+    const auto record = seabass::infrastructure::local::readRekordboxBaseline(stick.root, &error);
+    assert(record && error.empty());
+    const d::BaselineTrack *b07 = recordedTrack(*record, "b07");
+    assert(b07 && b07->pdbId);
+    std::uint32_t folderId = 0;
+    std::uint32_t innerId = 0;
+    {
+        seabass::infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+        for (const auto &node : pdb.playlistTree()) {
+            if (node.name == "T73 Folder" && node.isFolder) {
+                folderId = node.id;
+            }
+        }
+        assert(folderId != 0);
+        assert(pdb.renamePlaylist(folderId, "T73 Folder 2"));
+        innerId = pdb.createPlaylist(folderId, "T73 Inner", false);
+        assert(innerId != 0);
+        assert(pdb.appendPlaylistEntries(innerId, {b07->pdbId}) == 1);
+        assert(pdb.commit());
+    }
+    const std::string enginePath = pathToUtf8(stick.engine);
+    assert(seabass::infrastructure::engine::deleteEnginePlaylist(enginePath, "T73 Folder") > 0);
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title LIKE 'T73 Folder%';") == 0);
+
+    const std::string folderKey = "playlist:" + std::to_string(folderId);
+    const std::string innerKey = "playlist:" + std::to_string(innerId);
+    const auto rowOf = [](RekordboxExportSyncController &page, const std::string &key, bool conflict) {
+        const auto &rows = page.rows()->rows();
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            if (rows[i].header.key == key && (rows[i].section == Section::Conflicts) == conflict) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    const auto innerRowsTicked = [&](RekordboxExportSyncController &page) {
+        int ticked = 0;
+        int all = 0;
+        for (const Row &row : page.rows()->rows()) {
+            if (row.section == Section::Conflicts || !row.edit) {
+                continue;
+            }
+            const std::string text = describe(row);
+            if (text.find("T73 Inner") != std::string::npos) {
+                ++all;
+                ticked += row.included ? 1 : 0;
+            }
+        }
+        assert(all == 2 && "the create of Inner and the put of B07 into it");
+        return ticked;
+    };
+
+    RekordboxExportSyncController controller;
+    analyze(controller, stick);
+    for (const auto &row : listed(controller)) {
+        std::cout << "  lists: " << row << "\n";
+    }
+    const int folderConflict = rowOf(controller, folderKey, true);
+    assert(folderConflict >= 0 && "the precondition: the folder's rename is a conflict");
+    if (innerRowsTicked(controller) != 0) {
+        std::cerr << "FAIL: the create of \"T73 Folder 2/T73 Inner\" is ticked under the folder's open conflict\n";
+    }
+    assert(innerRowsTicked(controller) == 0 && "held back while the conflict is open");
+    const int innerCreate = rowOf(controller, innerKey, false);
+    assert(innerCreate >= 0);
+    controller.setIncluded(innerCreate, true);
+    assert(innerRowsTicked(controller) == 0 && "cannot be ticked while the conflict is open");
+
+    controller.resolveConflict(rowOf(controller, folderKey, true), true);
+    assert(innerRowsTicked(controller) == 2 && "answered Create: they take their tick");
+    controller.clearConflictResolution(rowOf(controller, folderKey, true));
+    assert(innerRowsTicked(controller) == 0 && "the answer taken back: they wait again");
+
+    controller.resolveAllConflicts(false);
+    assert(innerRowsTicked(controller) == 0 && "answered Leave: they stay out");
+    controller.stageSelected();
+    assert(controller.errorMessage().isEmpty());
+    LibraryEditSession *session = sessionOf(stick);
+    for (const auto &change : session->pendingChanges()) {
+        std::cout << "    staged: " << change->description().toStdString() << "\n";
+        assert(!change->unitKeys().contains(QString::fromStdString(innerKey)) && "nothing of Inner staged");
+    }
+    waitForSave(session, controller, false);
+    for (const auto &row : testing::sqlRows(stick.db, "SELECT p.id, p.title, p.parentListId FROM Playlist p ORDER BY p.id;")) {
+        std::cout << "    Engine playlist " << row[0] << " \"" << row[1] << "\" in " << row[2] << "\n";
+    }
+    assert(controller.errorMessage().isEmpty());
+    if (testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Folder 2';") != 0) {
+        std::cerr << "FAIL: Engine got the folder the DJ said to leave out\n";
+    }
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title LIKE 'T73 Folder%';") == 0);
+    assert(testing::sqlScalar(stick.db, "SELECT count(*) FROM Playlist WHERE title = 'T73 Inner';") == 0);
+
+    // The next analysis: nothing ticked that would make the folder.
+    for (const auto &row : listed(controller)) {
+        std::cout << "  then lists: " << row << "\n";
+    }
+    for (const Row &row : controller.rows()->rows()) {
+        if (row.included && row.edit) {
+            if (const auto *create = std::get_if<d::PlaylistCreate>(&*row.edit)) {
+                if (create->path.rfind("T73 Folder 2", 0) == 0) {
+                    std::cerr << "FAIL: the next analysis ticks the create of " << create->path << "\n";
+                }
+                assert(create->path.rfind("T73 Folder 2", 0) != 0 && "never makes the folder left out");
+            }
+        }
+    }
+    const int innerConflict = rowOf(controller, innerKey, true);
+    assert(innerConflict >= 0 && "Inner is a question of its own now");
+    const Row &asked = controller.rows()->rows()[static_cast<std::size_t>(innerConflict)];
+    std::cout << "  then asks: " << asked.header.reasonText << "\n";
+    assert(asked.header.reasonText.find("does not have") != std::string::npos);
+    std::cout << "conflictedparent: a new playlist inside a folder under an open conflict waits for its answer OK\n";
+}
+
 const d::BaselineTrack *recordedTrack(const d::RekordboxBaseline &record, const std::string &name)
 {
     for (const auto &track : record.tracks) {
@@ -4105,7 +4240,7 @@ int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|renamedparent|reusedpulled|reusedpath|kindrefused\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|renamedparent|conflictedparent|reusedpulled|reusedpath|kindrefused\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -4151,6 +4286,8 @@ int main(int argc, char **argv)
         testReusedInRenamedFolder();
     } else if (which == "renamedparent") {
         testCreateInRenamedFolder();
+    } else if (which == "conflictedparent") {
+        testCreateInConflictedFolder();
     } else if (which == "reusedpulled") {
         testReusedAfterPulledRename();
     } else if (which == "reusedpath") {
