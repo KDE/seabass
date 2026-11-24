@@ -443,8 +443,9 @@ What it reuses, and what it must not:
   again after the commit).
 
   The order, delete first: when both are ticked, the page stages the old
-  playlist's delete directly before the new one's create (the plan's
-  usual order puts every create before every delete). The record can
+  playlist's delete before the new one's create (the plan's usual order
+  puts every create before every delete): every such delete first,
+  before any create or rename of the save. The record can
   hold only one item under the id, so a save that stopped with the new
   playlist made and the old one still on Engine would leave a state no
   record describes; delete first, that state cannot arise. Nothing else
@@ -453,7 +454,11 @@ What it reuses, and what it must not:
   exactly one item there (and, for a folder, nothing inside it), and the
   new playlist's parent exists. Staged before this save's renames, the
   delete names the old playlist where Engine has it then, the path the
-  reused key records. A save the DJ cancels leaves one of three states,
+  reused key records. (A create inside a folder renamed in the same
+  export has that rename staged before it, #127. The deletes of reused
+  ids are staged before the first create, so a rename pulled ahead by
+  any create still comes after every one of them.) A save the DJ
+  cancels leaves one of three states,
   each one the record says (a save that fails goes back whole):
   - neither half landed: the record keeps the old playlist whole, with
     exactly its own declines under the id, and the next analysis offers
