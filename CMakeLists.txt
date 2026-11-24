@@ -520,6 +520,7 @@ add_library(seabass_core STATIC
     src/domain/metadata_restore.cpp
     src/domain/engine_cue_translation.cpp
     src/domain/sync_planning.cpp
+    src/domain/cue_offset_repair.cpp
     src/domain/track_matching.cpp
     src/domain/track_queries.cpp
     src/domain/track_scope.cpp
@@ -723,6 +724,7 @@ add_library(seabass_core_testing STATIC
     src/domain/moved_files.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/sync_planning.cpp
+    src/domain/cue_offset_repair.cpp
     src/domain/track_matching.cpp
     src/domain/usb_filesystem.cpp
     src/infrastructure/backup/filesystem_backup_store.cpp
