@@ -467,7 +467,10 @@ Page {
             text: "This rekordbox export has no playlists. All tracks lists every track in it."
         }
 
-        // The one bar of a preview batch: the tracks being checked.
+        // The one bar of a preview batch: the tracks being checked. It says
+        // what the page does with them (#135), as a preview: each track's
+        // data is converted to see what syncing it would change, and
+        // nothing is written (a save has its own dialog).
         ProgressReport {
             objectName: "previewProgress"
             Layout.fillWidth: true
@@ -475,7 +478,12 @@ Page {
             unitsDone: root.controller.previewCurrent
             unitsTotal: root.controller.previewTotal
             unitName: "tracks"
-            currentItem: "Checking what copying would change"
+            // Only the parts ticked above are named.
+            currentItem: "Converting "
+                + (root.controller.grids && !root.controller.waveforms ? "beat grid"
+                   : root.controller.waveforms && !root.controller.grids ? "waveform"
+                   : "waveform and beat grid")
+                + " data to check what syncing would change..."
         }
 
         RowLayout {

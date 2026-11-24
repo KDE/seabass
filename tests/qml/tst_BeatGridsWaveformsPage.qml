@@ -1072,6 +1072,44 @@ TestCase {
         compare(analysed, 188);
     }
 
+    // While the page works through the tracks, its bar says what it does
+    // (#135): it converts rekordbox's waveforms and beat grids, to see what
+    // syncing them would change. Only a preview runs under this bar (a
+    // save has its own dialog), so it never says it is writing.
+    function test_theProgressSaysWhatThePageDoes() {
+        const stick = stickFixture.stickCopy(fixture("anonymized_library"));
+        verify(stick.length > 0);
+        const o = openOn(stick);
+        const bar = findChild(o.page, "previewProgress");
+        verify(bar !== null);
+        // The 1161 tracks of All tracks take a while to work out.
+        tryVerify(() => bar.visible, 30000, "the bar shows while the tracks are worked out");
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-progress.png");
+        }
+        const wanted = "Converting waveform and beat grid data to check what syncing would change...";
+        const words = findChild(bar, "currentItemLabel");
+        verify(words.visible, "the words are on screen");
+        compare(words.text, wanted);
+        verify(!/copying|writ|saving/i.test(words.text), "a preview never reads as a write: " + words.text);
+        waitSettled(o.c);
+
+        // With one of the two parts ticked, the words name only that one.
+        // Each box change works the tracks out again, under the same bar.
+        clickOn(findChild(o.page, "gridsCheckBox"));
+        compare(o.c.grids, false);
+        tryVerify(() => bar.visible, 30000, "the tracks are worked out again");
+        compare(words.text, "Converting waveform data to check what syncing would change...");
+        waitSettled(o.c);
+        clickOn(findChild(o.page, "gridsCheckBox"));
+        clickOn(findChild(o.page, "waveformsCheckBox"));
+        compare(o.c.grids, true);
+        compare(o.c.waveforms, false);
+        tryVerify(() => bar.visible, 30000, "the tracks are worked out again");
+        compare(words.text, "Converting beat grid data to check what syncing would change...");
+        waitSettled(o.c);
+    }
+
     // The edge states, each with its own sentence.
     function test_engine1xLibrary() {
         const stick = t73();
