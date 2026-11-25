@@ -356,23 +356,28 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
         std::atomic<std::size_t> done{0};
         std::mutex reporting;
         std::exception_ptr thrown;
+        std::atomic<bool> failed{false};
         const auto work = [&]() {
             for (;;) {
                 const std::size_t index = next.fetch_add(1);
-                if (index >= count || cancel.cancelled()) {
+                // One that failed fails the import: the rest of the
+                // files are not analysed for nothing.
+                if (index >= count || cancel.cancelled() || failed.load()) {
                     return;
                 }
+                // The report too: nothing may leave a thread's function.
                 try {
                     made[index] = request.analyser(prepared.staged.staged[index], cancel);
+                    const std::lock_guard<std::mutex> lock(reporting);
+                    report(ImportProgress::Step::Analysis, done.fetch_add(1) + 1, count, nameOf(prepared.staged.staged[index]));
                 } catch (...) {
+                    failed.store(true);
                     const std::lock_guard<std::mutex> lock(reporting);
                     if (!thrown) {
                         thrown = std::current_exception();
                     }
                     return;
                 }
-                const std::lock_guard<std::mutex> lock(reporting);
-                report(ImportProgress::Step::Analysis, done.fetch_add(1) + 1, count, nameOf(prepared.staged.staged[index]));
             }
         };
         report(ImportProgress::Step::Analysis, 0, count, {});

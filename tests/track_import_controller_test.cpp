@@ -752,6 +752,36 @@ int main(int argc, char **argv)
         std::cout << "case 12 (the tempo range of Preferences: 80 BPM by default, 160 in 88 to 175) OK\n";
     }
 
+    // 13. Several files at once, each analysed in a thread of its own:
+    //     every track gets its own tempo, not a neighbour's.
+    {
+        const std::vector<std::pair<std::string, double>> tempos{
+            {"n 100.wav", 100.0}, {"n 110.wav", 110.0}, {"n 120.wav", 120.0}, {"n 130.wav", 130.0}, {"n 140.wav", 140.0}};
+        QVariantList files;
+        int seconds = 32;
+        for (const auto &[name, bpm] : tempos) {
+            writeBeatWav(computer / name, seconds++, bpm);
+            files.push_back(pathToQString(computer / name));
+        }
+        assert(offer(files, QString(), false));
+        assert(controller.lastResult().value("withGrid").toInt() == 5);
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        assert(session->lastSummary().value("written").toInt() == 5);
+        std::size_t found = 0;
+        for (const auto &track : infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)).readAll()) {
+            for (const auto &[name, bpm] : tempos) {
+                if (pathToUtf8(pathFromUtf8(track.filePath).filename()) == name) {
+                    assert(std::abs(track.bpm - bpm) < 0.3);
+                    ++found;
+                }
+            }
+        }
+        assert(found == tempos.size());
+        std::cout << "case 13 (five files analysed at once: each track its own tempo) OK\n";
+    }
+
     std::cout << "track_import_controller_test: all cases passed\n";
     return 0;
 }

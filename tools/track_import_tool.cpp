@@ -48,6 +48,8 @@
 #include "gui/qt_path.hpp"
 #include "gui/track_import_analysis.hpp"
 #include "gui/track_import_cover.hpp"
+#include "infrastructure/backup/stick_locks.hpp"
+#include "infrastructure/backup/interrupted_save.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 namespace fs = std::filesystem;
@@ -224,6 +226,10 @@ int main(int argc, char **argv)
         std::fprintf(stderr, "the save failed and was taken back: %s\n", saved.error.toStdString().c_str());
         return 1;
     }
+    // The note that a save is under way is the session's to clear in the
+    // app; here nothing else does, and a stick with the note on it is
+    // offered an undo of a save that was not interrupted.
+    infrastructure::backup::clearSaveInProgress(infrastructure::backup::backupDirForStickRoot(pathToUtf8(root)));
     std::printf("saved: %lld change(s) written, %lld skipped\n", static_cast<long long>(saved.appliedIds.size()),
                 static_cast<long long>(saved.skippedIds.size()));
     return 0;
