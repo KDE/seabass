@@ -383,7 +383,9 @@ signals:
     // the backup advisor should too, or a pulled stick stays a peer that
     // can be offered as a clone source.
     void stickGone(const QString &mountPoint);
-    void stickReturned(const QString &libraryId, const QString &identityStrength);
+    // mountPoint is where it is mounted now, which need not be where it
+    // was: a stick back at another mount point is still the same stick.
+    void stickReturned(const QString &libraryId, const QString &identityStrength, const QString &mountPoint);
     // Every stick newly visible since the last detect(), including one
     // that was already plugged in at startup and one seen for the first
     // time -- neither of which stickReturned() covers, because that only

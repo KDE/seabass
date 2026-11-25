@@ -154,6 +154,15 @@ public:
     // repairs and orphan deletions) overrides this to name itself.
     virtual QString owner() const { return id().section(QLatin1Char(':'), 0, 0); }
 
+    // The library paths this change writes under, as it was staged: its
+    // catalog folders ("PIONEER", "Engine Library") or the stick root.
+    // A stick pulled and plugged back in at another mount point leaves a
+    // change staged before still naming the old place, where by then
+    // another stick may be; LibraryEditSession::save() refuses any change
+    // with a path outside the stick's current root, before anything is
+    // backed up or written. Empty for a change that names no place itself.
+    virtual QStringList targetPaths() const { return {}; }
+
     // Every file this change will overwrite, if it can say so before it
     // runs. The save loop backs all of them up in one pass BEFORE the
     // first change is applied, so the backup is complete and durable

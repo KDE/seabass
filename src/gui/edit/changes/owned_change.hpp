@@ -59,6 +59,7 @@ public:
     QString playlistEdited() const override;
     QStringList unitKeys() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return m_inner->targetPaths(); }
     QString owner() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     std::vector<RekordboxWrite> rekordboxWrites() const override;

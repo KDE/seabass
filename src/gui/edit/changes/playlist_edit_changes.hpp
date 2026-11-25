@@ -84,6 +84,7 @@ public:
     QString verb() const override;
     QString playlistEdited() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
@@ -121,6 +122,7 @@ public:
     QString verb() const override;
     QString playlistEdited() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
@@ -163,6 +165,7 @@ public:
     QString verb() const override;
     QString playlistEdited() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
@@ -198,6 +201,7 @@ public:
     QString verb() const override;
     QString playlistEdited() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
@@ -235,6 +239,7 @@ public:
     QString verb() const override;
     QString playlistEdited() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
@@ -278,6 +283,7 @@ public:
     // The playlist by the path it has before the save: one playlist edit.
     QString playlistEdited() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 

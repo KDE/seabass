@@ -28,6 +28,7 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_path}; }
     // The catalogs whose rows this group's doomed copies actually live
     // in. Empty of anything but m_format until rows are collapsed into
     // files -- see application::collapseCatalogRows().

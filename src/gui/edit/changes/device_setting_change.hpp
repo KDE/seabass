@@ -25,6 +25,7 @@ public:
     QString verb() const override;
     // Settings are not a catalog, so nothing cached needs invalidating.
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 

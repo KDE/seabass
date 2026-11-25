@@ -146,6 +146,11 @@ void CloneStickController::configure(const QString &sourceLabel, const QString &
     m_sourceRoot = stickRootOf(anyPath);
     m_targetLabel = targetLabel;
     m_targetRoot = targetMountPoint;
+    // Which sticks these are, as configured: a clone writes only to the
+    // sticks that were picked, not to whichever ones are at these places by
+    // the time it starts.
+    m_sourceIdAtRead = EditSessionRegistry::instance()->strongStickIdentityAt(m_sourceRoot);
+    m_targetIdAtRead = EditSessionRegistry::instance()->strongStickIdentityAt(m_targetRoot);
     m_archivePath = archivePathForLabel(backupDirectory, sourceLabel);
     emit configuredChanged();
     refresh();
@@ -317,7 +322,11 @@ void CloneStickController::start(bool exact)
     // overwritten: both libraries' locks, or neither.
     auto *registry = EditSessionRegistry::instance();
     if (auto refusal = m_writeHold.acquire({registry->libraryIdForPath(m_sourceRoot), registry->libraryIdForPath(m_targetRoot)},
-                                          m_sourceLabel, [this, exact] { start(exact); })) {
+                                          m_sourceLabel, [this, exact] { start(exact); }, {m_sourceRoot, m_targetRoot},
+                                          {m_sourceIdAtRead, m_targetIdAtRead})) {
+        if (refusal->kind == DirectWriteHold::Refusal::Kind::NotTheStick) {
+            setErrorMessage(refusal->message);
+        }
         if (refusal->showsLockedDialog()) {
             emit lockRefused(refusal->holder, m_writeHold.refusedLibraryId());
 

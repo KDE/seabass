@@ -50,6 +50,7 @@ public:
     int unitsWritten() const override;
     int unitsSkipped() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 

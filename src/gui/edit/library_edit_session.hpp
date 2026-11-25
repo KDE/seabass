@@ -136,6 +136,15 @@ public:
     bool interruptedSave() const { return m_interruptedSave; }
     bool stickPresent() const { return m_stickPresent; }
     QString stickIdentityStrength() const { return m_stickIdentityStrength; }
+    // The returned stick is known to be the very one that was pulled: its
+    // serial, its filesystem id, or (an opened folder) its path matched. A
+    // label and size match alone is not: another stick can share those.
+    bool stickIdentityVerified() const
+    {
+        return m_stickIdentityStrength == QLatin1String("hardware")
+            || m_stickIdentityStrength == QLatin1String("filesystem")
+            || m_stickIdentityStrength == QLatin1String("folder");
+    }
     QVariantMap lastSummary() const { return m_lastSummary; }
 
     // The catalog paths a save writes through. Set by whichever
@@ -202,7 +211,20 @@ public:
     void addRef() { ++m_refs; }
     void release();
     int refs() const { return m_refs; }
-    void setStickPresent(bool present, const QString &identityStrength);
+    // mountPoint: where a returned stick is mounted now. Elsewhere than this
+    // session's root, the session stays where it was (stickBackElsewhere).
+    void setStickPresent(bool present, const QString &identityStrength, const QString &mountPoint = QString());
+    // The stick came back, but at another mount point than this session's.
+    bool stickBackElsewhere() const { return m_stickBackElsewhere; }
+    // The stick root of this session's catalogs, or empty.
+    QString stickRoot() const;
+    // Why nothing may be written to this session's stick now, or empty: it
+    // came back elsewhere, came back matched by label and size only, or
+    // the stick at its root is not the one the session was opened on.
+    // save() refuses with it; so does a direct write on this library.
+    QString notTheStickReason();
+    // Clears an untrusted return once the stick at the root verifies.
+    void reverifyReturn();
     // Drops the cookie if nothing needs it any more (clean, no page open,
     // not writing). Returns true when the cookie was released.
     bool releaseLockIfUnneeded();
@@ -271,6 +293,12 @@ private:
     bool m_lockHeld = false;
     bool m_stickPresent = true;
     QString m_stickIdentityStrength;
+    bool m_stickBackElsewhere = false;
+    // strongStickIdentityAt(root) when first known; empty when it had none.
+    QString m_stickIdentity;
+    // A return that could not be trusted (elsewhere, or weak) was checked
+    // since: the stick at the root is this one by its strong id.
+    bool m_returnVerified = false;
     QVariantMap m_lastSummary;
     QString m_editorOwner;
     QString m_savingUnit;

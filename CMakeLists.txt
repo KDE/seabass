@@ -3608,6 +3608,7 @@ if(TARGET seabass_edit)
     # stickRemoved/stickReturned signals, never for a real stick.
     add_executable(edit_session_registry_test tests/edit_session_registry_test.cpp)
     target_include_directories(edit_session_registry_test PRIVATE src)
+    target_compile_definitions(edit_session_registry_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(edit_session_registry_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
     add_test(NAME edit_session_registry_test COMMAND edit_session_registry_test)
     set_tests_properties(edit_session_registry_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")

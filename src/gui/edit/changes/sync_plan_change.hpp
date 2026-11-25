@@ -63,6 +63,7 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_rekordboxPath, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     // The plan's cues, when the target is rekordbox or OneLibrary.
     std::vector<RekordboxWrite> rekordboxWrites() const override;

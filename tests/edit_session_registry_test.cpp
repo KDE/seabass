@@ -23,10 +23,17 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <thread>
 
+#include "application/path_key.hpp"
+#include "domain/sync_planning.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "gui/edit/changes/sync_plan_change.hpp"
+#include "gui/edit/direct_write_hold.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/edit/pending_change.hpp"
@@ -40,6 +47,8 @@
 
 using seabass::gui::EditSessionRegistry;
 using seabass::gui::LibraryEditSession;
+using seabass::gui::PendingChange;
+namespace domain = seabass::domain;
 using seabass::infrastructure::local::FileLibraryEditLockStore;
 namespace fs = std::filesystem;
 
@@ -360,10 +369,10 @@ int main(int argc, char **argv)
         registry.closeSession(QStringLiteral("lib-gone"));
         assert(registry.hasSession(QStringLiteral("lib-gone")));
 
-        emit media.stickReturned(QStringLiteral("lib-gone"), QStringLiteral("uuid"));
+        emit media.stickReturned(QStringLiteral("lib-gone"), QStringLiteral("uuid"), QString());
         assert(working->stickPresent());
         assert(working->stickIdentityStrength() == "uuid");
-        emit media.stickReturned(QStringLiteral("unknown"), QStringLiteral("uuid"));  // no session: nothing
+        emit media.stickReturned(QStringLiteral("unknown"), QStringLiteral("uuid"), QString());  // no session: nothing
 
         registry.acknowledgeStickReturned();
         assert(registry.stickRemovedSession() == nullptr);
@@ -397,6 +406,287 @@ int main(int argc, char **argv)
         assert(registry.quitAfterSave());
         assert(quitChanged.count() == 1);
         std::cout << "case 11 (catalog folders map to their stick root; quit flag) OK\n";
+    }
+
+    // Case 12: where a returned stick is, against where the session's
+    // catalogs are. The same root spelled with a trailing separator is
+    // the same place (filename() of ".../PIONEER/" is empty, and used to
+    // give the wrong root); another mount point is not, and the session
+    // stays where it was rather than following it.
+    {
+        seabass::gui::MediaController media;
+        EditSessionRegistry registry(lockStoreIn(locks));
+        registry.setMediaController(&media);
+        const fs::path was = scratch / "return-sep-a";
+        const QString id = QStringLiteral("lib-sep");
+        LibraryEditSession *session = registry.openSession(
+            id, QStringLiteral("SEP"), seabass::gui::pathToQString(was / "PIONEER") + "/",
+            seabass::gui::pathToQString(was / "Engine Library") + "/");
+        assert(seabass::application::samePath(session->stickRoot().toStdString(), seabass::pathToUtf8(was)));
+        assert(session->stage(std::make_unique<NoopChange>(QStringLiteral("test:sep"))));
+        emit media.stickRemoved(id, QStringLiteral("SEP"));
+        emit media.stickReturned(id, QStringLiteral("hardware"), seabass::gui::pathToQString(was) + "/");
+        assert(session->stickPresent() && !session->stickBackElsewhere() && "the same place, trailing separator or not");
+        emit media.stickRemoved(id, QStringLiteral("SEP"));
+        emit media.stickReturned(id, QStringLiteral("hardware"), seabass::gui::pathToQString(scratch / "return-sep-b"));
+        assert(session->stickPresent() && session->stickBackElsewhere());
+        assert(seabass::application::samePath(session->stickRoot().toStdString(), seabass::pathToUtf8(was))
+               && "the session stays where it was");
+        assert(session->notTheStickReason().contains(QStringLiteral("at another place")));
+        registry.acknowledgeStickReturned();
+        session->discard();
+        registry.closeSession(id);
+        registry.setMediaController(nullptr);
+        std::cout << "case 12 (a stick back elsewhere is not followed; the same root with a separator is the same) OK\n";
+    }
+
+    // Case 13: stick X with changes staged is pulled, and stick Y, another
+    // one with the same label, is mounted where X was. Whatever path the
+    // page holds, Save writes nothing to Y and backs nothing up there: the
+    // stick at the session's root is not X. Y with another filesystem id is
+    // told apart outright; Y matched to X by label and size alone (a weak
+    // return) may be X or not, and is refused too. A Sync Cue Points plan,
+    // then a playlist edit (one page's changes per save).
+    {
+        const fs::path source = seabass::pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library";
+        // A stick's identity, in this test: a file at its root naming it.
+        // On the developer's disk every folder is the same filesystem.
+        const auto stickCopy = [&](const fs::path &root, const char *identity) {
+            fs::remove_all(root);
+            fs::create_directories(root);
+            fs::copy(source / "rekordbox", root / "PIONEER", fs::copy_options::recursive);
+            fs::copy(source / "engine", root / "Engine Library", fs::copy_options::recursive);
+            std::ofstream(root / ".test-stick-id") << identity;
+        };
+        // "strong:<id>" or "weak:<id>", as the stick list would know it.
+        EditSessionRegistry::setStickIdentityProbeForTesting([](const QString &stickRoot) {
+            std::ifstream in(seabass::gui::pathFromQString(stickRoot) / ".test-stick-id");
+            std::string identity;
+            std::getline(in, identity);
+            const QString text = QString::fromStdString(identity);
+            return EditSessionRegistry::ProbedIdentity{text.section(QLatin1Char(':'), 1),
+                                                       text.startsWith(QStringLiteral("strong:"))};
+        });
+        const auto snapshot = [](const fs::path &root) {
+            std::map<std::string, std::pair<std::uintmax_t, fs::file_time_type>> files;
+            for (const auto &entry : fs::recursive_directory_iterator(root)) {
+                if (entry.is_regular_file()) {
+                    files[seabass::pathToUtf8(entry.path().lexically_relative(root))] = {entry.file_size(),
+                                                                                        entry.last_write_time()};
+                }
+            }
+            return files;
+        };
+
+        const auto refusedOnY = [&](const char *what, const char *yIdentity, const char *strength,
+                                    const char *expected, auto makeChange) {
+            const fs::path mount = scratch / "swap-a3";
+            const fs::path xAway = scratch / "swap-x-away";
+            fs::remove_all(xAway);
+            stickCopy(mount, "strong:X");
+            seabass::gui::MediaController media;
+            EditSessionRegistry registry(lockStoreIn(locks));
+            registry.setMediaController(&media);
+            const QString id = QStringLiteral("lib-swap");
+            LibraryEditSession *session = registry.openSession(id, QStringLiteral("A3"),
+                                                               seabass::gui::pathToQString(mount / "PIONEER"),
+                                                               seabass::gui::pathToQString(mount / "Engine Library"));
+            assert(session->stage(makeChange(mount)));
+
+            // X pulled and kept away; Y mounted where X was.
+            emit media.stickRemoved(id, QStringLiteral("A3"));
+            fs::rename(mount, xAway);
+            stickCopy(mount, yIdentity);
+            if (std::string(strength) == "weak") {
+                emit media.stickReturned(id, QStringLiteral("weak"), seabass::gui::pathToQString(mount));
+            }
+            registry.acknowledgeStickReturned();
+            const auto yBefore = snapshot(mount);
+            const auto xBefore = snapshot(xAway);
+
+            QSignalSpy finished(session, &LibraryEditSession::saveFinished);
+            session->save();
+            if (finished.count() == 0) {
+                finished.wait(120000);
+            }
+            assert(finished.count() == 1);
+            const QVariantMap summary = finished.takeFirst().at(0).toMap();
+            const QString error = summary.value("error").toString();
+            if (!error.contains(QString::fromUtf8(expected))) {
+                std::cerr << what << ": expected a refusal saying \"" << expected << "\", got \"" << error.toStdString()
+                          << "\"\n";
+                assert(false);
+            }
+            assert(summary.value("written").toInt() == 0);
+            assert(snapshot(mount) == yBefore && "nothing written into stick Y");
+            assert(snapshot(xAway) == xBefore && "nor into X");
+            assert(!fs::exists(mount / "Seabass") && !fs::exists(xAway / "Seabass") && "no backup taken");
+            assert(session->pendingCount() == 1 && "the change stays staged, to be discarded");
+            session->discard();
+            registry.closeSession(id);
+            registry.setMediaController(nullptr);
+            fs::remove_all(mount);
+            fs::remove_all(xAway);
+        };
+
+        const auto syncPlan = [](const fs::path &root) -> std::unique_ptr<PendingChange> {
+            domain::SyncPlan plan;
+            plan.direction = domain::SyncPlan::Direction::ToB;
+            plan.match.trackA.format = "engine";
+            plan.match.trackB.format = "rekordbox";
+            return std::make_unique<seabass::gui::SyncPlanChange>(seabass::gui::pathToQString(root / "PIONEER"),
+                                                                  seabass::gui::pathToQString(root / "Engine Library"),
+                                                                  plan, 1);
+        };
+        const auto playlistEdit = [](const fs::path &root) -> std::unique_ptr<PendingChange> {
+            return std::make_unique<seabass::gui::CreatePlaylistChange>(
+                seabass::gui::pathToQString(root / "PIONEER"), seabass::gui::pathToQString(root / "Engine Library"),
+                std::string("Swapped"), QStringList{QStringLiteral("rekordbox"), QStringLiteral("engine")});
+        };
+        refusedOnY("a Sync Cue Points plan, Y another stick", "strong:Y", "", "another stick is there now", syncPlan);
+        refusedOnY("a playlist edit, Y another stick", "strong:Y", "", "another stick is there now", playlistEdit);
+        refusedOnY("a playlist edit, Y matched by label only", "weak:A3-16", "weak", "may be a different stick",
+                   playlistEdit);
+        std::cout << "case 13 (another stick where the session's was gets nothing written) OK\n";
+
+        // Case 14: the same for a direct write (Clean Up's prune, Delete
+        // Orphaned Files, a clone, Recordings): the page passes the id it
+        // read the stick under, and another stick at the path refuses it
+        // with nothing taken. The stick it read is written to.
+        {
+            const fs::path mount = scratch / "direct-a3";
+            fs::create_directories(mount);
+            std::ofstream(mount / ".test-stick-id") << "strong:Y";
+            seabass::gui::DirectWriteHold stale;
+            const auto refused = stale.acquire({QStringLiteral("lib-direct")}, QStringLiteral("A3"), {},
+                                               {seabass::gui::pathToQString(mount / "PIONEER")}, {QStringLiteral("X")});
+            assert(refused && refused->kind == EditSessionRegistry::Refusal::Kind::NotTheStick);
+            assert(refused->message.contains(QStringLiteral("another stick is there now")));
+            assert(!stale.held() && "nothing taken");
+            seabass::gui::DirectWriteHold current;
+            assert(!current.acquire({QStringLiteral("lib-direct")}, QStringLiteral("A3"), {},
+                                    {seabass::gui::pathToQString(mount / "PIONEER")}, {QStringLiteral("Y")}));
+            assert(current.held());
+            current.release();
+            // A page that read a stick with no strong id is not refused on it.
+            seabass::gui::DirectWriteHold unknown;
+            assert(!unknown.acquire({QStringLiteral("lib-direct")}, QStringLiteral("A3"), {},
+                                    {seabass::gui::pathToQString(mount / "PIONEER")}, {QString()}));
+            unknown.release();
+            fs::remove_all(mount);
+            std::cout << "case 14 (a direct write meets the stick it read, or nothing) OK\n";
+        }
+        // Case 15: a stick known only weakly when the session recorded it
+        // (the fallback's label and size) and strongly when it saves (the
+        // stick list's filesystem id): two sources that do not agree on one
+        // and the same stick. Not refused: identity refuses only on two
+        // strong ids that differ.
+        {
+            const fs::path mount = scratch / "weak-then-strong";
+            fs::remove_all(mount);
+            fs::create_directories(mount);
+            std::ofstream(mount / ".test-stick-id") << "weak:A3-16000000000";
+            EditSessionRegistry registry(lockStoreIn(locks));
+            const QString id = QStringLiteral("lib-weak-strong");
+            LibraryEditSession *session = registry.openSession(id, QStringLiteral("A3"),
+                                                               seabass::gui::pathToQString(mount / "PIONEER"));
+            assert(session->stage(std::make_unique<NoopChange>(QStringLiteral("test:weak"))));
+            std::ofstream(mount / ".test-stick-id", std::ios::trunc) << "strong:0123-4567";
+            QSignalSpy finished(session, &LibraryEditSession::saveFinished);
+            session->save();
+            if (finished.count() == 0) {
+                finished.wait(60000);
+            }
+            const QString error = finished.takeFirst().at(0).toMap().value("error").toString();
+            if (!error.isEmpty()) {
+                std::cerr << "a weak id then a strong one was refused: " << error.toStdString() << "\n";
+                assert(false);
+            }
+            registry.closeSession(id);
+            fs::remove_all(mount);
+            std::cout << "case 15 (a weak id on either side never refuses) OK\n";
+        }
+
+        // Case 16: matched by label and size only on its return, then
+        // discarded: the stick at the root verifies as this one by its
+        // strong id, and the page stages again and saves.
+        {
+            const fs::path mount = scratch / "weak-return";
+            fs::remove_all(mount);
+            fs::create_directories(mount);
+            std::ofstream(mount / ".test-stick-id") << "strong:X";
+            seabass::gui::MediaController media;
+            EditSessionRegistry registry(lockStoreIn(locks));
+            registry.setMediaController(&media);
+            const QString id = QStringLiteral("lib-weak-return");
+            LibraryEditSession *session = registry.openSession(id, QStringLiteral("A3"),
+                                                               seabass::gui::pathToQString(mount / "PIONEER"));
+            assert(session->stage(std::make_unique<NoopChange>(QStringLiteral("test:first"))));
+            emit media.stickRemoved(id, QStringLiteral("A3"));
+            emit media.stickReturned(id, QStringLiteral("weak"), seabass::gui::pathToQString(mount));
+            registry.acknowledgeStickReturned();
+            assert(session->notTheStickReason().contains(QStringLiteral("may be a different stick")));
+            session->discard();
+            assert(session->notTheStickReason().isEmpty() && "verified on discard");
+            assert(session->stage(std::make_unique<NoopChange>(QStringLiteral("test:again"))));
+            QSignalSpy finished(session, &LibraryEditSession::saveFinished);
+            session->save();
+            if (finished.count() == 0) {
+                finished.wait(60000);
+            }
+            const QString error = finished.takeFirst().at(0).toMap().value("error").toString();
+            if (!error.isEmpty()) {
+                std::cerr << "staging again after a verified return was refused: " << error.toStdString() << "\n";
+                assert(false);
+            }
+            registry.closeSession(id);
+            registry.setMediaController(nullptr);
+            fs::remove_all(mount);
+            std::cout << "case 16 (a discard after a verified return lets the page stage again) OK\n";
+        }
+        EditSessionRegistry::setStickIdentityProbeForTesting({});
+    }
+
+    // Case 17: opened folders, through the real stick list. Folder A has
+    // changes staged, then folder B is opened, which takes A off the list.
+    // A unlisted is unknown, not another stick: its save goes through.
+    {
+        const fs::path folderA = scratch / "folder-a";
+        const fs::path folderB = scratch / "folder-b";
+        for (const fs::path &folder : {folderA, folderB}) {
+            fs::remove_all(folder);
+            fs::create_directories(folder / "PIONEER" / "rekordbox");
+            std::ofstream(folder / "PIONEER" / "rekordbox" / "export.pdb") << "x";
+            fs::create_directories(folder / "Engine Library" / "Database2");
+            std::ofstream(folder / "Engine Library" / "Database2" / "m.db") << "x";
+        }
+        seabass::gui::MediaController media;
+        EditSessionRegistry registry(lockStoreIn(locks));
+        registry.setMediaController(&media);
+        assert(media.openFolder(seabass::gui::pathToQString(folderA)).isEmpty());
+        const QString idA = registry.libraryIdForPath(seabass::gui::pathToQString(folderA / "PIONEER"));
+        assert(!idA.isEmpty());
+        LibraryEditSession *session = registry.openSession(idA, QStringLiteral("A"),
+                                                           seabass::gui::pathToQString(folderA / "PIONEER"),
+                                                           seabass::gui::pathToQString(folderA / "Engine Library"));
+        assert(!registry.strongStickIdentityAt(seabass::gui::pathToQString(folderA)).isEmpty()
+               && "precondition: a listed folder has a strong id");
+        assert(session->stage(std::make_unique<NoopChange>(QStringLiteral("test:folder"))));
+        assert(media.openFolder(seabass::gui::pathToQString(folderB)).isEmpty());
+        QSignalSpy finished(session, &LibraryEditSession::saveFinished);
+        session->save();
+        if (finished.count() == 0) {
+            finished.wait(60000);
+        }
+        const QString error = finished.takeFirst().at(0).toMap().value("error").toString();
+        if (!error.isEmpty()) {
+            std::cerr << "folder A was refused after folder B was opened: " << error.toStdString() << "\n";
+            assert(false);
+        }
+        registry.closeSession(idA);
+        media.closeFolder(seabass::gui::pathToQString(folderB));
+        registry.setMediaController(nullptr);
+        std::cout << "case 17 (an opened folder no longer listed is unknown, not another stick) OK\n";
     }
 
     std::cout << "edit_session_registry_test: all cases passed\n";

@@ -149,6 +149,8 @@ private:
     QString m_sourceEnginePath;
     QString m_targetLabel;
     QString m_targetRoot;
+    QString m_sourceIdAtRead;  // strongStickIdentityAt of each root when configured
+    QString m_targetIdAtRead;
     DirectWriteHold m_writeHold;
     QString m_archivePath;
     QVariantMap m_preview;

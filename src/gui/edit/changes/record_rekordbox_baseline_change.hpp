@@ -74,6 +74,7 @@ public:
     static QString idString();
 
     QString id() const override;
+    QStringList targetPaths() const override { return {QString::fromStdString(m_stickRoot)}; }
     QString description() const override;
     QString unit() const override;
     int unitsWritten() const override { return 0; }

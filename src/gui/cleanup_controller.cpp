@@ -1316,6 +1316,7 @@ void CleanupController::scan(const QString &format, const QString &path, const Q
 {
     m_format = format;
     m_path = path;
+    m_pathStrongId = EditSessionRegistry::instance()->strongStickIdentityAt(EditSessionRegistry::instance()->mountPointForPath(path));
     m_playlistName = playlistName;
     m_searchQuery = searchQuery;
     attachSession();
@@ -1331,6 +1332,7 @@ void CleanupController::loadPendingDeletionsOnly(const QString &format, const QS
 {
     m_format = format;
     m_path = path;
+    m_pathStrongId = EditSessionRegistry::instance()->strongStickIdentityAt(EditSessionRegistry::instance()->mountPointForPath(path));
     attachSession();
     refreshPendingDeletions();  // which lists the stale backups too
 }
@@ -1351,6 +1353,7 @@ void CleanupController::planManualMerge(const QString &format, const QString &pa
     }
     m_format = format;
     m_path = path;
+    m_pathStrongId = EditSessionRegistry::instance()->strongStickIdentityAt(EditSessionRegistry::instance()->mountPointForPath(path));
     attachSession();
     setErrorMessage({});
     // Also cleared here (unlike rescan(), which never needs to): a
@@ -1862,10 +1865,15 @@ void CleanupController::pruneStaleBackups()
     if (busy() || m_staleBackups.empty()) {
         return;
     }
-    const QString libraryId = EditSessionRegistry::instance()->libraryIdForPath(m_path);
-    if (auto refusal = m_writeHold.acquire({libraryId}, QString())) {
+    // Locked on the key the library's edit session uses; checked against
+    // the stick that was read, not whichever one is at m_path now.
+    const QString libraryId = m_session ? m_session->libraryId()
+                                        : EditSessionRegistry::instance()->libraryIdForPath(m_path);
+    if (auto refusal = m_writeHold.acquire({libraryId}, QString(), {}, {m_path}, {m_pathStrongId})) {
         if (refusal->showsLockedDialog()) {
             emit lockRefused(refusal->holder);
+        } else if (refusal->kind == DirectWriteHold::Refusal::Kind::NotTheStick) {
+            setErrorMessage(refusal->message);
         }
         return;
     }
@@ -1959,10 +1967,15 @@ void CleanupController::deleteSelectedPendingFiles()
 
     // A direct write on the library: same lock the staged edits take,
     // held for exactly this run.
-    const QString libraryId = EditSessionRegistry::instance()->libraryIdForPath(m_path);
-    if (auto refusal = m_writeHold.acquire({libraryId}, QString())) {
+    // Locked on the key the library's edit session uses; checked against
+    // the stick that was read, not whichever one is at m_path now.
+    const QString libraryId = m_session ? m_session->libraryId()
+                                        : EditSessionRegistry::instance()->libraryIdForPath(m_path);
+    if (auto refusal = m_writeHold.acquire({libraryId}, QString(), {}, {m_path}, {m_pathStrongId})) {
         if (refusal->showsLockedDialog()) {
             emit lockRefused(refusal->holder);
+        } else if (refusal->kind == DirectWriteHold::Refusal::Kind::NotTheStick) {
+            setErrorMessage(refusal->message);
         }
         return;
     }
