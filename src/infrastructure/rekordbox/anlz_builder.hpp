@@ -80,10 +80,15 @@ struct NewAnlzFiles
 };
 
 // Throws std::invalid_argument on an input that cannot make a valid
-// file: a path that is empty, not absolute or not UTF-8, beats out of
-// order or before 0, two beats closer than the PQTZ tempo field can say
-// (above 655.35 BPM), a seek table that is not 400 long, or no length at
-// all (no waveform entries and no positive durationMs).
+// file: a path that is empty, not absolute, not UTF-8 or with a NUL in
+// it, beats out of order or before 0, two beats closer than the PQTZ
+// tempo field can say (above 655.35 BPM), a seek table that is not 400
+// long, no length at all (no waveform entries and no positive
+// durationMs), or a length of over a day.
+//
+// Not checked: that the beats end where the track does. A grid moved onto
+// another timeline can reach past the last sample by a few milliseconds;
+// the caller cuts it to the track if it wants that.
 NewAnlzFiles buildAnlzFiles(const NewAnlzInput &input);
 
 // Where a new track's files go: "/PIONEER/USBANLZ/Pxxx/xxxxxxxx/ANLZ0000.DAT",

@@ -38,6 +38,11 @@ namespace seabass::domain
 constexpr int WaveformEntriesPerSecond = 150;
 constexpr double WaveformLowMidEdgeHz = 150.0;
 constexpr double WaveformMidHighEdgeHz = 2000.0;
+// The lowest sample rate a waveform is measured at. Below it the 2 kHz
+// edge comes too near half the rate, and at 4 kHz and under the filters
+// no longer hold: every level would stick at 1. No file a DJ plays is
+// sampled that low, so such a source gives an empty waveform.
+constexpr int WaveformLowestSampleRateHz = 8000;
 
 // One entry: each level 0 to 1.
 struct WaveformEntry
@@ -67,11 +72,14 @@ struct AudioWaveform
 // other three are one entry short, all on an exact boundary).
 std::size_t waveformEntryCount(std::uint64_t sampleCount, int sampleRateHz);
 
-// Measures a waveform in one pass. A sample rate of 0 or less gives an
-// empty waveform.
+// Measures a waveform in one pass. A sample rate under
+// WaveformLowestSampleRateHz gives an empty waveform. A sample that is no
+// number (a decoder's slip) counts as silence: left in, the filters would
+// carry it through the rest of the track.
 AudioWaveform waveformFromSamples(std::span<const float> samples, int sampleRateHz);
 
-// The same from a source, read to its end. The source's error, if it
+// The same from a source, read to its end; a source whose rate is too
+// low gives an empty waveform and says so in `error`. The source's error, if it
 // stopped on one, goes into `error` (when given) and the waveform covers
 // what was read: a caller must check it, since a track cut short by a
 // decode error is not the whole track.

@@ -91,7 +91,7 @@ public:
     void feed(std::span<const float> samples)
     {
         for (const float sample : samples) {
-            const double x = sample;
+            const double x = std::isfinite(sample) ? static_cast<double>(sample) : 0.0;
             const double low = m_low.process(x);
             const double mid = m_midLow.process(m_midHigh.process(x));
             const double high = m_high.process(x);
@@ -163,7 +163,7 @@ std::size_t waveformEntryCount(std::uint64_t sampleCount, int sampleRateHz)
 
 AudioWaveform waveformFromSamples(std::span<const float> samples, int sampleRateHz)
 {
-    if (sampleRateHz <= 0) {
+    if (sampleRateHz < WaveformLowestSampleRateHz) {
         return {};
     }
     WaveformMeter meter(sampleRateHz);
@@ -177,6 +177,12 @@ AudioWaveform waveformFromPcm(PcmSource &source, std::string *error)
     if (rate <= 0) {
         if (error != nullptr) {
             *error = source.error().empty() ? std::string("the source has no sample rate") : source.error();
+        }
+        return {};
+    }
+    if (rate < WaveformLowestSampleRateHz) {
+        if (error != nullptr) {
+            *error = "the sample rate is too low for a waveform";
         }
         return {};
     }

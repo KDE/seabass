@@ -501,6 +501,53 @@ int main()
         std::cout << "case 5 (PWV6, PWV4, scroll count and PWV7 read back; sizes; bands in the right places) OK\n";
     }
 
+    // ---- the scrolling sections, entry by entry ------------------------------------
+    //
+    // Four entries made by hand, so every bit written is known: PWV3 is
+    // the whiteness (the share that is not bass, in eighths) above a
+    // 5-bit height; PWV5 a 16-bit word, red (low) in bits 13 to 15, green
+    // (mid) 10 to 12, blue (high) 7 to 9, the height in 2 to 6; PWV7 low,
+    // mid, high. Height: 23.65 times the peak less 7.
+    {
+        rekordbox::NewAnlzInput hand;
+        hand.trackPath = TrackPath;
+        hand.sampleRateHz = Rate;
+        hand.waveform.sampleRateHz = Rate;
+        hand.waveform.sampleCount = 4 * 294;
+        hand.waveform.entries = {{1.0f, 0.0f, 0.0f, 1.0f},    // all bass, full height
+                                 {0.0f, 0.5f, 0.5f, 0.5f},    // no bass, mid and high alike
+                                 {0.0f, 0.0f, 0.0f, 0.0f},    // silence
+                                 {0.25f, 0.5f, 0.0f, 1.0f}};  // mid over bass
+        const auto made = rekordbox::buildAnlzFiles(hand);
+        const std::string pwv3 = *sectionBytes(made.ext, "PWV3");
+        const std::string pwv5 = *sectionBytes(made.ext, "PWV5");
+        const std::string pwv7 = *sectionBytes(made.twoEx, "PWV7");
+        assert(pwv3.size() == 24 + 4 && pwv5.size() == 24 + 8 && pwv7.size() == 24 + 12);
+        const auto u8 = [](const std::string &s, std::size_t at) { return static_cast<unsigned char>(s[at]); };
+        const unsigned mono[4] = {17, (7u << 5) | 5u, 0, (5u << 5) | 17u};
+        const unsigned colour[4] = {(7u << 13) | (17u << 2), (7u << 10) | (7u << 7) | (5u << 2), 0,
+                                    (4u << 13) | (7u << 10) | (17u << 2)};
+        const unsigned bands[4][3] = {{96, 0, 0}, {0, 72, 80}, {0, 0, 0}, {24, 72, 0}};
+        for (std::size_t i = 0; i < 4; ++i) {
+            assert(u8(pwv3, 24 + i) == mono[i]);
+            assert(be16(pwv5, 24 + 2 * i) == colour[i]);
+            for (std::size_t b = 0; b < 3; ++b) {
+                assert(u8(pwv7, 24 + 3 * i + b) == bands[i][b]);
+            }
+        }
+
+        // A beat a hair under the next millisecond: PQT2's thousandths
+        // would be 1000, which is the next millisecond and none.
+        rekordbox::NewAnlzInput carried = hand;
+        carried.beats = {{1000.9996, 1}, {1481.0, 2}, {1961.0, 3}};
+        const auto carriedFiles = rekordbox::buildAnlzFiles(carried);
+        const std::string pqtz = *sectionBytes(carriedFiles.dat, "PQTZ");
+        const std::string pqt2 = *sectionBytes(carriedFiles.ext, "PQT2");
+        assert(be32(pqtz, 24 + 4) == 1001 && be16(pqt2, 56) == 0);
+        assert(be32(pqtz, 24 + 8 + 4) == 1481 && be16(pqt2, 56 + 2) == 0);
+        std::cout << "case 5b (PWV3, PWV5 and PWV7 of four hand-made entries, bit for bit; a beat carried to the next ms) OK\n";
+    }
+
     // ---- the empty cue lists ----------------------------------------------------
     {
         for (const std::string *file : {&files.dat, &files.ext}) {
@@ -564,6 +611,20 @@ int main()
             b.durationMs = 0.0;
         }));
         assert(with([](auto &b) { b.sampleRateHz = 48000; }));
+        // A NUL would end the path for whoever reads it back.
+        assert(with([](auto &b) { b.trackPath = std::string("/Contents/a\0b.wav", 17); }));
+        // A length of over a day is a duration read wrongly, not a track.
+        for (const double tooLong : {25.0 * 3600.0 * 1000.0, 1e12, 1e20}) {
+            assert(with([tooLong](auto &b) {
+                b.waveform = {};
+                b.durationMs = tooLong;
+            }));
+        }
+        assert(!with([](auto &b) {
+            b.waveform = {};
+            b.beats.clear();
+            b.durationMs = 2.0 * 3600.0 * 1000.0;
+        }));
         std::cout << "case 8 (bad path, unordered or impossible beats, no length, rate mismatch: refused) OK\n";
     }
 

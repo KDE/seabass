@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <span>
 #include <string>
@@ -295,6 +296,56 @@ int main()
         assert(domain::reduceWaveform({}, 400).empty());
         assert(domain::reduceWaveform(e, 0).empty());
         std::cout << "case 6 (reduced to N columns: means, repeats when short, nothing lost) OK\n";
+    }
+
+    // ---- other sample rates, and one too low to measure -----------------------
+    //
+    // The filters are made for the rate they are given: a tone lands in
+    // its band at every rate a file comes in. Under 8 kHz the 2 kHz edge
+    // is too near half the rate (at 4 kHz and under the filters no longer
+    // hold and every level would stick at 1): nothing is measured.
+    {
+        for (const int rate : {8000, 22050, 48000, 96000, 192000}) {
+            const double highHz = std::min(6000.0, 0.4 * rate);
+            const double tones[3] = {60.0, 700.0, highHz};
+            for (int band = 0; band < 3; ++band) {
+                const auto samples = sine(tones[band], 1.0, 2.0, rate);
+                const auto w = domain::waveformFromSamples(samples, rate);
+                assert(w.entries.size() == domain::waveformEntryCount(samples.size(), rate));
+                const Means m = steadyMeans(w);
+                const double bands[3] = {m.low, m.mid, m.high};
+                for (int b = 0; b < 3; ++b) {
+                    assert(std::isfinite(bands[b]));
+                    assert(b == band ? (bands[b] > 0.75 && bands[b] <= 1.0) : bands[b] < 0.3);
+                }
+            }
+        }
+        for (const int rate : {100, 3000, 4000, 7999}) {
+            assert(domain::waveformFromSamples(sine(60, 1.0, 1.0, rate), rate).entries.empty());
+        }
+        domain::InMemoryPcmSource slow(sine(60, 1.0, 1.0, 4000), 4000);
+        std::string error;
+        assert(domain::waveformFromPcm(slow, &error).entries.empty() && !error.empty());
+        std::cout << "case 7 (a tone in its band at 8, 22.05, 48, 96 and 192 kHz; under 8 kHz nothing, and why) OK\n";
+    }
+
+    // ---- a sample that is no number ---------------------------------------------
+    //
+    // A decoder's slip is silence for that sample. Left in, it would stay
+    // in the filters and every level after it would read 1.
+    {
+        std::vector<float> samples = sine(700, 0.5, 2.0);
+        samples[1000] = std::numeric_limits<float>::quiet_NaN();
+        samples[2000] = std::numeric_limits<float>::infinity();
+        samples[3000] = -std::numeric_limits<float>::infinity();
+        const auto w = domain::waveformFromSamples(samples, Rate);
+        for (const auto &e : w.entries) {
+            assert(std::isfinite(e.low) && std::isfinite(e.mid) && std::isfinite(e.high) && std::isfinite(e.overall));
+        }
+        const Means m = steadyMeans(w);
+        assert(std::fabs(m.mid - 0.5) < 0.05 && m.low < 0.25 && m.high < 0.25);
+        assert(std::fabs(m.overall - 0.5) < 0.01);
+        std::cout << "case 8 (NaN and infinite samples count as silence: the levels after them are the tone's) OK\n";
     }
 
     std::cout << "waveform_from_audio_test: all cases passed\n";
