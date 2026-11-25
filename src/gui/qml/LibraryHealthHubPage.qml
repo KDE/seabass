@@ -70,6 +70,19 @@ Page {
 
     Component.onCompleted: root.runChecks()
 
+    // A check's page that comes back here once its save landed whole
+    // (Cover Art) says so here, where the user now is: that page is gone.
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    function sayDone(text) {
+        savedToast.show(text);
+    }
+
     function runChecks() {
         internal.hasScanned = false;
         healthController.scan(root.rekordboxPath, root.enginePath);

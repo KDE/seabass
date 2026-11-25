@@ -181,11 +181,17 @@ int main(int argc, char **argv)
         }
 
         bool said = false;
-        for (const QString &note : saved.notes) {
+        // Informational, not a note: it must not keep a whole save from
+        // being said with a toast, and the toast says it as a clause.
+        for (const QString &note : saved.info) {
             said = said || note == QStringLiteral("Removed 3 cover row(s) that no track used any more.");
         }
+        assert(saved.infoClauses == QStringList{QStringLiteral("3 unused cover rows removed")});
+        for (const QString &note : saved.notes) {
+            assert(!note.startsWith(QStringLiteral("Removed")) && "not a note the user has to act on");
+        }
         if (!said) {
-            for (const QString &note : saved.notes) {
+            for (const QString &note : saved.info) {
                 std::cerr << "note: " << note.toStdString() << "\n";
             }
         }

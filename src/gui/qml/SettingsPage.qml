@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 // Device Profile: rekordbox's player/mixer preference files on the
 // stick. Picking a value stages it (UNSAVED, with an Undo); the floating
@@ -43,10 +44,15 @@ Page {
     // Edit mode for this library: session, Save button, leave guard.
     EditSessionHost {
         id: editHost
+        objectName: "settingsEditHost"
         // Cancel on the low-space question leaves, as Back does -- see
         // EditSessionHost's backupLocationDeclined for why it must.
         onBackupLocationDeclined: editHost.requestLeave(() => root.StackView.view.pop())
         feature: "settings"
+        // A save that landed whole is said with the toast below; only one
+        // that failed, was cancelled or came back with a warning opens the
+        // summary dialog, which has to be read.
+        quietCleanSaves: true
         anchors.fill: parent
         libraryId: root.registryLibraryId()
         stickLabel: root.stickLabel
@@ -57,6 +63,36 @@ Page {
     }
 
     Component.onCompleted: settingsController.load(root.pioneerRoot)
+
+    // A save that landed whole, said over the page for a moment in the
+    // summary's own words ("6 settings saved"), as the other pages do.
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            // The page may be gone by the time this runs (a save finishing
+            // as the user leaves), and root is null then.
+            Qt.callLater(() => { if (root) { root.sayWholeSave(summary); } });
+        }
+    }
+    function sayWholeSave(summary) {
+        if (!summary || !(summary.written > 0) || !editHost.landsQuietly(summary)) {
+            return;
+        }
+        // Left on Save in the unsaved-changes dialog: the host says it
+        // where the user now is.
+        if (root.StackView.view && root.StackView.status !== StackView.Active) {
+            return;
+        }
+        savedToast.show(SaveSummary.wholeSaveText(summary));
+    }
 
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin

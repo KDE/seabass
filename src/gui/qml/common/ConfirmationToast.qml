@@ -26,9 +26,16 @@ Item {
     // Held: the pointer is over it, and the countdown waits.
     readonly property bool held: hover.hovered
 
+    // Said to a screen reader too: an alert named by its text, announced
+    // as it goes up, since it is gone again before anyone could tab to it.
+    Accessible.role: Accessible.AlertMessage
+    Accessible.name: toast.text
+    Accessible.ignored: !internal.shown
+
     function show(message) {
         toast.text = message;
         internal.shown = true;
+        toast.Accessible.announce(message);
         countdown.restart();
         if (toast.held) {
             countdown.pause();

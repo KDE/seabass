@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 // Cover art, from Library Health's own card: what a player can find, what
 // it cannot, and the one action that fixes it.
@@ -41,9 +42,30 @@ Page {
         // Back to the hub once the save the user asked for has been read,
         // with its cards re-counted from what was just written. Only then:
         // a cancelled or failed save leaves the page as it is.
+        //
+        // A save that landed whole opens no summary to read (#113): the
+        // page goes back at once and the hub says what was written with
+        // its toast, since this page and anything shown on it are gone.
+        quietCleanSaves: true
         onSummaryDismissed: {
-            if (!consistencyController?.artworkRepairStaged) {
-                root.StackView.view.pop();
+            if (consistencyController?.artworkRepairStaged) {
+                return;
+            }
+            const view = root.StackView.view;
+            // Save in the unsaved-changes dialog on the way out: the leave
+            // the user asked for has already gone (Back to the hub, Home to
+            // Home), and going back again would land a page short of it. The
+            // host says that save where the user now is.
+            if (!view || root.StackView.status !== StackView.Active) {
+                return;
+            }
+            const summary = editHost.session ? editHost.session.lastSummary : null;
+            const said = summary && summary.written > 0 && editHost.landsQuietly(summary)
+                ? SaveSummary.wholeSaveText(summary) : "";
+            view.pop();
+            const below = view.currentItem;
+            if (said.length > 0 && below && typeof below.sayDone === "function") {
+                below.sayDone(said);
             }
         }
         feature: "library-health"

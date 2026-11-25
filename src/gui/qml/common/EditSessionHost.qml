@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "SaveSummary.js" as SaveSummary
 
 // Everything an edit page needs from edit mode, in one item placed over
 // the page's content: the floating Save button, the leave guard, write
@@ -115,8 +116,11 @@ Item {
     // gets the dialog: that is news the page does not carry. So does a
     // save with notes (summary.notes, SaveContext::addSummaryNote: what
     // copying rekordbox's analysis along with a sync did), which a toast
-    // has no room for. landsQuietly(summary) says which it is, for a page
-    // that shows its own toast only when the dialog stays shut.
+    // has no room for. Informational sentences (summary.info,
+    // SaveContext::addSummaryInfo: the unused cover rows a Cover Art repair
+    // removed) are not notes: they keep a save quiet, and the toast says
+    // them (SaveSummary.wholeSaveText). landsQuietly(summary) says which it
+    // is, for a page that shows its own toast only when the dialog stays shut.
     property bool quietCleanSaves: false
     function landsQuietly(summary) {
         return host.quietCleanSaves && internal.landedWhole(summary)
@@ -175,6 +179,29 @@ Item {
                 && summary.cancelled !== true
                 && !(summary.skipped > 0)
                 && summary.written !== undefined && summary.written === summary.total;
+        }
+
+        // The StackView the page this host sits on was pushed onto, or null.
+        function stackViewOf(item) {
+            for (let it = item; it; it = it.parent) {
+                if (it.StackView.view) {
+                    return it.StackView.view;
+                }
+            }
+            return null;
+        }
+
+        // A save that landed whole on the way out (Save in the unsaved-
+        // changes dialog) is said where the user now is, since the page and
+        // its own toast are gone: by the page on top if it can show one
+        // (sayDone), else by the window.
+        function sayElsewhere(view, win, text) {
+            const top = view ? view.currentItem : null;
+            if (top && typeof top.sayDone === "function") {
+                top.sayDone(text);
+            } else if (win && typeof win.sayDone === "function") {
+                win.sayDone(text);
+            }
         }
 
         function runPendingLeave() {
@@ -488,7 +515,14 @@ Item {
                 return;
             }
             if (host.landsQuietly(summary)) {
+                // Taken before the leave: afterwards the page is off the stack.
+                const leaving = internal.leaveAfterSave && host.session && host.session.dirty !== true;
+                const view = internal.stackViewOf(host);
+                const win = host.Window.window;
                 internal.afterSummary();
+                if (leaving && summary.written > 0) {
+                    internal.sayElsewhere(view, win, SaveSummary.wholeSaveText(summary));
+                }
                 return;
             }
             summaryDialog.show(summary);

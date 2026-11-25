@@ -66,7 +66,9 @@ LeftRowsTally &leftRowsTally(SaveContext &ctx)
                 }
             }
             if (total > 0) {
-                ctx.addSummaryNote(QStringLiteral("Removed %1 cover row(s) that no track used any more.").arg(total));
+                ctx.addSummaryInfo(QStringLiteral("Removed %1 cover row(s) that no track used any more.").arg(total),
+                                   total == 1 ? QStringLiteral("1 unused cover row removed")
+                                              : QStringLiteral("%1 unused cover rows removed").arg(total));
             }
             if (!notRemoved.isEmpty()) {
                 ctx.addSummaryNote(QStringLiteral("Could not remove %1 cover file(s) that no row names any more: %2.")

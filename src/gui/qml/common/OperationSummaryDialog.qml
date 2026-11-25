@@ -44,6 +44,9 @@ SeabassDialog {
     // grids and waveforms a sync copied along with its tracks): said after
     // everything else, never instead of it.
     readonly property string notes: dialog.summary.notes !== undefined ? dialog.summary.notes : ""
+    // Informational sentences (what a Cover Art repair also tidied away):
+    // said when the dialog opens for another reason.
+    readonly property string info: dialog.summary.info !== undefined ? dialog.summary.info : ""
     readonly property string headline: dialog.summary.headline !== undefined ? dialog.summary.headline : ""
     readonly property string guidance: dialog.summary.guidance !== undefined ? dialog.summary.guidance : ""
     // Reached by the save and gone by then: a track deleted, or an image
@@ -184,7 +187,7 @@ SeabassDialog {
                    : dialog.detail.length > 0 ? dialog.detail
                    : dialog.cancelled ? "Stopped at your request. Everything up to here is complete; the rest was not touched."
                    : "",
-                   dialog.notes].filter(part => part.length > 0).join(" ")
+                   dialog.notes, dialog.info].filter(part => part.length > 0).join(" ")
         }
     }
 }

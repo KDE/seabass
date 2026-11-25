@@ -338,8 +338,23 @@ public:
     // waveforms a sync copied along with the tracks it wrote). Added by an
     // after-commit hook, from the changes that landed, so a save that went
     // back says nothing; runSaveLoop() hands them on in SaveLoopResult.
+    //
+    // A note is something the user has to read: a save with one is told
+    // in the summary dialog, even when the page would have said a whole
+    // save with its toast.
     void addSummaryNote(const QString &note) { m_summaryNotes << note; }
     const QStringList &summaryNotes() const { return m_summaryNotes; }
+    // Informational, not something to act on (the unused cover rows a
+    // Cover Art repair removed): `sentence` for the summary dialog when it
+    // opens anyway, `clause` for a page's toast, which keeps a whole save
+    // quiet ("3 tracks repaired, 2 unused cover rows removed").
+    void addSummaryInfo(const QString &sentence, const QString &clause)
+    {
+        m_summaryInfo << sentence;
+        m_summaryInfoClauses << clause;
+    }
+    const QStringList &summaryInfo() const { return m_summaryInfo; }
+    const QStringList &summaryInfoClauses() const { return m_summaryInfoClauses; }
     bool rekordboxBaselineRecordedBySave() const { return m_baselineRecordedBySave; }
 
     void onFinish(std::function<void(bool ok)> hook);
@@ -405,6 +420,8 @@ private:
     bool m_afterCommitRan = false;
     bool m_baselineRecordedBySave = false;
     QStringList m_summaryNotes;
+    QStringList m_summaryInfo;
+    QStringList m_summaryInfoClauses;
 
     // Whether this save has a stick to log to; tests run without one.
     bool hasStick() const { return !m_rekordboxPath.isEmpty() || !m_enginePath.isEmpty(); }

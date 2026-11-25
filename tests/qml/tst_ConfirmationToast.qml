@@ -42,6 +42,17 @@ TestCase {
 
     // By the ring, not the wall clock: animations in this harness do not
     // keep step with wait().
+    // A screen reader hears it: an alert, named by what it says, and
+    // nothing to find while it is not up.
+    function test_itIsAnAlertNamedByItsText() {
+        const toast = makeToast();
+        compare(toast.Accessible.role, Accessible.AlertMessage);
+        compare(toast.Accessible.ignored, true, "nothing to announce while hidden");
+        toast.show("6 settings saved");
+        compare(toast.Accessible.name, "6 settings saved");
+        compare(toast.Accessible.ignored, false);
+    }
+
     function test_shownAgainItRestartsWithTheNewText() {
         const toast = makeToast();
         const mark = findChild(toast, "confirmationToastMark");

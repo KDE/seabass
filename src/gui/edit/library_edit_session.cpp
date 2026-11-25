@@ -710,6 +710,11 @@ void LibraryEditSession::onSaveFinished()
         // What a part of the save did that the count above cannot say
         // (SaveContext::addSummaryNote): beside it, never instead of it.
         {"notes", result.notes.join(QLatin1Char(' '))},
+        // Informational (SaveContext::addSummaryInfo): never a reason to
+        // open the summary. The dialog says the sentences when it opens
+        // anyway; a page's toast adds the clauses to its count.
+        {"info", result.info.join(QLatin1Char(' '))},
+        {"infoClauses", result.infoClauses},
         {"failedId", result.failedId},
         // The save failed and went back whole: nothing on the stick
         // changed, and every change is still pending.
