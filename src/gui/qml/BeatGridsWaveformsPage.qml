@@ -196,9 +196,9 @@ Page {
     }
 
     // Scrolling the tracks folds the header's explanation away (the intro
-    // and the experimental note) and leaves the crumb, the boxes, the
-    // summary and its buttons: what is read once gives its room to the
-    // list, what is used stays. Back at the top of the list it unfolds
+    // and the grey notes) and leaves the crumb, the boxes, the summary and
+    // the buttons: what is read once gives its room to the list, what is
+    // used stays. Back at the top of the list it unfolds
     // again (#134). The mechanism is Clean Up Duplicates'
     // (CleanupPage.qml); see ScrollCollapse for when.
     ScrollCollapse {
@@ -278,22 +278,8 @@ Page {
                             wrapMode: Text.WordWrap
                             text: "Copies rekordbox's beat grids and waveforms into this stick's Engine library, "
                                 + "for the tracks you tick. A track the player has not analysed yet then loads "
-                                + "without analysis; on one it has, Engine's own grid stays beside the copy, so "
-                                + "the player can go back to it."
-                        }
-                        Label {
-                            objectName: "experimentalLabel"
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            color: Theme.conflictText
-                            // What is replaced and what is not, as the boxes
-                            // below have it, and the way back.
-                            text: "Experimental: the beat grid and the waveform are converted from rekordbox's, "
-                                + "and the conversion has been checked on a player with test tracks only. The grid "
-                                + "goes beside Engine's own; a grid locked or changed on the player, and a waveform "
-                                + "the player drew, are replaced only when you tick their box. Seabass keeps the "
-                                + "player's own analysis on the stick first, so Restore Engine's Analysis can put "
-                                + "it back."
+                                + "without analysis; on one it has, Engine's own grid is kept as a backup, even "
+                                + "with Overwrite Engine's Analysis ticked, so it can be restored."
                         }
                     }
                 }
@@ -315,7 +301,7 @@ Page {
                     visible: root.usable
                     columnSpacing: Theme.rowSpacing
                     rowSpacing: Theme.tightSpacing
-                    // The four boxes on one line, as wide as they ask.
+                    // The boxes on one line, as wide as they ask.
                     readonly property real boxesWidth: {
                         let sum = 0;
                         for (const box of optionsRow.children) {
@@ -470,21 +456,37 @@ Page {
                 RowLayout {
                     objectName: "summaryRow"
                     Layout.fillWidth: true
-                    visible: root.usable
+                    // Gone, spacing and all, when everything in it has
+                    // folded away or has nothing to say.
+                    // (Their own conditions, not their `visible`: that is
+                    // false while this row is hidden, and it would stay so.)
+                    visible: root.usable && (summaryLabel.fold < 1 || tickedPlaylistsLabel.text.length > 0
+                        || (leftAloneLabel.text.length > 0 && headerCollapse.progress < 1) || root.staged
+                        || (editHost.session !== null && editHost.session.canUndo === true))
                     spacing: Theme.rowSpacing
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
                         spacing: 2
+                        // With nothing ticked it only says how to start: that
+                        // folds away with the explanation when the list is
+                        // scrolled. What ticked tracks would get stays.
                         Label {
+                            id: summaryLabel
                             objectName: "summaryLabel"
+                            readonly property real fold: root.controller.tickedCount > 0 ? 0 : headerCollapse.progress
                             Layout.fillWidth: true
+                            Layout.preferredHeight: implicitHeight * (1 - fold)
+                            visible: fold < 1
+                            opacity: 1 - fold
+                            clip: true
                             wrapMode: Text.WordWrap
                             text: root.controller.summaryText
                         }
                         // How many playlists are ticked, which the closed
                         // combo cannot show.
                         Label {
+                            id: tickedPlaylistsLabel
                             objectName: "tickedPlaylistsLabel"
                             Layout.fillWidth: true
                             visible: text.length > 0
@@ -496,6 +498,7 @@ Page {
                         // A note, not a control: it folds away with the
                         // explanation when the list is scrolled.
                         Label {
+                            id: leftAloneLabel
                             objectName: "leftAloneLabel"
                             Layout.fillWidth: true
                             Layout.preferredHeight: implicitHeight * (1 - headerCollapse.progress)
@@ -515,6 +518,7 @@ Page {
                         color: Theme.warnText
                     }
                     Button {
+                        id: undoLastSaveButton
                         objectName: "undoLastSaveButton"
                         text: "Undo Last Save"
                         visible: editHost.session !== null && editHost.session.canUndo === true
@@ -526,8 +530,7 @@ Page {
                 }
 
                 // The way back from a copy, for the ticked tracks: two
-                // secondary actions, on the right; on the summary's left
-                // line once their note has folded away.
+                // secondary actions, on the right.
                 RowLayout {
                     objectName: "engineAnalysisRow"
                     Layout.fillWidth: true
@@ -538,8 +541,9 @@ Page {
                     Label {
                         objectName: "engineAnalysisLabel"
                         Layout.fillWidth: true
+                        // Folded to nothing rather than hidden, so it keeps
+                        // its width and the actions stay on the right.
                         Layout.preferredHeight: implicitHeight * (1 - headerCollapse.progress)
-                        visible: headerCollapse.progress < 1
                         opacity: 1 - headerCollapse.progress
                         clip: true
                         wrapMode: Text.WordWrap
@@ -651,9 +655,23 @@ Page {
         // data is converted to see what syncing it would change, and
         // nothing is written (a save has its own dialog).
         ProgressReport {
+            id: previewProgress
             objectName: "previewProgress"
             Layout.fillWidth: true
-            visible: root.controller.previewBusy && root.controller.previewTotal > 0
+            // Done, it fades out rather than vanishing; it comes back at
+            // once.
+            readonly property bool active: root.controller.previewBusy && root.controller.previewTotal > 0
+            opacity: active ? 1 : 0
+            // Its room goes as it fades, so the list slides up rather than
+            // jumping when it is gone.
+            Layout.preferredHeight: implicitHeight * opacity
+            visible: opacity > 0
+            // Animated only from shown (fading out); from hidden it is at
+            // once whole.
+            Behavior on opacity {
+                enabled: previewProgress.opacity > 0.5
+                NumberAnimation { duration: Theme.fadeTransitionDuration }
+            }
             unitsDone: root.controller.previewCurrent
             unitsTotal: root.controller.previewTotal
             unitName: "tracks"

@@ -1282,9 +1282,9 @@ linux:package:
 
       Run bin/seabass. This package carries Seabass only: it uses the Qt 6
       your distribution ships (Qt 6.5 or newer, with QtQuick, QtMultimedia
-      and QtSvg), plus sqlite3, zlib and SQLCipher 4; TagLib 2 is in lib/
-      (its licence beside it). It was built on Ubuntu 26.04, where this is
-      everything it needs, and runs on Ubuntu 24.04 with the same packages:
+      and QtSvg), plus sqlite3, zlib and SQLCipher 4. TagLib 2 is in lib/
+      (its licence beside it), for distributions that have none. It was
+      built on Ubuntu 26.04, where this is everything it needs:
 
         sudo apt install libqt6gui6 libqt6qml6 libqt6quick6 libqt6svg6 \\
              libqt6multimedia6 libqt6network6 libqt6concurrent6 \\

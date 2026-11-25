@@ -92,7 +92,7 @@ SeabassDialog {
         if (root.showing) {
             root.askForDetail();
         } else {
-            flick.cancelFlick();
+            root.stopGlide();
             root.storeZoom();
             root.releaseDetail();
             root.pendingSideMs = -1;
@@ -195,7 +195,7 @@ SeabassDialog {
         if (span === root.shownSpanMs || before <= 0) {
             return;
         }
-        flick.cancelFlick();
+        root.stopGlide();
         if (root.attached) {
             root.setSpan(span);
             return;
@@ -301,7 +301,7 @@ SeabassDialog {
         }
     }
     function attach() {
-        flick.cancelFlick();
+        root.stopGlide();
         root.attached = true;
     }
     function follow() {
@@ -312,15 +312,25 @@ SeabassDialog {
         if (root.pxPerMs <= 0) {
             return;
         }
-        flick.cancelFlick();
+        root.stopGlide();
         root.detach();
         root.manualMs = root.clampTime(root.manualMs + px / root.pxPerMs);
     }
-    // A drag (or its glide) while the track plays is a seek: once the
-    // waveform comes to rest, the moment under the line is where it plays
-    // on, and the view follows again. Paused, a drag only looks around.
+    // A drag by hand (and its glide) while the track plays is a seek:
+    // once the waveform comes to rest by itself, the moment under the line
+    // is where it plays on, and the view follows again. Paused, a drag only
+    // looks around, as the wheel and the touchpad always do. A glide
+    // stopped by anything else (a press, a seek, another track, follow,
+    // zoom, closing) is not a resting place and seeks nothing.
+    property bool draggedByHand: false
+    function stopGlide() {
+        root.draggedByHand = false;
+        flick.cancelFlick();
+    }
     function seekWhereDragged() {
-        if (!root.playing || root.attached || root.durationMs <= 0 || !root.controller) {
+        const byHand = root.draggedByHand;
+        root.draggedByHand = false;
+        if (!byHand || !root.playing || root.attached || root.durationMs <= 0 || !root.controller) {
             return;
         }
         const ms = Math.round(root.clampTime(root.manualMs));
@@ -508,7 +518,7 @@ SeabassDialog {
         }
         const c = root.controller;
         const t = side.track;
-        flick.cancelFlick();
+        root.stopGlide();
         root.pendingSideFollow = root.attached;
         root.pendingSideMs = c.position || 0;
         root.pendingSide = index;
@@ -847,6 +857,11 @@ SeabassDialog {
                 contentWidth: root.durationMs * root.pxPerMs + width
                 contentHeight: height
                 pressDelay: 0
+                onDraggingChanged: {
+                    if (flick.dragging) {
+                        root.draggedByHand = true;
+                    }
+                }
                 onMovementEnded: {
                     root.gliding = false;
                     root.seekWhereDragged();
@@ -870,7 +885,7 @@ SeabassDialog {
                     onPressed: {
                         stoppedGlide = flick.moving || root.gliding;
                         root.gliding = false;
-                        flick.cancelFlick();
+                        root.stopGlide();
                         root.detach();
                     }
                     onClicked: (mouse) => {
@@ -972,7 +987,9 @@ SeabassDialog {
         TrackTimeLabel {
             objectName: "zoomTime"
             Layout.alignment: Qt.AlignRight
-            positionMs: root.centerMs
+            // Following, the player's own position (the smoothed one can
+            // step back a hair at a second's edge).
+            positionMs: root.attached ? (root.controller ? root.controller.position || 0 : 0) : root.centerMs
             durationMs: root.durationMs
             settings: root.settings
         }
