@@ -17,7 +17,9 @@
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/analysis_settings.hpp"
 #include "gui/future_result.hpp"
+#include "gui/seabass_settings.hpp"
 #include "gui/track_import_analysis.hpp"
 #include "gui/track_import_cover.hpp"
 
@@ -247,8 +249,12 @@ bool TrackImportController::start(ImportRequest request)
         }
     }
     request.coverReader = readCoverPictures;
-    request.analyser = [](const std::string &file, const application::CancellationToken &cancel) {
-        return analyseForImport(file, cancel);
+    // The tempo range as Preferences has it now: it may have changed
+    // since the last import.
+    const QSettings settings = openSeabassSettings();
+    const domain::TempoRange range = storedAnalysisTempoRange(settings);
+    request.analyser = [range](const std::string &file, const application::CancellationToken &cancel) {
+        return analyseForImport(file, cancel, range);
     };
     request.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();
     m_joining = joins;

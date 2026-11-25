@@ -28,6 +28,7 @@
 #include <QCoreApplication>
 #include <QColor>
 #include <QImage>
+#include <QSettings>
 #include <QSignalSpy>
 
 #include <algorithm>
@@ -40,7 +41,9 @@
 #include <map>
 #include <unordered_set>
 
+#include "gui/analysis_settings.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
+#include "gui/seabass_settings.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/edit/pending_change.hpp"
@@ -715,6 +718,38 @@ int main(int argc, char **argv)
         session->undoLastSave();
         assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
         std::cout << "case 11 (an MP3: its waveform on rekordbox's timeline, the file's own offset later than decoded) OK\n";
+    }
+
+    // 12. The tempo range of Preferences decides between a tempo and its
+    //     double: a kick at 80 BPM is 80 in the default range and 160
+    //     once the range is 88 to 175, read when the import starts.
+    {
+        // Another length each: the same bytes twice would be one track.
+        const auto tempoOf = [&](const char *name, int seconds) {
+            writeBeatWav(computer / name, seconds, 80.0);
+            assert(offer(QVariantList{pathToQString(computer / name)}, QString(), false));
+            assert(controller.lastResult().value("withGrid").toInt() == 1);
+            finished.clear();
+            session->save();
+            assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+            assert(session->lastSummary().value("written").toInt() == 1);
+            for (const auto &track : infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)).readAll()) {
+                if (pathToUtf8(pathFromUtf8(track.filePath).filename()) == name) {
+                    return track.bpm;
+                }
+            }
+            return 0.0;
+        };
+        const double asDefault = tempoOf("l slow.wav", 30);
+        {
+            QSettings settings = openSeabassSettings();
+            settings.setValue(QLatin1String(AnalysisTempoRangeKey), QStringLiteral("88-175"));
+            settings.sync();
+        }
+        const double inRange = tempoOf("m slow.wav", 31);
+        std::cerr << "  80 BPM kicks: " << asDefault << " by default, " << inRange << " in 88 to 175" << std::endl;
+        assert(std::abs(asDefault - 80.0) < 0.3 && std::abs(inRange - 160.0) < 0.6);
+        std::cout << "case 12 (the tempo range of Preferences: 80 BPM by default, 160 in 88 to 175) OK\n";
     }
 
     std::cout << "track_import_controller_test: all cases passed\n";
