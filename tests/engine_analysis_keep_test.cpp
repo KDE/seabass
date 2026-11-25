@@ -842,10 +842,10 @@ int main(int argc, char **argv)
 
     // 12d. A row whose flag is down over the player's waveform, completed
     // with rekordbox's analysis because the option says to write over it
-    // (Beat Grids & Waveforms' "Also replace waveforms the player drew", a
-    // Sync after Rekordbox Export answer): the player's row is kept first,
-    // and Restore Engine's Analysis gives back exactly what it held, the
-    // overview column and file byte for byte, its flag down again.
+    // (Beat Grids & Waveforms' "Overwrite Waveforms", a Sync after Rekordbox
+    // Export answer): the player's row is kept first, and Restore Engine's
+    // Analysis gives back exactly what it held, the overview column and file
+    // byte for byte, its flag down again.
     {
         const Stick stick = freshStick("players-waveform-completed");
         StickKeptEngineAnalysisStore store(stick.root);

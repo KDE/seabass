@@ -364,6 +364,9 @@ Frame {
             property real durationMs: root.controller.duration
             property real positionMs: root.controller.position
             property string errorMessage: root.controller.errorMessage || ""
+            // The catalog the track was loaded from, which decides how
+            // its waveform is drawn.
+            property string format: root.controller.currentFormat || ""
             property var beats: {
                 root.controller.trackSerial;
                 root.controller.analysisPending;   // read after a write
@@ -379,6 +382,7 @@ Frame {
                 face.durationMs = face.durationMs;
                 face.positionMs = face.positionMs;
                 face.errorMessage = face.errorMessage;
+                face.format = face.format;
                 face.beats = face.beats;
             }
 
@@ -459,6 +463,11 @@ Frame {
                     // The grid cut out of the bars (option G): a ruler
                     // lane was too heavy for the bar.
                     gridStyle: "sliced"
+                    // Drawn as the player it came from draws it, the way the
+                    // zoomed popup does: Engine's layered bands for a track
+                    // from Engine, the CDJ's colours for one from either
+                    // rekordbox catalog.
+                    colorScheme: face.format === "engine" ? "engine" : "vivid"
                     // Only the beats drawn at this width, read with the
                     // waveform when the track was loaded; laid out again for a
                     // new track, a new length or a new width.
