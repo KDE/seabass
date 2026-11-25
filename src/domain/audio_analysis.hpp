@@ -7,6 +7,7 @@
 #include <span>
 
 #include "domain/grid_analyser.hpp"
+#include "domain/key_from_audio.hpp"
 #include "domain/seabass_grid_analyser.hpp"
 #include "domain/waveform_from_audio.hpp"
 
@@ -14,7 +15,7 @@ namespace seabass::domain
 {
 
 // Everything Seabass's own analysis makes of a track's audio, from one
-// set of samples: the one call for whoever has a decoded track and wants
+// set of samples (grid, tempo, key, waveform): the one call for whoever has a decoded track and wants
 // it analysed (the track import; later the page that analyses a library).
 // What is analysed how is decided here, so a caller gets every
 // improvement by building against a newer version and changes nothing.
@@ -31,6 +32,10 @@ struct AudioAnalysis
     // a grid that follows the tempo it is the track's usual tempo, not
     // the tempo everywhere.
     double bpm = 0.0;
+    // The musical key, where one could be read; keyName() spells it as
+    // the libraries do ("Fm", "Db"). `margin` tells a clear key from a
+    // close call.
+    KeyAnalysis key;
     // 150 entries a second. Empty where the sample rate is too low to
     // measure one (WaveformLowestSampleRateHz); the grid does not depend
     // on it.

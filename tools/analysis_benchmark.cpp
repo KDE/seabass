@@ -118,6 +118,7 @@
 #include "application/use_cases/scan_library.hpp"
 #include "domain/beat_grid.hpp"
 #include "domain/beat_grid_comparison.hpp"
+#include "domain/key_from_audio.hpp"
 #include "domain/seabass_grid_analyser.hpp"
 #include "domain/grid_analyser.hpp"
 #include "domain/mp3_lead_in.hpp"
@@ -642,6 +643,7 @@ std::optional<std::vector<std::string>> parseAnalyserList(const std::string &lis
         known.push_back("oracle");
     }
     known.push_back("seabass");
+    known.push_back("seabass-key");
 #ifdef SEABASS_ANALYSIS_BASELINE
     for (const std::string &name : baseline::baselineGridAnalyserNames()) {
         known.push_back(name);
@@ -729,6 +731,10 @@ std::unique_ptr<domain::GridAnalyser> makeGridAnalyser(const std::string &name)
 
 bool isKeyAnalyser(const std::string &name)
 {
+    // Seabass's own key detector (domain/key_from_audio.hpp).
+    if (name == "seabass-key") {
+        return true;
+    }
 #ifdef SEABASS_ANALYSIS_BASELINE
     const std::vector<std::string> keys = baseline::baselineKeyAnalyserNames();
     return std::find(keys.begin(), keys.end(), name) != keys.end();
@@ -879,6 +885,18 @@ int synthMode(int argc, char **argv)
         for (const std::string &analyserName : *analyserNames) {
             if (analyserName == "oracle") {
                 analysers.push_back(std::make_unique<OracleAnalyser>(track.beats, shiftMs));
+            } else if (analyserName == "seabass-key") {
+                // The preset says its key ("A minor"); spelled as the detector spells keys.
+                const domain::KeyAnalysis key = domain::keyFromSamples(track.samples, track.sampleRate);
+                const std::string preset = spec.keyName.substr(0, spec.keyName.find(' ')) + (spec.minor ? "m" : "");
+                const std::string found = key.key ? domain::keyName(*key.key) : std::string("none");
+                if (!key.error.empty()) {
+                    std::printf("%-24s %-24s failed: %s\n", name.c_str(), analyserName.c_str(), key.error.c_str());
+                    ++failures;
+                } else {
+                    std::printf("%-24s %-24s key %s, the preset's %s: %s\n", name.c_str(), analyserName.c_str(),
+                                found.c_str(), preset.c_str(), found == preset ? "same" : "not the same");
+                }
             } else if (auto analyser = makeGridAnalyser(analyserName)) {
                 analysers.push_back(std::move(analyser));
             }
@@ -1103,7 +1121,12 @@ std::vector<AudioResult> analyseJob(const AudioJob &job, const std::vector<std::
         }
         domain::InMemoryPcmSource source(samples, rate);
         const auto analyseStart = std::chrono::steady_clock::now();
-        if (result.key) {
+        if (name == "seabass-key") {
+            const domain::KeyAnalysis key = domain::keyFromSamples(samples, rate);
+            result.analyseMs = msSince(analyseStart);
+            result.error = key.error;
+            result.keyFound = key.key ? domain::keyName(*key.key) : std::string();
+        } else if (result.key) {
             const baseline::KeyAnalysis key = baseline::makeBaselineKeyAnalyser(name)->analyse(source);
             result.analyseMs = msSince(analyseStart);
             result.error = key.error;

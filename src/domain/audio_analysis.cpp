@@ -39,6 +39,7 @@ AudioAnalysis analyseAudio(std::span<const float> samples, int sampleRateHz, Tem
     analysis.waveform = waveformFromSamples(samples, sampleRateHz);
     analysis.grid = SeabassGridAnalyser(range).analyseSamples(samples, sampleRateHz);
     analysis.bpm = usualBpm(analysis.grid.beats);
+    analysis.key = keyFromSamples(samples, sampleRateHz);
     return analysis;
 }
 

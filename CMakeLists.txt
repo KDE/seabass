@@ -491,6 +491,7 @@ add_library(seabass_core STATIC
     src/domain/seabass_grid_analyser.cpp
     src/domain/waveform_from_audio.cpp
     src/domain/audio_analysis.cpp
+    src/domain/key_from_audio.cpp
     src/domain/camelot_key.cpp
     src/domain/engine_overview.cpp
     src/domain/hidden_engine_cues.cpp
@@ -5410,6 +5411,13 @@ add_executable(seabass_grid_analyser_test tests/seabass_grid_analyser_test.cpp)
 target_include_directories(seabass_grid_analyser_test PRIVATE src tools)
 target_link_libraries(seabass_grid_analyser_test PRIVATE seabass_core seabass_synth_track)
 add_test(NAME seabass_grid_analyser_test COMMAND seabass_grid_analyser_test)
+
+# Phase 5: Seabass's key detector on audio made for the test, whose key is
+# known: chords in every key, off concert pitch, at other sample rates.
+add_executable(key_from_audio_test tests/key_from_audio_test.cpp)
+target_include_directories(key_from_audio_test PRIVATE src tools)
+target_link_libraries(key_from_audio_test PRIVATE seabass_core seabass_synth_track)
+add_test(NAME key_from_audio_test COMMAND key_from_audio_test)
 
 # Phase 1's benchmark: rekordbox's grids against Engine's on a stick, and
 # every registered analyser against synthetic tracks. Reads only. The
