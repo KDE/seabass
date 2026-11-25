@@ -1671,9 +1671,11 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # 2026-11-01), so a file at five times the Linux figure still fits.
         # A file that needs more is named with its own bound in
         # _seabass_qml_slow_files (as tst_Name=seconds), from a measurement,
-        # not a guess; none does today.
+        # not a guess. tst_CoverArtPage: 29 s here, but 226 s on Invent's
+        # Tumbleweed runner (2026-11-25), and stopped at 600 s there on a
+        # run 1.7 times slower overall, two tests from its end.
         set(_seabass_qml_file_timeout 600)
-        set(_seabass_qml_slow_files)
+        set(_seabass_qml_slow_files tst_CoverArtPage=1200)
         # The files with a wall-clock bound in them get the label `timing`
         # as well as `qml` (see the label's own comment near the end of this
         # file): leaving a page within 1 s or 2.5 s while a read cannot stop
@@ -4022,6 +4024,12 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME track_field_edit_change_test COMMAND track_field_edit_change_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs)
+    # The slowest test of the C++ suite: 80-90 s here (Linux Debug), 133 s
+    # on Invent's Linux runner on a quiet morning, 157 s on Tumbleweed's.
+    # On 2026-11-25 a busy runner ran the whole suite 2.7 times slower
+    # (mirror_failure_fails_the_change_test 58 -> 256 s) and this one was
+    # stopped at the default 300 s in its case 15 of 18: slow, not hung.
+    set_tests_properties(track_field_edit_change_test PROPERTIES TIMEOUT 900)
 
     # #105: what Metadata Restore offers once the OneLibrary reader reads
     # rating and comment, against what it offered before.
