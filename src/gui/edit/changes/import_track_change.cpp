@@ -382,6 +382,9 @@ void ImportTrackChange::setAnalysis(std::shared_ptr<const ImportAnalysis> analys
     if (m_analysis && m_analysis->bpm > 0.0 && m_analysis->bpm < 1000.0) {
         m_track.bpm = m_analysis->bpm;
     }
+    if (m_analysis && m_track.key.empty() && !m_analysis->key.empty()) {
+        m_track.key = m_analysis->key;
+    }
 }
 
 std::string ImportTrackChange::destinationFile() const

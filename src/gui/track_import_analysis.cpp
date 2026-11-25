@@ -58,6 +58,9 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
         analysis->confidence = made.grid.confidence;
         analysis->followsTempo = made.grid.followsTempo;
     }
+    if (made.key.key) {
+        analysis->key = domain::keyName(*made.key.key);
+    }
     return analysis;
 #else
     (void)audioFile;

@@ -151,6 +151,11 @@ struct ImportAnalysis
     // The grid follows a tempo that moves (GridAnalysis::followsTempo):
     // one to look at before it is trusted.
     bool followsTempo = false;
+    // The key the analyser heard, as rekordbox spells it ("F#m"); empty
+    // where it heard none. Goes into the rows of a file whose tags name
+    // no key: a tag is somebody's choice, the analysis is right on about
+    // two tracks in three.
+    std::string key;
 };
 
 // Decodes and analyses a file; null when it cannot be decoded. Given from

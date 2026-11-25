@@ -47,6 +47,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/edit/pending_change.hpp"
+#include "gui/track_import_analysis.hpp"
 #include "gui/track_import_controller.hpp"
 #include "domain/mp3_lead_in.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
@@ -104,21 +105,11 @@ void writeWav(const fs::path &file, std::uint32_t frames, std::int16_t mark)
     out.write(reinterpret_cast<const char *>(samples.data()), bytes);
 }
 
-// A 16 bit, 44.1 kHz, mono WAV of `seconds` with a kick on every beat at
-// `bpm`, the first at 0.25 s: a 60 Hz thump that dies away in 150 ms.
-void writeBeatWav(const fs::path &file, int seconds, double bpm)
+// A 16 bit, 44.1 kHz, mono WAV of `samples`.
+void writeMonoWav(const fs::path &file, const std::vector<std::int16_t> &samples)
 {
     fs::create_directories(file.parent_path());
-    const std::uint32_t frames = static_cast<std::uint32_t>(seconds) * 44100;
-    std::vector<std::int16_t> samples(frames, 0);
-    const double beat = 60.0 / bpm * 44100.0;
-    for (double at = 0.25 * 44100.0; at < frames; at += beat) {
-        for (std::uint32_t i = 0; i < 6615 && static_cast<std::uint32_t>(at) + i < frames; ++i) {
-            const double t = i / 44100.0;
-            samples[static_cast<std::uint32_t>(at) + i] =
-                static_cast<std::int16_t>(24000.0 * std::exp(-t * 30.0) * std::sin(2.0 * 3.14159265358979 * 60.0 * t));
-        }
-    }
+    const std::uint32_t frames = static_cast<std::uint32_t>(samples.size());
     std::ofstream out(file, std::ios::binary);
     const auto u32 = [&](std::uint32_t v) { out.write(reinterpret_cast<const char *>(&v), 4); };
     const auto u16 = [&](std::uint16_t v) { out.write(reinterpret_cast<const char *>(&v), 2); };
@@ -137,17 +128,52 @@ void writeBeatWav(const fs::path &file, int seconds, double bpm)
     out.write(reinterpret_cast<const char *>(samples.data()), frames * 2);
 }
 
-// A WAV like writeWav()'s with an ID3v2.3 tag in a chunk of its own,
-// holding `picture` as the front cover.
-void writeWavWithCover(const fs::path &file, std::uint32_t frames, std::int16_t mark, const std::string &picture)
+// A 16 bit, 44.1 kHz, mono WAV of `seconds` with a kick on every beat at
+// `bpm`, the first at 0.25 s: a 60 Hz thump that dies away in 150 ms.
+void writeBeatWav(const fs::path &file, int seconds, double bpm)
 {
-    writeWav(file, frames, mark);
+    const std::uint32_t frames = static_cast<std::uint32_t>(seconds) * 44100;
+    std::vector<std::int16_t> samples(frames, 0);
+    const double beat = 60.0 / bpm * 44100.0;
+    for (double at = 0.25 * 44100.0; at < frames; at += beat) {
+        for (std::uint32_t i = 0; i < 6615 && static_cast<std::uint32_t>(at) + i < frames; ++i) {
+            const double t = i / 44100.0;
+            samples[static_cast<std::uint32_t>(at) + i] =
+                static_cast<std::int16_t>(24000.0 * std::exp(-t * 30.0) * std::sin(2.0 * 3.14159265358979 * 60.0 * t));
+        }
+    }
+    writeMonoWav(file, samples);
+}
+
+// A WAV of `seconds` of the chord A minor (A, C and E over three
+// octaves, each with two overtones), struck twice a second: something
+// with a key in it.
+void writeChordWav(const fs::path &file, int seconds)
+{
+    const std::uint32_t frames = static_cast<std::uint32_t>(seconds) * 44100;
+    std::vector<std::int16_t> samples(frames, 0);
+    const double notes[] = {110.0, 130.81, 164.81, 220.0, 261.63, 329.63, 440.0, 523.25, 659.26};
+    for (std::uint32_t i = 0; i < frames; ++i) {
+        const double t = i / 44100.0;
+        const double struck = std::exp(-std::fmod(t, 0.5) * 4.0);
+        double sum = 0.0;
+        for (const double note : notes) {
+            for (int overtone = 1; overtone <= 3; ++overtone) {
+                sum += std::sin(2.0 * 3.14159265358979 * note * overtone * t) / overtone;
+            }
+        }
+        samples[i] = static_cast<std::int16_t>(1500.0 * struck * sum);
+    }
+    writeMonoWav(file, samples);
+}
+
+// Adds an ID3v2.3 tag of one frame to a WAV, in a chunk of its own.
+void appendId3Frame(const fs::path &file, const std::string &id, const std::string &body)
+{
     const auto be32 = [](std::uint32_t v) {
         return std::string{static_cast<char>(v >> 24), static_cast<char>(v >> 16), static_cast<char>(v >> 8), static_cast<char>(v)};
     };
-    std::string body = std::string(1, '\0') + "image/png" + std::string(1, '\0') + std::string(1, '\3') + std::string(1, '\0')
-                       + picture;
-    const std::string frame = "APIC" + be32(static_cast<std::uint32_t>(body.size())) + std::string(2, '\0') + body;
+    const std::string frame = id + be32(static_cast<std::uint32_t>(body.size())) + std::string(2, '\0') + body;
     const std::uint32_t n = static_cast<std::uint32_t>(frame.size());
     const std::string synchsafe{static_cast<char>((n >> 21) & 0x7f), static_cast<char>((n >> 14) & 0x7f),
                                 static_cast<char>((n >> 7) & 0x7f), static_cast<char>(n & 0x7f)};
@@ -167,6 +193,16 @@ void writeWavWithCover(const fs::path &file, std::uint32_t frames, std::int16_t 
     const std::uint32_t riff = static_cast<std::uint32_t>(wav.size() - 8);
     wav.replace(4, 4, reinterpret_cast<const char *>(&riff), 4);
     std::ofstream(file, std::ios::binary | std::ios::trunc) << wav;
+}
+
+// A WAV like writeWav()'s with an ID3v2.3 tag in a chunk of its own,
+// holding `picture` as the front cover.
+void writeWavWithCover(const fs::path &file, std::uint32_t frames, std::int16_t mark, const std::string &picture)
+{
+    writeWav(file, frames, mark);
+    std::string body = std::string(1, '\0') + "image/png" + std::string(1, '\0') + std::string(1, '\3') + std::string(1, '\0')
+                       + picture;
+    appendId3Frame(file, "APIC", body);
 }
 
 template <typename Reader>
@@ -780,6 +816,40 @@ int main(int argc, char **argv)
         }
         assert(found == tempos.size());
         std::cout << "case 13 (five files analysed at once: each track its own tempo) OK\n";
+    }
+
+    // 14. The key the analyser hears goes into the rows of all three
+    //     libraries where the file's tags name none; a tag's key stays.
+    {
+        writeChordWav(computer / "o chord.wav", 20);
+        writeChordWav(computer / "o tagged.wav", 21);
+        appendId3Frame(computer / "o tagged.wav", "TKEY", std::string(1, '\0') + "Dm");
+        const auto heard = analyseForImport(pathToUtf8(computer / "o chord.wav"), application::CancellationToken{});
+        assert(heard && !heard->key.empty());
+        assert(heard->key != "Dm");
+        assert(offer(QVariantList{pathToQString(computer / "o chord.wav"), pathToQString(computer / "o tagged.wav")}, QString(),
+                     false));
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        assert(session->lastSummary().value("written").toInt() == 2);
+        const auto keysOf = [&](auto &&reader) {
+            std::map<std::string, std::string> keys;
+            for (const auto &track : reader.readAll()) {
+                keys[pathToUtf8(pathFromUtf8(track.filePath).filename())] = track.key;
+            }
+            return keys;
+        };
+        const auto check = [&](const char *library, const std::map<std::string, std::string> &keys) {
+            std::cerr << "  " << library << ": heard " << keys.at("o chord.wav") << ", tagged " << keys.at("o tagged.wav")
+                      << std::endl;
+            assert(keys.at("o chord.wav") == heard->key);
+            assert(keys.at("o tagged.wav") == "Dm");
+        };
+        check("DeviceLibrary", keysOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer))));
+        check("OneLibrary", keysOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer))));
+        check("Engine", keysOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8())));
+        std::cout << "case 14 (the analyser's key in all three libraries, a tag's key kept) OK\n";
     }
 
     std::cout << "track_import_controller_test: all cases passed\n";
