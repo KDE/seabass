@@ -34,7 +34,84 @@ std::string exportPdbUnder(const std::string &pioneerRoot)
     return pathToUtf8(pathFromUtf8(pioneerRoot) / "rekordbox" / "export.pdb");
 }
 
+// The two Pioneer rows of one track, from the one description.
+infrastructure::rekordbox::PdbRowWriter::NewTrack deviceLibraryRow(const domain::ImportedTrack &track,
+                                                                    std::uint64_t fileSizeBytes)
+{
+    infrastructure::rekordbox::PdbRowWriter::NewTrack row;
+    row.pathOnStick = track.stickPath;
+    row.title = track.title;
+    row.artist = track.artist;
+    row.album = track.album;
+    row.albumArtist = track.albumArtist;
+    row.genre = track.genre;
+    row.label = track.label;
+    row.remixer = track.remixer;
+    row.composer = track.composer;
+    row.key = track.key;
+    row.comment = track.comment;
+    row.bpm = track.bpm;
+    row.durationSeconds = track.lengthSeconds;
+    row.trackNumber = track.trackNumber;
+    row.year = track.year;
+    row.bitrate = track.bitrate;
+    row.sampleDepth = track.bitDepth;
+    row.sampleRateHz = track.sampleRateHz;
+    row.fileSizeBytes = fileSizeBytes;
+    row.date = track.date;
+    return row;
+}
+
+infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneLibraryRow(const domain::ImportedTrack &track,
+                                                                        const std::string &destination,
+                                                                        std::uint64_t fileSizeBytes)
+{
+    infrastructure::onelibrary::OneLibraryCueWriter::NewTrack row;
+    row.filePath = destination;
+    row.title = track.title;
+    row.artist = track.artist;
+    row.album = track.album;
+    row.albumArtist = track.albumArtist;
+    row.genre = track.genre;
+    row.label = track.label;
+    row.remixer = track.remixer;
+    row.composer = track.composer;
+    row.key = track.key;
+    row.comment = track.comment;
+    row.bpm = track.bpm;
+    row.lengthSeconds = track.lengthSeconds;
+    row.trackNumber = track.trackNumber;
+    row.year = track.year;
+    row.bitrate = track.bitrate;
+    row.bitDepth = track.bitDepth;
+    row.sampleRateHz = track.sampleRateHz;
+    row.fileSizeBytes = fileSizeBytes;
+    row.date = track.date;
+    return row;
+}
+
 }  // namespace
+
+std::string ImportTrackChange::rowRefusal(const domain::ImportedTrack &track, const QStringList &libraries,
+                                          std::uint64_t fileSizeBytes)
+{
+    if (libraries.contains(QStringLiteral("rekordbox"))) {
+        const std::string refusal =
+            infrastructure::rekordbox::PdbRowWriter::newTrackRefusal(deviceLibraryRow(track, fileSizeBytes));
+        if (!refusal.empty()) {
+            return refusal;
+        }
+    }
+    if (libraries.contains(QStringLiteral("onelibrary"))) {
+        // The file's place is all the check reads of the path.
+        const std::string refusal = infrastructure::onelibrary::OneLibraryCueWriter::newTrackRefusal(
+            oneLibraryRow(track, track.stickPath, fileSizeBytes));
+        if (!refusal.empty()) {
+            return refusal;
+        }
+    }
+    return {};
+}
 
 ImportTrackChange::ImportTrackChange(QString sourceFile, QString stickRoot, QString pioneerRoot, QString enginePath,
                                      domain::ImportedTrack track, QStringList libraries, int itemCountHint)
@@ -193,60 +270,10 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                 .arg(m_libraries.join(QStringLiteral(", "))));
     }
 
-    infrastructure::rekordbox::PdbRowWriter::NewTrack pdbRow;
-    pdbRow.pathOnStick = m_track.stickPath;
-    pdbRow.title = m_track.title;
-    pdbRow.artist = m_track.artist;
-    pdbRow.album = m_track.album;
-    pdbRow.albumArtist = m_track.albumArtist;
-    pdbRow.genre = m_track.genre;
-    pdbRow.label = m_track.label;
-    pdbRow.remixer = m_track.remixer;
-    pdbRow.composer = m_track.composer;
-    pdbRow.key = m_track.key;
-    pdbRow.comment = m_track.comment;
-    pdbRow.bpm = m_track.bpm;
-    pdbRow.durationSeconds = m_track.lengthSeconds;
-    pdbRow.trackNumber = m_track.trackNumber;
-    pdbRow.year = m_track.year;
-    pdbRow.bitrate = m_track.bitrate;
-    pdbRow.sampleDepth = m_track.bitDepth;
-    pdbRow.sampleRateHz = m_track.sampleRateHz;
-    pdbRow.fileSizeBytes = sourceSize;
-    pdbRow.date = m_track.date;
-
-    infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneRow;
-    oneRow.filePath = destination;
-    oneRow.title = m_track.title;
-    oneRow.artist = m_track.artist;
-    oneRow.album = m_track.album;
-    oneRow.albumArtist = m_track.albumArtist;
-    oneRow.genre = m_track.genre;
-    oneRow.label = m_track.label;
-    oneRow.remixer = m_track.remixer;
-    oneRow.composer = m_track.composer;
-    oneRow.key = m_track.key;
-    oneRow.comment = m_track.comment;
-    oneRow.bpm = m_track.bpm;
-    oneRow.lengthSeconds = m_track.lengthSeconds;
-    oneRow.trackNumber = m_track.trackNumber;
-    oneRow.year = m_track.year;
-    oneRow.bitrate = m_track.bitrate;
-    oneRow.bitDepth = m_track.bitDepth;
-    oneRow.sampleRateHz = m_track.sampleRateHz;
-    oneRow.fileSizeBytes = sourceSize;
-    oneRow.date = m_track.date;
-
-    if (toDeviceLibrary) {
-        if (const std::string refusal = infrastructure::rekordbox::PdbRowWriter::newTrackRefusal(pdbRow); !refusal.empty()) {
-            return ChangeOutcome::failure(QString::fromStdString(refusal + ". Nothing was imported."));
-        }
-    }
-    if (toOneLibrary) {
-        if (const std::string refusal = infrastructure::onelibrary::OneLibraryCueWriter::newTrackRefusal(oneRow);
-            !refusal.empty()) {
-            return ChangeOutcome::failure(QString::fromStdString(refusal + ". Nothing was imported."));
-        }
+    infrastructure::rekordbox::PdbRowWriter::NewTrack pdbRow = deviceLibraryRow(m_track, sourceSize);
+    infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneRow = oneLibraryRow(m_track, destination, sourceSize);
+    if (const std::string refusal = rowRefusal(m_track, m_libraries, sourceSize); !refusal.empty()) {
+        return ChangeOutcome::failure(QString::fromStdString(refusal + ". Nothing was imported."));
     }
     if (toEngine) {
         if (const QString refusal = engineRowWriteRefusal(m_enginePath); !refusal.isEmpty()) {

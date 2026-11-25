@@ -62,6 +62,13 @@ public:
     ImportTrackChange(QString sourceFile, QString stickRoot, QString pioneerRoot, QString enginePath,
                       domain::ImportedTrack track, QStringList libraries, int itemCountHint);
 
+    // Why the libraries named would refuse a row for `track`, a file of
+    // `fileSizeBytes`, for what it is; empty when none would. What
+    // apply() asks before it copies, for a caller that plans: a file
+    // refused here is left out of the save rather than failing it.
+    static std::string rowRefusal(const domain::ImportedTrack &track, const QStringList &libraries,
+                                  std::uint64_t fileSizeBytes);
+
     static QString idFor(const std::string &stickPath);
     // What ties the playlist changes of this track to it.
     static QString unitKeyFor(const std::string &stickPath);

@@ -1242,6 +1242,7 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/save_context.cpp
         src/gui/edit/save_loop.hpp
         src/gui/edit/save_loop.cpp
+        src/gui/edit/track_import_staging.cpp
         src/gui/edit/rekordbox_baseline_ledger.hpp
         src/gui/edit/rekordbox_baseline_ledger.cpp
         src/gui/edit/staged_edits_store.hpp
@@ -4376,6 +4377,14 @@ if(TARGET seabass_edit)
     add_test(NAME import_track_change_test COMMAND import_track_change_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(import_track_change_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
+    add_executable(track_import_staging_test tests/track_import_staging_test.cpp)
+    target_include_directories(track_import_staging_test PRIVATE src tests)
+    target_link_libraries(track_import_staging_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME track_import_staging_test COMMAND track_import_staging_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(track_import_staging_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
     add_executable(remove_engine_track_change_test tests/remove_engine_track_change_test.cpp)

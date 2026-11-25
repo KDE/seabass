@@ -171,6 +171,13 @@ public:
 
     std::optional<int> toIndex() const { return m_toIndex; }
 
+    // Makes this entry one unit with the changes that carry `key` (see
+    // PendingChange::unitKeys): a track imported in the same save and
+    // put into its playlist is not left imported and unlisted by a
+    // cancel between the two.
+    void tieTo(const QString &key) { m_unitKey = key; }
+    QStringList unitKeys() const override;
+
 private:
     QString m_pioneerRoot;
     QString m_enginePath;
@@ -179,6 +186,7 @@ private:
     QString m_title;
     QStringList m_libraries;
     std::optional<int> m_toIndex;
+    QString m_unitKey;
 };
 
 // Takes one file out of a playlist in every library on the stick that has

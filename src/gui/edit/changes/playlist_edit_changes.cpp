@@ -514,6 +514,11 @@ AddToPlaylistChange::AddToPlaylistChange(QString pioneerRoot, QString enginePath
 {
 }
 
+QStringList AddToPlaylistChange::unitKeys() const
+{
+    return m_unitKey.isEmpty() ? QStringList{id()} : QStringList{id(), m_unitKey};
+}
+
 QString AddToPlaylistChange::idFor(const std::string &playlist, const std::string &filePath)
 {
     return QStringLiteral("addcue:add-to-playlist:") + QString::fromStdString(playlist) + QLatin1Char('|')
