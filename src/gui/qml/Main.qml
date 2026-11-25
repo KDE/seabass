@@ -957,6 +957,7 @@ ApplicationWindow {
         id: restoreStickBackupPageComponent
         RestoreStickBackupPage {
             appSettingsController: appSettingsCtrl
+            backupAdvisor: backupAdvisorCtrl
             controller: RestoreStickBackupController {
                 defaultBackupDirectory: appSettingsCtrl.stickBackupDirectory
                 // A restore rewrites the stick's whole library. The

@@ -368,6 +368,29 @@ TestCase {
         compare(findChild(page, "openConfirmButton").enabled, true);
     }
 
+    // The home screen's warning that the stick changed since its last full
+    // backup is on the restore page too, for the drive chosen, as the
+    // advisor has it; not for a drive it says is backed up.
+    function test_changedSinceBackupIsWarned() {
+        const preview = {filesToWrite: 14, filesUnchanged: 1147, bytesToWrite: 500 * 1024 * 1024, extras: 0,
+                         targetHasEngineLibrary: true, freeBytes: 8 * 1024 * 1024 * 1024, enoughFreeSpace: true};
+        const advisor = {advice: {"/media/STICK": {state: "outdated",
+                                                   detail: "The library has changed since its last backup."}}};
+        const page = makePage([makeDisk({})], {preview: preview}, {backupAdvisor: advisor});
+        const banner = findChild(page, "changedSinceBackupBanner");
+        verify(banner !== null);
+        compare(banner.visible, true);
+        compare(banner.text, "Update the full stick backup: The library has changed since its last backup. "
+                + "Restoring now replaces those changes; back the stick up first to keep them.");
+        compare(findChild(page, "openConfirmButton").enabled, true, "a warning, not a block");
+
+        const current = makePage([makeDisk({})], {preview: preview},
+                                 {backupAdvisor: {advice: {"/media/STICK": {state: "current", detail: "Backup is up to date."}}}});
+        compare(findChild(current, "changedSinceBackupBanner").visible, false, "backed up: nothing to warn of");
+        const none = makePage([makeDisk({})], {preview: preview});
+        compare(findChild(none, "changedSinceBackupBanner").visible, false, "no advisor: nothing said");
+    }
+
     // A blank target with nothing at stake: no typing required.
     function test_confirmOnBlankTargetNeedsNoTypingAndCallsRestore() {
         var page = makePage([makeDisk({})]);

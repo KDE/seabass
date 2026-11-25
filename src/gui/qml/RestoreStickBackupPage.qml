@@ -36,6 +36,11 @@ Page {
     // Backups).
     property string stickLabel: ""
     property string hubLabel: ""
+    // Home's backup advisor (Main.qml), for what it says of the drive
+    // chosen below: that its library has changed since its last full
+    // backup, which a restore would throw away. Null in a test that has
+    // none.
+    property var backupAdvisor: null
     signal formatUsbRequested()
     // Same signature as StickListPage's own -- see TransferResultFrame's
     // repairLibraryRequested for why the result report offers this.
@@ -74,6 +79,11 @@ Page {
     readonly property var selectedDisk: (root.selectedIndex >= 0 && root.selectedIndex < root.disks.length)
         ? root.disks[root.selectedIndex] : null
     property bool exact: false
+    // The advisor's word on the chosen drive, as the home screen's Full
+    // Stick Backup card has it; null when it has none (yet).
+    readonly property var targetAdvice: root.backupAdvisor && root.backupAdvisor.advice && root.selectedDisk
+        && root.selectedDisk.mountPoint ? (root.backupAdvisor.advice[root.selectedDisk.mountPoint] || null) : null
+    readonly property bool targetChangedSinceBackup: root.targetAdvice !== null && root.targetAdvice.state === "outdated"
     readonly property bool archiveReady: root.info.label !== undefined && (!root.info.error || root.info.error.length === 0)
     // A drive not reported as removable media is asked about first (see
     // FixedDriveCheck), and its name is always typed: it may hold more
@@ -709,6 +719,17 @@ Page {
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 6
+                    // The home screen's line on the Full Stick Backup card,
+                    // here where it costs something: the stick holds changes
+                    // its backup does not, and this restore replaces them.
+                    WarningBanner {
+                        objectName: "changedSinceBackupBanner"
+                        visible: root.targetChangedSinceBackup
+                        text: root.targetChangedSinceBackup
+                            ? "Update the full stick backup: " + root.targetAdvice.detail
+                              + " Restoring now replaces those changes; back the stick up first to keep them."
+                            : ""
+                    }
                     GridLayout {
                         Layout.fillWidth: true
                         columns: 2
