@@ -546,6 +546,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/open_stick_backup.cpp
     src/application/use_cases/manage_stick_backups.cpp
     src/infrastructure/stick_backup/archive_anlz_source.cpp
+    src/infrastructure/rekordbox/anlz_builder.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_file.cpp
@@ -2408,6 +2409,12 @@ add_executable(waveform_from_audio_test tests/waveform_from_audio_test.cpp)
 target_include_directories(waveform_from_audio_test PRIVATE src)
 target_link_libraries(waveform_from_audio_test PRIVATE seabass_core)
 add_test(NAME waveform_from_audio_test COMMAND waveform_from_audio_test)
+
+add_executable(anlz_builder_test tests/anlz_builder_test.cpp)
+target_include_directories(anlz_builder_test PRIVATE src tests)
+target_link_libraries(anlz_builder_test PRIVATE seabass_core DjInterop)
+target_compile_definitions(anlz_builder_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME anlz_builder_test COMMAND anlz_builder_test)
 
 # Issue #38: how many tracks an Engine player will have to analyse. Takes
 # the fixture path, because its real distribution (1214 of 1564) is what
