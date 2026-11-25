@@ -925,6 +925,46 @@ which is why the tightness is alike. Whose grid slips is for his ear
 (the sample is with him); if it is ours, a followed grid wants a check
 of each stretch against the stretches around it.
 
+### Whose grid leaves the beat, and three things that did not mend it
+
+Beat This was asked as the third opinion on the 134 drifting tracks of
+the three sets of varied music: in each 15 seconds where the two grids
+are 60 ms or more apart on the middle beat, which grid has its beats
+(over 70 percent of them within 40 ms of one of the grid's).
+
+| On the drifting tracks | Our grid leaves the beat | rekordbox's does | Unclear | Never that far apart |
+|---|---|---|---|---|
+| Where our grid follows the tempo (86) | 48 | 7 | 23 | 8 |
+| Where ours is one straight grid (48) | 9 | 16 | 14 | 9 |
+
+So it is mostly our followed grid that leaves the beat for a stretch
+and comes back, on about a fifth of a track's stretches, and where we
+keep a straight grid it is more often rekordbox's Dynamic one that
+does. It is not yet confirmed by his ear; a sample of 20 is with him.
+
+What those stretches are, on the 86: 574 of them, four or five a
+track, twelve beats long at the middle. In 278 our grid runs at a
+tempo a few percent off rekordbox's there, which is a grid that has
+let go and floats until it locks on again; in 255 it holds the tempo
+with the phase a quarter, a third or half a beat off; in 41 it is at
+four thirds or one and a half times the tempo for the stretch.
+
+Three things were tried against it and none kept:
+
+- putting sections back that lie between two steps of about half a
+  beat, on the beat lists alone (130 sections on 58 tracks): 1066 for
+  1068 by the decisions, and our grid still leaves the beat on 46;
+- a stiffer path (its tightness 300 and 1000 for 100): 1067 and 1061,
+  our grid leaving the beat on 43 and 45;
+- more of the path's beats counted as unsure and spaced evenly (under
+  half of what is strong, not a quarter): 1064, and 49.
+
+The slips are not clean steps and not a matter of the path's
+constants. What is left to try is in the following itself: a stretch
+where the grid has little to go by keeps the tempo and the phase of
+what is around it, and takes a new phase only from a stretch that is
+sure of it.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
