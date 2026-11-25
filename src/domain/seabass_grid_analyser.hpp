@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <span>
+
 #include "domain/grid_analyser.hpp"
 
 namespace seabass::domain
@@ -110,6 +112,12 @@ public:
 
     std::string name() const override { return "seabass"; }
     GridAnalysis analyse(PcmSource &source) override;
+
+    // The same analysis of samples the caller holds already (mono, on the
+    // timeline the beats come back on), for one that needs them for
+    // something else as well, such as a waveform: they are read once and
+    // not kept. No samples, or no sample rate: the error says so.
+    GridAnalysis analyseSamples(std::span<const float> samples, int sampleRateHz) const;
 
     // The range in use: the one given, made valid.
     TempoRange tempoRange() const { return m_range; }

@@ -490,6 +490,7 @@ add_library(seabass_core STATIC
     src/domain/beat_grid_comparison.cpp
     src/domain/seabass_grid_analyser.cpp
     src/domain/waveform_from_audio.cpp
+    src/domain/audio_analysis.cpp
     src/domain/camelot_key.cpp
     src/domain/engine_overview.cpp
     src/domain/hidden_engine_cues.cpp

@@ -273,9 +273,9 @@ struct Onsets
 };
 
 // One value a millisecond: value i is at i ms on the source's timeline.
-// Takes the samples and lets go of them as soon as it has its own copy:
-// a track is held whole, and twice is once too many.
-Onsets onsetFunction(std::vector<float> samples, int sampleRate)
+// Reads the samples once, into a working copy of its own; whoever holds
+// them can let go of them as soon as this returns.
+Onsets onsetFunction(std::span<const float> samples, int sampleRate)
 {
     // A sample that is no number (a decoder's slip) is silence: left in,
     // the filters would spread it over the whole track.
@@ -283,7 +283,6 @@ Onsets onsetFunction(std::vector<float> samples, int sampleRate)
     for (std::size_t i = 0; i < samples.size(); ++i) {
         audio[i] = std::isfinite(samples[i]) ? static_cast<double>(samples[i]) : 0.0;
     }
-    samples = std::vector<float>();
     // Half the rate is enough for 5 kHz and halves the work: every other
     // sample of the audio, low-passed both ways first so nothing folds
     // down and nothing moves in time.
@@ -1537,23 +1536,18 @@ SeabassGridAnalyser::SeabassGridAnalyser(TempoRange range)
     m_range = range;
 }
 
-GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
+namespace
 {
-    GridAnalysis analysis;
-    const int rate = source.sampleRate();
-    std::vector<float> samples = readAllSamples(source);
-    if (!source.error().empty()) {
-        analysis.error = source.error();
-        return analysis;
-    }
-    if (rate <= 0 || samples.empty()) {
-        analysis.error = "no samples";
-        return analysis;
-    }
 
-    const Onsets both = onsetFunction(std::move(samples), rate);
+// The grid of a track from its onsets: all of the analysis after the
+// listening.
+GridAnalysis gridFromOnsets(const Onsets &both, const TempoRange &range)
+{
+    constexpr double FollowedGridEarlierMs = SeabassGridAnalyser::FollowedGridEarlierMs;
+    constexpr double StraightGridLaterMs = SeabassGridAnalyser::StraightGridLaterMs;
+    GridAnalysis analysis;
     const std::vector<double> &onsets = both.forBeat;
-    const Periods allowed = periodsOf(m_range);
+    const Periods allowed = periodsOf(range);
     // Under four beats of the slowest tempo there is nothing to repeat.
     if (static_cast<double>(onsets.size()) < 4.0 * std::max(static_cast<double>(LongestPeriodMs), allowed.longest)) {
         return analysis;
@@ -1746,7 +1740,40 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
         }
     }
     analysis.confidence = sure;
+    analysis.followsTempo = moves;
     return analysis;
+}
+
+}  // namespace
+
+GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
+{
+    const int rate = source.sampleRate();
+    std::vector<float> samples = readAllSamples(source);
+    GridAnalysis failed;
+    if (!source.error().empty()) {
+        failed.error = source.error();
+        return failed;
+    }
+    if (rate <= 0 || samples.empty()) {
+        failed.error = "no samples";
+        return failed;
+    }
+    // The samples go as soon as the onsets are read from them: a track is
+    // held whole, and twice is once too many.
+    const Onsets both = onsetFunction(samples, rate);
+    samples = std::vector<float>();
+    return gridFromOnsets(both, m_range);
+}
+
+GridAnalysis SeabassGridAnalyser::analyseSamples(std::span<const float> samples, int sampleRateHz) const
+{
+    if (sampleRateHz <= 0 || samples.empty()) {
+        GridAnalysis failed;
+        failed.error = "no samples";
+        return failed;
+    }
+    return gridFromOnsets(onsetFunction(samples, sampleRateHz), m_range);
 }
 
 }  // namespace seabass::domain

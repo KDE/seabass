@@ -21,6 +21,11 @@ struct GridAnalysis
     // 0 to 1. An analyser that cannot say gives 0; the benchmark reports
     // it beside the score and never weighs by it.
     double confidence = 0.0;
+    // The beats follow a tempo that moves: a list of beats whose spacing
+    // changes, where false means one tempo from one place, start to end.
+    // A followed grid is the one to look at before trusting it: on music
+    // with a steady tempo it is rarely needed.
+    bool followsTempo = false;
     // Empty when the analyser ran. A source that failed (PcmSource::error)
     // is reported here rather than as an empty grid, which would read as
     // "no beats in this track".

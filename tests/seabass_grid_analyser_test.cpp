@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "domain/audio_analysis.hpp"
 #include "domain/beat_grid_comparison.hpp"
 #include "domain/seabass_grid_analyser.hpp"
 #include "synth_track/synth_track.hpp"
@@ -71,6 +72,7 @@ void constantPreset(const std::string &name, double trueBpm)
     within(c.drift.ms, -2.0, 2.0, name + ": no drift over the track");
     within(c.cover, 0.98, 1.0, name + ": beats from the start of the track to its end");
     within(analysis.confidence, 0.5, 1.0, name + ": most windows agree with the grid");
+    check(!analysis.followsTempo, name + ": said to be one straight grid");
 }
 
 // A preset whose tempo moves: the grid found moves with it. `within8` and
@@ -91,6 +93,7 @@ void movingPreset(const std::string &name, double within8, double within20)
     within(given.offset.medianMs - c.offset.medianMs, -SeabassGridAnalyser::FollowedGridEarlierMs - 1e-6,
            -SeabassGridAnalyser::FollowedGridEarlierMs + 1e-6, name + ": given out 3 ms early");
     check(c.candidateShape.kind == GridShapeKind::Moving, name + ": a grid that moves");
+    check(analysis.followsTempo, name + ": said to follow the tempo");
     within(c.hits.within8Ms, within8, 1.0, name + ": true beats with one of ours within 8 ms");
     within(c.hits.within20Ms, within20, 1.0, name + ": true beats with one of ours within 20 ms");
     check(c.drift.known, name + ": the drift is known");
@@ -738,8 +741,51 @@ void aSampleThatIsNoNumber()
 
 }  // namespace
 
+// The one call a caller with decoded samples makes: the same grid as the
+// analyser gives a source, the tempo as one number, the waveform, and the
+// tempo range passed on.
+void theOneCall()
+{
+    const synth::SynthTrack house = synth::renderSynthTrack(*synth::synthPreset("house-124"));
+    const AudioAnalysis one = analyseAudio(house.samples, house.sampleRate);
+    const GridAnalysis fromSource = analysed(house);
+    check(one.grid.error.empty(), "the one call: no error");
+    check(one.grid.beats.size() == fromSource.beats.size() && !one.grid.beats.empty(),
+          "the one call: as many beats as the analyser gives a source");
+    bool same = one.grid.beats.size() == fromSource.beats.size();
+    for (std::size_t i = 0; same && i < one.grid.beats.size(); ++i) {
+        same = one.grid.beats[i].timeMs == fromSource.beats[i].timeMs;
+    }
+    check(same, "the one call: the same beats to the last digit");
+    within(one.bpm, 123.99, 124.01, "the one call: the tempo of a straight grid, not rounded");
+    check(!one.grid.followsTempo, "the one call: a straight grid is said to be one");
+    check(one.waveform.entries.size() == waveformEntryCount(house.samples.size(), house.sampleRate)
+              && !one.waveform.entries.empty(),
+          "the one call: a waveform of 150 entries a second");
+
+    const synth::SynthTrack drummer = synth::renderSynthTrack(*synth::synthPreset("live-drummer-96"));
+    const AudioAnalysis followed = analyseAudio(drummer.samples, drummer.sampleRate);
+    check(followed.grid.followsTempo, "the one call: a drummer's grid is said to follow the tempo");
+    within(followed.bpm, 90.0, 102.0, "the one call: a drummer's usual tempo");
+
+    // The range goes through: a kick at 170 BPM is at 170 or 85 in the
+    // default range and at a third or a quarter of it in 40 to 80.
+    const int rate = 44100;
+    std::vector<float> fast(static_cast<std::size_t>(rate) * 120, 0.0f);
+    for (double at = 0.3; at < 118.0; at += 60.0 / 170.0) {
+        addKick(fast, rate, at);
+    }
+    within(analyseAudio(fast, rate).bpm, 84.0, 171.0, "the one call: a kick at 170 in the default range");
+    within(analyseAudio(fast, rate, TempoRange{40.0, 80.0}).bpm, 40.0, 80.0, "the one call: the same kick in 40 to 80");
+
+    const AudioAnalysis nothing = analyseAudio({}, rate);
+    check(!nothing.grid.error.empty() && nothing.grid.beats.empty() && nothing.bpm == 0.0 && nothing.waveform.entries.empty(),
+          "the one call: no samples is an error, no grid, no tempo and no waveform");
+}
+
 int main()
 {
+    theOneCall();
     bassBetweenTheBeats();
     slowAndSparse();
     tempoRanges();
