@@ -881,6 +881,50 @@ of the 76 we have wrong it has 40 right, of the 107 it has wrong we
 have 71 right. An arbiter between the two would have to be right on
 two disagreements in three to gain anything; none is known yet.
 
+### When to follow: the two grids compared, and what "drifting" is
+
+Most of what the score still counts as wrong is not tempo: on 139
+tracks of the varied music our grid has rekordbox's tempo and beat,
+sits within 10 ms of it at the middle of the track, and the two run
+apart along it; on 43 more it sits over 10 ms off.
+
+Which grid sits on the hits there was measured (of a grid's beats with
+a strong onset within 50 ms, the share whose onset lies within 12 ms of
+that grid's usual place; on the tracks where the two grids agree it
+comes out alike for both on 168 of 191). Where our grid follows the
+tempo, the two are alike on 61 of 85 drifting tracks, ours the tighter
+on 10 and rekordbox's on 14. Where we kept one straight grid,
+rekordbox's is the tighter on 38 of 87 and ours on 7.
+
+So a run that followed every track was made and rules that choose per
+track between the committed grid and the followed one were tried on
+the pair, by the score above:
+
+| Rule | Right of 1327 | Collection, of 743 |
+|---|---|---|
+| Followed under three quarters explained (as it was) | 1061 | 732 |
+| Every track followed | 937 | 616 |
+| Followed wherever the followed grid is tighter by 0.12 | 1068 | 731 |
+| The straight grid's tightness alone, under 0.80, to 85 percent explained | 1066 | 732 |
+| To 85 percent explained, and the followed grid tighter by a tenth | 1068 | 732 |
+
+The last is in the analyser since commit 0b7cd1b2. It is a small
+change: seven tracks of the tuning halves, and on the held-back halves
+(totals only) the count within 10 ms stays at 826, one CD track more
+and one track of the collection fewer, while three in four of
+rekordbox's beats are within 10 ms of ours on five tracks more. One
+CD track whose grid he had approved by ear comes out followed now and
+is his to hear again.
+
+What the drifting tracks are came out of preparing excerpts for him to
+hear: in the 15 seconds where the two grids are furthest apart they
+are not a few tens of milliseconds apart but, on 16 of a sample of 20
+tracks, 100 to 330 ms: for a stretch one of the two grids is on the
+off-beat or between the beats, and comes back. Both sit on hits there,
+which is why the tightness is alike. Whose grid slips is for his ear
+(the sample is with him); if it is ours, a followed grid wants a check
+of each stretch against the stretches around it.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
