@@ -965,6 +965,73 @@ where the grid has little to go by keeps the tempo and the phase of
 what is around it, and takes a new phase only from a stretch that is
 sure of it.
 
+### The import uses the analysis: phases 4, 5 and 6 begun
+
+The track import (branch `track-import`, built on this one) analyses
+every file it puts on a stick. So that it gets each improvement by
+rebasing, the analysis has one home, here, and one call:
+`domain::analyseAudio()` takes a track's samples and the tempo range
+and gives the grid, its tempo as one number, the key and the waveform.
+
+- **Phase 4, a first version.** `domain/waveform_from_audio`: three
+  bands split at 150 Hz and 2 kHz, 150 entries a second, written for the
+  import and moved here. The bytes of rekordbox's PWV7 and PWV6 are low,
+  mid, high in that order; the public description of the format has
+  mid, high, low. Measured on 8 tracks: byte 0 follows the level below
+  150 Hz (0.87), byte 1 the middle (0.86), byte 2 above 2 kHz (0.88).
+- **Phase 6, a first version.** `infrastructure/rekordbox/anlz_builder`:
+  complete .DAT, .EXT and .2EX files from nothing, a tempo for every
+  beat. The colours of PWV4 and PWV5 and the values of PWVC are guesses.
+- **Phase 5, a first version.** `domain/key_from_audio`: the intake's
+  prototype in C++, its learned weights as they are (chroma from the
+  peaks of the spectrum in thirds of a semitone over five octaves, one
+  weight an octave and note for major and for minor, fitted to
+  rekordbox's keys on the tuning halves). The port gives the
+  prototype's key on 2,550 of 2,551 tracks. Held-back halves, the same
+  key as rekordbox: 848 of 1,245 (68.1 percent), where Mixxx's detector
+  has 53.6 percent; by set 68.6 (collection), 67.2, 67.9 and 67.4. Of
+  what it misses on the collection's held-back half, 52 are a fifth
+  away, 57 the parallel key, 7 the relative, 110 something else.
+- **The tempo range** is a setting (`music/analysisTempoRange`, four
+  ranges, 70 to 180 when nothing is set), in Preferences under
+  Experimental.
+
+**Nothing is lost on the way to the stick.** The 751 tracks of the
+collection's tuning half were imported into a folder standing in for a
+stick with the import's command line tool: 703 imported (48 are the
+same file as another), all with a grid, 28 of them followed, in 19
+minutes. Read back, the rekordbox grid on the stick is a fresh
+analysis's grid on every one of the 703: the same tempo, every beat
+within 1 ms (the file holds whole milliseconds), the MP3s' place on
+rekordbox's timeline included; and the Engine grid is the rekordbox
+grid, every beat within 2 ms.
+
+### When to follow, once more: nothing left in the rule
+
+Every track run with its straight grid only (`st1`), so that a rule
+which follows fewer tracks can be scored without the audio. By the
+decisions: as committed 1068, never following 977 (collection 725 for
+732), and the best rule found, not to follow where the straight grid
+already sits tight on the hits, 1069 with the collection at 733 and one
+approved grid lost. Not built.
+
+Of the 7 collection tracks we follow and he gave to rekordbox, our own
+straight grid is right on 2; the other 5 are wrong either way. What is
+left on the collection are 11 single tracks, not a rule.
+
+### rekordbox's beats to the microsecond: read 0.5 ms early so far
+
+PQTZ holds a beat in whole milliseconds; the .EXT's PQT2 holds the rest,
+in thousandths of one. With PQT2 added the beats of a straight grid lie
+on one line to 0.05 ms (300 tracks; with PQTZ alone to 0.53 ms), and
+PQT2's value is 0.5 ms at the mean. Our reader takes PQTZ alone, so
+every rekordbox grid in these measurements was read half a millisecond
+early at the mean: our grids are that much earlier against rekordbox
+than the tables say (1.9 ms at the middle, not 1.4), and a grid copied
+from rekordbox to Engine arrives that much early. To do before the
+beats are refined on the transient: read PQT2, measure again, calibrate
+again.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
