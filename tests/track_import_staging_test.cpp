@@ -317,6 +317,56 @@ int main(int argc, char **argv)
     }
     std::cout << "case 4d (Undo of the save that made the playlist: playlist, files and rows gone) OK\n";
 
+    // 4e. An export.pdb whose track table cannot start a new page (its
+    //     empty candidate is a page in use, as some real sticks have it):
+    //     the batch is rehearsed, the tracks the last page has no room
+    //     for are left out, and the save of the rest goes through instead
+    //     of failing at the first that does not fit and taking the ones
+    //     before it back.
+    {
+        const testing::EngineChangeStick full = testing::makeEngineChangeStick(fixture, "track_import_staging_full");
+        testing::levelImportCounter(full);
+        const fs::path pdbFile = full.pioneer / "rekordbox" / "export.pdb";
+        std::string pdb = testing::fileBytes(pdbFile);
+        const auto u32 = [&](size_t at) {
+            return static_cast<std::uint32_t>(static_cast<unsigned char>(pdb[at]) | (static_cast<unsigned char>(pdb[at + 1]) << 8)
+                                              | (static_cast<unsigned char>(pdb[at + 2]) << 16)
+                                              | (static_cast<unsigned char>(pdb[at + 3]) << 24));
+        };
+        for (std::uint32_t table = 0; table < u32(8); ++table) {
+            const size_t entry = 28 + 16 * table;
+            if (u32(entry) == 0) {
+                // empty_candidate: the table's own first page.
+                for (int i = 0; i < 4; ++i) {
+                    pdb[entry + 4 + i] = pdb[entry + 8 + i];
+                }
+            }
+        }
+        std::ofstream(pdbFile, std::ios::binary | std::ios::trunc) << pdb;
+        ImportTarget there{pathToQString(full.root), full.pioneerPath(), full.enginePath(), AllThree};
+        domain::ImportPlan many;
+        for (int i = 0; i < 30; ++i) {
+            const std::string name = "f" + std::to_string(i) + ".mp3";
+            many.entries.push_back(offer(computer, name, "F" + std::to_string(i), "Contents/Stager/Full/" + name));
+        }
+        const StagedImport fitted = stageTrackImport(many, there, tags, probe, "2026-11-25", std::nullopt);
+        assert(fitted.staged.size() + fitted.leftOut.size() == 30);
+        assert(!fitted.leftOut.empty() && fitted.staged.size() < 30 && "a page holds some ten track rows, not thirty");
+        for (const LeftOut &left : fitted.leftOut) {
+            assert(left.why.find("page") != std::string::npos);
+        }
+        assert(fitted.changes.size() == fitted.staged.size());
+        if (!fitted.changes.empty()) {
+            const SaveLoopResult savedFitted = testing::saveChanges(fitted.changes, full.pioneerPath(), full.enginePath());
+            if (!savedFitted.error.isEmpty()) {
+                std::cerr << "save: " << savedFitted.error.toStdString() << "\n";
+            }
+            assert(savedFitted.error.isEmpty() && savedFitted.appliedIds.size() == static_cast<qsizetype>(fitted.changes.size()));
+        }
+        std::cout << "case 4e (an export.pdb that cannot grow: " << fitted.staged.size() << " of 30 staged and saved, "
+                  << fitted.leftOut.size() << " left out before the save) OK\n";
+    }
+
     // 5. Nothing to stage is no change at all, not a lone playlist.
     domain::ImportPlan none;
     none.entries.push_back(offer(computer, "settled2.mp3", "Settled", "Contents/Stager/Staged/settled2.mp3"));

@@ -94,6 +94,43 @@ infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneLibraryRow(const do
 
 }  // namespace
 
+struct ImportRehearsal::Rows
+{
+    explicit Rows(const std::string &pdb)
+        : writer(pdb)
+    {
+    }
+    infrastructure::rekordbox::PdbRowWriter writer;
+};
+
+ImportRehearsal::ImportRehearsal(const QString &pioneerRoot)
+{
+    if (pioneerRoot.isEmpty()) {
+        return;
+    }
+    const std::string pdb = exportPdbUnder(pioneerRoot.toStdString());
+    std::error_code ec;
+    if (fs::is_regular_file(pathFromUtf8(pdb), ec)) {
+        m_rows = std::make_unique<Rows>(pdb);
+    }
+}
+
+ImportRehearsal::~ImportRehearsal() = default;
+
+std::string ImportRehearsal::add(const domain::ImportedTrack &track, std::uint64_t fileSizeBytes)
+{
+    if (!m_rows) {
+        return {};
+    }
+    try {
+        // Never committed: the writer's buffer is the rehearsal.
+        (void)m_rows->writer.addTrack(deviceLibraryRow(track, fileSizeBytes));
+    } catch (const std::exception &e) {
+        return e.what();
+    }
+    return {};
+}
+
 std::string ImportTrackChange::rowRefusal(const domain::ImportedTrack &track, const QStringList &libraries,
                                           std::uint64_t fileSizeBytes)
 {

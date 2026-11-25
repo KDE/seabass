@@ -73,6 +73,10 @@ struct StagedImport
 // back, so a file a library cannot list is left out here, with its
 // reason, instead of failing the save for the others.
 //
+// The batch is also rehearsed against the stick's export.pdb in memory
+// (ImportRehearsal), row after row in save order, so a track whose row
+// the file cannot take once the ones before it are in is left out too.
+//
 // A comment too long for export.pdb's page is cut to its first 250
 // characters rather than costing the track; the file's own tag is not
 // touched.

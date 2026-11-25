@@ -90,6 +90,8 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             return staged;
         }
     }
+    // The batch rehearsed against export.pdb as it is, row after row.
+    ImportRehearsal rehearsal(target.libraries.contains(QStringLiteral("rekordbox")) ? target.pioneerRoot : QString());
     std::vector<std::shared_ptr<ImportTrackChange>> imports;
     for (const auto &entry : plan.entries) {
         if (entry.verdict != domain::ImportVerdict::Import) {
@@ -137,6 +139,11 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         }
         if (!refusal.empty()) {
             leave(refusal);
+            continue;
+        }
+        // Last, so that only a track that is staged takes room in it.
+        if (const std::string full = rehearsal.add(track, audio.fileSizeBytes); !full.empty()) {
+            leave(full);
             continue;
         }
         try {

@@ -8,6 +8,7 @@
 #include <QStringList>
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "domain/imported_track.hpp"
@@ -51,6 +52,40 @@ namespace seabass::gui
 // Not this change's: playlists (AddToPlaylistChange and
 // EngineMembershipChange find the new rows by their file, staged after
 // this one and tied to it by unitKeys()), covers and analysis files.
+// A rehearsal of a batch of imports against the stick's export.pdb as it
+// is now: each track's row is added to a copy of the file in memory that
+// is never written, so what only the library can refuse a row for, and
+// only once the rows before it are in (the last page filling up where no
+// new page can be started, a lookup table that cannot take another
+// name), is known when the batch is staged. A failed change takes the
+// whole save back, so the one track that cannot go in must not be staged
+// with the forty that can.
+//
+// Reads the file once, at construction; writes nothing, ever. A stick
+// without export.pdb rehearses nothing and refuses nothing. The other
+// two libraries have no state of this kind: what they refuse a row for
+// beyond its own contents is the library as a whole (a schema, a missing
+// row), which the first change of a save meets with nothing yet to lose.
+class ImportRehearsal
+{
+public:
+    // pioneerRoot: empty, or a folder without rekordbox/export.pdb, for a
+    // stick without DeviceLibrary. Throws when the file is there and
+    // cannot be read as one.
+    explicit ImportRehearsal(const QString &pioneerRoot);
+    ~ImportRehearsal();
+    ImportRehearsal(const ImportRehearsal &) = delete;
+    ImportRehearsal &operator=(const ImportRehearsal &) = delete;
+
+    // Adds `track`'s row to the rehearsal copy. Empty when it went in;
+    // otherwise why not, and the copy is as it was before the call.
+    std::string add(const domain::ImportedTrack &track, std::uint64_t fileSizeBytes);
+
+private:
+    struct Rows;
+    std::unique_ptr<Rows> m_rows;
+};
+
 class ImportTrackChange : public PendingChange
 {
 public:
