@@ -535,6 +535,105 @@ TestCase {
         }
     }
 
+    // #113: a restore that landed whole is said with the toast, and no
+    // "Done" dialog has to be clicked away. One track, on the writable
+    // copy of the anonymized library, through a real save.
+    function test_aWholeRestoreIsAToastNotADialog() {
+        const fixture = decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+            .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+        const prepared = metadataRestoreFixture.prepareFromLibrary(fixture);
+        verify(prepared > 0, "the fixture must offer tracks back, got " + prepared);
+        const stick = metadataRestoreFixture.stickRoot();
+        const rekordboxPath = stick + "/PIONEER";
+        const libraryId = EditSessionRegistry.libraryIdForPath(rekordboxPath);
+        verify(libraryId.length > 0, "the stick-shaped copy has a library id");
+        const page = make({stickLabel: "FIXTURE", rekordboxPath: rekordboxPath,
+                           enginePath: stick + "/Engine Library", libraryId: libraryId});
+        const controller = page.controller;
+        tryVerify(() => !controller.busy, 60000);
+        verify(metadataRestoreFixture.applyPrepared(controller));
+        try {
+            for (let row = 0; row < controller.proposalCount && controller.stagedCount === 0; ++row) {
+                controller.stage(row);
+            }
+            compare(controller.stagedCount, 1, "precondition: one track staged");
+            const session = EditSessionRegistry.sessionFor(libraryId, "FIXTURE");
+            verify(session !== null);
+            const dialog = findChild(page, "summaryDialog");
+            verify(dialog !== null);
+            let dialogShown = false;
+            dialog.aboutToShow.connect(() => { dialogShown = true; });
+            const toast = findChild(page, "savedToast");
+            verify(toast !== null, "the page has a saved toast");
+            toast.duration = 600000;
+            let summary = null;
+            const done = (result) => { summary = result; };
+            session.saveFinished.connect(done);
+            try {
+                session.save();
+                tryVerify(() => summary !== null, 300000, "the save finishes");
+            } finally {
+                session.saveFinished.disconnect(done);
+            }
+            compare(summary.error || "", "", "precondition: the save landed");
+            compare(summary.written, 1, "precondition: one track written");
+            tryCompare(toast, "showing", true, 2000);
+            compare(toast.text, "1 track restored");
+            wait(100);
+            compare(dialogShown, false, "no Done dialog for a restore that went through");
+            compare(dialog.opened, false);
+        } finally {
+            EditSessionRegistry.closeSession(libraryId);
+        }
+    }
+
+    // Back with a track staged, Restore in the unsaved-changes dialog, and
+    // a clean save: the page is gone by then, so the page now showing says
+    // it rather than nothing confirming it at all.
+    Component {
+        id: belowComponent
+        Item {
+            property string said: ""
+            function sayDone(text) { said = text; }
+        }
+    }
+    Component {
+        id: stackComponent
+        StackView { width: 880; height: 660 }
+    }
+
+    function test_aRestoreOnLeavingIsSaidOnThePageBelow() {
+        const fixture = decodeURIComponent(Qt.resolvedUrl("../fixtures/anonymized_library").toString()
+            .replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+        verify(metadataRestoreFixture.prepareFromLibrary(fixture) > 0);
+        const stick = metadataRestoreFixture.stickRoot();
+        const rekordboxPath = stick + "/PIONEER";
+        const libraryId = EditSessionRegistry.libraryIdForPath(rekordboxPath);
+        const stack = createTemporaryObject(stackComponent, testCase);
+        const below = stack.push(belowComponent);
+        const page = stack.push(pageComponent, {stickLabel: "FIXTURE", rekordboxPath: rekordboxPath,
+                                                enginePath: stick + "/Engine Library", libraryId: libraryId});
+        tryCompare(stack, "busy", false, 5000);
+        const controller = page.controller;
+        tryVerify(() => !controller.busy, 60000);
+        verify(metadataRestoreFixture.applyPrepared(controller));
+        try {
+            for (let row = 0; row < controller.proposalCount && controller.stagedCount === 0; ++row) {
+                controller.stage(row);
+            }
+            compare(controller.stagedCount, 1, "precondition: one track staged");
+            const host = findChild(page, "metadataRestoreEditHost");
+            host.requestLeave(() => page.StackView.view.pop());
+            const unsaved = findChild(page, "unsavedDialog");
+            tryCompare(unsaved, "opened", true, 2000);
+            unsaved.saveRequested();
+            tryCompare(stack, "depth", 1, 300000, "the restore lands and the page goes");
+            tryCompare(below, "said", "1 track restored", 2000, "and the page below says so");
+        } finally {
+            EditSessionRegistry.closeSession(libraryId);
+        }
+    }
+
     function test_headerTextLinesUpWithTheBody() {
         var page = make();
         var crumbText = null;

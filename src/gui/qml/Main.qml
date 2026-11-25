@@ -121,6 +121,21 @@ ApplicationWindow {
             quitDialog.open();
         }
     }
+
+    // A save that landed whole as its page was left (Save in the unsaved-
+    // changes dialog) and that the page now showing cannot say itself:
+    // said over the window, so a clean save always confirms somewhere.
+    ConfirmationToast {
+        id: windowToast
+        objectName: "windowToast"
+        parent: window.contentItem
+        z: 1100
+        anchors.centerIn: parent
+    }
+    function sayDone(text) {
+        windowToast.show(text);
+    }
+
     function quitNow() {
         window.quitting = true;
         window.close();

@@ -6,6 +6,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import SeabassGui
+import "common/SaveSummary.js" as SaveSummary
 
 // Restore Metadata: put the cues from this computer's metadata store
 // back on a stick that has lost them.
@@ -115,6 +116,7 @@ Page {
 
     EditSessionHost {
         id: editHost
+        objectName: "metadataRestoreEditHost"
 
         // Cancel on the low-space question leaves, as Back does -- see
 
@@ -131,6 +133,40 @@ Page {
         // "Save" is right on a page where you have been editing; here
         // the whole page is one verb, and it is this one.
         saveLabel: "Restore"
+        // A restore that landed whole is said with the toast below; only
+        // one that failed, was cancelled, skipped something or came back
+        // with a warning or notes opens the summary, which has to be read.
+        quietCleanSaves: true
+    }
+
+    // A restore that landed whole, said over the page for a moment in the
+    // summary's own words ("12 tracks restored"), as the other pages do.
+    ConfirmationToast {
+        id: savedToast
+        objectName: "savedToast"
+        parent: root
+        z: 1100
+        anchors.centerIn: parent
+    }
+    Connections {
+        target: editHost.session
+        ignoreUnknownSignals: true
+        function onSaveFinished(summary) {
+            // The page may be gone by the time this runs (a save finishing
+            // as the user leaves), and root is null then.
+            Qt.callLater(() => { if (root) { root.sayWholeSave(summary); } });
+        }
+    }
+    function sayWholeSave(summary) {
+        if (!summary || !(summary.written > 0) || !editHost.landsQuietly(summary)) {
+            return;
+        }
+        // Left on Save in the unsaved-changes dialog: the host says it
+        // where the user now is.
+        if (root.StackView.view && root.StackView.status !== StackView.Active) {
+            return;
+        }
+        savedToast.show(SaveSummary.wholeSaveText(summary));
     }
 
     MessagePopup { id: messagePopup }

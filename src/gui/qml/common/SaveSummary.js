@@ -21,3 +21,22 @@ function isUndo(summary) {
 function undoneText() {
     return "Changes undone.";
 }
+
+// What a page's toast says for a save that landed whole, in the summary's
+// own words: "6 settings saved", "1 track restored", "3 tracks repaired,
+// 2 unused cover rows removed", or the undo's. The
+// unit is plural and one of them reads as one, by the rule
+// OperationSummaryDialog uses.
+function wholeSaveText(summary) {
+    if (isUndo(summary)) {
+        return undoneText();
+    }
+    let unit = summary.unit;
+    if (summary.written === 1) {
+        unit = unit.endsWith("ies") ? unit.substring(0, unit.length - 3) + "y"
+            : unit.endsWith("s") ? unit.substring(0, unit.length - 1) : unit;
+    }
+    // Informational clauses (SaveContext::addSummaryInfo) after the count.
+    const clauses = summary.infoClauses ? Array.from(summary.infoClauses) : [];
+    return [summary.written + " " + unit + " " + summary.verb].concat(clauses).join(", ");
+}

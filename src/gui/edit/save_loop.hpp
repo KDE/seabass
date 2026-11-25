@@ -40,6 +40,10 @@ struct SaveLoopResult
     // SaveContext::addSummaryNote(), in order: said with the summary of a
     // save whose changes stand; empty after one that went back.
     QStringList notes;
+    // SaveContext::addSummaryInfo(): informational sentences and the
+    // clauses a toast says them in. Empty after a save that went back.
+    QStringList info;
+    QStringList infoClauses;
     bool cancelled = false;  // stopped between two changes on request
     // The save failed and everything it had written went back: the stick
     // is as it was before it, and every change is still pending. A save

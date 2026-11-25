@@ -510,6 +510,8 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
 
     if (!ctx.saveFailed() && !finish.error) {
         result.notes = ctx.summaryNotes();
+        result.info = ctx.summaryInfo();
+        result.infoClauses = ctx.summaryInfoClauses();
     }
     ctx.progress().tick(total);
     ctx.progress().finish();

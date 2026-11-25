@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 
@@ -421,6 +422,77 @@ TestCase {
             env.session.discard();
             EditSessionRegistry.mediaController = null;
         }
+    }
+
+    // #113: a save that landed whole is said with the toast, as the other
+    // pages say theirs, and no "Done" dialog has to be clicked away.
+    function test_aWholeSaveIsAToastNotADialog() {
+        const env = stagedOnACopy();
+        let summary = null;
+        const done = (result) => { summary = result; };
+        env.session.saveFinished.connect(done);
+        env.session.save();
+        tryVerify(() => summary !== null, 60000, "the save finishes");
+        env.session.saveFinished.disconnect(done);
+        compare(summary.error || "", "", "precondition: the save landed");
+        compare(summary.written, 1);
+        const toast = findChild(env.page, "savedToast");
+        verify(toast !== null, "the page has a saved toast");
+        tryCompare(toast, "showing", true, 2000);
+        compare(toast.text, "1 setting saved");
+        const dialog = findChild(env.page, "summaryDialog");
+        verify(dialog !== null);
+        wait(100);
+        compare(dialog.opened, false, "no Done dialog for a save that went through");
+        compare(dialog.visible, false);
+        // And the page shows what the stick now holds.
+        tryVerify(() => !env.controller.busy && env.controller.pendingCount === 0, 5000);
+        compare(fieldIn(env.controller, env.target.fileName, env.target.label).value, env.target.other);
+    }
+
+    // Back with a change staged, Save in the unsaved-changes dialog, and a
+    // clean save: the page is gone by the time the save is over, so the
+    // confirmation is said by the page now showing, not lost with it.
+    Component {
+        id: belowComponent
+        Item {
+            property string said: ""
+            function sayDone(text) { said = text; }
+        }
+    }
+    Component {
+        id: stackComponent
+        StackView { width: 980; height: 780 }
+    }
+
+    function test_aSaveOnLeavingIsSaidOnThePageBelow() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const stack = createTemporaryObject(stackComponent, testCase);
+        const below = stack.push(belowComponent);
+        const page = stack.push(pageComponent, {pioneerRoot: stick + "/PIONEER"});
+        tryCompare(stack, "busy", false, 5000);
+        const controller = findChild(page, "settingsController");
+        tryVerify(() => controller.groups.length > 0 && !controller.busy, 5000);
+        let target = null;
+        for (let g = 0; g < controller.groups.length && target === null; ++g) {
+            for (const field of controller.groups[g].fields) {
+                if (field.isSwitch && field.options.indexOf(field.value) >= 0) {
+                    target = field;
+                    break;
+                }
+            }
+        }
+        verify(target !== null);
+        controller.setField(target.fileName, target.label, target.value === "on" ? "off" : "on");
+        compare(controller.pendingCount, 1);
+        const host = findChild(page, "settingsEditHost");
+        host.requestLeave(() => page.StackView.view.pop());
+        const unsaved = findChild(page, "unsavedDialog");
+        tryCompare(unsaved, "opened", true, 2000);
+        unsaved.saveRequested();
+        tryCompare(stack, "depth", 1, 60000, "the save lands and the page goes");
+        tryCompare(below, "said", "1 setting saved", 2000, "and the page below says so");
     }
 
     function test_screenshot() {

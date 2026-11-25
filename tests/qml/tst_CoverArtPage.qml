@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import SeabassGui
 import "Breadcrumb.js" as Breadcrumb
@@ -405,6 +406,170 @@ TestCase {
         verify(headline.text.indexOf("can find it") < 0, "it does not claim every cover is found: " + headline.text);
         verify(headline.text.indexOf(String(controller.artworkUncheckedCount)) >= 0,
                "it counts the covers it could not check: " + headline.text);
+    }
+
+    // #113: the fix saved whole opens no "Done" dialog to click away. The
+    // page goes back to the hub at once, the way it used to after the
+    // dialog, and the hub says what was written with its toast. On a copy
+    // of the fixture, through a real save, from a real hub.
+    PlaybackController { id: realPlayback }
+    Component {
+        id: hubComponent
+        LibraryHealthHubPage {
+            playbackController: realPlayback
+            stickLabel: "REPAIRABLE"
+            rekordboxPath: ""
+            enginePath: testCase.repairableLibrary
+        }
+    }
+    Component {
+        id: stackComponent
+        StackView {
+            width: 980
+            height: 660
+        }
+    }
+
+    // What the toast says for a repair: the count, then what the repair
+    // also tidied away (the cover rows it left unused, summary.infoClauses),
+    // which is information and keeps the save quiet. The fixture's repair
+    // leaves rows unused, so there is a clause to say.
+    function repairedText(summary) {
+        verify(summary.infoClauses && summary.infoClauses.length > 0,
+               "precondition: the repair removed unused cover rows: " + JSON.stringify(summary));
+        verify(!(summary.notes && summary.notes.length > 0), "and left no note to read: " + summary.notes);
+        return [summary.written + " " + (summary.written === 1 ? "track" : "tracks") + " repaired"]
+            .concat(Array.from(summary.infoClauses)).join(", ");
+    }
+
+    // Which outcome keeps a whole save quiet is the kind of what it says,
+    // not its words: unused cover rows removed is information, said in
+    // the toast; cover files that could not be removed is a note to read,
+    // and opens the summary dialog.
+    function test_informationKeepsASaveQuietAWarningDoesNot() {
+        const page = createTemporaryObject(pageComponent, testCase);
+        const host = findChild(page, "coverArtEditHost");
+        const whole = {written: 3, total: 3, unit: "tracks", verb: "repaired", error: "", warning: "",
+                       cancelled: false, skipped: 0, notes: "",
+                       info: "Removed 2 cover row(s) that no track used any more.",
+                       infoClauses: ["2 unused cover rows removed"]};
+        verify(host.landsQuietly(whole), "information alone keeps it quiet");
+        const warned = Object.assign({}, whole, {
+            notes: "Could not remove 1 cover file(s) that no row names any more: a.jpg."});
+        verify(!host.landsQuietly(warned), "a note to read opens the dialog");
+    }
+
+    function test_aWholeSaveGoesBackToTheHubWithAToastNotADialog() {
+        testCase.repairableLibrary = artworkFixture.libraryWithRepairableArt(testCase.fixtureEngineRoot);
+        verify(testCase.repairableLibrary.length > 0, "the fixture library must be built");
+        const stack = createTemporaryObject(stackComponent, testCase);
+        const hub = stack.push(hubComponent);
+        verify(hub !== null, "the hub did not instantiate");
+        tryVerify(() => hub.scanned, 300000, "the hub's scan must finish");
+        const page = stack.push(repairablePageComponent, {sharedController: hub.consistencyController});
+        verify(page !== null, "the page did not instantiate");
+        tryCompare(stack, "busy", false, 5000);
+        const controller = page.consistencyController;
+        verify(controller.artworkRepairableCount > 0, "precondition: art Seabass can copy in");
+        findChild(page, "fixCoverArtButton").clicked();
+        compare(controller.artworkRepairStaged, true, "precondition: the fix is staged");
+
+        const libraryId = EditSessionRegistry.libraryIdForPath(testCase.repairableLibrary);
+        const session = EditSessionRegistry.sessionFor(libraryId);
+        verify(session !== null, "staging opened the session");
+        const dialog = findChild(page, "summaryDialog");
+        verify(dialog !== null);
+        let dialogShown = false;
+        dialog.aboutToShow.connect(() => { dialogShown = true; });
+        const toast = findChild(hub, "savedToast");
+        verify(toast !== null, "the hub has a saved toast");
+        toast.duration = 600000;
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        try {
+            session.save();
+            tryVerify(() => summary !== null, 300000, "the save finishes");
+        } finally {
+            session.saveFinished.disconnect(done);
+        }
+        compare(summary.error || "", "", "precondition: the save landed");
+        verify(summary.written > 0 && summary.written === summary.total, "precondition: it landed whole");
+        tryCompare(stack, "depth", 1, 5000, "back on the hub without a click");
+        compare(dialogShown, false, "no Done dialog for a save that went through");
+        tryCompare(toast, "showing", true, 2000);
+        compare(toast.text, testCase.repairedText(summary));
+        EditSessionRegistry.closeSession(libraryId);
+    }
+
+    // Back with the fix staged, Save in the unsaved-changes dialog, and a
+    // clean save: the leave itself goes back to the hub, and the page must
+    // not go back once more on top of it (it used to land a page short of
+    // the hub, on whatever was under it). The toast shows on the hub.
+    Component {
+        id: underHubComponent
+        Item {
+            property string said: ""
+            function sayDone(text) { said = text; }
+        }
+    }
+
+    function saveOnLeaving(home) {
+        testCase.repairableLibrary = artworkFixture.libraryWithRepairableArt(testCase.fixtureEngineRoot);
+        verify(testCase.repairableLibrary.length > 0, "the fixture library must be built");
+        const stack = createTemporaryObject(stackComponent, testCase);
+        const under = stack.push(underHubComponent);
+        const hub = stack.push(hubComponent);
+        tryVerify(() => hub.scanned, 300000, "the hub's scan must finish");
+        const page = stack.push(repairablePageComponent, {sharedController: hub.consistencyController});
+        tryCompare(stack, "busy", false, 5000);
+        compare(stack.depth, 3);
+        const controller = page.consistencyController;
+        findChild(page, "fixCoverArtButton").clicked();
+        compare(controller.artworkRepairStaged, true, "precondition: the fix is staged");
+        const libraryId = EditSessionRegistry.libraryIdForPath(testCase.repairableLibrary);
+        const session = EditSessionRegistry.sessionFor(libraryId);
+        const toast = findChild(hub, "savedToast");
+        toast.duration = 600000;
+
+        // Back or Home, as the breadcrumb does them.
+        const host = findChild(page, "coverArtEditHost");
+        host.requestLeave(() => home ? page.StackView.view.pop(null) : page.StackView.view.pop());
+        const unsaved = findChild(page, "unsavedDialog");
+        tryCompare(unsaved, "opened", true, 2000);
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        try {
+            unsaved.saveRequested();
+            tryVerify(() => summary !== null, 300000, "the save finishes");
+        } finally {
+            session.saveFinished.disconnect(done);
+        }
+        verify(summary.written > 0 && summary.written === summary.total, "precondition: it landed whole");
+        tryCompare(stack, "busy", false, 5000);
+        wait(200);
+        const said = testCase.repairedText(summary);
+        if (home) {
+            compare(stack.depth, 1, "Home, and no further");
+            compare(under.said, said, "the page now showing says the save");
+        } else {
+            compare(stack.depth, 2, "back one page, not two");
+            verify(stack.currentItem === hub, "on the hub");
+            tryCompare(toast, "showing", true, 2000);
+            compare(toast.text, said);
+        }
+        EditSessionRegistry.closeSession(libraryId);
+    }
+
+    function test_saveOnLeavingLandsOnTheHubOnce() {
+        saveOnLeaving(false);
+    }
+
+    // Home rather than Back: the page showing then is Home's, and the
+    // save is said there, not lost with the page that made it.
+    function test_saveOnGoingHomeIsSaidWhereTheUserLands() {
+        saveOnLeaving(true);
     }
 
     // Pushed from the Library Health hub only: Home > stick > Library
