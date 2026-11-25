@@ -8,6 +8,7 @@
 #include <string>
 
 #include "application/ports/cancellation_token.hpp"
+#include "domain/seabass_grid_analyser.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
 
 namespace seabass::gui
@@ -15,9 +16,8 @@ namespace seabass::gui
 
 // Seabass's own analysis of an audio file for the track import, a test
 // version: the file is decoded once (QtMultimediaPcmSource, whole into
-// memory: about 10 MB a minute), the beat grid is
-// domain::SeabassGridAnalyser's with its default tempo range, the
-// waveform domain::waveformFromSamples'. Null when the file cannot be
+// memory: about 10 MB a minute) and given to domain::analyseAudio,
+// which makes grid, tempo and waveform. Null when the file cannot be
 // decoded, or this build has no decoder. A grid the analyser could not
 // make leaves the waveform alone in the result.
 //
@@ -29,7 +29,11 @@ namespace seabass::gui
 // asked between the steps, not inside them.
 constexpr int ImportAnalysisMaxSeconds = 20 * 60;
 
+//
+// `range`: the tempos a grid may have (domain::TempoRange); the default
+// until Preferences has a setting for it.
 std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioFile,
-                                                       const application::CancellationToken &cancel);
+                                                       const application::CancellationToken &cancel,
+                                                       domain::TempoRange range = {});
 
 }  // namespace seabass::gui

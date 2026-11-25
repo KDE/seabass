@@ -272,6 +272,9 @@ Page {
                             : qsTr("Seabass analysed %1 of them, %2 with a beat grid (a test version).")
                                 .arg(outcome.analysed).arg(outcome.withGrid ?? 0))
                 : "")
+            + ((outcome.followedGrids ?? []).length > 0
+                ? "\n\n" + qsTr("The tempo of %n of them moves, so their grid follows it. Check these on the player: %1",
+                                 "", outcome.followedGrids.length).arg(outcome.followedGrids.join(", ")) : "")
             + (staged > 0 && added > 0
                 ? "\n\n" + qsTr("%n more are on the stick already and go into the playlist too.", "", added) : "")
             + ((outcome.note ?? "").length > 0 ? (staged + added > 0 ? "\n\n" : "") + outcome.note : "")

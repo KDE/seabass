@@ -63,6 +63,9 @@ struct PreparedImport
     // beat grid in it.
     int analysed = 0;
     int withGrid = 0;
+    // The staged files whose grid follows a moving tempo, by name: the
+    // ones to look at.
+    std::vector<std::string> followedGrids;
 };
 
 // How far the preparing of an import is, for a bar that is not in the

@@ -272,13 +272,15 @@ TestCase {
 
         // Tracks the stick already has, on their way into the playlist:
         // said beside the new ones, and alone when there are no new ones.
-        fake.lastResult = {staged: 1, addedToPlaylist: 2, analysed: 1, withGrid: 1, megabytes: 3, playlist: "Peak",
+        fake.lastResult = {staged: 1, addedToPlaylist: 2, analysed: 1, withGrid: 1, followedGrids: ["live.flac"],
+                           megabytes: 3, playlist: "Peak",
                            playlistIsNew: false, note: "",
                            notImported: [], possibleDuplicates: 0};
         fake.resultReady();
         tryCompare(dialog, "opened", true);
         verify(dialog.detailText.indexOf("2 more are on the stick already") > 0, dialog.detailText);
         verify(dialog.detailText.indexOf("each has a beat grid and waveforms") > 0, dialog.detailText);
+        verify(dialog.detailText.indexOf("Check these on the player: live.flac") > 0, dialog.detailText);
         dialog.close();
         tryCompare(dialog, "visible", false);
         fake.lastResult = {staged: 0, addedToPlaylist: 2, megabytes: 0, playlist: "Peak", playlistIsNew: false, note: "",

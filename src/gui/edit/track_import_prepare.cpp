@@ -352,6 +352,9 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
             if (auto analysis = request.analyser(source, cancel)) {
                 ++prepared.analysed;
                 prepared.withGrid += analysis->beats.empty() ? 0 : 1;
+                if (analysis->followsTempo && !analysis->beats.empty()) {
+                    prepared.followedGrids.push_back(nameOf(source));
+                }
                 imports[i]->setAnalysis(std::move(analysis));
             }
         }

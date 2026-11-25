@@ -148,6 +148,9 @@ struct ImportAnalysis
     double bpm = 0.0;
     // As the analyser gives it, 0 to 1.
     double confidence = 0.0;
+    // The grid follows a tempo that moves (GridAnalysis::followsTempo):
+    // one to look at before it is trusted.
+    bool followsTempo = false;
 };
 
 // Decodes and analyses a file; null when it cannot be decoded. Given from

@@ -247,7 +247,9 @@ bool TrackImportController::start(ImportRequest request)
         }
     }
     request.coverReader = readCoverPictures;
-    request.analyser = analyseForImport;
+    request.analyser = [](const std::string &file, const application::CancellationToken &cancel) {
+        return analyseForImport(file, cancel);
+    };
     request.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();
     m_joining = joins;
     m_joined = joins ? m_staged : std::set<QString>();
@@ -380,6 +382,10 @@ void TrackImportController::onPrepared()
         ++m_pendingRevision;
         emit pendingChanged();
     }
+    QStringList followed;
+    for (const std::string &name : prepared.followedGrids) {
+        followed << QString::fromStdString(name);
+    }
     m_lastResult = QVariantMap{
         {QStringLiteral("staged"), stagedTracks},
         {QStringLiteral("addedToPlaylist"), stagedTracks > 0 || !prepared.staged.changes.empty()
@@ -387,6 +393,7 @@ void TrackImportController::onPrepared()
                                                 : 0},
         {QStringLiteral("analysed"), prepared.analysed},
         {QStringLiteral("withGrid"), prepared.withGrid},
+        {QStringLiteral("followedGrids"), followed},
         {QStringLiteral("megabytes"), static_cast<double>(prepared.bytesToCopy) / (1024.0 * 1024.0)},
         {QStringLiteral("playlist"), playlist},
         {QStringLiteral("playlistIsNew"), isNew},

@@ -67,7 +67,8 @@ class TrackImportController : public QObject
     // What the last import asked for came to, as {staged, addedToPlaylist
     // (tracks the stick already has, staged to go into the playlist),
     // analysed and withGrid (of the staged tracks: how many Seabass
-    // analysed, and how many of those got a beat grid), megabytes,
+    // analysed, and how many of those got a beat grid), followedGrids
+    // (the names of those whose grid follows a moving tempo), megabytes,
     // playlist, playlistIsNew, note, notImported: [{name, why}],
     // possibleDuplicates}: `staged` tracks are in the session, the
     // `notImported` ones are not, `possibleDuplicates` of those may be

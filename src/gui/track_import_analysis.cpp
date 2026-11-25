@@ -4,12 +4,9 @@
 
 #include "track_import_analysis.hpp"
 
-#include <algorithm>
 #include <vector>
 
-#include "domain/pcm_source.hpp"
-#include "domain/seabass_grid_analyser.hpp"
-#include "domain/waveform_from_audio.hpp"
+#include "domain/audio_analysis.hpp"
 
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
@@ -19,7 +16,8 @@ namespace seabass::gui
 {
 
 std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioFile,
-                                                       const application::CancellationToken &cancel)
+                                                       const application::CancellationToken &cancel,
+                                                       domain::TempoRange range)
 {
 #ifdef SEABASS_HAVE_QT_AUDIO
     cancel.throwIfCancelled();
@@ -48,29 +46,23 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
             return nullptr;
         }
     }
-    auto analysis = std::make_shared<ImportAnalysis>();
-    analysis->waveform = domain::waveformFromSamples(samples, rate);
     cancel.throwIfCancelled();
-
-    domain::InMemoryPcmSource source(std::move(samples), rate);
-    domain::GridAnalysis grid = domain::SeabassGridAnalyser().analyse(source);
-    if (grid.error.empty() && grid.beats.size() >= 2) {
-        std::vector<double> gaps;
-        for (std::size_t i = 1; i < grid.beats.size(); ++i) {
-            gaps.push_back(grid.beats[i].timeMs - grid.beats[i - 1].timeMs);
-        }
-        std::nth_element(gaps.begin(), gaps.begin() + static_cast<std::ptrdiff_t>(gaps.size() / 2), gaps.end());
-        const double gap = gaps[gaps.size() / 2];
-        if (gap > 0.0) {
-            analysis->bpm = 60000.0 / gap;
-            analysis->beats = std::move(grid.beats);
-            analysis->confidence = grid.confidence;
-        }
+    // The one call the analyser's own tools use: grid, tempo and waveform
+    // from the samples, read once.
+    domain::AudioAnalysis made = domain::analyseAudio(samples, rate, range);
+    auto analysis = std::make_shared<ImportAnalysis>();
+    analysis->waveform = std::move(made.waveform);
+    if (made.grid.error.empty() && made.bpm > 0.0) {
+        analysis->beats = std::move(made.grid.beats);
+        analysis->bpm = made.bpm;
+        analysis->confidence = made.grid.confidence;
+        analysis->followsTempo = made.grid.followsTempo;
     }
     return analysis;
 #else
     (void)audioFile;
     (void)cancel;
+    (void)range;
     return nullptr;
 #endif
 }

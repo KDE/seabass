@@ -529,10 +529,15 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     const bool isMp3 = domain::hasMp3Extension(source);
     if (m_analysis && !m_analysis->waveform.entries.empty()) {
         const std::optional<double> offset = infrastructure::audio::cueTimelineOffsetMs(source);
+        const double lengthMs = m_analysis->waveform.sampleRateHz > 0
+                                    ? 1000.0 * static_cast<double>(m_analysis->waveform.sampleCount)
+                                          / m_analysis->waveform.sampleRateHz
+                                    : m_track.durationSeconds * 1000.0;
         if (offset) {
             for (domain::Beat beat : m_analysis->beats) {
                 beat.timeMs += *offset;
-                if (beat.timeMs >= 0.0) {
+                // Inside the track: the builder does not ask.
+                if (beat.timeMs >= 0.0 && beat.timeMs <= lengthMs) {
                     rekordboxBeats.push_back(beat);
                 }
             }
