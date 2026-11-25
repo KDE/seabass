@@ -263,6 +263,8 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
     m_stickLabel = stickLabel;
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
+    m_strongIdAtRead = EditSessionRegistry::instance()->strongStickIdentityAt(
+        EditSessionRegistry::instance()->mountPointForPath(!enginePath.isEmpty() ? enginePath : rekordboxPath));
     const QString root = stickRoot();
     if (root.isEmpty()) {
         setError(QStringLiteral("This stick has no library folder to find its root from."));
@@ -358,9 +360,13 @@ void RecordingsController::deleteSelected()
     // take: another instance editing this stick's library holds it off.
     const QString libraryId =
         EditSessionRegistry::instance()->libraryIdForPath(!m_enginePath.isEmpty() ? m_enginePath : m_rekordboxPath);
-    if (auto refusal = m_writeHold.acquire({libraryId}, m_stickLabel)) {
+    if (auto refusal = m_writeHold.acquire({libraryId}, m_stickLabel, {},
+                                           {!m_enginePath.isEmpty() ? m_enginePath : m_rekordboxPath}, {m_strongIdAtRead})) {
         if (refusal->showsLockedDialog()) {
             emit lockRefused(refusal->holder);
+        } else if (refusal->kind == DirectWriteHold::Refusal::Kind::NotTheStick) {
+            m_errorMessage = refusal->message;
+            emit messagesChanged();
         }
         return;
     }

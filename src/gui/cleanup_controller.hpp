@@ -634,6 +634,7 @@ private:
     QStringList m_playlistNames;
     QString m_searchQuery;
     QString m_path;
+    QString m_pathStrongId;  // strongStickIdentityAt(m_path's stick) when it was read
     bool m_deleting = false;
     bool m_writing = false;
     int m_scanCurrent = 0;

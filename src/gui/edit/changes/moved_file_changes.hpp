@@ -41,6 +41,9 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    // The file it moves, found on the stick. Not the path the rows expect:
+    // that is spelled as the catalog wrote it, maybe on another computer.
+    QStringList targetPaths() const override { return {QString::fromStdString(m_file.filePath)}; }
     ChangeOutcome apply(SaveContext &ctx) override;
 
 private:
@@ -74,6 +77,7 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 

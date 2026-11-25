@@ -200,6 +200,7 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_enginePath, m_rekordboxPath, QString::fromStdString(m_stickRoot)}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     void beforeSave(SaveContext &ctx) override;
     ChangeOutcome apply(SaveContext &ctx) override;
@@ -339,6 +340,7 @@ public:
     QString verb() const override;
     QStringList unitKeys() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_rekordboxPath, m_enginePath, QString::fromStdString(m_stickRoot)}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     void beforeSave(SaveContext &ctx) override;
     ChangeOutcome apply(SaveContext &ctx) override;
@@ -416,6 +418,7 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_enginePath, QString::fromStdString(m_stickRoot)}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     void beforeSave(SaveContext &ctx) override;
     ChangeOutcome apply(SaveContext &ctx) override;

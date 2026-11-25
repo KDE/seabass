@@ -37,6 +37,7 @@ Page {
 
     SettingsController {
         id: settingsController
+        objectName: "settingsController"
     }
 
     // Edit mode for this library: session, Save button, leave guard.
@@ -138,6 +139,17 @@ Page {
                 visible: settingsController.errorMessage.length > 0
                 text: settingsController.errorMessage
                 color: Theme.danger
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            // What the stick coming back changed (a staged setting it no
+            // longer has, or already holds), or why the page was not read
+            // again (a stick that may be a different one).
+            Label {
+                objectName: "statusLabel"
+                visible: settingsController.statusMessage.length > 0
+                text: settingsController.statusMessage
+                color: Theme.warnText
                 wrapMode: Text.WordWrap
                 Layout.fillWidth: true
             }

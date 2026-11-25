@@ -33,6 +33,15 @@ public:
     QString description() const override;
     QString unit() const override { return QStringLiteral("undo steps"); }
     QStringList formatsTouched() const override { return {"rekordbox", "engine", "onelibrary"}; }
+    // Each backup sits in its stick's Seabass/backups folder, under the root.
+    QStringList targetPaths() const override
+    {
+        QStringList paths;
+        for (const UndoableBackup &backup : m_backups) {
+            paths << backup.backupDir;
+        }
+        return paths;
+    }
 
     ChangeOutcome apply(SaveContext &ctx) override;
 

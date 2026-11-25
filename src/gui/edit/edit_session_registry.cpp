@@ -4,6 +4,8 @@
 
 #include "infrastructure/local/browsed_backup_root.hpp"
 #include "gui/edit/edit_session_registry.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
+#include "application/path_key.hpp"
 
 #include <QUuid>
 
@@ -294,6 +296,76 @@ void EditSessionRegistry::reportReadOnlyRefusal(const QString &libraryId, const 
                             QString::fromStdString(infrastructure::local::browsedBackupRefusal(name.toStdString())));
 }
 
+namespace
+{
+EditSessionRegistry::StickIdentityProbe &stickIdentityProbe()
+{
+    static EditSessionRegistry::StickIdentityProbe probe;
+    return probe;
+}
+}  // namespace
+
+void EditSessionRegistry::setStickIdentityProbeForTesting(StickIdentityProbe probe)
+{
+    stickIdentityProbe() = std::move(probe);
+}
+
+EditSessionRegistry::ProbedIdentity EditSessionRegistry::probeStickIdentity(const QString &stickRoot)
+{
+    if (stickRoot.isEmpty()) {
+        return {};
+    }
+    if (const auto &probe = stickIdentityProbe()) {
+        return probe(stickRoot);
+    }
+    if (m_mediaController) {
+        if (const auto identity = m_mediaController->lastKnownIdentity(stickRoot.toStdString())) {
+            using Strength = application::StickIdentity::Strength;
+            switch (identity->strength()) {
+            case Strength::Folder:
+                return {QString::fromStdString(identity->explicitLibraryId), true};
+            case Strength::Hardware:
+                return {identity->filesystemUuid.empty() ? "serial:" + QString::fromStdString(identity->hardwareSerial)
+                                                         : QString::fromStdString(identity->filesystemUuid),
+                        true};
+            case Strength::Filesystem:
+                return {QString::fromStdString(identity->filesystemUuid), true};
+            default:
+                return {QString::fromStdString(identity->libraryId()), false};
+            }
+        }
+    }
+    // Not listed: the fallback's id, never trusted to tell sticks apart.
+    return {libraryIdForPath(stickRoot), false};
+}
+
+QString EditSessionRegistry::strongStickIdentityAt(const QString &stickRoot)
+{
+    const ProbedIdentity probed = probeStickIdentity(stickRoot);
+    return probed.strong ? probed.id : QString();
+}
+
+QString EditSessionRegistry::writeRefusalFor(const QString &lockId, const QString &path, const QString &expectedStrongId)
+{
+    if (path.isEmpty()) {
+        return {};
+    }
+    if (LibraryEditSession *session = findSession(lockId)) {
+        return session->notTheStickReason();
+    }
+    if (expectedStrongId.isEmpty()) {
+        return {};
+    }
+    const QString root = mountPointForPath(path);
+    const QString there = strongStickIdentityAt(root);
+    if (there.isEmpty() || there == expectedStrongId) {
+        return {};
+    }
+    return QStringLiteral("The stick at %1 is not the one this page read: another stick is there now. Nothing "
+                          "was written. Open the stick that is there from the stick list.")
+        .arg(root);
+}
+
 QString EditSessionRegistry::mountPointForPath(const QString &anyLibraryPath) const
 {
     if (anyLibraryPath.isEmpty()) {
@@ -481,13 +553,14 @@ void EditSessionRegistry::onStickRemoved(const QString &libraryId, const QString
     }
 }
 
-void EditSessionRegistry::onStickReturned(const QString &libraryId, const QString &identityStrength)
+void EditSessionRegistry::onStickReturned(const QString &libraryId, const QString &identityStrength,
+                                          const QString &mountPoint)
 {
     LibraryEditSession *session = findSession(libraryId);
     if (!session) {
         return;
     }
-    session->setStickPresent(true, identityStrength);
+    session->setStickPresent(true, identityStrength, mountPoint);
 }
 
 void EditSessionRegistry::setQuitAfterSave(bool value)

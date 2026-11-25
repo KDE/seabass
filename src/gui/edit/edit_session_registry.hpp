@@ -6,6 +6,8 @@
 
 #include <QJSEngine>
 #include <QObject>
+
+#include <functional>
 #include <QPointer>
 #include <QQmlEngine>
 #include <QString>
@@ -125,9 +127,12 @@ public:
     // user" decision is made in one place rather than seven.
     struct Refusal
     {
-        enum class Kind { Locked, ReadOnly };
+        // NotTheStick: the stick at the write's place is not the one the
+        // page read (writeRefusalFor); `message` says so.
+        enum class Kind { Locked, ReadOnly, NotTheStick };
         Kind kind = Kind::Locked;
         QVariantMap holder;  // Locked only, and may still be empty -- see below
+        QString message;     // NotTheStick only
 
         // True only when there is a holder to name. A lock attempt can
         // fail with nobody to report: an unparseable cookie, a lock
@@ -145,6 +150,34 @@ public:
     // Takes the direct-write hold, or says why not; nullopt means the
     // write may proceed.
     std::optional<Refusal> enterDirectWrite(const QString &libraryId, const QString &stickLabel);
+    // What is known of the stick at a root: an id, and whether that id
+    // tells one stick from every other. Strong: a filesystem UUID, a
+    // hardware serial, or an opened folder's own id, as the stick list has
+    // it. Weak: label and size, or anything from readStickHardwareInfo()'s
+    // fallback, whose ids do not even agree with the stick list's for the
+    // same stick.
+    struct ProbedIdentity
+    {
+        QString id;
+        bool strong = false;
+    };
+    ProbedIdentity probeStickIdentity(const QString &stickRoot);
+    // The strong id of the stick at `stickRoot` now, or empty when there is
+    // none to be had (weak, unlisted, nothing there). Every identity check
+    // fails open on empty: it refuses only on two strong ids that differ,
+    // so a stick that cannot be told apart is never refused for it (#114).
+    QString strongStickIdentityAt(const QString &stickRoot);
+    using StickIdentityProbe = std::function<ProbedIdentity(const QString &stickRoot)>;
+    // Tests: stands in for the stick at a path, which in a test is a
+    // folder on the developer's disk. Empty restores the real one.
+    static void setStickIdentityProbeForTesting(StickIdentityProbe probe);
+    // Why a direct write for the library locked as `lockId` under `path`
+    // must not go ahead, or empty. With a session on that library, the
+    // session decides (LibraryEditSession::notTheStickReason). Without one,
+    // `expectedStrongId` (strongStickIdentityAt when the page read the
+    // stick) and the strong id at `path` now have to agree when both are
+    // known.
+    QString writeRefusalFor(const QString &lockId, const QString &path, const QString &expectedStrongId);
     Q_INVOKABLE bool tryEnterDirectWrite(const QString &libraryId, const QString &stickLabel);
     // Whether the listed library with this id is a stick backup being
     // browsed -- read-only. Explicit, so a caller refused by
@@ -187,7 +220,7 @@ private:
     LibraryEditSession *findSession(const QString &libraryId) const;
     LibraryEditSession *ensureSession(const QString &libraryId, const QString &stickLabel);
     void onStickRemoved(const QString &libraryId, const QString &label);
-    void onStickReturned(const QString &libraryId, const QString &identityStrength);
+    void onStickReturned(const QString &libraryId, const QString &identityStrength, const QString &mountPoint);
 
     std::unique_ptr<application::LibraryEditLockStore> m_store;
     std::string m_instanceId;

@@ -717,7 +717,8 @@ void MediaController::detect()
                                   m_awaitedIdentities.end());
         emit stickReturned(QString::fromStdString(awaited->libraryId()),
                            QString::fromUtf8(application::StickIdentity::strengthName(
-                               application::matchStrength(*awaited, identity))));
+                               application::matchStrength(*awaited, identity))),
+                           qtPathFromUtf8(mountPointFor(identity)));
     }
     queueAutoMounts();
 }
@@ -861,7 +862,8 @@ void MediaController::announceOpenedFolder(const application::DetectedStick &fol
         // necessarily the same one: Strength::Folder, not a re-match.
         emit stickReturned(QString::fromStdString(folder.identity.libraryId()),
                            QString::fromUtf8(application::StickIdentity::strengthName(
-                               application::StickIdentity::Strength::Folder)));
+                               application::StickIdentity::Strength::Folder)),
+                           qtPathFromUtf8(folder.mountPoint));
     } else {
         emit stickRemoved(QString::fromStdString(folder.identity.libraryId()),
                           QString::fromStdString(folder.label));

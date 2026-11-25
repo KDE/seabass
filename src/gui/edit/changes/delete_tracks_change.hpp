@@ -44,6 +44,7 @@ public:
     QString verb() const override;
     int unitsWritten() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 

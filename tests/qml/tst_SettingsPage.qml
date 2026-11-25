@@ -186,6 +186,243 @@ TestCase {
         compare(column.x, 0);
     }
 
+    // The fixture as a whole stick (PIONEER and Engine Library), for the
+    // tests that write to it or take it away: a copy, never the fixture.
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    Component { id: mediaComponent; MediaController {} }
+
+    // A page on a copy of the fixture stick, loaded, with one setting
+    // staged to its other value. Returns what the tests need of it.
+    function stagedOnACopy() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const pioneer = stick + "/PIONEER";
+        const page = createTemporaryObject(pageComponent, testCase, {pioneerRoot: pioneer});
+        verify(page, "page did not instantiate");
+        const controller = findChild(page, "settingsController");
+        tryVerify(() => controller.groups.length > 0 && !controller.busy, 5000, "the copy's settings load");
+        let target = null;
+        for (let g = 0; g < controller.groups.length && target === null; ++g) {
+            const fields = controller.groups[g].fields;
+            for (let f = 0; f < fields.length; ++f) {
+                const at = fields[f].options.indexOf(fields[f].value);
+                if (fields[f].isSwitch && at >= 0) {
+                    target = {fileName: fields[f].fileName, label: fields[f].label, value: fields[f].value,
+                              other: fields[f].options[(at + 1) % fields[f].options.length]};
+                    break;
+                }
+            }
+        }
+        verify(target !== null, "precondition: an off/on setting to change");
+        controller.setField(target.fileName, target.label, target.other);
+        compare(controller.pendingCount, 1, "the change is staged");
+        const libraryId = EditSessionRegistry.libraryIdForPath(pioneer);
+        verify(libraryId.length > 0, "the copy has a library id");
+        const session = EditSessionRegistry.sessionFor(libraryId);
+        verify(session !== null, "staging opened the session");
+        tryCompare(session, "pendingCount", 1, 5000);
+        return {stick: stick, pioneer: pioneer, page: page, controller: controller, target: target,
+                libraryId: libraryId, session: session};
+    }
+
+    // The stick pulled (its PIONEER folder moved aside), `whileGone` run on
+    // the folder, and the stick back at `mountPoint` (its old root when
+    // empty) with an identity match of `strength`.
+    function pullAndReturn(media, env, strength, mountPoint, whileGone) {
+        const aside = stickFixture.scratchDirectory() + "/PIONEER";
+        verify(stickFixture.moveFile(env.pioneer, aside), "the stick goes");
+        media.stickRemoved(env.libraryId, "FIXTURE");
+        compare(env.session.stickPresent, false);
+        if (whileGone) {
+            whileGone(aside);
+        }
+        const root = mountPoint.length > 0 ? mountPoint : env.stick;
+        verify(stickFixture.moveFile(aside, root + "/PIONEER"), "the stick comes back");
+        media.stickReturned(env.libraryId, strength, root);
+        compare(env.session.stickPresent, true);
+        tryCompare(env.controller, "busy", false, 5000);
+        return root + "/PIONEER";
+    }
+
+    function savedIn(session) {
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 60000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        return summary;
+    }
+
+    // #114: back at another mount point (/media/x/A3 then /media/x/A31),
+    // it is a new library there, not this page's. The page does not read
+    // its old path again (whatever is mounted there now is not this
+    // stick), says what to do, and what is staged cannot be saved: the
+    // session's stick is not at its root.
+    function test_theStickBackAtAnotherMountPointIsNotFollowed() {
+        const media = createTemporaryObject(mediaComponent, testCase);
+        EditSessionRegistry.mediaController = media;
+        const env = stagedOnACopy();
+        try {
+            const elsewhere = stickFixture.scratchDirectory();
+            pullAndReturn(media, env, "hardware", elsewhere, null);
+            EditSessionRegistry.acknowledgeStickReturned();
+            wait(200);
+            compare(env.controller.busy, false, "not read again");
+            const status = findChild(env.page, "statusLabel");
+            verify(status.visible && status.text.indexOf("at another place") >= 0, "and it says why: " + status.text);
+            compare(env.controller.pendingCount, 1, "what is staged stays staged");
+            const summary = savedIn(env.session);
+            verify(summary.error.indexOf("at another place") >= 0, "and cannot be saved: " + summary.error);
+            compare(summary.written, 0);
+            verify(!stickFixture.exists(elsewhere + "/Seabass"), "nothing written where the stick is now");
+        } finally {
+            EditSessionRegistry.acknowledgeStickReturned();
+            env.session.discard();
+            EditSessionRegistry.mediaController = null;
+        }
+    }
+
+    // #114: what is staged is squared with the stick that came back. A
+    // setting it already holds is no longer staged ("was X" against X
+    // says nothing), and one it no longer has is said, not hidden.
+    function test_theStickBackSquaresWhatIsStaged() {
+        const media = createTemporaryObject(mediaComponent, testCase);
+        EditSessionRegistry.mediaController = media;
+        const env = stagedOnACopy();
+        try {
+            // The stick as it will come back, made by a save: the setting
+            // holds the staged value. Then the original under it again, and
+            // the same change staged once more.
+            compare(savedIn(env.session).written, 1, "precondition: saved");
+            const holdsIt = stickFixture.scratchDirectory() + "/" + env.target.fileName;
+            verify(stickFixture.copyFile(env.pioneer + "/" + env.target.fileName, holdsIt));
+            verify(stickFixture.copyFile(testCase.fixturePioneerRoot + "/" + env.target.fileName,
+                                         env.pioneer + "/" + env.target.fileName));
+            tryCompare(env.controller, "busy", false, 5000);
+            env.controller.load(env.pioneer);
+            tryCompare(env.controller, "busy", false, 5000);
+            env.controller.setField(env.target.fileName, env.target.label, env.target.other);
+            compare(env.controller.pendingCount, 1, "precondition: staged again");
+
+            pullAndReturn(media, env, "hardware", "", (aside) => {
+                verify(stickFixture.copyFile(holdsIt, aside + "/" + env.target.fileName));
+            });
+            EditSessionRegistry.acknowledgeStickReturned();
+            tryVerify(() => env.controller.pendingCount === 0, 5000, "a value the stick holds is not staged");
+            compare(env.session.pendingCount, 0, "nor in the session");
+            const field = fieldIn(env.controller, env.target.fileName, env.target.label);
+            compare(field.unsaved, false);
+            compare(field.value, env.target.other);
+            const status = findChild(env.page, "statusLabel");
+            verify(status.visible && status.text.indexOf("Already set that way") >= 0
+                   && status.text.indexOf(env.target.label) >= 0, "and it is said: " + status.text);
+
+            // Staged again, and this time its file is gone while the stick is out.
+            const other = env.target.value;
+            env.controller.setField(env.target.fileName, env.target.label, other);
+            compare(env.controller.pendingCount, 1);
+            pullAndReturn(media, env, "hardware", "", (aside) => {
+                verify(stickFixture.moveFile(aside + "/" + env.target.fileName,
+                                             stickFixture.scratchDirectory() + "/" + env.target.fileName));
+            });
+            EditSessionRegistry.acknowledgeStickReturned();
+            tryVerify(() => env.controller.pendingCount === 0, 5000, "a setting the stick lacks is not staged");
+            compare(env.session.pendingCount, 0);
+            compare(fieldIn(env.controller, env.target.fileName, env.target.label), null, "no row for it");
+            verify(status.visible && status.text.indexOf("Not on the stick any more") >= 0
+                   && status.text.indexOf(env.target.label) >= 0, "and it is said: " + status.text);
+        } finally {
+            EditSessionRegistry.acknowledgeStickReturned();
+            env.session.discard();
+            EditSessionRegistry.mediaController = null;
+        }
+    }
+
+    // #114: matched by label and size only, the stick may be another one.
+    // The page stays as it was, staged change and all, and says why.
+    function test_aStickMatchedByLabelOnlyIsNotReadAgain() {
+        const media = createTemporaryObject(mediaComponent, testCase);
+        EditSessionRegistry.mediaController = media;
+        const env = stagedOnACopy();
+        try {
+            // What a read would see: the staged setting's file is gone.
+            pullAndReturn(media, env, "weak", "", (aside) => {
+                verify(stickFixture.moveFile(aside + "/" + env.target.fileName,
+                                             stickFixture.scratchDirectory() + "/" + env.target.fileName));
+            });
+            wait(200);
+            compare(env.controller.busy, false, "not read again");
+            verify(fieldIn(env.controller, env.target.fileName, env.target.label) !== null,
+                   "the page still shows what it read before");
+            compare(env.controller.pendingCount, 1, "the staged change is kept");
+            compare(env.session.pendingCount, 1);
+            const status = findChild(env.page, "statusLabel");
+            verify(status.visible && status.text.indexOf("cannot tell it is the same one") >= 0,
+                   "and it says why: " + status.text);
+        } finally {
+            EditSessionRegistry.acknowledgeStickReturned();
+            env.session.discard();
+            EditSessionRegistry.mediaController = null;
+        }
+    }
+
+    function fieldIn(controller, fileName, label) {
+        for (let g = 0; g < controller.groups.length; ++g) {
+            const fields = controller.groups[g].fields;
+            for (let f = 0; f < fields.length; ++f) {
+                if (fields[f].fileName === fileName && fields[f].label === label) {
+                    return fields[f];
+                }
+            }
+        }
+        return null;
+    }
+
+    // #114: the stick pulled mid-save and the page read it while it was
+    // gone (the save's own re-read), so it said "No recognized settings
+    // files found on this stick." The same stick back, matched by its
+    // serial, must show its settings again without leaving the page, and
+    // a change still staged keeps its UNSAVED row against what the stick
+    // really holds.
+    function test_theSameStickBackShowsItsSettingsAgain() {
+        const media = createTemporaryObject(mediaComponent, testCase);
+        EditSessionRegistry.mediaController = media;
+        const env = stagedOnACopy();
+        try {
+            // Pulled: the folder is gone and the watcher says so.
+            verify(stickFixture.moveFile(env.pioneer, env.stick + "/PIONEER.pulled"), "the stick goes");
+            media.stickRemoved(env.libraryId, "FIXTURE");
+            compare(env.session.stickPresent, false, "the session knows the stick is gone");
+            // Read while gone, as the save's re-read was.
+            env.controller.load(env.pioneer);
+            tryCompare(env.controller, "busy", false, 5000);
+            compare(env.controller.groups.length, 0, "precondition: nothing to read while it is gone");
+            verify(findChild(env.page, "errorLabel").visible, "precondition: the page says so");
+
+            // Plugged back in: the same stick, by its serial.
+            verify(stickFixture.moveFile(env.stick + "/PIONEER.pulled", env.pioneer), "the stick comes back");
+            media.stickReturned(env.libraryId, "hardware", env.stick);
+            compare(env.session.stickPresent, true);
+            tryVerify(() => env.controller.groups.length > 0 && !env.controller.busy, 5000,
+                      "the same stick back must show its settings again");
+            compare(findChild(env.page, "errorLabel").visible, false, "and the empty-stick message goes");
+            const field = fieldIn(env.controller, env.target.fileName, env.target.label);
+            verify(field !== null, env.target.label + " is shown again");
+            compare(field.unsaved, true, "the staged change is kept");
+            compare(field.pendingValue, env.target.other);
+            compare(field.value, env.target.value, "\"was\" is what the stick holds");
+        } finally {
+            EditSessionRegistry.acknowledgeStickReturned();
+            env.session.discard();
+            EditSessionRegistry.mediaController = null;
+        }
+    }
+
     function test_screenshot() {
         if (!screenshotDir) {
             skip("SEABASS_SCREENSHOT_DIR not set");

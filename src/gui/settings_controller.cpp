@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <string>
 
 #include <QVariantMap>
@@ -151,6 +152,40 @@ void SettingsController::attachSession()
         // it and the staged overlay only covers what is still pending.
         load(m_pioneerRoot);
     });
+    connect(m_session, &LibraryEditSession::stickPresenceChanged, this, [this]() {
+        // The stick is back (#114). Pulled mid-save, the read above ran
+        // while it was gone and found no settings files, and nothing read
+        // it again: the page said the stick had none until it was left and
+        // opened again.
+        if (!m_session || !m_session->stickPresent()) {
+            return;
+        }
+        // Matched by label and size only: it may be another stick. Keep
+        // the page as it was rather than lay a stranger's settings under
+        // what is staged, and say why.
+        if (!m_session->stickIdentityVerified()) {
+            setStatusMessage("A stick with the same label and size is back, but Seabass cannot tell it is the same "
+                             "one, so this page still shows what it read before. Open the page again to read the "
+                             "stick that is plugged in.");
+            return;
+        }
+        // Back at another mount point: a new library there, not this page's.
+        // Nothing staged here can be saved; reading this page's path again
+        // would read whatever is mounted there now.
+        if (m_session->stickBackElsewhere()) {
+            setStatusMessage("The stick was plugged back in at another place. Discard these changes and open it "
+                             "again from the stick list.");
+            return;
+        }
+        setStatusMessage({});
+        // Read it now, and square what is staged with what it holds once
+        // read (reconcileStaged). A save still writing reads it when it
+        // finishes; the reconciling waits for that read.
+        m_reconcileOnRead = true;
+        if (!m_session->writing()) {
+            load(m_pioneerRoot);
+        }
+    });
     connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
         m_pending.clear();
         rebuildGroupsView();
@@ -160,6 +195,10 @@ void SettingsController::attachSession()
 void SettingsController::load(const QString &pioneerRoot)
 {
     if (m_busy) {
+        // A read already running may be the one that found the stick gone:
+        // read again once it is done rather than keep what it found.
+        m_reloadQueued = true;
+        m_queuedRoot = pioneerRoot;
         return;
     }
     m_pioneerRoot = pioneerRoot;
@@ -221,6 +260,55 @@ void SettingsController::unstageField(const QString &fileName, const QString &fi
     rebuildGroupsView();
 }
 
+void SettingsController::reconcileStaged()
+{
+    QStringList gone;
+    QStringList already;
+    for (auto it = m_pending.begin(); it != m_pending.end();) {
+        const QString &fileName = it->first.first;
+        const QString &label = it->first.second;
+        const QString id = changeIdFor(fileName, label);
+        std::optional<QString> onStick;
+        for (const QVariant &groupVariant : m_groups) {
+            for (const QVariant &fieldVariant : groupVariant.toMap()["fields"].toList()) {
+                const QVariantMap field = fieldVariant.toMap();
+                if (field["fileName"].toString() == fileName && field["label"].toString() == label) {
+                    onStick = field["value"].toString();
+                }
+            }
+        }
+        if (!onStick) {
+            // Not on the stick any more: there is no row left to show it
+            // on, and nothing it could be written to. Said, not hidden.
+            gone << label;
+        } else if (*onStick == it->second) {
+            // The stick already holds it: no "was X" against X.
+            already << label;
+        } else {
+            // Staged again against what the stick holds now, so its "was"
+            // and the change's own old value are the stick's.
+            if (m_session) {
+                m_session->stage(
+                    std::make_unique<DeviceSettingChange>(m_pioneerRoot, fileName, label, *onStick, it->second));
+            }
+            ++it;
+            continue;
+        }
+        if (m_session) {
+            m_session->unstage(id);
+        }
+        it = m_pending.erase(it);
+    }
+    QStringList said;
+    if (!gone.isEmpty()) {
+        said << "Not on the stick any more, so no longer staged: " + gone.join(", ") + ".";
+    }
+    if (!already.isEmpty()) {
+        said << "Already set that way on the stick, so no longer staged: " + already.join(", ") + ".";
+    }
+    setStatusMessage(said.join(" "));
+}
+
 void SettingsController::rebuildGroupsView()
 {
     QVariantList view;
@@ -251,11 +339,21 @@ void SettingsController::onTaskFinished()
         result.errorMessage = thrown;
     }
     m_groups = result.groups;
+    // Only a read that found the settings: one that failed (the stick gone
+    // again) says nothing about what is staged, and the next read squares it.
+    if (m_reconcileOnRead && result.errorMessage.isEmpty() && !m_groups.isEmpty()) {
+        m_reconcileOnRead = false;
+        reconcileStaged();
+    }
     rebuildGroupsView();
     if (!result.errorMessage.isEmpty()) {
         setErrorMessage(result.errorMessage);
     }
     setBusy(false);
+    if (m_reloadQueued) {
+        m_reloadQueued = false;
+        load(m_queuedRoot);
+    }
 }
 
 void SettingsController::setBusy(bool busy)

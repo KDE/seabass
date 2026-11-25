@@ -40,8 +40,18 @@ public:
     // drive has no library). On the first refusal every lock taken so
     // far is given back and the refusal is returned; nothing is held.
     // `retry` is kept for retryLockedAction().
+    // `writePaths` and `expectedStrongIds`, when given, pair with
+    // `libraryIds` by index: where the write goes on that library's stick,
+    // and the strong id of the stick the page read there
+    // (EditSessionRegistry::strongStickIdentityAt at read time, empty when
+    // it had none). Before any lock is taken, a stick there now with
+    // another strong id refuses the write (writeRefusalFor), so a page
+    // whose stick was pulled and another mounted in its place writes
+    // nothing to that one. The locks are taken on `libraryIds` as given:
+    // the key the library's edit session uses.
     std::optional<Refusal> acquire(const QStringList &libraryIds, const QString &stickLabel,
-                                   std::function<void()> retry = {});
+                                   std::function<void()> retry = {}, const QStringList &writePaths = {},
+                                   const QStringList &expectedStrongIds = {});
     void release();
     bool held() const { return !m_held.isEmpty(); }
 

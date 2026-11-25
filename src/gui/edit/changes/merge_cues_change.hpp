@@ -26,6 +26,7 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_path}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 

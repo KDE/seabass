@@ -44,6 +44,7 @@ public:
     QString unit() const override;
     QString verb() const override;
     QStringList formatsTouched() const override;
+    QStringList targetPaths() const override { return {m_path}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     // The cues and the rating it puts back, for a rekordbox or OneLibrary
     // track. The comment is not recorded: the baseline has no origin for

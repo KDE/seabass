@@ -19,12 +19,15 @@
 #include <set>
 
 #include "gui/edit/changes/restore_backups_change.hpp"
+#include "application/path_key.hpp"
 #include "gui/edit/edit_session_registry.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/write_guard.hpp"
 #include "infrastructure/backup/filesystem_backup_store.hpp"
 #include "infrastructure/backup/interrupted_save.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/stick_layout.hpp"
@@ -233,6 +236,14 @@ void LibraryEditSession::setLibraryPaths(const QString &rekordboxPath, const QSt
     if (m_rekordboxPath.isEmpty() && !m_enginePath.isEmpty()) {
         m_rekordboxPath = QString::fromStdString(infrastructure::catalogPathFor("rekordbox", m_enginePath.toStdString()));
     }
+    // Which stick this is, as found at its root when that became known:
+    // every save checks the stick there is still this one. And a root set
+    // again (the stick opened again where it now is) clears a return that
+    // could not be trusted, once the stick there verifies.
+    if (m_stickIdentity.isEmpty()) {
+        m_stickIdentity = m_registry->strongStickIdentityAt(stickRoot());
+    }
+    reverifyReturn();
     adoptInterruptedSave();
 
     // Measured once here rather than per save: this is where the stick
@@ -360,6 +371,11 @@ bool LibraryEditSession::stage(std::unique_ptr<PendingChange> change)
     }
     if (!acquireLock()) {
         return false;
+    }
+    // Not known when the root was (the stick list had not listed it yet):
+    // the stick a page just read and staged from is this one.
+    if (m_stickIdentity.isEmpty()) {
+        m_stickIdentity = m_registry->strongStickIdentityAt(stickRoot());
     }
     m_editorOwner = owner;
     const QString id = change->id();
@@ -503,6 +519,37 @@ void LibraryEditSession::save()
                          {"undo", m_changes.front()->id() == QLatin1String("undo:last-save")},
                          {"cancelled", false},
                          {"error", QStringLiteral("no library path is known for this session")}};
+        emit saveFinished(m_lastSummary);
+        return;
+    }
+    // Nothing is backed up or written unless the stick at this session's
+    // root is still its stick (#114): pulled and another one, one with the
+    // same label say, mounted where it was, is never written to. And no
+    // change may name a place outside that root, whatever path the page
+    // that staged it held.
+    QString refusal = notTheStickReason();
+    if (refusal.isEmpty()) {
+        const std::string root = stickRoot().toStdString();
+        const bool outside = std::any_of(m_changes.begin(), m_changes.end(), [&](const auto &change) {
+            const QStringList paths = change->targetPaths();
+            return std::any_of(paths.begin(), paths.end(), [&](const QString &path) {
+                return !path.isEmpty() && !application::pathIsAtOrUnder(path.toStdString(), root);
+            });
+        });
+        if (outside) {
+            refusal = QStringLiteral("These changes name a place that is not on %1. Nothing was written. Discard "
+                                     "them and stage them again from the stick.")
+                          .arg(m_stickLabel.isEmpty() ? QStringLiteral("this stick") : "USB Stick " + m_stickLabel);
+        }
+    }
+    if (!refusal.isEmpty()) {
+        m_lastSummary = {{"written", 0},
+                         {"total", pendingUnits()},
+                         {"unit", m_changes.front()->unit()},
+                         {"verb", m_changes.front()->verb()},
+                         {"undo", m_changes.front()->id() == QLatin1String("undo:last-save")},
+                         {"cancelled", false},
+                         {"error", refusal}};
         emit saveFinished(m_lastSummary);
         return;
     }
@@ -688,6 +735,9 @@ void LibraryEditSession::discard()
     }
     bool hadChanges = !m_changes.empty();
     m_changes.clear();
+    // Discarded after a return that could not be trusted: if the stick at
+    // the root now verifies as this one, the page can stage again.
+    reverifyReturn();
     clearOwnerIfClean();
     if (hadChanges) {
         emit pendingChanged();
@@ -725,16 +775,72 @@ void LibraryEditSession::undoLastSave()
     }
 }
 
-void LibraryEditSession::setStickPresent(bool present, const QString &identityStrength)
+void LibraryEditSession::setStickPresent(bool present, const QString &identityStrength, const QString &mountPoint)
 {
-    if (m_stickPresent == present && m_stickIdentityStrength == identityStrength) {
+    // Where it came back, kept apart from where this session's catalogs
+    // are. Back at another mount point it is a new library there, opened
+    // like any stick seen for the first time; this session, and what is
+    // staged in it, stays where the stick was and cannot be saved (#114).
+    const bool elsewhere = present && !mountPoint.isEmpty() && !stickRoot().isEmpty()
+        && !application::samePath(stickRoot().toStdString(), mountPoint.toStdString());
+    if (m_stickPresent == present && m_stickIdentityStrength == identityStrength && m_stickBackElsewhere == elsewhere) {
         return;
     }
     m_stickPresent = present;
     m_stickIdentityStrength = identityStrength;
+    m_stickBackElsewhere = elsewhere;
+    m_returnVerified = false;
     emit stickPresenceChanged();
-    if (present) {
+    if (present && !elsewhere) {
         adoptInterruptedSave();
+    }
+}
+
+QString LibraryEditSession::stickRoot() const
+{
+    const QString &catalog = m_rekordboxPath.isEmpty() ? m_enginePath : m_rekordboxPath;
+    // normal: ".../PIONEER/" has the same root as ".../PIONEER".
+    return catalog.isEmpty() ? QString()
+                             : QString::fromStdString(infrastructure::paths::normalStickRootForCatalogPath(catalog.toStdString()));
+}
+
+QString LibraryEditSession::notTheStickReason()
+{
+    const QString stick = m_stickLabel.isEmpty() ? QStringLiteral("The stick") : "USB Stick " + m_stickLabel;
+    if (!m_returnVerified && m_stickBackElsewhere) {
+        return stick + " was plugged back in at another place, and what this page holds names where it was. "
+                       "Nothing was written. Discard these changes, leave this page, and open the stick again "
+                       "from the stick list.";
+    }
+    if (!m_returnVerified && m_stickIdentityStrength == QLatin1String("weak")) {
+        return stick + " was plugged back in, but only its label and size match, so this may be a different "
+                       "stick. Nothing was written. Discard these changes, leave this page, and open the "
+                       "stick again from the stick list.";
+    }
+    // Fails open: only two strong ids that differ say it is another stick.
+    // A weak or unknown id on either side says nothing, and the fallback's
+    // ids and the stick list's do not agree for one and the same stick.
+    const QString root = stickRoot();
+    if (m_stickIdentity.isEmpty() || root.isEmpty()) {
+        return {};
+    }
+    const QString there = m_registry->strongStickIdentityAt(root);
+    if (there.isEmpty() || there == m_stickIdentity) {
+        return {};
+    }
+    return QStringLiteral("The stick at %1 is not %2 any more: another stick is there now. Nothing was written. "
+                          "Discard these changes and open the stick that is there from the stick list.")
+        .arg(root, m_stickLabel.isEmpty() ? QStringLiteral("the one these changes were made on") : "USB Stick " + m_stickLabel);
+}
+
+void LibraryEditSession::reverifyReturn()
+{
+    if (m_returnVerified || !(m_stickBackElsewhere || m_stickIdentityStrength == QLatin1String("weak"))) {
+        return;
+    }
+    const QString there = m_registry->strongStickIdentityAt(stickRoot());
+    if (!m_stickIdentity.isEmpty() && there == m_stickIdentity) {
+        m_returnVerified = true;
     }
 }
 

@@ -78,6 +78,8 @@ private:
     void setStatusMessage(const QString &message);
     void attachSession();
     void rebuildGroupsView();
+    // After the stick came back: each staged change against the fresh read.
+    void reconcileStaged();
     static QString changeIdFor(const QString &fileName, const QString &fieldLabel);
 
     QFutureWatcher<SettingsTaskResult> m_watcher;
@@ -87,6 +89,9 @@ private:
     std::map<std::pair<QString, QString>, QString> m_pending;  // (fileName, label) -> staged option
     QPointer<LibraryEditSession> m_session;
     bool m_busy = false;
+    bool m_reloadQueued = false;  // load() asked while a read ran: run it after
+    QString m_queuedRoot;
+    bool m_reconcileOnRead = false;  // the stick came back: square what is staged with the next read
     QString m_errorMessage;
     QString m_statusMessage;
 };

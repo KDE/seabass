@@ -208,6 +208,7 @@ private:
     QString m_stickLabel;
     QString m_rekordboxPath;
     QString m_enginePath;
+    QString m_strongIdAtRead;  // strongStickIdentityAt(the stick) when these paths were read
     bool m_listing = false;
     bool m_working = false;
     bool m_listed = false;

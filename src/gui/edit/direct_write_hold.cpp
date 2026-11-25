@@ -16,10 +16,21 @@ DirectWriteHold::~DirectWriteHold()
 
 std::optional<DirectWriteHold::Refusal> DirectWriteHold::acquire(const QStringList &libraryIds,
                                                                  const QString &stickLabel,
-                                                                 std::function<void()> retry)
+                                                                 std::function<void()> retry,
+                                                                 const QStringList &writePaths,
+                                                                 const QStringList &expectedStrongIds)
 {
     release();
     auto *registry = EditSessionRegistry::instance();
+    for (int i = 0; i < libraryIds.size() && i < writePaths.size(); ++i) {
+        const QString why = registry->writeRefusalFor(libraryIds[i], writePaths[i],
+                                                      i < expectedStrongIds.size() ? expectedStrongIds[i] : QString());
+        if (!why.isEmpty()) {
+            m_refusedLibraryId = libraryIds[i];
+            m_retry = nullptr;
+            return Refusal{Refusal::Kind::NotTheStick, {}, why};
+        }
+    }
     for (const QString &id : libraryIds) {
         if (id.isEmpty() || m_held.contains(id)) {
             continue;
