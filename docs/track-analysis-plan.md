@@ -1019,18 +1019,52 @@ Of the 7 collection tracks we follow and he gave to rekordbox, our own
 straight grid is right on 2; the other 5 are wrong either way. What is
 left on the collection are 11 single tracks, not a rule.
 
-### rekordbox's beats to the microsecond: read 0.5 ms early so far
+### rekordbox's straight grids to the microsecond: read 0.5 ms early, and put right
 
 PQTZ holds a beat in whole milliseconds; the .EXT's PQT2 holds the rest,
-in thousandths of one. With PQT2 added the beats of a straight grid lie
-on one line to 0.05 ms (300 tracks; with PQTZ alone to 0.53 ms), and
-PQT2's value is 0.5 ms at the mean. Our reader takes PQTZ alone, so
-every rekordbox grid in these measurements was read half a millisecond
-early at the mean: our grids are that much earlier against rekordbox
-than the tables say (1.9 ms at the middle, not 1.4), and a grid copied
-from rekordbox to Engine arrives that much early. To do before the
-beats are refined on the transient: read PQT2, measure again, calibrate
-again.
+in thousandths of one. For a grid of rekordbox's Normal analysis that
+rest is real: with it the beats lie on one line to 0.05 ms (300 tracks;
+with PQTZ alone to 0.53 ms), and it is 0.5 ms at the mean. For a grid of
+its Dynamic analysis it is nothing: nearly every beat's rest is zero
+(0.003 ms at the mean on the CD rips), those grids are on whole
+milliseconds as rekordbox means them.
+
+So the collection's reference was read half a millisecond early, the
+three sets of varied music were read rightly. The benchmark now adds
+PQT2 where a list names an analysis file. Against rekordbox's beats as
+it means them, the committed analyser (run `h1`) had 547 of the 751
+tuning tracks within 3 ms and not 591, its straight grids 1.9 ms early
+at the middle and not 1.4.
+
+Calibrated again by the rule as it was (the middle track about 1.5 ms
+early, nine in ten early, no more late by over 3 ms than before): a
+straight grid is given out 1.2 ms later than the place the onsets peak
+at, where it was 0.7. A followed grid stays 3 ms earlier: that was
+measured against Dynamic grids. Run `h3`:
+
+| Collection, straight grids against rekordbox's real beats | Before | After |
+|---|---|---|
+| Tuning half, within 3 ms (of 751) | 547 | 590 |
+| Tuning half, 3 to 10 ms | 112 | 69 |
+| The middle track | 1.9 ms early | 1.4 ms early |
+| Later than rekordbox, of those near it | 5 percent | 10 percent |
+| Held-back half, within 3 ms (of 724) | not run | 566 |
+
+By the decisions the collection stays at 732 of 743. The varied music
+loses three tracks at the 10 ms line (1065 for 1068 over all four sets;
+held back, within 3 ms: second playlist 31 for 31, CD rips 103 for
+107): our straight grids there are measured against Dynamic grids,
+which sit earlier than rekordbox's own straight ones, and are now half
+a millisecond further from them.
+
+Two things that follow and are not done here. The scoring by decisions
+compared a half-beat grid's offset as a number, where minus and plus
+half a beat are the same grid; it now compares around the beat. And the
+app's own reader of rekordbox grids (`readTrackAnalysis`) still takes
+PQTZ alone, so a grid copied from rekordbox to Engine arrives half a
+millisecond early at the mean; changing it changes what the Beat Grids
+page calls "already the same" for every grid copied so far, which is
+for Sebastian to decide.
 
 ## Denon again: the new music, and the players
 

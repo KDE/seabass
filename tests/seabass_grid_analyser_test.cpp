@@ -91,7 +91,7 @@ void movingPreset(const std::string &name, double within8, double within20)
     // And as it is given out, it is that much earlier.
     const BeatGridComparison given = compareBeatGrids(analysis.beats, track.beats);
     within(given.offset.medianMs - c.offset.medianMs, -SeabassGridAnalyser::FollowedGridEarlierMs - 1e-6,
-           -SeabassGridAnalyser::FollowedGridEarlierMs + 1e-6, name + ": given out 3 ms early");
+           -SeabassGridAnalyser::FollowedGridEarlierMs + 1e-6, name + ": given out early by what it is calibrated by");
     check(c.candidateShape.kind == GridShapeKind::Moving, name + ": a grid that moves");
     check(analysis.followsTempo, name + ": said to follow the tempo");
     within(c.hits.within8Ms, within8, 1.0, name + ": true beats with one of ours within 8 ms");

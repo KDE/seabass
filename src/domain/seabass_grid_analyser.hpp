@@ -98,6 +98,11 @@ public:
     // ones as they are; our followed grids were 3.4 ms later than its
     // beat-by-beat ones. Early is the safe side: a late grid cuts a
     // quantised loop into the kick.
+    //
+    // rekordbox's beat-by-beat grids are on whole milliseconds as it
+    // means them (the section that holds the rest of each millisecond,
+    // PQT2, is zero for nearly every beat of such a grid), so this stands
+    // as measured; its straight grids are not, see below.
     static constexpr double FollowedGridEarlierMs = 3.0;
 
     // A straight grid is given out this much later than the place the
@@ -108,7 +113,16 @@ public:
     // grid counts as rekordbox's cuts a quarter of them off. 0.7 ms later
     // the middle track is 1.5 ms early, nine tracks in ten are still
     // early, and no more are late by over 3 ms than before.
-    static constexpr double StraightGridLaterMs = 0.7;
+    //
+    // Those numbers were against rekordbox's beats in whole
+    // milliseconds, and its straight grids are not on whole
+    // milliseconds: PQTZ holds the millisecond and PQT2, in the .EXT,
+    // the thousandths of it, half a millisecond at the mean. Against its
+    // beats to the microsecond the same grids were 1.9 ms early at the
+    // middle and only 547 of 751 within 3 ms; 1.2 ms later puts them
+    // where the lines above say: 1.4 ms early at the middle, nine in ten
+    // early, 591 within 3 ms.
+    static constexpr double StraightGridLaterMs = 1.2;
 
     std::string name() const override { return "seabass"; }
     GridAnalysis analyse(PcmSource &source) override;
