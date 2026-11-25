@@ -467,8 +467,9 @@ Canvas {
         // at the column's own left edge (on the device grid), so an
         // attack is never drawn earlier than the column it is in. What
         // the outlines cover is cleared first, so no grid line shows
-        // through; drawn at unplayedOpacity throughout (the popup shows
-        // what has played by its shade).
+        // through; drawn at unplayedOpacity, and opaque where it has
+        // played when the view has a progress (the popup has none: it
+        // shows what has played by its shade).
         if (engine && engineBars.length > 0) {
             const centre = top + h / 2;
             const outline = (valueOf) => {
@@ -501,10 +502,25 @@ Canvas {
             outline((b) => Math.max(b.low, b.mid, b.high));
             ctx.fill();
             ctx.restore();
-            for (const [band, fill] of [["low", engineLow], ["mid", engineMid], ["high", engineHigh]]) {
-                ctx.fillStyle = fill + unplayed + ")";
-                outline((b) => b[band]);
-                ctx.fill();
+            // With a progress (the player bar), what has played is drawn
+            // opaque, left of where the music is, as the other schemes
+            // draw a played bar.
+            const splitX = root.progress >= 0
+                ? Math.max(0, Math.min(w, root.at((root.progress * lengthMs - startMs) * pxPerMs))) : 0;
+            for (const [from, to, alpha] of [[0, splitX, 1.0], [splitX, w, unplayed]]) {
+                if (to <= from) {
+                    continue;
+                }
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(from, 0, to - from, height);
+                ctx.clip();
+                for (const [band, fill] of [["low", engineLow], ["mid", engineMid], ["high", engineHigh]]) {
+                    ctx.fillStyle = fill + alpha + ")";
+                    outline((b) => b[band]);
+                    ctx.fill();
+                }
+                ctx.restore();
             }
         }
 

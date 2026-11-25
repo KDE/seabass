@@ -424,10 +424,8 @@ TestCase {
         const list = findChild(o.page, "trackList");
         compare(list.mapToItem(body, 0, 0).x, 0, "the tracks start on the page's left line");
         compare(list.width, body.width, "and take its whole width");
-        const label = findChild(o.page, "playlistPickerLabel");
-        compare(label.text, "Playlist:");
-        compare(label.mapToItem(body, 0, 0).x, 0, "the combo's label is on the left line");
         const picker = findChild(o.page, "playlistPicker");
+        compare(findChild(o.page.header, "playlistPicker"), picker, "the combo is in the header");
         compare(picker.displayText, "All tracks");
         const ticked = findChild(o.page, "tickedPlaylistsLabel");
         compare(ticked.text, "");
@@ -605,13 +603,13 @@ TestCase {
         clickPlaylistBox(o.page, "T73 Renamed");
         waitSettled(o.c);
         const box = findChild(o.page, "replaceWaveformsCheckBox");
-        compare(box.text, "Also replace waveforms the player drew");
+        compare(box.text, "Overwrite Waveforms");
         compare(box.checked, false, "off by default");
         compare(box.enabled, true, "Waveforms is ticked");
         compare(row(o.c, b04).waveformState, "Drawn by the player");
         compare(row(o.c, b04).waveformTip,
-                "The player drew its own waveform of this track, and it stays. \"Also replace waveforms the "
-                + "player drew\" replaces it all the same.");
+                "The player drew its own waveform of this track, and it stays. \"Overwrite Waveforms\" "
+                + "replaces it all the same.");
         compare(row(o.c, b01).waveformState, "New", "a row the player has not analysed gets rekordbox's");
 
         // Without "Waveforms" there is nothing for it to replace.
@@ -1060,7 +1058,7 @@ TestCase {
         const body = findChild(o.page, "pageBody");
         const left = body.mapToItem(o.page, 0, 0).x;
         compare(left, Theme.pageMargin);
-        for (const name of ["introLabel", "summaryLabel", "playlistPickerLabel", "trackList", "breadcrumb"]) {
+        for (const name of ["introLabel", "summaryLabel", "trackList", "breadcrumb"]) {
             compare(findChild(o.page, name).mapToItem(o.page, 0, 0).x, left, name + " is on the page's left line");
         }
         const box = findChild(findChild(o.page, "gridsCheckBox"), "seabassCheckIndicator");
@@ -1088,22 +1086,27 @@ TestCase {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage.png");
         }
 
-        // Narrower than the boxes fit on one line: the last goes onto a
-        // line of its own, whole, rather than squeezing beside the others.
-        o.page.width = 480;
+        // Narrower than the boxes fit on one line: a box that does not fit
+        // goes onto a line of its own, whole, starting it on the left line,
+        // rather than squeezing beside the others.
+        o.page.width = 320;
         verify(waitForPolish(o.page.Window.window));
         const options = findChild(o.page, "optionsRow");
-        const first = findChild(o.page, "gridsCheckBox");
-        const last = findChild(o.page, "replaceEditsCheckBox");
-        verify(last.y >= first.y + first.height, "the third box is on a line of its own");
-        compare(last.x, first.x, "and starts it on the left line");
-        verify(last.x + last.width <= options.width, "and fits the page");
-        verifyBoxLabelGap(o.page, "replaceEditsCheckBox");
-        // And the fourth, after it, the same.
-        const fourth = findChild(o.page, "replaceWaveformsCheckBox");
-        verify(fourth.y >= first.y + first.height, "the fourth box is not beside the first");
-        verify(fourth.x + fourth.width <= options.width, "and fits the page");
-        verifyBoxLabelGap(o.page, "replaceWaveformsCheckBox");
+        const names = ["gridsCheckBox", "waveformsCheckBox", "replaceEditsCheckBox", "replaceWaveformsCheckBox"];
+        const first = findChild(o.page, names[0]);
+        let wrapped = 0;
+        for (let i = 1; i < names.length; ++i) {
+            const box = findChild(o.page, names[i]);
+            const before = findChild(o.page, names[i - 1]);
+            if (box.y > before.y) {
+                ++wrapped;
+                verify(box.y >= before.y + before.height, names[i] + " is on a line of its own");
+                compare(box.x, first.x, names[i] + " starts it on the left line");
+            }
+            verify(box.x + box.width <= options.width, names[i] + " fits the page");
+            verifyBoxLabelGap(o.page, names[i]);
+        }
+        verify(wrapped > 0, "320 px: some box went onto a line of its own");
     }
 
     // The state badges are bounded by their row's title column (`room`,
@@ -1254,7 +1257,8 @@ TestCase {
         compare(intro.visible, false);
         compare(note.visible, false);
         verify(o.page.header.height < fullHeader - 40, "folded " + o.page.header.height + ", was " + fullHeader);
-        for (const name of ["breadcrumb", "optionsRow", "summaryRow", "stageButton", "selectAllButton"]) {
+        for (const name of ["breadcrumb", "optionsRow", "summaryRow", "stageButton", "selectAllButton",
+                            "playlistPicker"]) {
             const control = findChild(o.page.header, name);
             verify(control.visible, name + " stays");
             const top = control.mapToItem(o.page, 0, 0).y;
@@ -1272,6 +1276,77 @@ TestCase {
         verify(details.visible && intro.visible && note.visible);
     }
 
+    // The boxes, the playlist and the buttons on the ticks share one row
+    // where they fit: the boxes on the page's left line, the actions on its
+    // right. Where they do not, the actions go onto a line of their own
+    // under the boxes, on the left line.
+    function test_theControlsShareOneRow() {
+        const o = openOn(t73(), {width: 1600});
+        waitSettled(o.c);
+        verify(waitForPolish(o.page.Window.window));
+        const row = findChild(o.page.header, "controlsRow");
+        compare(row.oneLine, true, "1600 px: one row");
+        const middle = item => item.mapToItem(o.page, 0, item.height / 2).y;
+        const grids = findChild(o.page.header, "gridsCheckBox");
+        for (const name of ["playlistPicker", "selectAllButton", "selectNoneButton", "stageButton"]) {
+            const item = findChild(o.page.header, name);
+            verify(Math.abs(middle(item) - middle(grids)) <= 1, name + " is on the boxes' row");
+            verify(item.mapToItem(o.page, 0, 0).x > grids.mapToItem(o.page, grids.width, 0).x,
+                   name + " is right of the boxes");
+        }
+        const stage = findChild(o.page.header, "stageButton");
+        compare(stage.mapToItem(o.page, stage.width, 0).x, o.page.width - Theme.pageMargin,
+                "the actions end on the page's right line");
+        compare(findChild(o.page, "replaceEditsCheckBox").text, "Overwrite Beat Grids");
+        compare(findChild(o.page, "replaceWaveformsCheckBox").text, "Overwrite Waveforms");
+        if (screenshotDir) {
+            grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-one-row.png");
+        }
+
+        o.page.width = 720;
+        verify(waitForPolish(o.page.Window.window));
+        compare(row.oneLine, false, "720 px: the actions on a line of their own");
+        const options = findChild(o.page.header, "optionsRow");
+        const actions = findChild(o.page.header, "actionsRow");
+        verify(actions.mapToItem(o.page, 0, 0).y >= options.mapToItem(o.page, 0, options.height).y,
+               "the actions are under the boxes");
+        compare(actions.mapToItem(o.page, 0, 0).x, Theme.pageMargin, "on the page's left line");
+        verify(actions.mapToItem(o.page, actions.width, 0).x <= o.page.width - Theme.pageMargin + 0.5,
+               "and inside the page");
+    }
+
+    // The grey notes in the header say rather than offer: scrolling the
+    // tracks folds them away with the explanation, and leaves the actions
+    // beside them.
+    function test_scrollingFoldsTheNotes() {
+        const o = openOn(t73(), {height: 560});
+        copyT73New(o);
+        showPlaylist(o.page, "");
+        waitSettled(o.c);
+        verify(waitForPolish(o.page.Window.window));
+        const label = findChild(o.page.header, "engineAnalysisLabel");
+        const restore = findChild(o.page.header, "restoreButton");
+        verify(label.visible && label.text.length > 0, "the note shows before any scroll");
+        verify(restore.visible);
+        const list = findChild(o.page, "trackList");
+        const details = findChild(o.page.header, "headerDetails");
+        for (let i = 0; i < 10 && details.visible; ++i) {
+            const before = list.contentY;
+            mouseWheel(list, list.width / 2, list.height / 2, 0, -120);
+            tryVerify(() => list.contentY > before || list.atYEnd, 2000, "a wheel step scrolls the list");
+            tryVerify(() => !list.moving, 2000, "the wheel step settles");
+        }
+        tryVerify(() => !details.visible, 2000, "scrolling folds the intro away");
+        compare(label.visible, false, "the note folds with it");
+        compare(findChild(o.page.header, "leftAloneLabel").visible, false);
+        verify(restore.visible, "the actions stay");
+        const top = restore.mapToItem(o.page, 0, 0).y;
+        verify(top >= 0 && top + restore.height <= o.page.header.height + 0.5, "inside the folded header");
+
+        list.positionViewAtBeginning();
+        tryVerify(() => details.visible && label.visible, 2000, "the note unfolds at the top");
+    }
+
     // The edge states, each with its own sentence.
     function test_engine1xLibrary() {
         const stick = t73();
@@ -1280,7 +1355,7 @@ TestCase {
         const o = openOn(stick);
         compare(o.c.engineTooOld, true);
         compare(findChild(o.page, "engineTooOldLabel").visible, true);
-        compare(findChild(o.page, "playlistPickerRow").visible, false, "nothing to tick");
+        compare(findChild(o.page, "playlistPicker").visible, false, "nothing to tick");
         compare(findChild(o.page, "trackList").visible, false);
         compare(findChild(o.page, "optionsRow").visible, false);
         compare(findChild(o.page, "summaryRow").visible, false);

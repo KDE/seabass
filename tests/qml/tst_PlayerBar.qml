@@ -195,6 +195,28 @@ TestCase {
         }
     }
 
+    // The waveform is drawn as the player the track came from draws it:
+    // Engine's layered bands for an Engine track, the CDJ's colours for one
+    // from either rekordbox catalog. A face on its way out keeps the look
+    // of the track it shows.
+    function test_theWaveformTakesTheLibrarysLook() {
+        const controller = createTemporaryObject(liveController, testCase, {currentFormat: "engine"});
+        const bar = createTemporaryObject(barComponent, testCase, {controller: controller});
+        verify(bar !== null);
+        const face = findChild(bar, "playerFace");
+        const waveform = findChild(face, "playerWaveform");
+        compare(waveform.colorScheme, "engine", "Engine OS: Engine's look");
+        controller.currentFormat = "rekordbox";
+        compare(waveform.colorScheme, "vivid", "DeviceLibrary: the CDJ's");
+        controller.currentFormat = "onelibrary";
+        compare(waveform.colorScheme, "vivid", "OneLibrary: the CDJ's");
+
+        controller.currentFormat = "engine";
+        face.freeze();
+        controller.currentFormat = "rekordbox";
+        compare(waveform.colorScheme, "engine", "a frozen face keeps its track's look");
+    }
+
     // Playing: the rim and the glyph are lit green, and stay lit. The
     // press reaches the controller.
     function test_playingLightsTheRim() {

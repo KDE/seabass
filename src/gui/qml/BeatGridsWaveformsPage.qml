@@ -298,79 +298,182 @@ Page {
                     }
                 }
 
-                // What to copy. The boxes themselves on the page's left line.
-                // A box that does not fit beside the others goes onto a line
-                // of its own, and one wider than the page wraps its words.
-                Flow {
-                    id: optionsRow
-                    objectName: "optionsRow"
+                // What to copy, which playlist is listed, and the actions on
+                // the ticks, in one row: the boxes on the page's left line,
+                // the playlist and the buttons on the right. Where the boxes
+                // and the actions do not fit beside each other, the actions
+                // go onto a line of their own, on the left line too; and a
+                // box that does not fit beside the others onto its own.
+                GridLayout {
+                    id: controlsRow
+                    objectName: "controlsRow"
                     Layout.fillWidth: true
                     // While the explanation folds, the spacing under it is
-                    // taken off as it goes, so the boxes end up the crumb's
+                    // taken off as it goes, so the row ends up the crumb's
                     // gap under it without a jump when it hides.
                     Layout.topMargin: headerDetails.visible ? -Theme.tightSpacing * headerCollapse.progress : 0
                     visible: root.usable
-                    spacing: Theme.rowSpacing
-                    SeabassCheckBox {
-                        objectName: "gridsCheckBox"
-                        width: Math.min(implicitWidth, optionsRow.width)
-                        leftPadding: 0
-                        text: "Beat grids"
-                        checked: root.controller.grids
-                        enabled: root.ticksEnabled
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        ToolTip.text: root.staged ? "Unstage to change what is copied"
-                            : "rekordbox's beat grid becomes the one the player plays by"
-                        onToggled: {
-                            root.controller.grids = checked;
-                            checked = Qt.binding(() => root.controller.grids);
+                    columnSpacing: Theme.rowSpacing
+                    rowSpacing: Theme.tightSpacing
+                    // The four boxes on one line, as wide as they ask.
+                    readonly property real boxesWidth: {
+                        let sum = 0;
+                        for (const box of optionsRow.children) {
+                            sum += box.implicitWidth;
+                        }
+                        return sum + optionsRow.spacing * Math.max(0, optionsRow.children.length - 1);
+                    }
+                    readonly property bool oneLine: width >= boxesWidth + columnSpacing + actionsRow.implicitWidth
+                    columns: oneLine ? 2 : 1
+
+                    Flow {
+                        id: optionsRow
+                        objectName: "optionsRow"
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: Theme.rowSpacing
+                        SeabassCheckBox {
+                            objectName: "gridsCheckBox"
+                            width: Math.min(implicitWidth, optionsRow.width)
+                            leftPadding: 0
+                            text: "Beat Grids"
+                            checked: root.controller.grids
+                            enabled: root.ticksEnabled
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: root.staged ? "Unstage to change what is copied"
+                                : "rekordbox's beat grid becomes the one the player plays by"
+                            onToggled: {
+                                root.controller.grids = checked;
+                                checked = Qt.binding(() => root.controller.grids);
+                            }
+                        }
+                        SeabassCheckBox {
+                            objectName: "waveformsCheckBox"
+                            width: Math.min(implicitWidth, optionsRow.width)
+                            text: "Waveforms"
+                            checked: root.controller.waveforms
+                            enabled: root.ticksEnabled
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: root.staged ? "Unstage to change what is copied"
+                                : "rekordbox's waveform, for a track the player has drawn none of"
+                            onToggled: {
+                                root.controller.waveforms = checked;
+                                checked = Qt.binding(() => root.controller.waveforms);
+                            }
+                        }
+                        SeabassCheckBox {
+                            objectName: "replaceEditsCheckBox"
+                            width: Math.min(implicitWidth, optionsRow.width)
+                            text: "Overwrite Beat Grids"
+                            checked: root.controller.replaceEngineEdits
+                            enabled: root.ticksEnabled
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: root.staged ? "Unstage to change what is copied"
+                                : "Also replace a grid the DJ locked or moved on the player. Off, such a grid is "
+                                  + "left as it is"
+                            onToggled: {
+                                root.controller.replaceEngineEdits = checked;
+                                checked = Qt.binding(() => root.controller.replaceEngineEdits);
+                            }
+                        }
+                        SeabassCheckBox {
+                            objectName: "replaceWaveformsCheckBox"
+                            width: Math.min(implicitWidth, optionsRow.width)
+                            text: "Overwrite Waveforms"
+                            checked: root.controller.replacePlayerWaveforms
+                            // Only for a copy of the waveforms.
+                            enabled: root.ticksEnabled && root.controller.waveforms
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: root.staged ? "Unstage to change what is copied"
+                                : "Also replace a waveform the player drew of its own. Off, such a waveform is "
+                                  + "left as it is"
+                            onToggled: {
+                                root.controller.replacePlayerWaveforms = checked;
+                                checked = Qt.binding(() => root.controller.replacePlayerWaveforms);
+                            }
                         }
                     }
-                    SeabassCheckBox {
-                        objectName: "waveformsCheckBox"
-                        width: Math.min(implicitWidth, optionsRow.width)
-                        text: "Waveforms"
-                        checked: root.controller.waveforms
-                        enabled: root.ticksEnabled
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        ToolTip.text: root.staged ? "Unstage to change what is copied"
-                            : "rekordbox's waveform, for a track the player has drawn none of"
-                        onToggled: {
-                            root.controller.waveforms = checked;
-                            checked = Qt.binding(() => root.controller.waveforms);
+
+                    RowLayout {
+                        id: actionsRow
+                        objectName: "actionsRow"
+                        Layout.alignment: (controlsRow.oneLine ? Qt.AlignRight : Qt.AlignLeft) | Qt.AlignVCenter
+                        // On a page too narrow even for the actions, the
+                        // combo gives way.
+                        Layout.maximumWidth: controlsRow.width
+                        spacing: Theme.rowSpacing
+                        // Which playlist's tracks are listed, picked as on Sync
+                        // Cue Points and Clean Up Duplicates (#115), with a box on
+                        // each playlist in the combo that ticks all of its tracks,
+                        // half filled when some are. Beside the buttons that act
+                        // on the listed tracks.
+                        PlaylistPickerCombo {
+                            id: playlistPicker
+                            objectName: "playlistPicker"
+                            Layout.preferredWidth: Theme.snap(Math.max(Theme.scaled(180), Math.min(Theme.scaled(280), controlsRow.width * 0.25)))
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            model: root.playlistPickerModel
+                            currentIndex: root.controller.shownPlaylist.length === 0 ? 0
+                                : root.controller.playlistNames.indexOf(root.controller.shownPlaylist) + 1
+                            checkable: true
+                            checksEnabled: root.ticksEnabled
+                            checkRevision: root.controller.tickRevision
+                            checkStateOf: name => root.controller.playlistCheckState(name)
+                            checkEnabledFor: name => root.controller.tickablePlaylistTracks(name) > 0
+                            checkOffReason: name => root.boxOffReason(root.controller.tickablePlaylistTracks(name),
+                                root.controller.writing,
+                                editHost.blockedByOtherPage ? editHost.pageNameFor(editHost.editorOwner) : "",
+                                root.staged, root.stickReadOnly)
+                            ToolTip.visible: hovered && !popup.visible
+                            ToolTip.delay: 400
+                            ToolTip.text: "The playlist whose tracks are listed; a playlist's box ticks all of its tracks"
+                            onPlaylistPicked: (index, modelData) => root.controller.shownPlaylist = index === 0 ? "" : modelData.name
+                            onPlaylistCheckToggled: (name, checked) => root.controller.setPlaylistTicked(name, checked)
                         }
-                    }
-                    SeabassCheckBox {
-                        objectName: "replaceEditsCheckBox"
-                        width: Math.min(implicitWidth, optionsRow.width)
-                        text: "Also replace grids locked or changed on the player"
-                        checked: root.controller.replaceEngineEdits
-                        enabled: root.ticksEnabled
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        ToolTip.text: root.staged ? "Unstage to change what is copied"
-                            : "Off, a grid the DJ locked or moved on the player is left as it is"
-                        onToggled: {
-                            root.controller.replaceEngineEdits = checked;
-                            checked = Qt.binding(() => root.controller.replaceEngineEdits);
+                        // Every row the list shows ticked, as the shown
+                        // playlist's box (or All tracks') ticks them; and every
+                        // tick taken off. Each is off where it would change
+                        // nothing, and while a batch is staged, as the row
+                        // boxes are.
+                        Button {
+                            objectName: "selectAllButton"
+                            text: "Select All"
+                            // Asked again when the ticks move and when the
+                            // library is read again (playlistNames' signal),
+                            // which can change what can be ticked.
+                            enabled: root.ticksEnabled && root.controller.tickRevision >= 0
+                                && root.controller.playlistNames !== undefined
+                                && root.controller.tickablePlaylistTracks(root.controller.shownPlaylist) > 0
+                                && root.controller.playlistCheckState(root.controller.shownPlaylist) !== Qt.Checked
+                            ToolTip.visible: hovered
+                            ToolTip.text: root.controller.shownPlaylist.length > 0
+                                ? "Tick every track of this playlist" : "Tick every track"
+                            onClicked: root.controller.setPlaylistTicked(root.controller.shownPlaylist, true)
                         }
-                    }
-                    SeabassCheckBox {
-                        objectName: "replaceWaveformsCheckBox"
-                        width: Math.min(implicitWidth, optionsRow.width)
-                        text: "Also replace waveforms the player drew"
-                        checked: root.controller.replacePlayerWaveforms
-                        // Only for a copy of the waveforms.
-                        enabled: root.ticksEnabled && root.controller.waveforms
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        ToolTip.text: root.staged ? "Unstage to change what is copied"
-                            : "Off, a waveform the player drew is left as it is"
-                        onToggled: {
-                            root.controller.replacePlayerWaveforms = checked;
-                            checked = Qt.binding(() => root.controller.replacePlayerWaveforms);
+                        Button {
+                            objectName: "selectNoneButton"
+                            text: "Select None"
+                            enabled: root.ticksEnabled && root.controller.tickedCount > 0
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Untick every track, in every playlist"
+                            onClicked: root.controller.setPlaylistTicked("", false)
+                        }
+                        Button {
+                            objectName: "stageButton"
+                            highlighted: !root.staged
+                            text: root.staged ? "Unstage" : "Stage Selected"
+                            enabled: root.staged ? !root.controller.writing
+                                : root.controller.canStage && !root.stickReadOnly && !editHost.blockedByOtherPage
+                            ToolTip.visible: hovered
+                            ToolTip.text: root.staged ? "Take these changes back out of the changes to save"
+                                : "Stage a copy for every ticked track that would change; Save writes them"
+                            onClicked: root.staged ? root.controller.unstage() : root.controller.stage()
                         }
                     }
                 }
@@ -391,10 +494,26 @@ Page {
                             wrapMode: Text.WordWrap
                             text: root.controller.summaryText
                         }
+                        // How many playlists are ticked, which the closed
+                        // combo cannot show.
+                        Label {
+                            objectName: "tickedPlaylistsLabel"
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            elide: Text.ElideRight
+                            color: Theme.textMuted
+                            font.pointSize: Theme.fontSmall
+                            text: root.tickedPlaylistsText
+                        }
+                        // A note, not a control: it folds away with the
+                        // explanation when the list is scrolled.
                         Label {
                             objectName: "leftAloneLabel"
                             Layout.fillWidth: true
-                            visible: text.length > 0
+                            Layout.preferredHeight: implicitHeight * (1 - headerCollapse.progress)
+                            visible: text.length > 0 && headerCollapse.progress < 1
+                            opacity: 1 - headerCollapse.progress
+                            clip: true
                             wrapMode: Text.WordWrap
                             color: Theme.textMuted
                             font.pointSize: Theme.fontSmall
@@ -416,57 +535,25 @@ Page {
                         ToolTip.text: "Revert the last save: restores every file it touched to what it was before"
                         onClicked: editHost.session.undoLastSave()
                     }
-                    // Every row the list shows ticked, as the shown
-                    // playlist's box (or All tracks') ticks them; and every
-                    // tick taken off. Each is off where it would change
-                    // nothing, and while a batch is staged, as the row
-                    // boxes are.
-                    Button {
-                        objectName: "selectAllButton"
-                        text: "Select All"
-                        // Asked again when the ticks move and when the
-                        // library is read again (playlistNames' signal),
-                        // which can change what can be ticked.
-                        enabled: root.ticksEnabled && root.controller.tickRevision >= 0
-                            && root.controller.playlistNames !== undefined
-                            && root.controller.tickablePlaylistTracks(root.controller.shownPlaylist) > 0
-                            && root.controller.playlistCheckState(root.controller.shownPlaylist) !== Qt.Checked
-                        ToolTip.visible: hovered
-                        ToolTip.text: root.controller.shownPlaylist.length > 0
-                            ? "Tick every track of this playlist" : "Tick every track"
-                        onClicked: root.controller.setPlaylistTicked(root.controller.shownPlaylist, true)
-                    }
-                    Button {
-                        objectName: "selectNoneButton"
-                        text: "Select None"
-                        enabled: root.ticksEnabled && root.controller.tickedCount > 0
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Untick every track, in every playlist"
-                        onClicked: root.controller.setPlaylistTicked("", false)
-                    }
-                    Button {
-                        objectName: "stageButton"
-                        highlighted: !root.staged
-                        text: root.staged ? "Unstage" : "Stage Selected"
-                        enabled: root.staged ? !root.controller.writing
-                            : root.controller.canStage && !root.stickReadOnly && !editHost.blockedByOtherPage
-                        ToolTip.visible: hovered
-                        ToolTip.text: root.staged ? "Take these changes back out of the changes to save"
-                            : "Stage a copy for every ticked track that would change; Save writes them"
-                        onClicked: root.staged ? root.controller.unstage() : root.controller.stage()
-                    }
                 }
 
                 // The way back from a copy, for the ticked tracks: two
-                // secondary actions, on the summary's left line.
+                // secondary actions, on the right; on the summary's left
+                // line once their note has folded away.
                 RowLayout {
                     objectName: "engineAnalysisRow"
                     Layout.fillWidth: true
                     visible: root.usable && root.controller.tickedCount > 0
                     spacing: Theme.rowSpacing
+                    // A note beside the two actions: it folds away with the
+                    // explanation when the list is scrolled, the actions stay.
                     Label {
                         objectName: "engineAnalysisLabel"
                         Layout.fillWidth: true
+                        Layout.preferredHeight: implicitHeight * (1 - headerCollapse.progress)
+                        visible: headerCollapse.progress < 1
+                        opacity: 1 - headerCollapse.progress
+                        clip: true
                         wrapMode: Text.WordWrap
                         color: Theme.textMuted
                         font.pointSize: Theme.fontSmall
@@ -588,55 +675,6 @@ Page {
                    : root.controller.waveforms && !root.controller.grids ? "waveform"
                    : "waveform and beat grid")
                 + " data to check what syncing would change..."
-        }
-
-        // Which playlist's tracks are listed, picked as on Sync Cue Points
-        // and Clean Up Duplicates (#115), with a box on each playlist in
-        // the combo that ticks all of its tracks, half filled when some
-        // are. Beside it, how many playlists are ticked, which the closed
-        // combo cannot show.
-        RowLayout {
-            objectName: "playlistPickerRow"
-            Layout.fillWidth: true
-            visible: root.usable
-            spacing: Theme.tightSpacing
-            Label {
-                objectName: "playlistPickerLabel"
-                text: "Playlist:"
-                color: Theme.textMuted
-            }
-            PlaylistPickerCombo {
-                id: playlistPicker
-                objectName: "playlistPicker"
-                Layout.preferredWidth: Theme.snap(Math.max(Theme.scaled(200), Math.min(Theme.scaled(320), body.width * 0.35)))
-                Layout.minimumWidth: 0
-                model: root.playlistPickerModel
-                currentIndex: root.controller.shownPlaylist.length === 0 ? 0
-                    : root.controller.playlistNames.indexOf(root.controller.shownPlaylist) + 1
-                checkable: true
-                checksEnabled: root.ticksEnabled
-                checkRevision: root.controller.tickRevision
-                checkStateOf: name => root.controller.playlistCheckState(name)
-                checkEnabledFor: name => root.controller.tickablePlaylistTracks(name) > 0
-                checkOffReason: name => root.boxOffReason(root.controller.tickablePlaylistTracks(name),
-                    root.controller.writing,
-                    editHost.blockedByOtherPage ? editHost.pageNameFor(editHost.editorOwner) : "",
-                    root.staged, root.stickReadOnly)
-                ToolTip.visible: hovered && !popup.visible
-                ToolTip.delay: 400
-                ToolTip.text: "The playlist whose tracks are listed; a playlist's box ticks all of its tracks"
-                onPlaylistPicked: (index, modelData) => root.controller.shownPlaylist = index === 0 ? "" : modelData.name
-                onPlaylistCheckToggled: (name, checked) => root.controller.setPlaylistTicked(name, checked)
-            }
-            Label {
-                objectName: "tickedPlaylistsLabel"
-                Layout.fillWidth: true
-                Layout.leftMargin: Theme.rowSpacing - Theme.tightSpacing
-                elide: Text.ElideRight
-                color: Theme.textMuted
-                font.pointSize: Theme.fontSmall
-                text: root.tickedPlaylistsText
-            }
         }
 
         ListView {
