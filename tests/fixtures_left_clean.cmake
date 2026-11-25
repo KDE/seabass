@@ -23,8 +23,11 @@ foreach(required GIT SOURCE)
 endforeach()
 
 # -x: untracked files, ignored or not. -d: whole untracked folders.
+# safe.directory: CI's checkout belongs to another user than the one
+# running the tests, and git refuses to read such a tree without it. This
+# only lists files (-n), so trusting the tree changes nothing.
 execute_process(
-    COMMAND "${GIT}" -C "${SOURCE}" clean -ndx -- tests/fixtures
+    COMMAND "${GIT}" -c safe.directory=* -C "${SOURCE}" clean -ndx -- tests/fixtures
     OUTPUT_VARIABLE strays
     ERROR_VARIABLE error
     RESULT_VARIABLE code)
