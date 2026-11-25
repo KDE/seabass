@@ -1728,9 +1728,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         after.isAnalyzed = EngineSqlValue::ofInteger(1);
     };
     // A completion over the waveform the player drew (asked for: an answer,
-    // or "Overwrite Waveforms") keeps the player's row first, every column
-    // and the overview file, so Restore Engine's Analysis brings it back.
-    // What cannot be kept is not replaced, in a preview as in the write.
+    // or "Overwrite Engine's Analysis") keeps the player's row first, every
+    // column and the overview file, so Restore Engine's Analysis brings it
+    // back. What cannot be kept is not replaced, in a preview as in the
+    // write.
     const bool overPlayers = holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint);
     const KeepFacts keep{overPlayers, overPlayers, options.ownGridFingerprint, overPlayers};
     if (overPlayers

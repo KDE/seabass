@@ -329,8 +329,8 @@ TestCase {
         compare(o.c.replacePlayerWaveforms, false);
         compare(findChild(o.page, "gridsCheckBox").checked, true);
         compare(findChild(o.page, "waveformsCheckBox").checked, true);
-        compare(findChild(o.page, "replaceEditsCheckBox").checked, false);
-        compare(findChild(o.page, "replaceWaveformsCheckBox").checked, false);
+        compare(o.c.overwriteEngineAnalysis, false);
+        compare(findChild(o.page, "overwriteCheckBox").checked, false);
         const button = findChild(o.page, "stageButton");
         compare(button.text, "Stage Selected");
         compare(button.enabled, false, "nothing ticked: nothing to stage");
@@ -577,10 +577,11 @@ TestCase {
         compare(o.c.waveformsToCopy, 6, "the 5 analysed rows keep the waveform the player drew");
         compare(o.c.leftAloneCount, 5, "locked, and the player's waveform: nothing to copy");
 
-        const box = findChild(o.page, "replaceEditsCheckBox");
+        const box = findChild(o.page, "overwriteCheckBox");
         compare(box.checked, false, "off by default");
         clickOn(box);
         compare(o.c.replaceEngineEdits, true);
+        compare(o.c.replacePlayerWaveforms, true, "one box for the player's grid and waveform both");
         compare(row(o.c, n1).pending, true, "worked out again");
         waitSettled(o.c);
         compare(row(o.c, n1).gridState, "Replaces Engine's");
@@ -588,6 +589,7 @@ TestCase {
 
         clickOn(box);
         compare(o.c.replaceEngineEdits, false);
+        compare(o.c.replacePlayerWaveforms, false);
         waitSettled(o.c);
         compare(row(o.c, n1).gridState, "Locked on the player", "and back");
         compare(o.c.gridsToCopy, 6);
@@ -602,23 +604,27 @@ TestCase {
         const o = openOn(t73());
         clickPlaylistBox(o.page, "T73 Renamed");
         waitSettled(o.c);
-        const box = findChild(o.page, "replaceWaveformsCheckBox");
-        compare(box.text, "Overwrite Waveforms");
+        const box = findChild(o.page, "overwriteCheckBox");
+        compare(box.text, "Overwrite Engine's Analysis");
         compare(box.checked, false, "off by default");
         compare(box.enabled, true, "Waveforms is ticked");
         compare(row(o.c, b04).waveformState, "Drawn by the player");
         compare(row(o.c, b04).waveformTip,
-                "The player drew its own waveform of this track, and it stays. \"Overwrite Waveforms\" "
-                + "replaces it all the same.");
+                "The player drew its own waveform of this track, and it stays. \"Overwrite Engine's "
+                + "Analysis\" replaces it all the same.");
         compare(row(o.c, b01).waveformState, "New", "a row the player has not analysed gets rekordbox's");
 
-        // Without "Waveforms" there is nothing for it to replace.
+        // With neither part ticked there is nothing for it to replace.
         clickOn(findChild(o.page, "waveformsCheckBox"));
         compare(o.c.waveforms, false);
-        compare(box.enabled, false, "off with Waveforms");
+        compare(box.enabled, true, "still there for the grids");
+        clickOn(findChild(o.page, "gridsCheckBox"));
+        compare(o.c.grids, false);
+        compare(box.enabled, false, "off with both parts off");
+        clickOn(findChild(o.page, "gridsCheckBox"));
         clickOn(findChild(o.page, "waveformsCheckBox"));
         compare(o.c.waveforms, true);
-        compare(box.enabled, true, "and back with it");
+        compare(box.enabled, true, "and back with them");
         waitSettled(o.c);
 
         clickOn(box);
@@ -724,7 +730,7 @@ TestCase {
         compare(rowsBefore.overviewFiles, 0);
         const o = openOn(stick);
         // Every waveform, the player's too: the box reaches the save.
-        clickOn(findChild(o.page, "replaceWaveformsCheckBox"));
+        clickOn(findChild(o.page, "overwriteCheckBox"));
         compare(o.c.replacePlayerWaveforms, true);
         clickPlaylistBox(o.page, "");
         waitSettled(o.c);
@@ -1063,7 +1069,7 @@ TestCase {
         }
         const box = findChild(findChild(o.page, "gridsCheckBox"), "seabassCheckIndicator");
         compare(box.mapToItem(o.page, 0, 0).x, left, "the first box itself is on the left line");
-        for (const name of ["gridsCheckBox", "waveformsCheckBox", "replaceEditsCheckBox", "replaceWaveformsCheckBox"]) {
+        for (const name of ["gridsCheckBox", "waveformsCheckBox", "overwriteCheckBox"]) {
             verifyBoxLabelGap(o.page, name);
         }
         verifyRowsAlike(o.page, [b01, b02, b04, b12], "720 px, three ticked");
@@ -1086,27 +1092,17 @@ TestCase {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage.png");
         }
 
-        // Narrower than the boxes fit on one line: a box that does not fit
-        // goes onto a line of its own, whole, starting it on the left line,
-        // rather than squeezing beside the others.
-        o.page.width = 320;
-        verify(waitForPolish(o.page.Window.window));
+        // At the narrowest width the three boxes still share one line, each
+        // whole and inside the page.
         const options = findChild(o.page, "optionsRow");
-        const names = ["gridsCheckBox", "waveformsCheckBox", "replaceEditsCheckBox", "replaceWaveformsCheckBox"];
+        const names = ["gridsCheckBox", "waveformsCheckBox", "overwriteCheckBox"];
         const first = findChild(o.page, names[0]);
-        let wrapped = 0;
         for (let i = 1; i < names.length; ++i) {
             const box = findChild(o.page, names[i]);
-            const before = findChild(o.page, names[i - 1]);
-            if (box.y > before.y) {
-                ++wrapped;
-                verify(box.y >= before.y + before.height, names[i] + " is on a line of its own");
-                compare(box.x, first.x, names[i] + " starts it on the left line");
-            }
+            compare(box.y, first.y, names[i] + " is on the first box's line");
             verify(box.x + box.width <= options.width, names[i] + " fits the page");
             verifyBoxLabelGap(o.page, names[i]);
         }
-        verify(wrapped > 0, "320 px: some box went onto a line of its own");
     }
 
     // The state badges are bounded by their row's title column (`room`,
@@ -1267,9 +1263,9 @@ TestCase {
         }
         // The crumb's gap is the one-row header's, folded too.
         const crumb = findChild(o.page.header, "crumbRow");
-        const options = findChild(o.page.header, "optionsRow");
-        compare(options.mapToItem(o.page, 0, 0).y - crumb.mapToItem(o.page, 0, crumb.height).y, Theme.crumbGap,
-                "the boxes sit the crumb's gap under it");
+        const controls = findChild(o.page.header, "controlsRow");
+        compare(controls.mapToItem(o.page, 0, 0).y - crumb.mapToItem(o.page, 0, crumb.height).y, Theme.crumbGap,
+                "the boxes' row sits the crumb's gap under it");
 
         list.positionViewAtBeginning();
         tryCompare(o.page.header, "height", fullHeader, 2000, "the header unfolds at the top");
@@ -1297,8 +1293,7 @@ TestCase {
         const stage = findChild(o.page.header, "stageButton");
         compare(stage.mapToItem(o.page, stage.width, 0).x, o.page.width - Theme.pageMargin,
                 "the actions end on the page's right line");
-        compare(findChild(o.page, "replaceEditsCheckBox").text, "Overwrite Beat Grids");
-        compare(findChild(o.page, "replaceWaveformsCheckBox").text, "Overwrite Waveforms");
+        compare(findChild(o.page, "overwriteCheckBox").text, "Overwrite Engine's Analysis");
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-one-row.png");
         }

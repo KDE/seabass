@@ -319,7 +319,7 @@ struct AnalysisEdit
     // A row whose flag is down over the player's own waveform takes
     // rekordbox's only as a completion: the answer then writes rekordbox's
     // whole analysis (grid and waveform), as Beat Grids & Waveforms does
-    // with "Overwrite Waveforms".
+    // with "Overwrite Engine's Analysis".
     bool completesRow = false;
     // The grid was locked on the player when the conflict was raised: the
     // answer then writes over the lock, as the user saw it. A lock set
