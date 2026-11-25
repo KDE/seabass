@@ -168,7 +168,7 @@ int main(int argc, char **argv)
         const fs::path destination = stick.root / "Contents" / "Hand Built" / "From Disk" / pathFromUtf8("04 Imported S\xc3\xb6ng.flac");
         assert(!fs::exists(destination));
 
-        auto change = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto change = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                           stick.enginePath(), description(stickPath), AllThree, 1);
         assert(change->id() == QStringLiteral("addcue:import-track:") + QString::fromStdString(stickPath));
         assert(change->owner() == QStringLiteral("addcue") && "staged beside Browse's playlist edits");
@@ -255,7 +255,7 @@ int main(int argc, char **argv)
         const std::string pdbBefore = testing::fileBytes(pdb);
         const Counts before = countsOf(stick);
         const fs::path destination = stick.root / "Contents" / "Hand Built" / "From Disk" / pathFromUtf8("04 Imported S\xc3\xb6ng.flac");
-        auto change = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto change = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                           stick.enginePath(), description(stickPath), AllThree, 1);
         const SaveLoopResult saved = testing::saveChanges({change}, stick.pioneerPath(), stick.enginePath());
         assert(!saved.error.isEmpty() && saved.appliedIds.isEmpty());
@@ -275,7 +275,7 @@ int main(int argc, char **argv)
         const fs::path destination = stick.root / "Contents" / "Hand Built" / "From Disk" / pathFromUtf8("04 Imported S\xc3\xb6ng.flac");
         domain::ImportedTrack noRate = description(stickPath);
         noRate.sampleRateHz = 0;
-        auto unprobed = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto unprobed = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                             stick.enginePath(), noRate, AllThree, 1);
         const SaveLoopResult early = testing::saveChanges({unprobed}, stick.pioneerPath(), stick.enginePath());
         assert(!early.error.isEmpty() && early.error.contains(QStringLiteral("sample rate")));
@@ -291,12 +291,12 @@ int main(int argc, char **argv)
         for (int i = 0; i < 2500; ++i) {
             wordy.comment += "\xc3\xa9";
         }
-        auto tooLong = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto tooLong = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                            stick.enginePath(), wordy, AllThree, 1);
         const SaveLoopResult long1 = testing::saveChanges({tooLong}, stick.pioneerPath(), stick.enginePath());
         assert(!long1.error.isEmpty() && long1.error.contains(QStringLiteral("do not fit a page")));
         assert(!fs::exists(stick.root / "Contents" / "Hand Built") && countsOf(stick) == before);
-        auto ogg = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto ogg = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                        stick.enginePath(), description("/Contents/Hand Built/x.ogg"), AllThree, 1);
         const SaveLoopResult ogg1 = testing::saveChanges({ogg}, stick.pioneerPath(), stick.enginePath());
         assert(!ogg1.error.isEmpty() && ogg1.error.contains(QStringLiteral("no file type known")));
@@ -305,7 +305,7 @@ int main(int argc, char **argv)
         // The libraries named have to be the stick's: one left out, and
         // the two written would say what the third does not.
         auto partial = std::make_shared<ImportTrackChange>(
-            pathToQString(source), pathToQString(stick.root), stick.pioneerPath(), stick.enginePath(), description(stickPath),
+            pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(), stick.enginePath(), description(stickPath),
             QStringList{QStringLiteral("rekordbox"), QStringLiteral("engine")}, 1);
         const SaveLoopResult part = testing::saveChanges({partial}, stick.pioneerPath(), stick.enginePath());
         assert(!part.error.isEmpty() && part.error.contains(QStringLiteral("not the ones this import was planned for")));
@@ -313,7 +313,7 @@ int main(int argc, char **argv)
 
         fs::create_directories(destination.parent_path());
         std::ofstream(destination, std::ios::binary) << "somebody's own file";
-        auto change = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto change = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                           stick.enginePath(), description(stickPath), AllThree, 1);
         const SaveLoopResult occupied = testing::saveChanges({change}, stick.pioneerPath(), stick.enginePath());
         assert(!occupied.error.isEmpty() && occupied.error.contains(QStringLiteral("not replaced")));
@@ -321,7 +321,7 @@ int main(int argc, char **argv)
 
         // A file that is not there on the computer.
         fs::remove(destination);
-        auto missing = std::make_shared<ImportTrackChange>(pathToQString(computer / "never was.flac"), pathToQString(stick.root),
+        auto missing = std::make_shared<ImportTrackChange>(pathToUtf8(computer / "never was.flac"), pathToQString(stick.root),
                                                            stick.pioneerPath(), stick.enginePath(), description(stickPath),
                                                            AllThree, 1);
         const SaveLoopResult gone = testing::saveChanges({missing}, stick.pioneerPath(), stick.enginePath());
@@ -334,7 +334,7 @@ int main(int argc, char **argv)
             domain::ImportedTrack t = description(stickPath);
             t.stickPath = path;
             try {
-                ImportTrackChange c(pathToQString(source), pathToQString(stick.root), pioneer, engine, t, libraries, 1);
+                ImportTrackChange c(pathToUtf8(source), pathToQString(stick.root), pioneer, engine, t, libraries, 1);
             } catch (const std::invalid_argument &) {
                 return true;
             }
@@ -372,7 +372,7 @@ int main(int argc, char **argv)
                 t.key = "8A";
             }
             destinations.push_back(stick.root / "Contents" / "Many" / name);
-            changes.push_back(std::make_shared<ImportTrackChange>(pathToQString(makeSource(computer, name)),
+            changes.push_back(std::make_shared<ImportTrackChange>(pathToUtf8(makeSource(computer, name)),
                                                                   pathToQString(stick.root), stick.pioneerPath(),
                                                                   stick.enginePath(), t, AllThree, 20));
         }
@@ -412,11 +412,11 @@ int main(int argc, char **argv)
         const Counts before = countsOf(stick);
         const fs::path first = stick.root / "Contents" / "Two" / "first.flac";
         const fs::path second = stick.root / "Contents" / "Two" / "second.flac";
-        auto one = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto one = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                        stick.enginePath(), description("/Contents/Two/first.flac"), AllThree, 2);
         // Occupied by a folder: nothing a copy could replace.
         fs::create_directories(second);
-        auto two = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+        auto two = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                        stick.enginePath(), description("/Contents/Two/second.flac"), AllThree, 2);
         const SaveLoopResult saved = testing::saveChanges({one, two}, stick.pioneerPath(), stick.enginePath());
         assert(!saved.error.isEmpty() && saved.error.contains(QStringLiteral("not replaced")));

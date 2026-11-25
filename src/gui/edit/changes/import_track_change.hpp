@@ -54,12 +54,13 @@ namespace seabass::gui
 class ImportTrackChange : public PendingChange
 {
 public:
-    // `sourceFile`: the file on the computer. `stickRoot`: the stick as it
+    // `sourceFile`: the file on the computer, as the bytes of its path (a
+    // name that is not UTF-8 does not survive a QString). `stickRoot`: the stick as it
     // is mounted now; `track.stickPath` is the file's place under it.
     // `pioneerRoot` and `enginePath` as every change takes them, empty for
     // a library the stick does not have. `libraries`: "rekordbox",
     // "onelibrary", "engine".
-    ImportTrackChange(QString sourceFile, QString stickRoot, QString pioneerRoot, QString enginePath,
+    ImportTrackChange(std::string sourceFile, QString stickRoot, QString pioneerRoot, QString enginePath,
                       domain::ImportedTrack track, QStringList libraries, int itemCountHint);
 
     // Why the libraries named would refuse a row for `track`, a file of
@@ -94,7 +95,7 @@ public:
     std::int64_t engineId() const { return m_engineId; }
 
 private:
-    QString m_sourceFile;
+    std::string m_sourceFile;
     QString m_stickRoot;
     QString m_pioneerRoot;
     QString m_enginePath;

@@ -77,8 +77,9 @@ struct StagedImport
 // already says what happens to them.
 //
 // `date`: the day of the import, "YYYY-MM-DD". Throws
-// std::invalid_argument for a target without libraries or a date that is
-// not a day.
+// std::invalid_argument for a target without libraries, a date that is
+// not a day, or a place in the playlist below 0. A file whose place on
+// the stick is taken by now is left out.
 StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget &target,
                               application::TrackTagReader &tags, application::TrackMetadataProbe &probe,
                               const std::string &date, const std::optional<ImportPlaylist> &playlist);

@@ -5,12 +5,14 @@
 #include "gui/edit/changes/import_track_change.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
 #include "domain/import_field_checks.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
@@ -113,13 +115,13 @@ std::string ImportTrackChange::rowRefusal(const domain::ImportedTrack &track, co
     return {};
 }
 
-ImportTrackChange::ImportTrackChange(QString sourceFile, QString stickRoot, QString pioneerRoot, QString enginePath,
+ImportTrackChange::ImportTrackChange(std::string sourceFile, QString stickRoot, QString pioneerRoot, QString enginePath,
                                      domain::ImportedTrack track, QStringList libraries, int itemCountHint)
     : m_sourceFile(std::move(sourceFile)), m_stickRoot(std::move(stickRoot)), m_pioneerRoot(std::move(pioneerRoot)),
       m_enginePath(std::move(enginePath)), m_track(std::move(track)), m_libraries(std::move(libraries)),
       m_itemCountHint(itemCountHint)
 {
-    if (m_stickRoot.isEmpty() || m_sourceFile.isEmpty()) {
+    if (m_stickRoot.isEmpty() || m_sourceFile.empty()) {
         throw std::invalid_argument("ImportTrackChange: a source file and a stick are required");
     }
     // The one plain spelling, so the file cannot land beside the stick
@@ -234,7 +236,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     m_oneLibraryId = -1;
     m_engineId = -1;
     const std::string destination = destinationFile();
-    const std::string source = m_sourceFile.toStdString();
+    const std::string &source = m_sourceFile;
     const std::string pioneer = m_pioneerRoot.toStdString();
     const bool toDeviceLibrary = m_libraries.contains(QStringLiteral("rekordbox"));
     const bool toOneLibrary = m_libraries.contains(QStringLiteral("onelibrary"));
@@ -247,7 +249,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     std::error_code ec;
     const std::uintmax_t sourceSize = fs::file_size(pathFromUtf8(source), ec);
     if (ec) {
-        return ChangeOutcome::failure(QStringLiteral("%1 is not a file that can be read. Nothing was imported.").arg(m_sourceFile));
+        return ChangeOutcome::failure(QStringLiteral("%1 is not a file that can be read. Nothing was imported.").arg(pathToQString(pathFromUtf8(m_sourceFile))));
     }
     // Never over a file that is there (the copy would refuse too, after
     // the libraries were opened).
@@ -282,11 +284,25 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         if (m_track.sampleRateHz <= 0) {
             return ChangeOutcome::failure(
                 QStringLiteral("The sample rate of %1 could not be read, which an Engine row needs. Nothing was imported.")
-                    .arg(m_sourceFile));
+                    .arg(pathToQString(pathFromUtf8(m_sourceFile))));
         }
     }
 
     try {
+        // export.pdb's row is made before the copy, in the writer's own
+        // copy of the file: what only the library can refuse it for (a
+        // row that already names the file, a page that cannot take a row,
+        // a table that cannot start a new page) is then known while
+        // nothing is on the stick. It reaches the file with commit(),
+        // after the copy.
+        std::optional<infrastructure::rekordbox::PdbRowWriter> pdbRows;
+        FormatWriteSession *pdbSession = nullptr;
+        if (toDeviceLibrary) {
+            pdbSession = &sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
+            pdbRows.emplace(exportPdbUnder(pdbSession->writeRoot()));
+            m_deviceLibraryId = pdbRows->addTrack(pdbRow);
+        }
+
         // Not cancellable: the save's cancel is asked between changes
         // (runSaveLoop), and a copy stopped halfway would be a failed
         // change, which takes back every track imported before it. A
@@ -296,17 +312,18 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         if (!copied.copied) {
             return ChangeOutcome::failure(QString::fromStdString(copied.error));
         }
-        pdbRow.fileSizeBytes = copied.bytes;
-        oneRow.fileSizeBytes = copied.bytes;
+        // The row holds the size that was measured before the copy: a
+        // file that is another size now is not the file the row is for.
+        if (copied.bytes != sourceSize) {
+            return ChangeOutcome::failure(
+                QStringLiteral("%1 changed while it was imported.").arg(pathToQString(pathFromUtf8(m_sourceFile))));
+        }
 
         if (toDeviceLibrary) {
-            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbUnder(session.writeRoot()));
-            m_deviceLibraryId = rows.addTrack(pdbRow);
-            if (!rows.commit()) {
+            if (!pdbRows->commit()) {
                 return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb for %1.").arg(subject()));
             }
-            session.noteItemApplied();
+            pdbSession->noteItemApplied();
         }
         if (toOneLibrary) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);

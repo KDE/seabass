@@ -239,6 +239,22 @@ int main(int argc, char **argv)
     none.entries.push_back(offer(computer, "settled2.mp3", "Settled", "Contents/Stager/Staged/settled2.mp3"));
     none.entries.back().verdict = domain::ImportVerdict::PossibleDuplicate;
     assert(stageTrackImport(none, target, tags, probe, "2026-11-25", ImportPlaylist{"Never Made", true, std::nullopt}).changes.empty());
+    {
+        bool refused = false;
+        try {
+            (void)stageTrackImport(plan, target, tags, probe, "2026-11-25", ImportPlaylist{"Staged Import", false, -1});
+        } catch (const std::invalid_argument &) {
+            refused = true;
+        }
+        assert(refused && "a place below 0 is not a place");
+        // A file whose place was taken since the plan was made is left
+        // out, not staged to fail.
+        domain::ImportPlan taken;
+        taken.entries.push_back(offer(computer, "one again.mp3", "One Again", "Contents/Stager/Staged/one.mp3"));
+        const StagedImport none2 = stageTrackImport(taken, target, tags, probe, "2026-11-25", std::nullopt);
+        assert(none2.changes.empty() && none2.leftOut.size() == 1
+               && none2.leftOut[0].why.find("on the stick already") != std::string::npos);
+    }
     for (const char *date : {"", "25-11-2026"}) {
         bool refused = false;
         try {

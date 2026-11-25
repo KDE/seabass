@@ -4,12 +4,14 @@
 
 #include "gui/edit/track_import_staging.hpp"
 
+#include <filesystem>
 #include <stdexcept>
 
 #include "domain/import_field_checks.hpp"
 #include "domain/imported_track.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::gui
 {
@@ -41,6 +43,11 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
     }
     if (!domain::isCalendarDate(date)) {
         throw std::invalid_argument("stageTrackImport: \"" + date + "\" is not a date as YYYY-MM-DD");
+    }
+    if (playlist && playlist->atIndex && *playlist->atIndex < 0) {
+        // Each file would be clamped to the top in turn, and the batch
+        // come out backwards.
+        throw std::invalid_argument("stageTrackImport: a place in a playlist is counted from 0");
     }
     int toImport = 0;
     for (const auto &entry : plan.entries) {
@@ -77,6 +84,15 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             leave("its sample rate could not be read, which an Engine row needs");
             continue;
         }
+        {
+            // Its place has to be free now, whatever the plan saw.
+            std::error_code ec;
+            const auto place = pathFromUtf8(target.stickRoot.toStdString()) / pathFromUtf8(entry.destination);
+            if (std::filesystem::symlink_status(place, ec).type() != std::filesystem::file_type::not_found) {
+                leave("/" + entry.destination + " is on the stick already");
+                continue;
+            }
+        }
         std::string refusal = ImportTrackChange::rowRefusal(track, target.libraries, audio.fileSizeBytes);
         if (!refusal.empty() && track.comment.size() > 250) {
             // The one text that is long in real files (a tracklist, a
@@ -89,7 +105,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             continue;
         }
         try {
-            imports.push_back(std::make_shared<ImportTrackChange>(QString::fromStdString(source), target.stickRoot,
+            imports.push_back(std::make_shared<ImportTrackChange>(source, target.stickRoot,
                                                                   target.pioneerRoot, target.enginePath, track,
                                                                   target.libraries, toImport));
         } catch (const std::invalid_argument &e) {
