@@ -560,6 +560,78 @@ void stabsBetweenTheBeatsForASection()
     within(c.hits.within20Ms, 0.75, 1.0, "stabs between the beats for a section: the grid stays on the kick");
 }
 
+// A drummer at 100 BPM who falls behind for a quarter of the track, by up to
+// 40 ms, and catches up again. One straight grid explains about four
+// fifths of the track, more than the three quarters under which a track is
+// followed outright. But the followed grid sits on the hits there too and
+// the straight one does not, so the track is followed all the same.
+void drummerWhoFallsBehindForAWhile()
+{
+    const int rate = 44100;
+    const int count = 300;
+    const double period = 0.6;
+    const double pi = 3.14159265358979;
+    std::vector<float> audio(static_cast<std::size_t>((count * period + 2.0) * rate), 0.0f);
+    std::vector<Beat> truth;
+    for (int k = 0; k < count; ++k) {
+        double behind = 0.0;
+        if (k >= 165 && k < 243) {
+            const double through = std::sin(pi * (k - 165) / 78.0);
+            behind = 0.040 * through * through;
+        }
+        const double at = 0.4 + k * period + behind;
+        truth.push_back({at * 1000.0, k % 4 + 1});
+        if (k % 2 == 0) {
+            addKick(audio, rate, at);
+        } else {
+            addNote(audio, rate, at, 220.0, 0.45, 0.002, 0.06);
+            addNote(audio, rate, at, 1800.0, 0.3, 0.001, 0.04);
+        }
+        addNote(audio, rate, at, 3500.0, 0.12, 0.001, 0.012);
+        addNote(audio, rate, at + period / 2.0, 3500.0, 0.12, 0.001, 0.012);
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth, SeabassGridAnalyser::FollowedGridEarlierMs);
+    const std::string name = "a drummer who falls behind for a while";
+    check(c.tempo == TempoRelation::Same, name + ": the tempo, was " + tempoRelationName(c.tempo));
+    check(c.candidateShape.kind == GridShapeKind::Moving, name + ": followed, though a straight grid explains most of it");
+    within(c.hits.within20Ms, 0.95, 1.0, name + ": true beats with one of ours within 20 ms");
+}
+
+// A drum machine at 124 BPM with a stab between the beats, louder than the
+// kick, on a fifth of the track. The windows of those sections have their
+// peak on the stab, so the straight grid explains about four fifths of the
+// track, as with the drummer above. But it sits on every kick and the
+// followed grid sits no tighter: the track keeps its straight grid.
+void stabsOnAFifthOfTheTrack()
+{
+    const int rate = 44100;
+    const int count = 320;
+    const double period = 60.0 / 124.0;
+    std::vector<float> audio(static_cast<std::size_t>((count * period + 1.5) * rate), 0.0f);
+    std::vector<Beat> truth;
+    for (int k = 0; k < count; ++k) {
+        const double beat = 0.3 + k * period;
+        truth.push_back({beat * 1000.0, k % 4 + 1});
+        addKick(audio, rate, beat, 0.8);
+        // Of every 80 beats the last 16 are such a section.
+        if (k % 80 >= 64) {
+            addStab(audio, rate, beat + period / 2.0, 1.0);
+        }
+    }
+    InMemoryPcmSource source(audio, rate);
+    SeabassGridAnalyser analyser;
+    const GridAnalysis analysis = analyser.analyse(source);
+    const BeatGridComparison c = compareBeatGrids(analysis.beats, truth);
+    const std::string name = "stabs between the beats on a fifth of the track";
+    check(c.tempo == TempoRelation::Same, name + ": the tempo, was " + tempoRelationName(c.tempo));
+    check(c.candidateShape.kind == GridShapeKind::Constant, name + ": one straight grid");
+    within(c.offset.medianMs, -6.0, 0.0, name + ": the beat, in ms from the true one");
+    within(analysis.confidence, 0.75, 0.85, name + ": the straight grid explains about four fifths of the track");
+}
+
 // A loop of seven seconds, shorter than the windows the tempo's candidates
 // are compared in: it is one window, and its tempo is still read from the
 // audio. (With no window at all every candidate scored nothing and the
@@ -675,6 +747,8 @@ int main()
     wanderingDrummer(6.0, 0.35, true);
     wanderingDrummer(20.0, 0.8, false);
     stabsBetweenTheBeatsForASection();
+    drummerWhoFallsBehindForAWhile();
+    stabsOnAFifthOfTheTrack();
     movingInARange(45.0, 50.0, TempoRange{40.0, 80.0}, "a kick from 45 to 50 BPM in 40 to 80");
     movingInARange(205.0, 230.0, TempoRange{120.0, 240.0}, "a kick from 205 to 230 BPM in 120 to 240");
     heldTones();

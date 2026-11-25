@@ -1381,6 +1381,67 @@ std::vector<double> trackBeats(const std::vector<double> &onsets, const TempoCur
     return whole;
 }
 
+// How tightly a grid sits on the hits. A beat counts when the onset
+// function has a strong onset within 50 ms of it: at least half as strong
+// as the beat a quarter of the way down this grid's own list of strongest
+// (its 75th percentile). Of those beats, the share whose onset lies within
+// 12 ms of where this grid's onsets usually lie against its beats. A grid
+// that follows the playing has its hits at one place all through the
+// track; one the playing runs away from has them wandering. A beat with no
+// onset near it says nothing either way. Nothing where under 16 of the
+// beats lie 50 ms or more inside the track, the grid has no strong onsets,
+// or under 8 of its beats have one.
+std::optional<double> tightness(const std::vector<double> &beats, const std::vector<double> &onsets)
+{
+    constexpr std::ptrdiff_t ReachMs = 50;
+    constexpr double NearMs = 12.0;
+    const auto length = static_cast<std::ptrdiff_t>(onsets.size());
+    std::vector<double> peaks;
+    std::vector<double> places;
+    for (const double beat : beats) {
+        if (!std::isfinite(beat) || beat < 0.0 || beat >= static_cast<double>(length)) {
+            continue;
+        }
+        const auto centre = static_cast<std::ptrdiff_t>(std::llround(beat));
+        if (centre - ReachMs < 0 || centre + ReachMs >= length) {
+            continue;
+        }
+        double best = 0.0;
+        std::ptrdiff_t at = 0;
+        for (std::ptrdiff_t k = -ReachMs; k <= ReachMs; ++k) {
+            const double value = onsets[static_cast<std::size_t>(centre + k)];
+            if (value > best) {
+                best = value;
+                at = k;
+            }
+        }
+        peaks.push_back(best);
+        places.push_back(static_cast<double>(at));
+    }
+    if (peaks.size() < 16) {
+        return std::nullopt;
+    }
+    const double strong = quantile(peaks, 0.75);
+    if (!(strong > 0.0)) {
+        return std::nullopt;
+    }
+    std::vector<double> kept;
+    for (std::size_t i = 0; i < peaks.size(); ++i) {
+        if (peaks[i] >= 0.5 * strong) {
+            kept.push_back(places[i]);
+        }
+    }
+    if (kept.size() < 8) {
+        return std::nullopt;
+    }
+    const double usual = quantile(kept, 0.5);
+    std::size_t near = 0;
+    for (const double place : kept) {
+        near += std::abs(place - usual) <= NearMs ? 1 : 0;
+    }
+    return static_cast<double>(near) / static_cast<double>(kept.size());
+}
+
 // How far the tempo wanders: the spread of the curve's periods (5th to
 // 95th percentile) over their middle, in the windows that have a rhythm.
 // A drum machine holds to a thousandth; a drummer wanders by percents.
@@ -1566,9 +1627,11 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
     // count)? On a track made with a drum machine nearly all: on the
     // collection the grid explains 99 percent of the windows of the
     // middle track. Where it explains fewer than three quarters, the
-    // tempo is taken to move and the track is followed. The followed grid
-    // is not asked first: on real music it strays from a straight grid
-    // that is right more often than it finds a tempo that moves.
+    // tempo is taken to move and the track is followed; between three
+    // quarters and 85 percent the two grids are compared (below). Above
+    // that the followed grid is not asked: on real music it strays from a
+    // straight grid that is right more often than it finds a tempo that
+    // moves.
     bool moves = false;
     std::vector<double> followed;
     // How sure the grid is, 0 to 1: of the windows with a rhythm, the
@@ -1597,8 +1660,30 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
             explained += std::abs(offset - middle) <= OnTheGridWithinMs ? 1 : 0;
         }
         constexpr double ExplainsTheTrack = 0.75;
+        // Between three quarters and 85 percent the windows do not say: a
+        // drummer who keeps close to one tempo is there, and so is a drum
+        // machine under sounds that lie off its beats. There the two grids
+        // are asked themselves, each as it would be given out: the track is
+        // followed if the followed grid sits on the hits more tightly than
+        // the straight one, by a tenth of its beats.
+        //
+        // The followed grid has been set on its onsets by then and is tight
+        // on most tracks (0.97 and over on three in four), so this asks
+        // above all whether the straight grid's hits wander. The straight
+        // grid's tightness alone decides nearly as well.
+        //
+        // Judged by Sebastian's decisions where he made one and by
+        // rekordbox elsewhere, on the 1327 tracks of the four tuning
+        // halves: three quarters alone is right on 1061, this on 1068 with
+        // all 732 of the collection kept, the straight grid's tightness
+        // alone on 1066 at best, following wherever the followed grid is
+        // tighter (at any share) on 1068 with one of the collection lost,
+        // following every track on 937. Margins from a tenth to a fifth
+        // come to the same within a track or two.
+        constexpr double NearlyExplainsTheTrack = 0.85;
+        constexpr double TighterBy = 0.10;
         sure = withRhythm > 0 ? static_cast<double>(explained) / static_cast<double>(withRhythm) : 0.0;
-        if (withRhythm > 0 && static_cast<double>(explained) < ExplainsTheTrack * static_cast<double>(withRhythm)) {
+        if (withRhythm > 0 && static_cast<double>(explained) < NearlyExplainsTheTrack * static_cast<double>(withRhythm)) {
             std::size_t windowsSure = 0;
             std::size_t windowsTried = 0;
             followed = followWindows(onsets, *curve, period, phase, windowsSure, windowsTried);
@@ -1632,7 +1717,13 @@ GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
                 }
             }
             setOnOnsets(followed, onsets);
-            moves = followed.size() >= 8;
+            bool taken = static_cast<double>(explained) < ExplainsTheTrack * static_cast<double>(withRhythm);
+            if (!taken && followed.size() >= 8) {
+                const std::optional<double> ofFollowed = tightness(followed, onsets);
+                const std::optional<double> ofStraight = ofFollowed ? tightness(straight, onsets) : std::nullopt;
+                taken = ofFollowed && ofStraight && *ofFollowed - *ofStraight > TighterBy;
+            }
+            moves = taken && followed.size() >= 8;
             if (moves) {
                 sure = followedSure;
             }
