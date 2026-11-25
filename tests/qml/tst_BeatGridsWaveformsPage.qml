@@ -1312,10 +1312,13 @@ TestCase {
         copyT73New(o);
         showPlaylist(o.page, "");
         waitSettled(o.c);
-        verify(waitForPolish(o.page.Window.window));
+        // Waited for by what it shows, not by an idle layout: the save's
+        // toast is still animating, and on a slow runner (Tumbleweed,
+        // 2026-11-25) the page was not idle within waitForPolish's 5 s.
         const label = findChild(o.page.header, "engineAnalysisLabel");
         const restore = findChild(o.page.header, "restoreButton");
-        verify(label.visible && label.height > 0 && label.text.length > 0, "the note shows before any scroll");
+        tryVerify(() => label.visible && label.height > 0 && label.text.length > 0, 10000,
+                  "the note shows before any scroll");
         verify(restore.visible);
         const list = findChild(o.page, "trackList");
         const details = findChild(o.page.header, "headerDetails");
