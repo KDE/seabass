@@ -57,6 +57,15 @@ class AppSettingsController : public QObject
                    copyBeatGridsOnSyncChanged)
     Q_PROPERTY(bool copyWaveformsOnSync READ copyWaveformsOnSync WRITE setCopyWaveformsOnSync NOTIFY
                    copyWaveformsOnSyncChanged)
+    // The tempo range Seabass's own analysis reads a beat in, one of
+    // analysisTempoRanges ("low-high"; gui/analysis_settings.hpp), and
+    // its two ends for the page to say. A value that is none of the
+    // choices is not taken.
+    Q_PROPERTY(QString analysisTempoRange READ analysisTempoRange WRITE setAnalysisTempoRange NOTIFY
+                   analysisTempoRangeChanged)
+    Q_PROPERTY(QStringList analysisTempoRanges READ analysisTempoRanges CONSTANT)
+    Q_PROPERTY(int analysisTempoLowBpm READ analysisTempoLowBpm NOTIFY analysisTempoRangeChanged)
+    Q_PROPERTY(int analysisTempoHighBpm READ analysisTempoHighBpm NOTIFY analysisTempoRangeChanged)
     // Whether this build can decode audio at all. QML gates the
     // "compare audio" row's explanation on it, so a build that cannot
     // do it says so instead of offering a number that does nothing.
@@ -176,6 +185,12 @@ public:
     bool copyWaveformsOnSync() const { return m_copyWaveformsOnSync; }
     void setCopyWaveformsOnSync(bool value);
 
+    QString analysisTempoRange() const { return m_analysisTempoRange; }
+    void setAnalysisTempoRange(const QString &value);
+    static QStringList analysisTempoRanges();
+    int analysisTempoLowBpm() const;
+    int analysisTempoHighBpm() const;
+
     // Whether audio can actually be decoded HERE, now. Not a
     // compile-time #ifdef: a build with QtMultimedia linked in still
     // decodes nothing when the FFmpeg plugin did not load, and in that
@@ -259,6 +274,7 @@ signals:
     void correctMp3CueTimingChanged();
     void copyBeatGridsOnSyncChanged();
     void copyWaveformsOnSyncChanged();
+    void analysisTempoRangeChanged();
     void stickBackupDirectoryChanged();
     void seabassHomeDirectoryChanged();
     void lastPlaylistNameChanged();
@@ -282,6 +298,7 @@ private:
     bool m_correctMp3CueTiming = true;
     bool m_copyBeatGridsOnSync = false;
     bool m_copyWaveformsOnSync = false;
+    QString m_analysisTempoRange = QStringLiteral("70-180");
 
     // Pushes the trio into domain::MatchingPolicy, which is where every
     // layer below the GUI actually reads them. One function called by

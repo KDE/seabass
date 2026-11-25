@@ -216,6 +216,69 @@ TestCase {
         settings.experimentalFeaturesEnabled = false;
     }
 
+    // The tempo range of Seabass's own analysis: 70 to 180 when nothing is
+    // stored, kept under music/analysisTempoRange, and only ever one of
+    // the ranges on offer, whatever a settings file says.
+    function test_the_analysis_tempo_range_defaults_persists_and_refuses_nonsense() {
+        const before = controllerFixture.storeRawSetting("music/analysisTempoRange", undefined);
+        const fresh = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(fresh.analysisTempoRange, "70-180", "the default when nothing is stored");
+        compare(fresh.analysisTempoLowBpm, 70);
+        compare(fresh.analysisTempoHighBpm, 180);
+        compare(JSON.stringify(fresh.analysisTempoRanges), JSON.stringify(["58-115", "70-180", "78-155", "88-175"]));
+        fresh.analysisTempoRange = "88-175";
+        compare(fresh.analysisTempoLowBpm, 88, "the ends follow the choice");
+        compare(fresh.analysisTempoHighBpm, 175);
+        compare(controllerFixture.storeRawSetting("music/analysisTempoRange", "88-175"), "88-175",
+                "stored as music/analysisTempoRange");
+        const again = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(again.analysisTempoRange, "88-175", "a new controller reads it back");
+        again.analysisTempoRange = "10-900";
+        compare(again.analysisTempoRange, "88-175", "a range that is not on offer is not taken");
+        controllerFixture.storeRawSetting("music/analysisTempoRange", "nonsense");
+        const third = createTemporaryObject(freshSettingsComponent, testCase);
+        compare(third.analysisTempoRange, "70-180", "a stored value that is no range reads as the default");
+        compare(third.analysisTempoLowBpm, 70);
+        controllerFixture.storeRawSetting("music/analysisTempoRange", before);
+    }
+
+    // One radio button a range, in words with no dash; a click chooses,
+    // and the buttons follow the setting. Experimental: hidden with it
+    // off, the choice kept.
+    function test_the_analysis_tempo_range_buttons_choose_the_range() {
+        settings.experimentalFeaturesEnabled = true;
+        settings.analysisTempoRange = "70-180";
+        const page = make(900, 700);
+        const setting = findChild(page, "analysisTempoRangeSetting");
+        const usual = findChild(page, "analysisTempoRange_70-180");
+        const octave = findChild(page, "analysisTempoRange_88-175");
+        const line = findChild(page, "analysisTempoRangeExplanation");
+        verify(setting !== null && usual !== null && octave !== null && line !== null);
+        compare(setting.visible, true);
+        compare(usual.text, "70 to 180 BPM: suits most music");
+        compare(octave.text, "88 to 175 BPM: drum and bass at its faster tempo");
+        compare(findChild(page, "analysisTempoRange_78-155").text, "78 to 155 BPM");
+        for (const text of [usual.text, octave.text, line.text]) {
+            verify(text.indexOf("\u2014") < 0 && text.indexOf("\u2013") < 0 && text.indexOf("--") < 0, text);
+        }
+        compare(usual.checked, true);
+        compare(octave.checked, false);
+        const scroll = findChild(page, "settingsScroll");
+        scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height,
+                                               octave.mapToItem(scroll.contentItem, 0, 0).y - 200));
+        wait(50);
+        mouseClick(octave);
+        compare(settings.analysisTempoRange, "88-175", "a click chooses the range");
+        compare(usual.checked, false);
+        settings.analysisTempoRange = "58-115";
+        compare(findChild(page, "analysisTempoRange_58-115").checked, true, "the buttons follow the setting");
+        compare(octave.checked, false);
+        settings.experimentalFeaturesEnabled = false;
+        compare(setting.visible, false, "hidden with Experimental off");
+        compare(settings.analysisTempoRange, "58-115", "the choice is kept");
+        settings.analysisTempoRange = "70-180";
+    }
+
     // Anonymize Library graduated on 2026-11-19: its button is there with
     // Experimental off (init() turns it off), and asks for the page.
     function test_anonymize_library_needs_no_experimental_setting() {

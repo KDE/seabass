@@ -7,6 +7,7 @@
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
 #endif
+#include "gui/analysis_settings.hpp"
 #include "gui/app_color_scheme.hpp"
 #include "gui/local_file_url.hpp"
 #include "gui/style_color_scheme.hpp"
@@ -44,6 +45,12 @@ AppSettingsController::AppSettingsController(QObject *parent)
     m_waveformZoomBars = std::max(0.0, m_settings.value("waveformZoomBars", 0.0).toDouble());
     m_showRemainingTime = m_settings.value("showRemainingTime", false).toBool();
     m_keyNotation = m_settings.value("keyNotation", "camelot").toString();
+    // A stored value that is none of the choices reads as the default,
+    // so the page shows the range that is in force.
+    m_analysisTempoRange = m_settings.value(QLatin1String(AnalysisTempoRangeKey), defaultAnalysisTempoRange()).toString();
+    if (!analysisTempoRangeChoices().contains(m_analysisTempoRange)) {
+        m_analysisTempoRange = defaultAnalysisTempoRange();
+    }
     m_exactMatchSeconds = m_settings.value("music/exactMatchSeconds",
                                             static_cast<int>(domain::MatchingPolicy::DefaultExactMatchSeconds))
                               .toInt();
@@ -280,6 +287,31 @@ void AppSettingsController::setCopyWaveformsOnSync(bool value)
     applySyncAnalysisPolicy();
     m_settings.setValue("music/copyWaveformsToEngine", m_copyWaveformsOnSync);
     emit copyWaveformsOnSyncChanged();
+}
+
+void AppSettingsController::setAnalysisTempoRange(const QString &value)
+{
+    if (m_analysisTempoRange == value || !analysisTempoRangeChoices().contains(value)) {
+        return;
+    }
+    m_analysisTempoRange = value;
+    m_settings.setValue(QLatin1String(AnalysisTempoRangeKey), value);
+    emit analysisTempoRangeChanged();
+}
+
+QStringList AppSettingsController::analysisTempoRanges()
+{
+    return analysisTempoRangeChoices();
+}
+
+int AppSettingsController::analysisTempoLowBpm() const
+{
+    return static_cast<int>(tempoRangeOf(m_analysisTempoRange).lowBpm);
+}
+
+int AppSettingsController::analysisTempoHighBpm() const
+{
+    return static_cast<int>(tempoRangeOf(m_analysisTempoRange).highBpm);
 }
 
 void AppSettingsController::setKeyNotation(const QString &value)

@@ -43,7 +43,7 @@ Page {
     // The breadcrumb's Back keeps them, as it always did.
     readonly property var appSettingKeys: ["keyNotation", "hideStreamingTracks", "showPlayCount", "exactMatchSeconds",
         "compareAudioSeconds", "ignoreCuesAtStart", "correctMp3CueTiming", "copyBeatGridsOnSync",
-        "copyWaveformsOnSync", "seabassHomeDirectory", "stickBackupDirectory",
+        "copyWaveformsOnSync", "analysisTempoRange", "seabassHomeDirectory", "stickBackupDirectory",
         "useSystemTheme", "experimentalFeaturesEnabled"]
     readonly property var updateSettingKeys: ["automatic", "includeTesting"]
     property var openedWith: ({})
@@ -586,6 +586,46 @@ Page {
                         + "first and can be put back on the Beat Grids & Waveforms page. A beat grid locked or moved "
                         + "on the player is left alone, and a track the player has not analysed yet, a new one "
                         + "included, is only completed with both on."
+                }
+            }
+
+            // The tempo range of Seabass's own analysis. Experimental with
+            // the analysis itself: nothing analyses audio with the setting
+            // off. One radio button a range the controller offers, so the
+            // page cannot offer one it would refuse.
+            ColumnLayout {
+                objectName: "analysisTempoRangeSetting"
+                visible: root.appSettingsController.experimentalFeaturesEnabled === true
+                spacing: 6 * Theme.iconScale
+                readonly property var notes: ({
+                    "58-115": "slow music stays slow",
+                    "70-180": "suits most music",
+                    "88-175": "drum and bass at its faster tempo"
+                })
+                Subtitle { text: "Tempo range when Seabass analyses a track" }
+                ButtonGroup { id: analysisTempoRangeGroup }
+                Repeater {
+                    model: root.appSettingsController.analysisTempoRanges
+                    RadioButton {
+                        required property string modelData
+                        readonly property string note: parent.notes[modelData] || ""
+                        objectName: "analysisTempoRange_" + modelData
+                        Layout.leftMargin: root.settingIndent
+                        text: modelData.replace("-", " to ") + " BPM" + (note !== "" ? ": " + note : "")
+                        ButtonGroup.group: analysisTempoRangeGroup
+                        checked: root.appSettingsController.analysisTempoRange === modelData
+                        onCheckedChanged: if (checked) root.appSettingsController.analysisTempoRange = modelData
+                    }
+                }
+                Label {
+                    objectName: "analysisTempoRangeExplanation"
+                    Layout.leftMargin: root.settingIndent
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: "Many tracks can be counted at one tempo or at half or double of it. Seabass takes the "
+                        + "tempo that lies in this range. It applies to tracks analysed from now on, not to "
+                        + "grids already on a stick."
                 }
             }
 
