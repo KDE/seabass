@@ -396,6 +396,12 @@ public:
     // that is not one row with a track count.
     int64_t addTrack(const NewTrack &track);
 
+    // Why addTrack() would refuse `track` for what it is, whatever the
+    // stick and the library hold (its texts, numbers, date, file type and
+    // /PIONEER/ paths); empty when it would not. For a caller that has to
+    // know before it copies a file.
+    static std::string newTrackRefusal(const NewTrack &track);
+
     // A playlist's membership, by the playlist's full path ("Folder/List",
     // as the reader spells it) and the file's path. Add appends the file
     // at the end of the playlist (sequenceNo one past the last) unless it

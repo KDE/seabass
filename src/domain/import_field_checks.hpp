@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -95,6 +96,26 @@ inline bool isStorableText(std::string_view text)
         return false;
     }
     return text.empty() || (text.back() != ' ' && text.back() != '\t');
+}
+
+// Whether `path` is the one plain spelling of a file's place on a stick:
+// from the root, '/' between names, no empty name, no "." or "..", no
+// backslash. Every library's row for a file is made from this one text,
+// and a path that climbs ("/../x") would put the file beside the stick.
+inline bool isPlainStickPath(std::string_view path)
+{
+    if (path.size() < 2 || path.front() != '/' || path.find('\\') != std::string_view::npos) {
+        return false;
+    }
+    for (std::size_t at = 0; at < path.size();) {
+        const std::size_t next = std::min(path.find('/', at + 1), path.size());
+        const std::string_view name = path.substr(at + 1, next - at - 1);
+        if (name.empty() || name == "." || name == "..") {
+            return false;
+        }
+        at = next;
+    }
+    return true;
 }
 
 }  // namespace seabass::domain

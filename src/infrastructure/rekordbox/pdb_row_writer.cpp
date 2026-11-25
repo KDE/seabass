@@ -2648,65 +2648,80 @@ void PdbRowWriter::addRow(uint32_t tableType, const std::function<std::string(ui
     writeRows(placeRows(tableType, rows), rows);
 }
 
-uint32_t PdbRowWriter::addTrack(const NewTrack &track)
+std::string PdbRowWriter::newTrackRefusal(const NewTrack &track)
 {
-    if (m_format != Format::Export) {
-        throw std::logic_error("tracks live in export.pdb");
-    }
+    const std::string &path = track.pathOnStick;
     if (track.title.empty()) {
-        throw std::invalid_argument("export.pdb: a track row needs a title");
+        return "export.pdb: a track row needs a title";
     }
     if (!domain::isCalendarDate(track.date)) {
-        throw std::invalid_argument("export.pdb: \"" + track.date + "\" is not a date as YYYY-MM-DD");
+        return "export.pdb: \"" + track.date + "\" is not a date as YYYY-MM-DD";
     }
-    const std::string &path = track.pathOnStick;
     for (const std::string *text : {&track.title, &track.artist, &track.album, &track.albumArtist, &track.genre, &track.label,
                                     &track.remixer, &track.composer, &track.key, &track.comment, &track.pathOnStick,
                                     &track.analyzePath, &track.artworkPath}) {
         if (!domain::isStorableText(*text)) {
-            throw std::invalid_argument("export.pdb: a text of " + path
-                                        + " is not UTF-8, or ends in a blank; the caller trims what a tag holds");
+            return "export.pdb: a text of " + path + " is not UTF-8, or ends in a blank; the caller trims what a tag holds";
         }
     }
-    // One spelling per file: from the root, '/' between names, no empty
-    // name, "." or "..". OneLibrary's row is made from the same file and
-    // must come out as the same text.
-    {
-        bool plain = path.size() >= 2 && path[0] == '/' && path.find('\\') == std::string::npos;
-        for (size_t at = 0; plain && at < path.size();) {
-            const size_t next = std::min(path.find('/', at + 1), path.size());
-            const std::string name = path.substr(at + 1, next - at - 1);
-            plain = !name.empty() && name != "." && name != "..";
-            at = next;
-        }
-        if (!plain) {
-            throw std::invalid_argument("export.pdb: " + path + " is not a path from the stick's root");
-        }
+    if (!domain::isPlainStickPath(path)) {
+        return "export.pdb: " + path + " is not a path from the stick's root";
     }
-    const uint16_t fileType = pdbFileType(path);
-    if (fileType == 0) {
-        throw std::invalid_argument("export.pdb: no file type known for " + path);
+    if (pdbFileType(path) == 0) {
+        return "export.pdb: no file type known for " + path;
     }
     // Not clamped: a number its field cannot hold would be another
     // number in the row.
     if (!(track.bpm >= 0.0) || track.bpm >= 1000.0) {
-        throw std::invalid_argument("export.pdb: not a tempo a track row holds");
+        return "export.pdb: not a tempo a track row holds";
     }
     const auto fits = [](int value, int most) { return value >= 0 && value <= most; };
     if (!fits(track.durationSeconds, 0xFFFF) || !fits(track.discNumber, 0xFFFF) || !fits(track.year, 0xFFFF)
         || !fits(track.sampleDepth, 0xFFFF) || !fits(track.trackNumber, std::numeric_limits<int>::max())
         || !fits(track.bitrate, std::numeric_limits<int>::max())
         || !fits(track.sampleRateHz, std::numeric_limits<int>::max())) {
-        throw std::invalid_argument("export.pdb: a number of " + path + " does not fit its field");
+        return "export.pdb: a number of " + path + " does not fit its field";
     }
     if (track.fileSizeBytes > 0xFFFFFFFFull) {
-        throw std::invalid_argument("export.pdb: " + path + " is too large for a track row's file size");
+        return "export.pdb: " + path + " is too large for a track row's file size";
     }
     for (const std::string *onStick : {&track.analyzePath, &track.artworkPath}) {
         if (!onStick->empty() && onStick->rfind("/PIONEER/", 0) != 0) {
-            throw std::invalid_argument("export.pdb: " + *onStick + " is not a path under the stick's /PIONEER/");
+            return "export.pdb: " + *onStick + " is not a path under the stick's /PIONEER/";
         }
     }
+    // The row with its room has to fit an empty page: a comment holding a
+    // whole tracklist does not.
+    try {
+        PdbTrackRowFields row;
+        row.dateAdded = track.date;
+        row.analyzePath = track.analyzePath;
+        row.analyzeDate = track.date;
+        row.comment = track.comment;
+        row.title = track.title;
+        row.filename = path.substr(path.rfind('/') + 1);
+        row.filePath = path;
+        const size_t bytes = paddedRowSize(encodePdbTrackRow(row).size() + TrackRowRoom);
+        if (bytes + 2 + 4 > 4096 - PageHeaderSize) {
+            return "export.pdb: the texts of " + path + " (" + std::to_string(bytes)
+                   + " bytes as a row) do not fit a page; a shorter comment or title would";
+        }
+    } catch (const std::exception &e) {
+        return std::string("export.pdb: ") + e.what();
+    }
+    return {};
+}
+
+uint32_t PdbRowWriter::addTrack(const NewTrack &track)
+{
+    if (m_format != Format::Export) {
+        throw std::logic_error("tracks live in export.pdb");
+    }
+    if (const std::string refusal = newTrackRefusal(track); !refusal.empty()) {
+        throw std::invalid_argument(refusal);
+    }
+    const std::string &path = track.pathOnStick;
+    const uint16_t fileType = pdbFileType(path);
     {
         const std::string wanted = application::normalizedPathKey(path);
         const std::string wantedAnalysis = application::normalizedPathKey(track.analyzePath);

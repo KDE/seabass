@@ -397,8 +397,26 @@ int main(int argc, char **argv)
             }
         }
         assert(refused([](auto &t) { t.artist = std::string("a\0b", 3); }, "is not UTF-8, or ends in a blank"));
-        // A title too long for a row is found out after the artist's row
-        // was placed: the artist goes again (counted below).
+        // A row has to fit a page with its room: a comment of 2500
+        // accented letters is 5 KB of UTF-16. Asked without a library
+        // too, for a caller that has not copied the file yet.
+        assert(refused([](auto &t) {
+            for (int i = 0; i < 2500; ++i) {
+                t.comment += "\xc3\xa9";
+            }
+        }, "do not fit a page"));
+        assert(PdbRowWriter::newTrackRefusal(good).empty());
+        {
+            PdbRowWriter::NewTrack t = good;
+            t.title.clear();
+            assert(PdbRowWriter::newTrackRefusal(t).find("needs a title") != std::string::npos);
+            t = good;
+            t.comment.assign(3000, 'c');
+            assert(PdbRowWriter::newTrackRefusal(t).empty() && "3 KB of plain text is a long string, and fits");
+            t.comment.assign(3900, 'c');
+            assert(PdbRowWriter::newTrackRefusal(t).find("do not fit a page") != std::string::npos);
+        }
+        // A title past what a string's 16-bit length holds.
         assert(throws<std::invalid_argument>([&] {
             PdbRowWriter::NewTrack t = good;
             t.title.clear();

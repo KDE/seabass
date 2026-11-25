@@ -280,6 +280,36 @@ int main(int argc, char **argv)
         const SaveLoopResult early = testing::saveChanges({unprobed}, stick.pioneerPath(), stick.enginePath());
         assert(!early.error.isEmpty() && early.error.contains(QStringLiteral("sample rate")));
         assert(!fs::exists(destination) && countsOf(stick) == before);
+        // Refused before the copy, not copied and taken back: the folder
+        // the copy would have made was never there.
+        assert(!fs::exists(stick.root / "Contents" / "Hand Built") && "nothing was copied");
+
+        // What a library's writer would refuse the row for is asked
+        // before the copy too: a comment that does not fit export.pdb's
+        // page, a file type the Pioneer libraries have no number for.
+        domain::ImportedTrack wordy = description(stickPath);
+        for (int i = 0; i < 2500; ++i) {
+            wordy.comment += "\xc3\xa9";
+        }
+        auto tooLong = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+                                                           stick.enginePath(), wordy, AllThree, 1);
+        const SaveLoopResult long1 = testing::saveChanges({tooLong}, stick.pioneerPath(), stick.enginePath());
+        assert(!long1.error.isEmpty() && long1.error.contains(QStringLiteral("do not fit a page")));
+        assert(!fs::exists(stick.root / "Contents" / "Hand Built") && countsOf(stick) == before);
+        auto ogg = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+                                                       stick.enginePath(), description("/Contents/Hand Built/x.ogg"), AllThree, 1);
+        const SaveLoopResult ogg1 = testing::saveChanges({ogg}, stick.pioneerPath(), stick.enginePath());
+        assert(!ogg1.error.isEmpty() && ogg1.error.contains(QStringLiteral("no file type known")));
+        assert(!fs::exists(stick.root / "Contents" / "Hand Built") && countsOf(stick) == before);
+
+        // The libraries named have to be the stick's: one left out, and
+        // the two written would say what the third does not.
+        auto partial = std::make_shared<ImportTrackChange>(
+            pathToQString(source), pathToQString(stick.root), stick.pioneerPath(), stick.enginePath(), description(stickPath),
+            QStringList{QStringLiteral("rekordbox"), QStringLiteral("engine")}, 1);
+        const SaveLoopResult part = testing::saveChanges({partial}, stick.pioneerPath(), stick.enginePath());
+        assert(!part.error.isEmpty() && part.error.contains(QStringLiteral("not the ones this import was planned for")));
+        assert(!fs::exists(stick.root / "Contents" / "Hand Built") && countsOf(stick) == before);
 
         fs::create_directories(destination.parent_path());
         std::ofstream(destination, std::ios::binary) << "somebody's own file";
@@ -315,10 +345,86 @@ int main(int argc, char **argv)
         assert(refusedAtStaging({QStringLiteral("rekordbox")}, QString(), stick.enginePath(), stickPath));
         assert(refusedAtStaging({QStringLiteral("traktor")}, stick.pioneerPath(), stick.enginePath(), stickPath));
         assert(refusedAtStaging(AllThree, stick.pioneerPath(), stick.enginePath(), "Contents/a.flac"));
+        // A place that would be beside the stick, or spelled two ways.
+        assert(refusedAtStaging(AllThree, stick.pioneerPath(), stick.enginePath(), "/../outside.flac"));
+        assert(refusedAtStaging(AllThree, stick.pioneerPath(), stick.enginePath(), "//Contents/a.flac"));
+        assert(refusedAtStaging(AllThree, stick.pioneerPath(), stick.enginePath(), "/Contents\\a.flac"));
         assert(!refusedAtStaging(AllThree, stick.pioneerPath(), stick.enginePath(), stickPath));
     }
     std::cout << "case 4 (no sample rate, an occupied destination, a missing source: nothing written; a change that "
                  "could not be one is refused when staged) OK\n";
+
+    // 5. Twenty files in one save, which is enough for the save to write
+    //    scratch copies of the databases and put them in place at the
+    //    end: all of them in every library, the second with a Camelot key
+    //    that Engine holds as the same key; then Undo.
+    {
+        const testing::EngineChangeStick stick = testing::makeEngineChangeStick(fixture, "import_track_many");
+        testing::levelImportCounter(stick);
+        const Counts before = countsOf(stick);
+        std::vector<std::shared_ptr<PendingChange>> changes;
+        std::vector<fs::path> destinations;
+        for (int i = 0; i < 20; ++i) {
+            const std::string name = "many " + std::to_string(i) + ".flac";
+            domain::ImportedTrack t = description("/Contents/Many/" + name);
+            t.title = "Many " + std::to_string(i);
+            if (i == 1) {
+                t.key = "8A";
+            }
+            destinations.push_back(stick.root / "Contents" / "Many" / name);
+            changes.push_back(std::make_shared<ImportTrackChange>(pathToQString(makeSource(computer, name)),
+                                                                  pathToQString(stick.root), stick.pioneerPath(),
+                                                                  stick.enginePath(), t, AllThree, 20));
+        }
+        const SaveLoopResult saved = testing::saveChanges(changes, stick.pioneerPath(), stick.enginePath());
+        if (!saved.error.isEmpty()) {
+            std::cerr << "save: " << saved.error.toStdString() << "\n";
+        }
+        assert(saved.error.isEmpty() && saved.appliedIds.size() == 20);
+        const Counts after = countsOf(stick);
+        assert(after.deviceLibrary == before.deviceLibrary + 20 && after.oneLibrary == before.oneLibrary + 20
+               && after.engine == before.engine + 20);
+        for (const fs::path &destination : destinations) {
+            assert(testing::fileBytes(destination) == sourceBytes);
+        }
+        {
+            const auto engine = infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()).readAll();
+            const domain::Track *camelot = findByPath<void>(engine, pathToUtf8(destinations[1]));
+            assert(camelot && camelot->key == "Am" && "8A is A minor, and Engine holds it");
+            const auto pioneer = infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)).readAll();
+            const domain::Track *asTagged = findByPath<void>(pioneer, pathToUtf8(destinations[1]));
+            assert(asTagged && asTagged->key == "8A" && "rekordbox's row keeps the tag's spelling");
+        }
+        const SaveLoopResult undone = testing::undoSave(saved, stick.pioneerPath(), stick.enginePath());
+        assert(undone.error.isEmpty() && countsOf(stick) == before);
+        for (const fs::path &destination : destinations) {
+            assert(!fs::exists(destination));
+        }
+    }
+    std::cout << "case 5 (twenty imports in one save, through scratch copies; a Camelot key in Engine; Undo) OK\n";
+
+    // 6. A change that fails takes the save back: the track imported
+    //    before it is gone again, file and rows. The second file's place
+    //    is taken between staging and saving.
+    {
+        const testing::EngineChangeStick stick = testing::makeEngineChangeStick(fixture, "import_track_second_fails");
+        testing::levelImportCounter(stick);
+        const Counts before = countsOf(stick);
+        const fs::path first = stick.root / "Contents" / "Two" / "first.flac";
+        const fs::path second = stick.root / "Contents" / "Two" / "second.flac";
+        auto one = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+                                                       stick.enginePath(), description("/Contents/Two/first.flac"), AllThree, 2);
+        // Occupied by a folder: nothing a copy could replace.
+        fs::create_directories(second);
+        auto two = std::make_shared<ImportTrackChange>(pathToQString(source), pathToQString(stick.root), stick.pioneerPath(),
+                                                       stick.enginePath(), description("/Contents/Two/second.flac"), AllThree, 2);
+        const SaveLoopResult saved = testing::saveChanges({one, two}, stick.pioneerPath(), stick.enginePath());
+        assert(!saved.error.isEmpty() && saved.error.contains(QStringLiteral("not replaced")));
+        assert(!fs::exists(first) && "the first track's file went with the save");
+        // What was at the second place is not the save's to remove.
+        assert(fs::is_directory(second) && countsOf(stick) == before);
+    }
+    std::cout << "case 6 (the second import fails: the first is taken back with it) OK\n";
 
     std::cout << "import_track_change_test: all cases passed\n";
     return 0;

@@ -156,7 +156,9 @@ int main()
 
     // 4. The caller's own values are refused when wrong, not repaired.
     {
-        for (const char *path : {"", "/", "Contents/a.mp3", "/Contents/", "/Contents/a.mp3 ", "/Contents/caf\xc3.mp3"}) {
+        for (const char *path : {"", "/", "Contents/a.mp3", "/Contents/", "/Contents/a.mp3 ", "/Contents/caf\xc3.mp3",
+                                 "/Contents/../a.mp3", "/../a.mp3", "//Contents/a.mp3", "/Contents//a.mp3",
+                                 "/Contents/./a.mp3", "/Contents\\a.mp3", "/Contents/.."}) {
             assert(refuses([&] { (void)describeImportedTrack({}, {}, path, "2026-11-24"); }));
         }
         for (const char *date : {"", "24-11-2026", "2026-02-30", "2026-11-24T10:00"}) {

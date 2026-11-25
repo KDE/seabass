@@ -485,6 +485,13 @@ public:
     // table holds one at the top of the range).
     uint32_t addTrack(const NewTrack &track);
 
+    // Why addTrack() would refuse `track` for what it is, whatever the
+    // library holds: every std::invalid_argument above but the two that
+    // need the library (a file or an analysis file a row already names),
+    // and a row whose texts do not fit a page. Empty when it would not.
+    // For a caller that has to know before it copies a file.
+    static std::string newTrackRefusal(const NewTrack &track);
+
     // The ids of the track rows whose file_path is `pathOnStick` as
     // export.pdb spells it ("/Contents/Artist/track.mp3"), space padding
     // ignored. More than one when the file was imported twice.

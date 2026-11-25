@@ -59,7 +59,7 @@ ImportedTrack describeImportedTrack(const TrackTags &tags, const AudioFormat &au
         throw std::invalid_argument("\"" + std::string(date) + "\" is not a date as YYYY-MM-DD");
     }
     const std::size_t slash = stickPath.rfind('/');
-    if (stickPath.size() < 2 || stickPath.front() != '/' || slash + 1 == stickPath.size() || !isStorableText(stickPath)) {
+    if (!isPlainStickPath(stickPath) || !isStorableText(stickPath)) {
         throw std::invalid_argument("\"" + std::string(stickPath) + "\" is not a path from the stick's root to a file");
     }
     ImportedTrack track;

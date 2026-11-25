@@ -598,8 +598,13 @@ std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrac
     if (source.bpm > 0.0) {
         snapshot.bpm = source.bpm;
     }
+    // A note name as rekordbox writes it ("Am"), or the Camelot number a
+    // tag often holds instead ("8A"): the same key, and Pioneer's rows
+    // keep either spelling as text.
     if (auto key = parseRekordboxKey(source.key)) {
         snapshot.key = *key;
+    } else if (auto camelot = parseCamelotKey(source.key)) {
+        snapshot.key = *camelot;
     }
     if (source.durationSeconds > 0.0) {
         snapshot.duration = std::chrono::milliseconds(static_cast<std::int64_t>(source.durationSeconds * 1000.0));

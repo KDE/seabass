@@ -1524,38 +1524,52 @@ void bindOptional(SqlCipherStatement &statement, int index, const std::optional<
 
 }  // namespace
 
-int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
+std::string OneLibraryCueWriter::newTrackRefusal(const NewTrack &track)
 {
     if (track.title.empty()) {
-        throw std::invalid_argument("onelibrary: a track row needs a title");
+        return "onelibrary: a track row needs a title";
     }
     if (!domain::isCalendarDate(track.date)) {
-        throw std::invalid_argument("onelibrary: \"" + track.date + "\" is not a date as YYYY-MM-DD");
+        return "onelibrary: \"" + track.date + "\" is not a date as YYYY-MM-DD";
     }
     for (const std::string *text : {&track.title, &track.artist, &track.album, &track.albumArtist, &track.genre, &track.label,
                                     &track.remixer, &track.composer, &track.key, &track.comment, &track.filePath,
                                     &track.analysisDataFilePath, &track.imagePath}) {
         if (!domain::isStorableText(*text)) {
-            throw std::invalid_argument("onelibrary: a text of " + track.filePath
-                                        + " is not UTF-8, or ends in a blank; the caller trims what a tag holds");
+            return "onelibrary: a text of " + track.filePath
+                   + " is not UTF-8, or ends in a blank; the caller trims what a tag holds";
         }
     }
     // Not clamped: a number the row cannot hold is the caller's mistake,
     // and a row quietly given 0 for it would say something else.
     if (!(track.bpm >= 0.0) || track.bpm >= 1000.0) {
-        throw std::invalid_argument("onelibrary: not a tempo a track row holds");
+        return "onelibrary: not a tempo a track row holds";
     }
     if (track.lengthSeconds < 0 || track.trackNumber < 0 || track.discNumber < 0 || track.year < 0 || track.bitrate < 0
         || track.bitDepth < 0 || track.sampleRateHz < 0) {
-        throw std::invalid_argument("onelibrary: a negative number for " + track.filePath);
+        return "onelibrary: a negative number for " + track.filePath;
     }
     if (track.fileSizeBytes > static_cast<std::uint64_t>(std::numeric_limits<int64_t>::max())) {
-        throw std::invalid_argument("onelibrary: not a file size a track row holds");
+        return "onelibrary: not a file size a track row holds";
     }
     for (const std::string *onStick : {&track.analysisDataFilePath, &track.imagePath}) {
         if (!onStick->empty() && onStick->rfind("/PIONEER/", 0) != 0) {
-            throw std::invalid_argument("onelibrary: " + *onStick + " is not a path under the stick's /PIONEER/");
+            return "onelibrary: " + *onStick + " is not a path under the stick's /PIONEER/";
         }
+    }
+    std::string fileName = track.filePath;
+    std::replace(fileName.begin(), fileName.end(), '\\', '/');
+    fileName = fileName.substr(fileName.rfind('/') + 1);
+    if (contentFileType(fileName) == 0) {
+        return "onelibrary: no file type known for " + fileName;
+    }
+    return {};
+}
+
+int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
+{
+    if (const std::string refusal = newTrackRefusal(track); !refusal.empty()) {
+        throw std::invalid_argument(refusal);
     }
     const std::string contentPath = toContentPath(m_stickRoot, track.filePath);
     // A file beside the stick comes out of toContentPath() as

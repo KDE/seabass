@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "domain/import_field_checks.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
@@ -44,7 +45,9 @@ ImportTrackChange::ImportTrackChange(QString sourceFile, QString stickRoot, QStr
     if (m_stickRoot.isEmpty() || m_sourceFile.isEmpty()) {
         throw std::invalid_argument("ImportTrackChange: a source file and a stick are required");
     }
-    if (m_track.stickPath.size() < 2 || m_track.stickPath.front() != '/') {
+    // The one plain spelling, so the file cannot land beside the stick
+    // and every library is given the same text for it.
+    if (!domain::isPlainStickPath(m_track.stickPath)) {
         throw std::invalid_argument("ImportTrackChange: the track has no place on the stick");
     }
     for (const QString &library : m_libraries) {
@@ -132,11 +135,19 @@ std::vector<BackupTarget> ImportTrackChange::filesToBackup(SaveContext &) const
     if (m_libraries.contains(QStringLiteral("engine"))) {
         targets.push_back({FormatWriteSession::databaseFileFor("engine", m_enginePath.toStdString()), Label});
     }
-    // The audio file itself: absent now, so a failed change and Undo Last
+    // The audio file itself: absent now, so a failed save and Undo Last
     // Save both take it away again rather than leave a file no row names.
-    BackupTarget audio{destinationFile(), Label};
-    audio.removeOnRestoreIfAbsent = true;
-    targets.push_back(std::move(audio));
+    // Only when nothing at all is there: apply() refuses a place that is
+    // taken, and "remove it on restore" said of a place where an empty
+    // folder sits would have the restore remove that folder (a folder is
+    // no file to the backup, so it counts as absent).
+    std::error_code ec;
+    const std::string destination = destinationFile();
+    if (fs::symlink_status(pathFromUtf8(destination), ec).type() == fs::file_type::not_found) {
+        BackupTarget audio{destination, Label};
+        audio.removeOnRestoreIfAbsent = true;
+        targets.push_back(std::move(audio));
+    }
     return targets;
 }
 
@@ -147,8 +158,96 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     m_engineId = -1;
     const std::string destination = destinationFile();
     const std::string source = m_sourceFile.toStdString();
+    const std::string pioneer = m_pioneerRoot.toStdString();
+    const bool toDeviceLibrary = m_libraries.contains(QStringLiteral("rekordbox"));
+    const bool toOneLibrary = m_libraries.contains(QStringLiteral("onelibrary"));
     const bool toEngine = m_libraries.contains(QStringLiteral("engine"));
-    // Before anything is written: what would be refused after the copy.
+
+    // Everything that can be known before the copy is asked before it. A
+    // change that fails takes the whole save back, every track imported
+    // before it included, so a refusal has to come while nothing is
+    // written, not after the file is on the stick.
+    std::error_code ec;
+    const std::uintmax_t sourceSize = fs::file_size(pathFromUtf8(source), ec);
+    if (ec) {
+        return ChangeOutcome::failure(QStringLiteral("%1 is not a file that can be read. Nothing was imported.").arg(m_sourceFile));
+    }
+    // Never over a file that is there (the copy would refuse too, after
+    // the libraries were opened).
+    if (fs::symlink_status(pathFromUtf8(destination), ec).type() != fs::file_type::not_found) {
+        return ChangeOutcome::failure(
+            QStringLiteral("%1 is on the stick already; not replaced. Nothing was imported.")
+                .arg(QString::fromStdString(m_track.stickPath)));
+    }
+    // The libraries named are the libraries the stick has: one written
+    // and another left out would have them disagree about the track.
+    const bool hasDeviceLibrary = !pioneer.empty() && fs::is_regular_file(pathFromUtf8(exportPdbUnder(pioneer)), ec);
+    const bool hasOneLibrary = !pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer);
+    const bool hasEngine =
+        !m_enginePath.isEmpty()
+        && fs::is_regular_file(pathFromUtf8(FormatWriteSession::databaseFileFor("engine", m_enginePath.toStdString())), ec);
+    if (hasDeviceLibrary != toDeviceLibrary || hasOneLibrary != toOneLibrary || hasEngine != toEngine) {
+        return ChangeOutcome::failure(
+            QStringLiteral("The libraries on the stick are not the ones this import was planned for (%1). Nothing was "
+                           "imported.")
+                .arg(m_libraries.join(QStringLiteral(", "))));
+    }
+
+    infrastructure::rekordbox::PdbRowWriter::NewTrack pdbRow;
+    pdbRow.pathOnStick = m_track.stickPath;
+    pdbRow.title = m_track.title;
+    pdbRow.artist = m_track.artist;
+    pdbRow.album = m_track.album;
+    pdbRow.albumArtist = m_track.albumArtist;
+    pdbRow.genre = m_track.genre;
+    pdbRow.label = m_track.label;
+    pdbRow.remixer = m_track.remixer;
+    pdbRow.composer = m_track.composer;
+    pdbRow.key = m_track.key;
+    pdbRow.comment = m_track.comment;
+    pdbRow.bpm = m_track.bpm;
+    pdbRow.durationSeconds = m_track.lengthSeconds;
+    pdbRow.trackNumber = m_track.trackNumber;
+    pdbRow.year = m_track.year;
+    pdbRow.bitrate = m_track.bitrate;
+    pdbRow.sampleDepth = m_track.bitDepth;
+    pdbRow.sampleRateHz = m_track.sampleRateHz;
+    pdbRow.fileSizeBytes = sourceSize;
+    pdbRow.date = m_track.date;
+
+    infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneRow;
+    oneRow.filePath = destination;
+    oneRow.title = m_track.title;
+    oneRow.artist = m_track.artist;
+    oneRow.album = m_track.album;
+    oneRow.albumArtist = m_track.albumArtist;
+    oneRow.genre = m_track.genre;
+    oneRow.label = m_track.label;
+    oneRow.remixer = m_track.remixer;
+    oneRow.composer = m_track.composer;
+    oneRow.key = m_track.key;
+    oneRow.comment = m_track.comment;
+    oneRow.bpm = m_track.bpm;
+    oneRow.lengthSeconds = m_track.lengthSeconds;
+    oneRow.trackNumber = m_track.trackNumber;
+    oneRow.year = m_track.year;
+    oneRow.bitrate = m_track.bitrate;
+    oneRow.bitDepth = m_track.bitDepth;
+    oneRow.sampleRateHz = m_track.sampleRateHz;
+    oneRow.fileSizeBytes = sourceSize;
+    oneRow.date = m_track.date;
+
+    if (toDeviceLibrary) {
+        if (const std::string refusal = infrastructure::rekordbox::PdbRowWriter::newTrackRefusal(pdbRow); !refusal.empty()) {
+            return ChangeOutcome::failure(QString::fromStdString(refusal + ". Nothing was imported."));
+        }
+    }
+    if (toOneLibrary) {
+        if (const std::string refusal = infrastructure::onelibrary::OneLibraryCueWriter::newTrackRefusal(oneRow);
+            !refusal.empty()) {
+            return ChangeOutcome::failure(QString::fromStdString(refusal + ". Nothing was imported."));
+        }
+    }
     if (toEngine) {
         if (const QString refusal = engineRowWriteRefusal(m_enginePath); !refusal.isEmpty()) {
             return ChangeOutcome::failure(refusal);
@@ -161,73 +260,31 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     }
 
     try {
-        infrastructure::track_import::FileCopyOptions options;
-        options.cancel = ctx.cancel();
+        // Not cancellable: the save's cancel is asked between changes
+        // (runSaveLoop), and a copy stopped halfway would be a failed
+        // change, which takes back every track imported before it. A
+        // cancel waits for this one file.
         const infrastructure::track_import::FileCopyResult copied =
-            infrastructure::track_import::copyFileVerified(pathFromUtf8(source), pathFromUtf8(destination), options);
-        if (copied.cancelled) {
-            return ChangeOutcome::failure(QStringLiteral("The copy of %1 was cancelled. Nothing was imported.").arg(m_sourceFile));
-        }
+            infrastructure::track_import::copyFileVerified(pathFromUtf8(source), pathFromUtf8(destination), {});
         if (!copied.copied) {
             return ChangeOutcome::failure(QString::fromStdString(copied.error));
         }
+        pdbRow.fileSizeBytes = copied.bytes;
+        oneRow.fileSizeBytes = copied.bytes;
 
-        const std::string pioneer = m_pioneerRoot.toStdString();
-        if (m_libraries.contains(QStringLiteral("rekordbox"))) {
+        if (toDeviceLibrary) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
             infrastructure::rekordbox::PdbRowWriter rows(exportPdbUnder(session.writeRoot()));
-            infrastructure::rekordbox::PdbRowWriter::NewTrack row;
-            row.pathOnStick = m_track.stickPath;
-            row.title = m_track.title;
-            row.artist = m_track.artist;
-            row.album = m_track.album;
-            row.albumArtist = m_track.albumArtist;
-            row.genre = m_track.genre;
-            row.label = m_track.label;
-            row.remixer = m_track.remixer;
-            row.composer = m_track.composer;
-            row.key = m_track.key;
-            row.comment = m_track.comment;
-            row.bpm = m_track.bpm;
-            row.durationSeconds = m_track.lengthSeconds;
-            row.trackNumber = m_track.trackNumber;
-            row.year = m_track.year;
-            row.bitrate = m_track.bitrate;
-            row.sampleDepth = m_track.bitDepth;
-            row.sampleRateHz = m_track.sampleRateHz;
-            row.fileSizeBytes = copied.bytes;
-            row.date = m_track.date;
-            m_deviceLibraryId = rows.addTrack(row);
+            m_deviceLibraryId = rows.addTrack(pdbRow);
             if (!rows.commit()) {
                 return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb for %1.").arg(subject()));
             }
             session.noteItemApplied();
         }
-        if (m_libraries.contains(QStringLiteral("onelibrary"))) {
+        if (toOneLibrary) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
             auto &writer = sharedOneLibraryWriter(ctx, pioneer);
-            infrastructure::onelibrary::OneLibraryCueWriter::NewTrack row;
-            row.filePath = destination;
-            row.title = m_track.title;
-            row.artist = m_track.artist;
-            row.album = m_track.album;
-            row.albumArtist = m_track.albumArtist;
-            row.genre = m_track.genre;
-            row.label = m_track.label;
-            row.remixer = m_track.remixer;
-            row.composer = m_track.composer;
-            row.key = m_track.key;
-            row.comment = m_track.comment;
-            row.bpm = m_track.bpm;
-            row.lengthSeconds = m_track.lengthSeconds;
-            row.trackNumber = m_track.trackNumber;
-            row.year = m_track.year;
-            row.bitrate = m_track.bitrate;
-            row.bitDepth = m_track.bitDepth;
-            row.sampleRateHz = m_track.sampleRateHz;
-            row.fileSizeBytes = copied.bytes;
-            row.date = m_track.date;
-            m_oneLibraryId = writer.addTrack(row);
+            m_oneLibraryId = writer.addTrack(oneRow);
         }
         if (toEngine) {
             FormatWriteSession &session =

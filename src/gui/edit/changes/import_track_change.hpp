@@ -32,14 +32,21 @@ namespace seabass::gui
 // All three rows are filled from the one domain::ImportedTrack, so the
 // libraries say the same about the track.
 //
-// A library not named in `libraries` is not written; the caller names
-// every library the stick has, or does not stage the change (an import
-// that reaches only some of a stick's libraries leaves them disagreeing,
-// which is the state the app exists to prevent).
+// `libraries` has to name exactly the libraries the stick has: apply()
+// refuses otherwise, before it writes (an import that reaches only some
+// of a stick's libraries leaves them disagreeing, which is the state the
+// app exists to prevent).
 //
-// A failure anywhere fails the change: the save loop puts this change's
-// files back, the copied audio file included, which is declared as a file
-// this change creates so that Undo Last Save removes it as well.
+// A failed change takes the whole save back (runSaveLoop), every track
+// imported before it included. So everything that can be asked before
+// the copy is: what each library's writer would refuse the row for, the
+// libraries on the stick, the source file. The copy itself is not
+// cancellable for the same reason; a cancel waits for the file in hand.
+// What is left to fail after the copy is the stick itself.
+//
+// The copied audio file is declared as a file this change creates, so a
+// failed save and Undo Last Save both take it away with the rows. The
+// folders the copy made stay, empty.
 //
 // Not this change's: playlists (AddToPlaylistChange and
 // EngineMembershipChange find the new rows by their file, staged after
@@ -73,7 +80,8 @@ public:
     // The file on the stick: where it is, or will be.
     std::string destinationFile() const;
     // After an apply() that succeeded: the ids of the new rows, 0 or -1
-    // for a library that was not written.
+    // for a library that was not written. They name rows only while the
+    // save that made them stands.
     std::uint32_t deviceLibraryId() const { return m_deviceLibraryId; }
     std::int64_t oneLibraryId() const { return m_oneLibraryId; }
     std::int64_t engineId() const { return m_engineId; }
