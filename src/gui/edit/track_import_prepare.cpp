@@ -119,9 +119,10 @@ std::string whyNot(const domain::ImportPlanEntry &entry, const std::string &root
 PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel,
                                   const ImportProgressSink &progress)
 {
-    const auto report = [&](ImportProgress::Step step, std::size_t done, std::size_t total, const std::string &file) {
+    const auto report = [&](ImportProgress::Step step, std::size_t done, std::size_t total, const std::string &file,
+                            std::vector<std::string> inHand = {}) {
         if (progress) {
-            progress({step, done, total, file});
+            progress({step, done, total, file, std::move(inHand)});
         }
     };
     report(ImportProgress::Step::Stick, 0, 0, {});
@@ -239,7 +240,7 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
     std::vector<domain::ImportFile> files;
     for (const std::string &source : sources) {
         cancel.throwIfCancelled();
-        report(ImportProgress::Step::Files, files.size(), sources.size(), nameOf(source));
+        report(ImportProgress::Step::Files, files.size(), sources.size(), nameOf(source), {nameOf(source)});
         domain::ImportFile file;
         file.file.format = "disk";
         file.file.sourceId = source;
@@ -357,6 +358,10 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
         std::mutex reporting;
         std::exception_ptr thrown;
         std::atomic<bool> failed{false};
+        // Under `reporting`: the files the workers have in hand, and the
+        // one last done.
+        std::vector<std::string> inHand;
+        std::string lastDone;
         const auto work = [&]() {
             for (;;) {
                 const std::size_t index = next.fetch_add(1);
@@ -367,9 +372,19 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
                 }
                 // The report too: nothing may leave a thread's function.
                 try {
+                    const std::string name = nameOf(prepared.staged.staged[index]);
+                    {
+                        const std::lock_guard<std::mutex> lock(reporting);
+                        inHand.push_back(name);
+                        report(ImportProgress::Step::Analysis, done.load(), count, lastDone, inHand);
+                    }
                     made[index] = request.analyser(prepared.staged.staged[index], cancel);
                     const std::lock_guard<std::mutex> lock(reporting);
-                    report(ImportProgress::Step::Analysis, done.fetch_add(1) + 1, count, nameOf(prepared.staged.staged[index]));
+                    if (const auto at = std::find(inHand.begin(), inHand.end(), name); at != inHand.end()) {
+                        inHand.erase(at);
+                    }
+                    lastDone = name;
+                    report(ImportProgress::Step::Analysis, done.fetch_add(1) + 1, count, lastDone, inHand);
                 } catch (...) {
                     failed.store(true);
                     const std::lock_guard<std::mutex> lock(reporting);

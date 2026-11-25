@@ -48,9 +48,12 @@ void TrackImportController::setBusy(bool busy)
     }
 }
 
-void TrackImportController::setProgress(const QString &step, int done, int total, const QString &file)
+void TrackImportController::setProgress(const QString &step, int done, int total, const QString &file,
+                                        const QStringList &inHand)
 {
-    if (m_progressStep != step || m_progressDone != done || m_progressTotal != total || m_progressFile != file) {
+    if (m_progressStep != step || m_progressDone != done || m_progressTotal != total || m_progressFile != file
+        || m_progressFiles != inHand) {
+        m_progressFiles = inHand;
         m_progressStep = step;
         m_progressDone = done;
         m_progressTotal = total;
@@ -273,11 +276,15 @@ bool TrackImportController::start(ImportRequest request)
         const QString file = QString::fromStdString(at.file);
         const int done = static_cast<int>(at.done);
         const int total = static_cast<int>(at.total);
+        QStringList inHand;
+        for (const std::string &name : at.inHand) {
+            inHand.push_back(QString::fromStdString(name));
+        }
         QMetaObject::invokeMethod(
             qApp,
-            [self, offer, step, done, total, file]() {
+            [self, offer, step, done, total, file, inHand]() {
                 if (self && self->m_busy && self->m_offer == offer && !self->m_cancel.cancelled()) {
-                    self->setProgress(step, done, total, file);
+                    self->setProgress(step, done, total, file, inHand);
                 }
             },
             Qt::QueuedConnection);

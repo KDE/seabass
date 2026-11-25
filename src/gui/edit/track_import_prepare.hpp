@@ -91,8 +91,12 @@ struct ImportProgress
     Step step = Step::Stick;
     std::size_t done = 0;
     std::size_t total = 0;
-    // The file in hand, by its name; empty between files.
+    // The file in hand, by its name; empty between files. In the
+    // analysis, where several are in hand at once: the one last done.
     std::string file;
+    // Every file in hand now, by name: one while files are read, as many
+    // as there are workers in the analysis.
+    std::vector<std::string> inHand;
 };
 
 // Called on the thread that prepares, often, and never from two threads

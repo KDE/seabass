@@ -36,6 +36,7 @@ TestCase {
             property int progressDone: 0
             property int progressTotal: 0
             property string progressFile: ""
+            property var progressFiles: []
             function cancel() { calls.push(["cancel"]); }
             property string errorMessage: ""
             property int pendingRevision: 0
@@ -194,6 +195,7 @@ TestCase {
         fake.progressDone = 11;
         fake.progressTotal = 40;
         fake.progressFile = "b two.wav";
+        fake.progressFiles = ["b two.wav"];
         fake.busy = true;
         tryCompare(strip, "visible", true);
         compare(findChild(strip, "passiveProgressSummary").text, "Import: reading file 12 of 40");
@@ -203,9 +205,15 @@ TestCase {
         tryVerify(() => list.height < fullHeight, 1000, "the list makes room for the strip");
         compare(findChild(strip, "passiveProgressCancel").visible, false);
         compare(findChild(strip, "passiveProgressDetail").visible, false);
+        const closedHeight = strip.height;
         mouseClick(strip, 20, 8);
         compare(strip.expanded, true);
-        compare(findChild(strip, "passiveProgressDetail").text, "b two.wav");
+        // Open, it names the file in hand and counts the step.
+        compare(strip.activity.join("|"), "Reading b two.wav");
+        compare(findChild(strip, "passiveProgressDetail").visible, false);
+        compare(strip.steps.map(s => s.count).join("|"), "|11 of 40 done||");
+        compare(findChild(strip, "passiveProgressNote").text, "Nothing is written until you save.");
+        tryVerify(() => strip.height > closedHeight * 4, 1000, "the open panel takes room to read");
         compare(strip.steps.map(s => s.state).join(" "), "done now later later");
         waitForRendering(page);
         if (screenshotDir && screenshotDir.length > 0) {
@@ -223,7 +231,13 @@ TestCase {
         fake.progressStep = "analysis";
         fake.progressDone = 2;
         fake.progressTotal = 5;
+        fake.progressFile = "c three.wav";
+        fake.progressFiles = ["d four.wav", "e five.wav"];
         compare(findChild(strip, "passiveProgressSummary").text, "Import: analysing track 3 of 5");
+        // Two are analysed at once: both named, and the one last done.
+        compare(strip.activity.join("|"), "Analysing d four.wav|Analysing e five.wav");
+        compare(findChild(strip, "passiveProgressDetail").text, "Last done: c three.wav");
+        compare(findChild(strip, "passiveProgressDetail").visible, true);
         compare(strip.steps.map(s => s.state).join(" "), "done done done now");
         compare(bar.indeterminate, false);
         fake.busy = false;

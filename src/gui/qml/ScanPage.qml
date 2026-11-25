@@ -1785,15 +1785,21 @@ Page {
                     running: root.trackImportController.busy === true
                     done: root.trackImportController.progressDone ?? 0
                     total: root.trackImportController.progressTotal ?? 0
-                    detail: root.trackImportController.progressFile ?? ""
+                    readonly property string lastFile: root.trackImportController.progressFile ?? ""
+                    detail: step === "analysis" && lastFile.length > 0 ? qsTr("Last done: %1").arg(lastFile) : ""
+                    activity: (root.trackImportController.progressFiles ?? []).map(
+                        file => step === "analysis" ? qsTr("Analysing %1").arg(file) : qsTr("Reading %1").arg(file))
+                    note: qsTr("Nothing is written until you save.")
                     summary: step === "files" && total > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(total, done + 1)).arg(total)
                         : step === "analysis" && total > 0
                             ? qsTr("Import: analysing track %1 of %2").arg(Math.min(total, done + 1)).arg(total)
                         : step === "check" ? qsTr("Import: checking against the stick")
                         : qsTr("Import: reading the stick")
-                    steps: [qsTr("Read the stick's libraries and files"), qsTr("Read the offered files and their tags"),
-                            qsTr("Check them against the stick"), qsTr("Analyse: beat grid and waveform")].map((label, index) => ({
+                    steps: [qsTr("Read the stick"), qsTr("Read the files"), qsTr("Check against the stick"),
+                            qsTr("Analyse the tracks")].map((label, index) => ({
                                 label: label,
+                                count: index === importProgress.stepIndex && importProgress.total > 0
+                                    ? qsTr("%1 of %2 done").arg(importProgress.done).arg(importProgress.total) : "",
                                 state: index < importProgress.stepIndex ? "done" : index === importProgress.stepIndex ? "now" : "later"
                             }))
                     onCancelRequested: root.trackImportController.cancel()

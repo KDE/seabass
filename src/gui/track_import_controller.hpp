@@ -55,6 +55,8 @@ class TrackImportController : public QObject
     Q_PROPERTY(int progressDone READ progressDone NOTIFY progressChanged)
     Q_PROPERTY(int progressTotal READ progressTotal NOTIFY progressChanged)
     Q_PROPERTY(QString progressFile READ progressFile NOTIFY progressChanged)
+    // Every file in hand now, by name: several while tracks are analysed.
+    Q_PROPERTY(QStringList progressFiles READ progressFiles NOTIFY progressChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     // Bumps whenever what is staged changes, so QML re-reads the queries.
     Q_PROPERTY(int pendingRevision READ pendingRevision NOTIFY pendingChanged)
@@ -84,6 +86,7 @@ public:
     int progressDone() const { return m_progressDone; }
     int progressTotal() const { return m_progressTotal; }
     QString progressFile() const { return m_progressFile; }
+    QStringList progressFiles() const { return m_progressFiles; }
     QString errorMessage() const { return m_errorMessage; }
     int pendingRevision() const { return m_pendingRevision; }
     int stagedCount() const { return m_stagedTracks; }
@@ -130,7 +133,7 @@ private:
     bool start(ImportRequest request);
     void onPrepared();
     void setBusy(bool busy);
-    void setProgress(const QString &step, int done, int total, const QString &file);
+    void setProgress(const QString &step, int done, int total, const QString &file, const QStringList &inHand = {});
     void setErrorMessage(const QString &message);
     void forgetStaged();
 
@@ -154,6 +157,7 @@ private:
     int m_progressDone = 0;
     int m_progressTotal = 0;
     QString m_progressFile;
+    QStringList m_progressFiles;
     QString m_errorMessage;
     int m_pendingRevision = 0;
     std::set<QString> m_staged;  // change ids
