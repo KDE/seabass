@@ -11,6 +11,7 @@
 
 #include "domain/import_field_checks.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/edit/save_context.hpp"
@@ -101,6 +102,9 @@ struct ImportRehearsal::Rows
     {
     }
     infrastructure::rekordbox::PdbRowWriter writer;
+    // The playlist in use, and the rows whose entries went into it.
+    std::optional<std::uint32_t> playlist;
+    std::vector<std::uint32_t> entered;
 };
 
 ImportRehearsal::ImportRehearsal(const QString &pioneerRoot)
@@ -124,7 +128,45 @@ std::string ImportRehearsal::add(const domain::ImportedTrack &track, std::uint64
     }
     try {
         // Never committed: the writer's buffer is the rehearsal.
-        (void)m_rows->writer.addTrack(deviceLibraryRow(track, fileSizeBytes));
+        const std::uint32_t id = m_rows->writer.addTrack(deviceLibraryRow(track, fileSizeBytes));
+        if (m_rows->playlist) {
+            m_rows->writer.appendPlaylistEntries(*m_rows->playlist, {id});
+            m_rows->entered.push_back(id);
+        }
+    } catch (const std::exception &e) {
+        return e.what();
+    }
+    return {};
+}
+
+std::string ImportRehearsal::usePlaylist(const std::string &path, bool create)
+{
+    if (!m_rows) {
+        return {};
+    }
+    try {
+        m_rows->playlist = pdbPlaylistAt(m_rows->writer, path);
+        if (!m_rows->playlist && create && path.find('/') == std::string::npos) {
+            m_rows->playlist = m_rows->writer.createPlaylist(0, path, false);
+        }
+    } catch (const std::exception &e) {
+        return e.what();
+    }
+    return m_rows->playlist ? std::string() : "export.pdb has no playlist \"" + path + "\"";
+}
+
+std::string ImportRehearsal::place(int toIndex)
+{
+    if (!m_rows || !m_rows->playlist || m_rows->entered.empty()) {
+        return {};
+    }
+    try {
+        const auto order =
+            orderWithRunAt(m_rows->writer.playlistTrackIds(*m_rows->playlist), m_rows->entered, toIndex);
+        if (!order) {
+            return "export.pdb's playlist does not hold each of the tracks once";
+        }
+        (void)m_rows->writer.reorderPlaylist(*m_rows->playlist, *order);
     } catch (const std::exception &e) {
         return e.what();
     }

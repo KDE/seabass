@@ -77,9 +77,24 @@ public:
     ImportRehearsal(const ImportRehearsal &) = delete;
     ImportRehearsal &operator=(const ImportRehearsal &) = delete;
 
-    // Adds `track`'s row to the rehearsal copy. Empty when it went in;
-    // otherwise why not, and the copy is as it was before the call.
+    // The playlist the batch goes into, by its path: from here on add()
+    // also rehearses the track's entry in it, as the AddToPlaylistChange
+    // staged behind each import writes one. With `create`, a playlist
+    // export.pdb does not have is made in the copy first, at the top
+    // level, as CreatePlaylistChange makes it. Empty when the copy has
+    // the playlist now; otherwise why not.
+    std::string usePlaylist(const std::string &path, bool create);
+
+    // Adds `track`'s row to the rehearsal copy, and its playlist entry
+    // when a playlist is in use. Empty when they went in; otherwise why
+    // not. A row whose entry could not follow it stays in the copy: the
+    // table that refused it refuses every later one as well.
     std::string add(const domain::ImportedTrack &track, std::uint64_t fileSizeBytes);
+
+    // Moves the entries add() made to `toIndex` in the playlist, in their
+    // order, as PlaceInPlaylistChange does once for the batch. Empty when
+    // the copy took it (or there is nothing to move); otherwise why not.
+    std::string place(int toIndex);
 
 private:
     struct Rows;

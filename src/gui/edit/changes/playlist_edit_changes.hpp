@@ -7,11 +7,18 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "gui/edit/pending_change.hpp"
+
+namespace seabass::infrastructure::rekordbox
+{
+class PdbRowWriter;
+}
 
 namespace seabass::gui
 {
@@ -276,6 +283,76 @@ private:
     int m_toIndex = 0;
     QStringList m_libraries;
 };
+
+// The one playlist export.pdb has at `path` ("Folder/List"), which is not
+// a folder; nothing when it has none, or a folder, there. Throws when
+// several rows spell the path. For a caller rehearsing playlist entries
+// on a writer of its own (ImportRehearsal).
+std::optional<std::uint32_t> pdbPlaylistAt(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path);
+
+// Moves a run of files already in a playlist to one place, in the order
+// given, in every library on the stick named: what a batch of imported
+// tracks dropped between two rows needs after each was added at the end.
+// One rewrite of the playlist per library, however many files: placing
+// each as it is added (AddToPlaylistChange's toIndex) rewrites
+// export.pdb's entries of the whole playlist once per file. A library
+// whose playlist does not hold every one of the files exactly once is
+// left alone and the log says so; nothing moved anywhere is a skip.
+class PlaceInPlaylistChange : public PendingChange
+{
+public:
+    // toIndex: where the first file goes once the run is taken out of
+    // the playlist, from 0, clamped to the end.
+    PlaceInPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, std::vector<std::string> files,
+                          int toIndex, QStringList libraries);
+
+    static QString idFor(const std::string &playlist);
+
+    QString id() const override;
+    QString owner() const override;
+    QString description() const override;
+    QString subject() const override;
+    QString unit() const override;
+    QString verb() const override;
+    QString playlistEdited() const override;
+    QStringList formatsTouched() const override;
+    std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
+    ChangeOutcome apply(SaveContext &ctx) override;
+
+    int toIndex() const { return m_toIndex; }
+    const std::vector<std::string> &files() const { return m_files; }
+
+private:
+    QString m_pioneerRoot;
+    QString m_enginePath;
+    std::string m_playlist;
+    std::vector<std::string> m_files;
+    int m_toIndex = 0;
+    QStringList m_libraries;
+};
+
+// `order` with the ids of `run` taken out and put back together at
+// `toIndex` (counted in what is left, clamped to its end), in `run`'s
+// order. Nothing when `order` does not hold each of them exactly once, or
+// `run` names one twice.
+template<typename Id>
+std::optional<std::vector<Id>> orderWithRunAt(const std::vector<Id> &order, const std::vector<Id> &run, int toIndex)
+{
+    for (size_t i = 0; i < run.size(); ++i) {
+        if (std::count(order.begin(), order.end(), run[i]) != 1 || std::count(run.begin(), run.end(), run[i]) != 1) {
+            return std::nullopt;
+        }
+    }
+    std::vector<Id> rest;
+    for (const Id &id : order) {
+        if (std::find(run.begin(), run.end(), id) == run.end()) {
+            rest.push_back(id);
+        }
+    }
+    const size_t to = std::min(static_cast<size_t>(std::max(toIndex, 0)), rest.size());
+    rest.insert(rest.begin() + static_cast<std::ptrdiff_t>(to), run.begin(), run.end());
+    return rest;
+}
 
 // Renames a playlist or a folder (the last segment of its path; the
 // folders above it stay, and a folder's children follow it) in every

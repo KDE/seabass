@@ -57,8 +57,13 @@ struct StagedImport
     // libraries are not the ones named, or the playlist cannot take the
     // tracks in every library. Empty otherwise.
     std::string refusal;
+    // Something the person should know about what is staged (the tracks
+    // go to the end of the playlist, not to the place asked for). Empty
+    // otherwise.
+    std::string note;
     // In save order: the playlist made first when it has to be, then per
-    // file its import and its playlist entry.
+    // file its import and its playlist entry at the end, then one move of
+    // the whole run to the place asked for, when one was.
     std::vector<std::shared_ptr<PendingChange>> changes;
     // The source files that are staged, in order.
     std::vector<std::string> staged;
@@ -83,7 +88,8 @@ struct StagedImport
 //
 // The playlist is asked of the stick as it is now (playlistWhereabouts,
 // which reads each library: not for the GUI thread). An existing one has
-// to be in every library the stick has, once; a new one is made at the
+// to be in every library the stick has, once, and be a playlist there
+// rather than a folder; a new one is made at the
 // top level in the libraries that lack it. Otherwise nothing is staged
 // and `refusal` says why: tracks listed in a playlist in two libraries
 // and not in the third is the disagreement this app is for removing.

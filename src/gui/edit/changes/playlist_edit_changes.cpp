@@ -168,6 +168,24 @@ std::optional<std::vector<Id>> movedOrder(const std::vector<Id> &order, const st
 
 }  // namespace
 
+std::optional<std::uint32_t> pdbPlaylistAt(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path)
+{
+    std::optional<std::uint32_t> found;
+    for (const auto &[node, spelled] : spelledPaths(rows.playlistTree())) {
+        if (spelled != path) {
+            continue;
+        }
+        if (found) {
+            throw std::runtime_error("rekordbox has more than one playlist named \"" + path + "\"");
+        }
+        found = node.id;
+        if (node.isFolder) {
+            return std::nullopt;
+        }
+    }
+    return found;
+}
+
 PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist,
                                         const std::string &filePath)
 {
@@ -981,6 +999,197 @@ ChangeOutcome MoveInPlaylistChange::apply(SaveContext &ctx)
     }
     ctx.log().record("playlist-move: moved \"" + m_filePath + "\" to position " + std::to_string(m_toIndex + 1) + " in \""
                      + m_playlist + "\" in " + std::to_string(moved) + " libraries");
+    return ChangeOutcome::success();
+}
+
+PlaceInPlaylistChange::PlaceInPlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist,
+                                             std::vector<std::string> files, int toIndex, QStringList libraries)
+    : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
+      m_files(std::move(files)), m_toIndex(toIndex), m_libraries(std::move(libraries))
+{
+    if (m_files.empty() || m_toIndex < 0) {
+        throw std::invalid_argument("PlaceInPlaylistChange: files and a place counted from 0 are required");
+    }
+}
+
+QString PlaceInPlaylistChange::idFor(const std::string &playlist)
+{
+    return QStringLiteral("addcue:place-in-playlist:") + QString::fromStdString(playlist);
+}
+
+QString PlaceInPlaylistChange::id() const
+{
+    return idFor(m_playlist);
+}
+
+QString PlaceInPlaylistChange::owner() const
+{
+    return QStringLiteral("addcue");
+}
+
+QString PlaceInPlaylistChange::description() const
+{
+    return QStringLiteral("Move %1 tracks to position %2 in \"%3\"")
+        .arg(m_files.size())
+        .arg(m_toIndex + 1)
+        .arg(QString::fromStdString(m_playlist));
+}
+
+QString PlaceInPlaylistChange::playlistEdited() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
+QString PlaceInPlaylistChange::subject() const
+{
+    return QString::fromStdString(m_playlist);
+}
+
+QString PlaceInPlaylistChange::unit() const
+{
+    return QStringLiteral("playlist entries");
+}
+
+QString PlaceInPlaylistChange::verb() const
+{
+    return QStringLiteral("moved");
+}
+
+QStringList PlaceInPlaylistChange::formatsTouched() const
+{
+    return touched(m_libraries);
+}
+
+std::vector<BackupTarget> PlaceInPlaylistChange::filesToBackup(SaveContext &) const
+{
+    return backupsFor(m_libraries, m_pioneerRoot, m_enginePath, MoveLabel);
+}
+
+ChangeOutcome PlaceInPlaylistChange::apply(SaveContext &ctx)
+{
+    const std::string pioneer = m_pioneerRoot.toStdString();
+    int moved = 0;
+    std::vector<std::string> leftAlone;
+    const std::string notAll = " playlist does not hold each of the files once";
+    try {
+        if (m_libraries.contains(QStringLiteral("rekordbox"))) {
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, MoveLabel);
+            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            const auto playlist = pdbPlaylistId(rows, m_playlist);
+            std::vector<uint32_t> run;
+            for (const std::string &file : m_files) {
+                const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, file));
+                if (ids.size() == 1) {
+                    run.push_back(ids.front());
+                }
+            }
+            if (!playlist) {
+                leftAlone.push_back("rekordbox has no such playlist");
+            } else if (const auto order = run.size() == m_files.size()
+                                              ? orderWithRunAt(rows.playlistTrackIds(*playlist), run, m_toIndex)
+                                              : std::nullopt) {
+                if (rows.reorderPlaylist(*playlist, *order)) {
+                    if (!rows.commit()) {
+                        return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
+                    }
+                    session.noteItemApplied();
+                    ++moved;
+                } else {
+                    leftAlone.push_back("rekordbox has them there already");
+                }
+            } else {
+                leftAlone.push_back("rekordbox's" + notAll);
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("onelibrary"))) {
+            ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), MoveLabel);
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            requireOneOneLibraryPlaylist(writer, m_playlist);
+            if (writer.playlistCountAtPath(m_playlist) == 0) {
+                leftAlone.push_back("OneLibrary has no such playlist");
+            } else {
+                std::vector<int64_t> run;
+                for (const std::string &file : m_files) {
+                    try {
+                        const auto ids = writer.contentIdsForFile(file);
+                        if (ids.size() == 1) {
+                            run.push_back(ids.front());
+                        }
+                    } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+                        // Counted below: the run comes out short.
+                    }
+                }
+                std::vector<int64_t> order;
+                for (const auto &[content, sequence] : writer.playlistContent(m_playlist)) {
+                    order.push_back(content);
+                }
+                if (const auto wanted =
+                        run.size() == m_files.size() ? orderWithRunAt(order, run, m_toIndex) : std::nullopt) {
+                    if (writer.reorderPlaylistContent(m_playlist, *wanted)) {
+                        ++moved;
+                    } else {
+                        leftAlone.push_back("OneLibrary has them there already");
+                    }
+                } else {
+                    leftAlone.push_back("OneLibrary's" + notAll);
+                }
+            }
+        }
+        if (m_libraries.contains(QStringLiteral("engine"))) {
+            const std::string engine = m_enginePath.toStdString();
+            FormatWriteSession &session = sharedFormatWriteSession(ctx, "engine", engine, 1, MoveLabel);
+            requireOneEnginePlaylist(session.writeRoot(), m_playlist);
+            if (infrastructure::engine::enginePlaylistCountAtPath(session.writeRoot(), m_playlist) == 0) {
+                leftAlone.push_back("Engine has no such playlist");
+            } else {
+                std::vector<std::int64_t> run;
+                for (const std::string &file : m_files) {
+                    const auto ids =
+                        infrastructure::engine::engineTrackIdsForFile(session.writeRoot(), session.realRoot(), file);
+                    if (ids.size() == 1) {
+                        run.push_back(ids.front());
+                    }
+                }
+                const auto order = infrastructure::engine::engineTrackIdsInPlaylist(session.writeRoot(), m_playlist);
+                if (const auto wanted =
+                        run.size() == m_files.size() ? orderWithRunAt(order, run, m_toIndex) : std::nullopt) {
+                    // Engine orders by links: each of the run goes after
+                    // the entry before it in the order wanted, or first.
+                    bool any = false;
+                    const auto first = std::find(wanted->begin(), wanted->end(), run.front());
+                    std::optional<std::int64_t> after =
+                        first == wanted->begin() ? std::nullopt : std::optional<std::int64_t>(*(first - 1));
+                    for (const std::int64_t id : run) {
+                        any = infrastructure::engine::moveInEnginePlaylist(session.writeRoot(), m_playlist, id, after)
+                              || any;
+                        after = id;
+                    }
+                    if (any) {
+                        session.noteItemApplied();
+                        ++moved;
+                    } else {
+                        leftAlone.push_back("Engine has them there already");
+                    }
+                } else {
+                    leftAlone.push_back("Engine's" + notAll);
+                }
+            }
+        }
+    } catch (const std::exception &e) {
+        return ChangeOutcome::failure(QString::fromStdString(e.what()));
+    }
+    for (const auto &why : leftAlone) {
+        ctx.log().record("playlist-place: " + std::to_string(m_files.size()) + " tracks not moved in \"" + m_playlist
+                         + "\" there: " + why);
+    }
+    if (moved == 0) {
+        ctx.log().record("playlist-place: " + std::to_string(m_files.size()) + " tracks moved in \"" + m_playlist
+                         + "\" nowhere, skipped");
+        return ChangeOutcome::skip();
+    }
+    ctx.log().record("playlist-place: moved " + std::to_string(m_files.size()) + " tracks to position "
+                     + std::to_string(m_toIndex + 1) + " in \"" + m_playlist + "\" in " + std::to_string(moved)
+                     + " libraries");
     return ChangeOutcome::success();
 }
 

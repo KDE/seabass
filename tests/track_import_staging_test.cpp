@@ -25,10 +25,13 @@
 #include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/track_import_staging.hpp"
+#include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "engine_change_fixture.hpp"
 
 using namespace seabass;
@@ -216,12 +219,12 @@ int main(int argc, char **argv)
     domain::ImportPlan more;
     more.entries.push_back(offer(computer, "zero.mp3", "Zero", "Contents/Stager/Staged/zero.mp3"));
     const StagedImport second = stageTrackImport(more, target, tags, probe, "2026-11-25", ImportPlaylist{"Staged Import", false, 0});
-    assert(second.changes.size() == 2 && second.leftOut.empty());
+    assert(second.changes.size() == 3 && second.leftOut.empty() && second.note.empty());
     const SaveLoopResult savedSecond = testing::saveChanges(second.changes, stick.pioneerPath(), stick.enginePath());
     if (!savedSecond.error.isEmpty()) {
         std::cerr << "save: " << savedSecond.error.toStdString() << "\n";
     }
-    assert(savedSecond.error.isEmpty() && savedSecond.appliedIds.size() == 2);
+    assert(savedSecond.error.isEmpty() && savedSecond.appliedIds.size() == 3);
     std::vector<std::string> withZero = expected;
     withZero.insert(withZero.begin(), onStick("Contents/Stager/Staged/zero.mp3"));
     assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)), "Staged Import") == withZero);
@@ -248,9 +251,17 @@ int main(int argc, char **argv)
         }
         const StagedImport dropped =
             stageTrackImport(middle, target, tags, probe, "2026-11-25", ImportPlaylist{"Staged Import", false, 1});
-        assert(dropped.refusal.empty() && dropped.changes.size() == 6);
+        // Three imports, each with its entry at the end, and one move of
+        // the run: not a rewrite of the playlist per file.
+        assert(dropped.refusal.empty() && dropped.note.empty() && dropped.changes.size() == 7);
+        for (size_t i = 1; i < 6; i += 2) {
+            const auto entry = std::dynamic_pointer_cast<AddToPlaylistChange>(dropped.changes[i]);
+            assert(entry && !entry->toIndex());
+        }
+        const auto run = std::dynamic_pointer_cast<PlaceInPlaylistChange>(dropped.changes[6]);
+        assert(run && run->toIndex() == 1 && run->files().size() == 3);
         const SaveLoopResult savedDrop = testing::saveChanges(dropped.changes, stick.pioneerPath(), stick.enginePath());
-        assert(savedDrop.error.isEmpty() && savedDrop.appliedIds.size() == 6);
+        assert(savedDrop.error.isEmpty() && savedDrop.appliedIds.size() == 7);
         const std::vector<std::string> order = {expected[0],
                                                 onStick("Contents/Stager/Staged/m1.mp3"),
                                                 onStick("Contents/Stager/Staged/m2.mp3"),
@@ -355,8 +366,8 @@ int main(int argc, char **argv)
         for (const LeftOut &left : fitted.leftOut) {
             assert(left.why.find("page") != std::string::npos);
         }
-        assert(fitted.changes.size() == fitted.staged.size());
-        if (!fitted.changes.empty()) {
+        assert(fitted.changes.size() == fitted.staged.size() && !fitted.staged.empty() && "some fit the last page");
+        {
             const SaveLoopResult savedFitted = testing::saveChanges(fitted.changes, full.pioneerPath(), full.enginePath());
             if (!savedFitted.error.isEmpty()) {
                 std::cerr << "save: " << savedFitted.error.toStdString() << "\n";
@@ -366,6 +377,114 @@ int main(int argc, char **argv)
         std::cout << "case 4e (an export.pdb that cannot grow: " << fitted.staged.size() << " of 30 staged and saved, "
                   << fitted.leftOut.size() << " left out before the save) OK\n";
     }
+
+    // 4f. A folder is not a playlist: nothing is staged into its path,
+    //     whether it is asked for as it is or as one to make.
+    {
+        const testing::EngineChangeStick foldered = testing::makeEngineChangeStick(fixture, "track_import_staging_folder");
+        testing::levelImportCounter(foldered);
+        {
+            infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(foldered.pioneer / "rekordbox" / "export.pdb"));
+            rows.createPlaylist(0, "Sets", true);
+            assert(rows.commit());
+            infrastructure::onelibrary::OneLibraryCueWriter writer(pathToUtf8(foldered.pioneer));
+            writer.createPlaylist("", "Sets", true);
+            infrastructure::engine::createEnginePlaylist(foldered.engineUtf8(), "Sets/Inner");
+        }
+        ImportTarget there{pathToQString(foldered.root), foldered.pioneerPath(), foldered.enginePath(), AllThree};
+        assert(playlistWhereabouts(foldered.pioneerPath(), foldered.enginePath(), "Sets").having.size() == 3
+               && "the lookup alone takes the folder for a playlist");
+        domain::ImportPlan one;
+        one.entries.push_back(offer(computer, "s.mp3", "S", "Contents/Stager/Sets/s.mp3"));
+        for (const bool create : {false, true}) {
+            const StagedImport into =
+                stageTrackImport(one, there, tags, probe, "2026-11-25", ImportPlaylist{"Sets", create, std::nullopt});
+            assert(into.changes.empty() && into.refusal.find("is a folder") != std::string::npos);
+        }
+    }
+    std::cout << "case 4f (a folder at the playlist's path: nothing staged, with the reason) OK\n";
+
+    // 4g. An export.pdb whose playlist-entries table cannot start a new
+    //     page: the move of the run to its place would rewrite the
+    //     playlist onto pages the table cannot have. Rehearsed, it is not
+    //     staged, the tracks go to the end and the save goes through.
+    {
+        const testing::EngineChangeStick tight = testing::makeEngineChangeStick(fixture, "track_import_staging_entries");
+        testing::levelImportCounter(tight);
+        const fs::path pdbFile = tight.pioneer / "rekordbox" / "export.pdb";
+        std::string pdb = testing::fileBytes(pdbFile);
+        const auto u32 = [&](size_t at) {
+            return static_cast<std::uint32_t>(static_cast<unsigned char>(pdb[at]) | (static_cast<unsigned char>(pdb[at + 1]) << 8)
+                                              | (static_cast<unsigned char>(pdb[at + 2]) << 16)
+                                              | (static_cast<unsigned char>(pdb[at + 3]) << 24));
+        };
+        bool found = false;
+        for (std::uint32_t table = 0; table < u32(8); ++table) {
+            const size_t entry = 28 + 16 * table;
+            if (u32(entry) == 8) {
+                // playlist entries: empty_candidate made the table's own first page.
+                for (int i = 0; i < 4; ++i) {
+                    pdb[entry + 4 + i] = pdb[entry + 8 + i];
+                }
+                found = true;
+            }
+        }
+        assert(found);
+        std::ofstream(pdbFile, std::ios::binary | std::ios::trunc) << pdb;
+        // The fixture's longest playlist that all three libraries have.
+        std::map<std::string, size_t> sizes;
+        for (const auto &track : infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(tight.pioneer)).readAll()) {
+            for (const auto &membership : track.playlists) {
+                ++sizes[membership.name];
+            }
+        }
+        std::string longest;
+        for (const auto &[name, size] : sizes) {
+            const PlaylistWhereabouts where = playlistWhereabouts(tight.pioneerPath(), tight.enginePath(), name);
+            if (where.having.size() == 3 && where.several.isEmpty() && (longest.empty() || size > sizes[longest])) {
+                longest = name;
+            }
+        }
+        assert(!longest.empty());
+        const std::vector<std::string> before =
+            playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(tight.pioneer)), longest);
+        // Engine's copy of it, which need not be as long as rekordbox's.
+        const std::vector<std::string> engineBefore =
+            playlistOf(infrastructure::engine::LibdjinteropEngineReader(tight.engineUtf8()), longest);
+        ImportTarget there{pathToQString(tight.root), tight.pioneerPath(), tight.enginePath(), AllThree};
+        domain::ImportPlan two;
+        two.entries.push_back(offer(computer, "t1.mp3", "T1", "Contents/Stager/Tight/t1.mp3"));
+        two.entries.push_back(offer(computer, "t2.mp3", "T2", "Contents/Stager/Tight/t2.mp3"));
+        const StagedImport atTop = stageTrackImport(two, there, tags, probe, "2026-11-25", ImportPlaylist{longest, false, 0});
+        assert(atTop.refusal.empty() && atTop.staged.size() == 2);
+        assert(atTop.note.find("end of") != std::string::npos && atTop.changes.size() == 4 && "no move is staged");
+        const SaveLoopResult savedTight = testing::saveChanges(atTop.changes, tight.pioneerPath(), tight.enginePath());
+        if (!savedTight.error.isEmpty()) {
+            std::cerr << "save: " << savedTight.error.toStdString() << "\n";
+        }
+        assert(savedTight.error.isEmpty() && savedTight.appliedIds.size() == 4);
+        std::vector<std::string> after = before;
+        after.push_back(pathToUtf8(tight.root / "Contents" / "Stager" / "Tight" / "t1.mp3"));
+        after.push_back(pathToUtf8(tight.root / "Contents" / "Stager" / "Tight" / "t2.mp3"));
+        assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(tight.pioneer)), longest) == after);
+        std::vector<std::string> engineAfter = engineBefore;
+        engineAfter.insert(engineAfter.end(), after.end() - 2, after.end());
+        assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(tight.engineUtf8()), longest) == engineAfter);
+        std::cout << "case 4g (a playlist of " << before.size()
+                  << " whose entries cannot be rewritten: the two tracks at its end, no move staged, saved) OK\n";
+    }
+
+    // 4h. A file where a folder of the destination has to be: left out.
+    {
+        std::ofstream(stick.root / "Contents" / "Blocked") << "a file, not a folder";
+        domain::ImportPlan under;
+        under.entries.push_back(offer(computer, "b.mp3", "B", "Contents/Blocked/Album/b.mp3"));
+        const StagedImport blocked = stageTrackImport(under, target, tags, probe, "2026-11-25", std::nullopt);
+        assert(blocked.changes.empty() && blocked.leftOut.size() == 1
+               && blocked.leftOut[0].why.find("a file is where the folder") != std::string::npos);
+        fs::remove(stick.root / "Contents" / "Blocked");
+    }
+    std::cout << "case 4h (a file where the destination's folder has to be: left out) OK\n";
 
     // 5. Nothing to stage is no change at all, not a lone playlist.
     domain::ImportPlan none;
