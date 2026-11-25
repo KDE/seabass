@@ -219,9 +219,11 @@ int main(int argc, char **argv)
         // No stars: the import has no rating to give (one of
         // rekordbox's rows here has four).
         assert(one(db, "SELECT rating" + where) == "0");
-        // What only rekordbox's collection knows: none here.
+        // What only rekordbox's collection knows: none here. The row
+        // names an analysis file, so it says analysed, as rekordbox's
+        // rows with a file and no update counters do (41).
         assert(one(db, "SELECT masterDbId || '/' || masterContentId || '/' || contentLink || '/' || analysedBits" + where)
-               == "0/0/0/0");
+               == "0/0/0/41");
     }
     std::cout << "case 2 (typed and filled as rekordbox's own row, column by column) OK\n";
 
@@ -252,6 +254,8 @@ int main(int argc, char **argv)
         assert(one(db, "SELECT count(*) FROM album WHERE name = 'An Album'") == "2");
         assert(one(db, "SELECT count(DISTINCT album_id) FROM content WHERE content_id IN (16, 18)") == "2");
         assert(one(db, "SELECT fileType || '/' || typeof(image_id) FROM content WHERE content_id = 18") == "4/null");
+        // Without an analysis file the row does not say analysed.
+        assert(one(db, "SELECT analysedBits FROM content WHERE content_id = 18") == "0");
 
         // rekordbox's own lookup rows are found, not doubled: its artist,
         // its album without an artist, its key.

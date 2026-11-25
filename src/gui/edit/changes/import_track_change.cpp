@@ -4,17 +4,35 @@
 
 #include "gui/edit/changes/import_track_change.hpp"
 
+#include <QDir>
+#include <QTemporaryFile>
+
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 #include "domain/import_field_checks.hpp"
+#include "application/path_key.hpp"
+#include "application/ports/analysis_writer.hpp"
+#include "domain/mp3_lead_in.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/edit/save_context.hpp"
+#include "infrastructure/audio/playback_timeline.hpp"
+#include "infrastructure/durable_file_write.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/rekordbox/anlz_builder.hpp"
+#include "infrastructure/rekordbox/anlz_path_index.hpp"
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/exact_sample_count.hpp"
+#endif
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/engine_track_rows.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -93,6 +111,52 @@ infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneLibraryRow(const do
     return row;
 }
 
+// The analysis files the stick has, as rows spell them
+// ("/PIONEER/USBANLZ/P01E/00009ECC/ANLZ0000.DAT"), and those this save
+// has given out: where a new track's folder must not be.
+struct AnalysisFoldersInUse
+{
+    explicit AnalysisFoldersInUse(const std::string &pioneerRoot)
+    {
+        const fs::path root = pathFromUtf8(pioneerRoot);
+        const fs::path folder = root / "USBANLZ";
+        std::error_code ec;
+        if (fs::symlink_status(folder, ec).type() == fs::file_type::not_found) {
+            return;  // a library without analysis files yet
+        }
+        fs::recursive_directory_iterator at(folder, fs::directory_options::skip_permission_denied, ec);
+        for (const fs::recursive_directory_iterator end; !ec && at != end; at.increment(ec)) {
+            // An error of its own each: one entry that cannot be asked
+            // must not read as the end of the folder.
+            std::error_code entryError;
+            const bool isFile = at->is_regular_file(entryError);
+            if (entryError) {
+                complete = false;
+                continue;
+            }
+            if (isFile) {
+                const fs::path relative = fs::relative(at->path(), root, entryError);
+                if (entryError) {
+                    complete = false;
+                    continue;
+                }
+                paths.insert("/PIONEER/" + pathToGenericUtf8(relative));
+            }
+        }
+        complete = complete && !ec;
+    }
+    std::unordered_set<std::string> paths;
+    // False when the folder could not be read to its end: what is free
+    // is then not known, and no new analysis file is placed.
+    bool complete = true;
+};
+
+// "..../a7.jpg" to "..../a7_m.jpg".
+std::string mediumPictureOf(const std::string &small)
+{
+    return small.substr(0, small.size() - 4) + "_m.jpg";
+}
+
 }  // namespace
 
 struct ImportRehearsal::Rows
@@ -105,6 +169,7 @@ struct ImportRehearsal::Rows
     // The playlist in use, and the rows whose entries went into it.
     std::optional<std::uint32_t> playlist;
     std::vector<std::uint32_t> entered;
+    std::uint32_t analysisFiles = 0;
 };
 
 ImportRehearsal::ImportRehearsal(const QString &pioneerRoot)
@@ -121,18 +186,52 @@ ImportRehearsal::ImportRehearsal(const QString &pioneerRoot)
 
 ImportRehearsal::~ImportRehearsal() = default;
 
-std::string ImportRehearsal::add(const domain::ImportedTrack &track, std::uint64_t fileSizeBytes)
+std::string ImportRehearsal::add(const domain::ImportedTrack &track, std::uint64_t fileSizeBytes, bool withCover,
+                                 bool withAnalysisFile)
 {
     if (!m_rows) {
         return {};
     }
     try {
         // Never committed: the writer's buffer is the rehearsal.
-        const std::uint32_t id = m_rows->writer.addTrack(deviceLibraryRow(track, fileSizeBytes));
+        auto row = deviceLibraryRow(track, fileSizeBytes);
+        if (withCover) {
+            row.artworkPath =
+                infrastructure::rekordbox::PdbRowWriter::artworkPathFor('a', m_rows->writer.nextArtworkId());
+        }
+        if (withAnalysisFile) {
+            // A name of the length the save's will have, in a folder no
+            // real file is in, another for each track.
+            char name[16];
+            std::snprintf(name, sizeof name, "%08X", 0xFF000000u + m_rows->analysisFiles++);
+            row.analyzePath = std::string("/PIONEER/USBANLZ/P07F/") + name + "/ANLZ0000.DAT";
+        }
+        const std::uint32_t id = m_rows->writer.addTrack(row);
         if (m_rows->playlist) {
             m_rows->writer.appendPlaylistEntries(*m_rows->playlist, {id});
             m_rows->entered.push_back(id);
         }
+    } catch (const std::exception &e) {
+        return e.what();
+    }
+    return {};
+}
+
+std::string ImportRehearsal::enter(const QString &pioneerRoot, const std::string &file)
+{
+    if (!m_rows || !m_rows->playlist) {
+        return {};
+    }
+    try {
+        std::error_code ec;
+        const auto relative =
+            fs::relative(pathFromUtf8(file), pathFromUtf8(pioneerRoot.toStdString()).parent_path(), ec);
+        const auto ids = m_rows->writer.trackIdsWithFilePath(ec ? file : "/" + pathToGenericUtf8(relative));
+        if (ids.empty()) {
+            return "export.pdb has no row for it";
+        }
+        m_rows->writer.appendPlaylistEntries(*m_rows->playlist, {ids.front()});
+        m_rows->entered.push_back(ids.front());
     } catch (const std::exception &e) {
         return e.what();
     }
@@ -174,11 +273,14 @@ std::string ImportRehearsal::place(int toIndex)
 }
 
 std::string ImportTrackChange::rowRefusal(const domain::ImportedTrack &track, const QStringList &libraries,
-                                          std::uint64_t fileSizeBytes)
+                                          std::uint64_t fileSizeBytes, bool withAnalysisFile)
 {
     if (libraries.contains(QStringLiteral("rekordbox"))) {
-        const std::string refusal =
-            infrastructure::rekordbox::PdbRowWriter::newTrackRefusal(deviceLibraryRow(track, fileSizeBytes));
+        auto row = deviceLibraryRow(track, fileSizeBytes);
+        if (withAnalysisFile) {
+            row.analyzePath = "/PIONEER/USBANLZ/P000/00000000/ANLZ0000.DAT";
+        }
+        const std::string refusal = infrastructure::rekordbox::PdbRowWriter::newTrackRefusal(row);
         if (!refusal.empty()) {
             return refusal;
         }
@@ -274,6 +376,14 @@ QStringList ImportTrackChange::formatsTouched() const
     return m_libraries;
 }
 
+void ImportTrackChange::setAnalysis(std::shared_ptr<const ImportAnalysis> analysis)
+{
+    m_analysis = std::move(analysis);
+    if (m_analysis && m_analysis->bpm > 0.0 && m_analysis->bpm < 1000.0) {
+        m_track.bpm = m_analysis->bpm;
+    }
+}
+
 std::string ImportTrackChange::destinationFile() const
 {
     // stickPath starts with '/', which a path join would take for a root.
@@ -353,7 +463,8 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
 
     infrastructure::rekordbox::PdbRowWriter::NewTrack pdbRow = deviceLibraryRow(m_track, sourceSize);
     infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneRow = oneLibraryRow(m_track, destination, sourceSize);
-    if (const std::string refusal = rowRefusal(m_track, m_libraries, sourceSize); !refusal.empty()) {
+    if (const std::string refusal = rowRefusal(m_track, m_libraries, sourceSize, static_cast<bool>(m_analysis));
+        !refusal.empty()) {
         return ChangeOutcome::failure(QString::fromStdString(refusal + ". Nothing was imported."));
     }
     if (toEngine) {
@@ -364,6 +475,152 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             return ChangeOutcome::failure(
                 QStringLiteral("The sample rate of %1 could not be read, which an Engine row needs. Nothing was imported.")
                     .arg(pathToQString(pathFromUtf8(m_sourceFile))));
+        }
+    }
+
+    // The cover, read and scaled before anything is written. Each
+    // library's files are named after the row it will make for them; a
+    // name that is taken means the library's ids and files do not agree,
+    // and the track then goes without a cover there rather than over
+    // another track's picture.
+    std::optional<CoverPictures> cover = m_coverReader ? m_coverReader(source) : std::nullopt;
+    if (cover && (cover->small.empty() || cover->medium.empty() || cover->large.empty())) {
+        cover.reset();
+    }
+    const fs::path stickRoot = pathFromUtf8(m_stickRoot.toStdString());
+    const auto pictureFile = [&](const std::string &onStick) { return stickRoot / pathFromUtf8(onStick.substr(1)); };
+    const auto pictureNamesFree = [&](const std::string &onStick) {
+        std::error_code missing;
+        return fs::symlink_status(pictureFile(onStick), missing).type() == fs::file_type::not_found
+               && fs::symlink_status(pictureFile(mediumPictureOf(onStick)), missing).type() == fs::file_type::not_found;
+    };
+    // A cover file is named after a row made in this very save, so it
+    // cannot be declared with filesToBackup(). Declared here, before it
+    // is written: taken away again by a failed change
+    // (protectForThisChange) and by Undo Last Save (the save's record of
+    // a file that was not there).
+    const auto declareCreated = [&](const std::string &file) {
+        ctx.protectForThisChange(file);
+        BackupTarget created{file, Label};
+        created.removeOnRestoreIfAbsent = true;
+        ctx.backupAllNow({created});
+    };
+    // Throws when a picture cannot be written: the row would name a file
+    // that is not there.
+    const auto writePictures = [&](const std::string &onStick) {
+        const std::pair<fs::path, const std::string *> files[] = {{pictureFile(onStick), &cover->small},
+                                                                 {pictureFile(mediumPictureOf(onStick)), &cover->medium}};
+        for (const auto &[file, bytes] : files) {
+            const std::string path = pathToUtf8(file);
+            declareCreated(path);
+            fs::create_directories(file.parent_path());
+            if (!infrastructure::writeFileDurablyAtomic(path, *bytes)) {
+                throw std::runtime_error("could not write the cover " + path);
+            }
+        }
+    };
+
+    // The analysis as rekordbox's files, built before anything is
+    // written. The grid goes onto rekordbox's timeline; an MP3 whose
+    // lead-in cannot be read has no known place on it and gets no grid.
+    std::optional<infrastructure::rekordbox::NewAnlzFiles> anlz;
+    std::vector<domain::Beat> rekordboxBeats;
+    std::optional<std::uint64_t> sampleCount;
+    const bool isMp3 = domain::hasMp3Extension(source);
+    if (m_analysis && !m_analysis->waveform.entries.empty()) {
+        const std::optional<double> offset = infrastructure::audio::cueTimelineOffsetMs(source);
+        if (offset) {
+            for (domain::Beat beat : m_analysis->beats) {
+                beat.timeMs += *offset;
+                if (beat.timeMs >= 0.0) {
+                    rekordboxBeats.push_back(beat);
+                }
+            }
+        }
+#ifdef SEABASS_HAVE_TAGLIB
+        if (const auto exact = infrastructure::audio::readExactSampleCount(source)) {
+            sampleCount = exact->samples;
+        }
+#endif
+        infrastructure::rekordbox::NewAnlzInput input;
+        input.trackPath = m_track.stickPath;
+        input.beats = rekordboxBeats;
+        input.waveform = m_analysis->waveform;
+        if (offset && *offset != 0.0 && !input.waveform.entries.empty()) {
+            // The waveform with the grid: moved by as many entries as the
+            // beats were moved by milliseconds, the track's length kept.
+            auto &entries = input.waveform.entries;
+            const auto shift = static_cast<std::ptrdiff_t>(std::llround(*offset * domain::WaveformEntriesPerSecond / 1000.0));
+            const auto count = static_cast<std::ptrdiff_t>(entries.size());
+            if (shift > 0 && shift < count) {
+                entries.insert(entries.begin(), static_cast<std::size_t>(shift), domain::WaveformEntry{});
+                entries.resize(static_cast<std::size_t>(count));
+            } else if (shift < 0 && -shift < count) {
+                entries.erase(entries.begin(), entries.begin() - shift);
+                entries.resize(static_cast<std::size_t>(count));
+            }
+        }
+        input.sampleRateHz = m_analysis->waveform.sampleRateHz;
+        input.durationMs = input.sampleRateHz > 0
+                               ? 1000.0 * static_cast<double>(m_analysis->waveform.sampleCount) / input.sampleRateHz
+                               : m_track.durationSeconds * 1000.0;
+        if (isMp3 && sampleCount && *sampleCount <= 0xFFFFFFFFull) {
+            input.mp3SampleCount = static_cast<std::uint32_t>(*sampleCount);
+        }
+        try {
+            anlz = infrastructure::rekordbox::buildAnlzFiles(input);
+        } catch (const std::invalid_argument &e) {
+            // A grid or a path the files cannot hold: the track goes in
+            // unanalysed, and the log says so.
+            ctx.log().record(std::string(Label) + ": no analysis files for " + m_track.stickPath + ": " + e.what());
+        }
+    }
+    std::string analysisFile;  // "/PIONEER/USBANLZ/.../ANLZ0000.DAT"
+    if (anlz && (toDeviceLibrary || toOneLibrary)) {
+        auto &inUse = ctx.sharedForWholeSave<AnalysisFoldersInUse>(
+            "track-import:anlz:" + application::normalizedPathKey(pioneer),
+            [&]() { return std::make_unique<AnalysisFoldersInUse>(pioneer); });
+        // A folder nothing is in: not in the list, and not on the stick
+        // either (the list is from one pass, and never an excuse to
+        // write over a file).
+        for (int attempt = 0; inUse.complete && analysisFile.empty() && attempt < 8; ++attempt) {
+            const std::string candidate = infrastructure::rekordbox::newAnlzPathFor(m_track.stickPath, inUse.paths);
+            inUse.paths.insert(candidate);
+            const std::string stem = candidate.substr(0, candidate.size() - 3);
+            bool taken = false;
+            for (const char *extension : {"DAT", "EXT", "2EX"}) {
+                std::error_code missing;
+                taken = taken
+                        || fs::symlink_status(stickRoot / pathFromUtf8((stem + extension).substr(1)), missing).type()
+                               != fs::file_type::not_found;
+            }
+            // Nor one a row names whose files are gone: either library
+            // refuses a second row for an analysis file.
+            if (!taken && toDeviceLibrary) {
+                const auto *index = sharedAnlzPathIndex(ctx, m_pioneerRoot);
+                taken = index != nullptr && index->names(candidate);
+            }
+            if (!taken && toOneLibrary) {
+                ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
+                taken = sharedOneLibraryWriter(ctx, pioneer).namesAnalysisFile(candidate);
+            }
+            if (!taken) {
+                analysisFile = candidate;
+            }
+        }
+        if (analysisFile.empty()) {
+            ctx.log().record(std::string(Label) + ": no free analysis folder found for " + m_track.stickPath
+                             + "; imported without analysis files");
+        }
+        if (analysisFile.empty()) {
+            // Neither library names a file.
+        } else {
+            if (toDeviceLibrary) {
+                pdbRow.analyzePath = analysisFile;
+            }
+            if (toOneLibrary) {
+                oneRow.analysisDataFilePath = analysisFile;
+            }
         }
     }
 
@@ -379,6 +636,13 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         if (toDeviceLibrary) {
             pdbSession = &sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
             pdbRows.emplace(exportPdbUnder(pdbSession->writeRoot()));
+            if (cover) {
+                const std::string picture =
+                    infrastructure::rekordbox::PdbRowWriter::artworkPathFor('a', pdbRows->nextArtworkId());
+                if (pictureNamesFree(picture)) {
+                    pdbRow.artworkPath = picture;
+                }
+            }
             m_deviceLibraryId = pdbRows->addTrack(pdbRow);
         }
 
@@ -386,8 +650,20 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         // (runSaveLoop), and a copy stopped halfway would be a failed
         // change, which takes back every track imported before it. A
         // cancel waits for this one file.
+        // The bar counts tracks; a large file says beside it how far its
+        // own copy is, every 8 MB.
+        infrastructure::track_import::FileCopyOptions copying;
+        const QString megabytes = QString::number((sourceSize + (1u << 20) - 1) >> 20);
+        std::uint64_t said = 0;
+        ctx.status(QStringLiteral("Copying %1").arg(subject()));
+        copying.progress = [&](std::uint64_t written) {
+            if (written - said >= (8u << 20)) {
+                said = written;
+                ctx.status(QStringLiteral("Copying %1 (%2 of %3 MB)").arg(subject()).arg(written >> 20).arg(megabytes));
+            }
+        };
         const infrastructure::track_import::FileCopyResult copied =
-            infrastructure::track_import::copyFileVerified(pathFromUtf8(source), pathFromUtf8(destination), {});
+            infrastructure::track_import::copyFileVerified(pathFromUtf8(source), pathFromUtf8(destination), copying);
         if (!copied.copied) {
             return ChangeOutcome::failure(QString::fromStdString(copied.error));
         }
@@ -398,7 +674,26 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                 QStringLiteral("%1 changed while it was imported.").arg(pathToQString(pathFromUtf8(m_sourceFile))));
         }
 
+        if (!analysisFile.empty()) {
+            // The three analysis files, before a row that names them is
+            // in a library.
+            const std::string stem = analysisFile.substr(0, analysisFile.size() - 3);
+            const std::pair<const char *, const std::string *> files[] = {
+                {"DAT", &anlz->dat}, {"EXT", &anlz->ext}, {"2EX", &anlz->twoEx}};
+            for (const auto &[extension, bytes] : files) {
+                const fs::path file = pictureFile(stem + extension);
+                const std::string path = pathToUtf8(file);
+                declareCreated(path);
+                fs::create_directories(file.parent_path());
+                if (!infrastructure::writeFileDurablyAtomic(path, *bytes)) {
+                    return ChangeOutcome::failure(QStringLiteral("Could not write the analysis file %1.").arg(pathToQString(file)));
+                }
+            }
+        }
         if (toDeviceLibrary) {
+            if (!pdbRow.artworkPath.empty()) {
+                writePictures(pdbRow.artworkPath);
+            }
             if (!pdbRows->commit()) {
                 return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb for %1.").arg(subject()));
             }
@@ -407,6 +702,14 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         if (toOneLibrary) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
             auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            if (cover) {
+                const std::string picture =
+                    infrastructure::rekordbox::PdbRowWriter::artworkPathFor('b', static_cast<std::uint64_t>(writer.nextImageId()));
+                if (pictureNamesFree(picture)) {
+                    writePictures(picture);
+                    oneRow.imagePath = picture;
+                }
+            }
             m_oneLibraryId = writer.addTrack(oneRow);
         }
         if (toEngine) {
@@ -433,9 +736,19 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             row.fileTags = tags;
             row.sampleRateHz = static_cast<double>(m_track.sampleRateHz);
             row.realEngineLibraryPath = session.realRoot();
-            infrastructure::engine::EngineTrackCover cover;
+            // Engine takes its cover from a file: the large picture, in
+            // a temporary one that goes when this block ends.
+            QTemporaryFile largePicture(QDir::tempPath() + QStringLiteral("/seabass-import-cover-XXXXXX.jpg"));
+            if (cover && largePicture.open()
+                && largePicture.write(cover->large.data(), static_cast<qint64>(cover->large.size()))
+                       == static_cast<qint64>(cover->large.size())
+                && largePicture.flush()) {
+                row.source.artworkPath = largePicture.fileName().toStdString();
+            }
+            infrastructure::engine::EngineTrackCover engineCover;
+            engineCover.beforeWrite = declareCreated;
             std::string error;
-            m_engineId = infrastructure::engine::createEngineTrack(session.writeRoot(), row, &cover, &error);
+            m_engineId = infrastructure::engine::createEngineTrack(session.writeRoot(), row, &engineCover, &error);
             if (m_engineId < 0) {
                 return ChangeOutcome::failure(QString::fromStdString(error));
             }
@@ -444,6 +757,30 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             if (rows != std::vector<std::int64_t>{m_engineId}) {
                 return ChangeOutcome::failure(
                     QStringLiteral("Engine has %1 rows for %2 after adding one.").arg(rows.size()).arg(subject()));
+            }
+            if (anlz) {
+                // Grid and overview into the new row, as a copy of
+                // rekordbox's analysis writes them: the writer moves the
+                // grid onto Engine's timeline again and marks the row
+                // analysed.
+                application::RekordboxAnalysis analysis;
+                analysis.beats = rekordboxBeats;
+                analysis.threeBandPreview = anlz->threeBandPreview;
+                analysis.colourPreview = anlz->colourPreview;
+                analysis.scrollEntries = anlz->scrollEntries;
+                if (m_analysis->bpm > 0.0) {
+                    analysis.bpm = m_analysis->bpm;
+                }
+                application::AnalysisImportOptions options;
+                options.fileSampleRateHz = static_cast<double>(m_track.sampleRateHz);
+                options.fileIsMp3 = isMp3;
+                options.fileSampleCount = sampleCount;
+                options.fileCountRequired = !isMp3;
+                options.grids = !rekordboxBeats.empty();
+                const application::AnalysisImportResult written =
+                    engineAnalysisWriterFor(ctx, session, m_stickRoot.toStdString())
+                        .importAnalysis(std::to_string(m_engineId), analysis, options);
+                m_engineAnalysed = written.completedRow;
             }
             session.noteItemApplied();
         }

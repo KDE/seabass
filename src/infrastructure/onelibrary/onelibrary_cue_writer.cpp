@@ -1566,6 +1566,25 @@ std::string OneLibraryCueWriter::newTrackRefusal(const NewTrack &track)
     return {};
 }
 
+int64_t OneLibraryCueWriter::nextImageId()
+{
+    checkNotStale();
+    return nextId(writeConnection(), "image", "image_id");
+}
+
+bool OneLibraryCueWriter::namesAnalysisFile(const std::string &analysisFile)
+{
+    checkNotStale();
+    const std::string wanted = application::normalizedPathKey(analysisFile);
+    SqlCipherStatement scan(writeConnection(), "SELECT analysisDataFilePath FROM content");
+    while (scan.step()) {
+        if (!scan.columnIsNull(0) && application::normalizedPathKey(scan.columnText(0)) == wanted) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
 {
     if (const std::string refusal = newTrackRefusal(track); !refusal.empty()) {
@@ -1658,7 +1677,8 @@ int64_t OneLibraryCueWriter::addTrack(const NewTrack &track)
             "masterContentId, analysisDataFilePath, analysedBits, contentLink, hasModified, cueUpdateCount, "
             "analysisDataUpdateCount, informationUpdateCount) VALUES ("
             "?1, ?2, NULL, '', ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, 0, ?10, ?11, ?12, ?13, 0, ?14, ?15, 0, ?16, '', "
-            "?17, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, '', 0, 1, 1, '', 0, 0, ?25, 0, 0, 0, NULL, NULL, NULL)");
+            "?17, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, '', 0, 1, 1, '', 0, 0, ?25, "
+            "CASE WHEN ?25 = '' THEN 0 ELSE 41 END, 0, 0, NULL, NULL, NULL)");
         insert.bindInt64(1, id);
         insert.bindText(2, track.title);
         insert.bindInt64(3, static_cast<int64_t>(track.bpm * 100.0 + 0.5));

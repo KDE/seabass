@@ -179,6 +179,14 @@ Page {
     // `files` into `playlist` ("" for none), which the save makes when
     // `create`; atIndex below 0 for its end.
     function importFiles(files, playlist, create, atIndex) {
+        // More for the playlist an import that waits will make: the
+        // controller joins the two.
+        const joins = playlist.length > 0 && root.trackImportController.stagedPlaylistIsNew === true
+            && root.trackImportController.stagedPlaylist === playlist;
+        if (joins) {
+            root.trackImportController.importFiles(root.rekordboxPath, root.enginePath, files, playlist, true, -1);
+            return;
+        }
         if (playlist.length > 0 && !create && root.newPlaylistNames.indexOf(playlist) >= 0) {
             playlistEditMessage.show(qsTr("\"%1\" is not on the stick yet. Save first, then import into it.").arg(playlist),
                                      true, qsTr("Not imported"));
@@ -247,17 +255,26 @@ Page {
         readonly property var notImported: outcome.notImported ?? []
         readonly property int possibleDuplicates: outcome.possibleDuplicates ?? 0
         readonly property string playlist: outcome.playlist ?? ""
-        severity: staged > 0 ? SeabassDialog.Info : SeabassDialog.Warning
+        severity: staged + (outcome.addedToPlaylist ?? 0) > 0 ? SeabassDialog.Info : SeabassDialog.Warning
         title: qsTr("Import tracks")
-        headline: staged === 0 ? qsTr("None of these files can be imported.")
+        readonly property int added: outcome.addedToPlaylist ?? 0
+        headline: staged === 0 && added > 0 ? qsTr("%n track(s) of the stick ready to go into \"%1\".", "", added).arg(playlist)
+            : staged === 0 ? qsTr("None of these files can be imported.")
             : playlist.length === 0 ? qsTr("%n track(s) ready to import.", "", staged)
             : (outcome.playlistIsNew ? qsTr("%n track(s) ready to import into the new playlist \"%1\".", "", staged)
                                     : qsTr("%n track(s) ready to import into \"%1\".", "", staged)).arg(playlist)
         detailText: (staged > 0
-                ? qsTr("Save copies them to the stick (%1 MB) and lists them in every library on it. "
-                       + "They have no beat grid or waveform yet.").arg(Math.ceil(outcome.megabytes ?? 0))
+                ? qsTr("Save copies them to the stick (%1 MB) and lists them in every library on it.")
+                        .arg(Math.ceil(outcome.megabytes ?? 0)) + " "
+                    + ((outcome.analysed ?? 0) === 0 ? qsTr("They have no beat grid or waveform yet.")
+                        : (outcome.withGrid ?? 0) === staged
+                            ? qsTr("Seabass analysed them: each has a beat grid and waveforms (a test version).")
+                            : qsTr("Seabass analysed %1 of them, %2 with a beat grid (a test version).")
+                                .arg(outcome.analysed).arg(outcome.withGrid ?? 0))
                 : "")
-            + ((outcome.note ?? "").length > 0 ? (staged > 0 ? "\n\n" : "") + outcome.note : "")
+            + (staged > 0 && added > 0
+                ? "\n\n" + qsTr("%n more are on the stick already and go into the playlist too.", "", added) : "")
+            + ((outcome.note ?? "").length > 0 ? (staged + added > 0 ? "\n\n" : "") + outcome.note : "")
         Label {
             objectName: "importNotImportedHeading"
             visible: importResultDialog.notImported.length > 0
@@ -296,7 +313,7 @@ Page {
             }
             Button {
                 objectName: "importTakeBackButton"
-                visible: importResultDialog.staged > 0
+                visible: importResultDialog.staged + importResultDialog.added > 0
                 text: qsTr("Take back")
                 DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
                 onClicked: {
@@ -1753,6 +1770,30 @@ Page {
                         iconName: "edit-find"
                         text: "No playlists match."
                     }
+                }
+
+                // The import being prepared, out of the way under the list.
+                PassiveProgress {
+                    id: importProgress
+                    objectName: "importProgress"
+                    Layout.fillWidth: true
+                    readonly property string step: root.trackImportController.progressStep ?? ""
+                    readonly property int stepIndex: ["stick", "files", "check", "analysis"].indexOf(step)
+                    running: root.trackImportController.busy === true
+                    done: root.trackImportController.progressDone ?? 0
+                    total: root.trackImportController.progressTotal ?? 0
+                    detail: root.trackImportController.progressFile ?? ""
+                    summary: step === "files" && total > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(total, done + 1)).arg(total)
+                        : step === "analysis" && total > 0
+                            ? qsTr("Import: analysing track %1 of %2").arg(Math.min(total, done + 1)).arg(total)
+                        : step === "check" ? qsTr("Import: checking against the stick")
+                        : qsTr("Import: reading the stick")
+                    steps: [qsTr("Read the stick's libraries and files"), qsTr("Read the offered files and their tags"),
+                            qsTr("Check them against the stick"), qsTr("Analyse: beat grid and waveform")].map((label, index) => ({
+                                label: label,
+                                state: index < importProgress.stepIndex ? "done" : index === importProgress.stepIndex ? "now" : "later"
+                            }))
+                    onCancelRequested: root.trackImportController.cancel()
                 }
             }
         }

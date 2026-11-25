@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "audio_file_fixture.hpp"
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
 #include "infrastructure/audio/taglib_tag_reader.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "scratch_path.hpp"
@@ -198,7 +199,17 @@ int main()
             assert(tags->bpm == 132.0);
             assert(tags->key == "Am");
         }
-        std::cout << "case 5 (WAV and AIFF, ID3v2 in a chunk) OK\n";
+        // The sample size is the container's: the fixture's 16 bits, and
+        // 24 once its format chunk says so.
+        assert(seabass::infrastructure::audio::bitsPerSampleOf(at("tagged.wav")) == 16);
+        std::string deep = wavFile(id3);
+        const std::size_t format = deep.find("fmt ");
+        assert(format != std::string::npos && static_cast<unsigned char>(deep[format + 22]) == 16);
+        deep[format + 22] = 24;
+        writeFile(root / "deep.wav", deep);
+        assert(seabass::infrastructure::audio::bitsPerSampleOf(at("deep.wav")) == 24);
+        assert(seabass::infrastructure::audio::bitsPerSampleOf(at("full.mp3")) == 0);
+        std::cout << "case 5 (WAV and AIFF, ID3v2 in a chunk; the sample size of a WAV) OK\n";
     }
 
     // 6. A file with no tags reads as a track nothing is known about; a

@@ -260,6 +260,17 @@ Writer &analysisWriterFor(SaveContext &ctx, FormatWriteSession &session, const s
     });
 }
 
+}  // namespace
+
+infrastructure::engine::LibdjinteropEngineCueWriter &engineAnalysisWriterFor(SaveContext &ctx, FormatWriteSession &session,
+                                                                             const std::string &stickRoot)
+{
+    return analysisWriterFor(ctx, session, stickRoot);
+}
+
+namespace
+{
+
 // The kept analysis' file of an item, on the stick; empty without a key.
 std::string keptFileOf(const std::string &stickRoot, const application::BeatGridCopyItem &item)
 {

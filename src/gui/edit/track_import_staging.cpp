@@ -14,6 +14,10 @@
 #include "domain/imported_track.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "infrastructure/audio/embedded_artwork.hpp"
+#ifdef SEABASS_HAVE_TAGLIB
+#include "infrastructure/audio/taglib_metadata_probe.hpp"
+#endif
 #include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::gui
@@ -39,7 +43,8 @@ std::string firstCharacters(const std::string &text, size_t characters)
 
 StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget &target,
                               application::TrackTagReader &tags, application::TrackMetadataProbe &probe,
-                              const std::string &date, const std::optional<ImportPlaylist> &playlist)
+                              const std::string &date, const std::optional<ImportPlaylist> &playlist,
+                              const OnStickLookup &onStick)
 {
     if (target.libraries.isEmpty() || target.stickRoot.isEmpty()) {
         throw std::invalid_argument("stageTrackImport: a stick with at least one library is required");
@@ -112,13 +117,63 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             return staged;
         }
     }
-    std::vector<std::shared_ptr<ImportTrackChange>> imports;
+    // What goes into the playlist, in the order offered: a new track
+    // with its import, a track of the stick's without one.
+    struct Entered
+    {
+        std::shared_ptr<ImportTrackChange> import;
+        std::string file;
+        QString title;
+    };
+    std::vector<Entered> entered;
+    const auto allLibraries = [&](const QStringList &some) {
+        return std::all_of(target.libraries.begin(), target.libraries.end(),
+                           [&](const QString &library) { return some.contains(library); });
+    };
     for (const auto &entry : plan.entries) {
+        const std::string &source = entry.offered.file.filePath;
+        const auto leave = [&](std::string why) { staged.leftOut.push_back({source, std::move(why)}); };
+        if (entry.verdict == domain::ImportVerdict::AlreadyOnStick && playlist && onStick && !entry.existingPath.empty()) {
+            const OnStickTrack known = onStick(entry.existingPath, playlist->path);
+            if (!allLibraries(known.listedIn)) {
+                leave(known.listedIn.isEmpty()
+                          ? "it is on the stick already, in no library, so no playlist can list it"
+                          : "it is on the stick already, but not in every library, so it is not added to the playlist");
+                continue;
+            }
+            if (!known.severalRowsIn.isEmpty()) {
+                leave("it is on the stick already, with more than one row in "
+                      + known.severalRowsIn.join(QStringLiteral(", ")).toStdString()
+                      + ", so it cannot be put into the playlist by its file");
+                continue;
+            }
+            if (allLibraries(known.inPlaylist)) {
+                leave("it is in \"" + playlist->path + "\" already");
+                continue;
+            }
+            if (!known.inPlaylist.isEmpty()) {
+                // Added to all, it would be in those twice.
+                leave("it is in \"" + playlist->path + "\" already in " + known.inPlaylist.join(QStringLiteral(", ")).toStdString()
+                      + " and not in the others, so it is not added again");
+                continue;
+            }
+            if (std::any_of(entered.begin(), entered.end(),
+                            [&](const Entered &one) { return one.file == entry.existingPath; })) {
+                leave("it is the file another one offered is on the stick as");
+                continue;
+            }
+            if (const std::string why = rehearsal.enter(target.pioneerRoot, entry.existingPath); !why.empty()) {
+                leave("it is on the stick already and the playlist cannot take it: " + why);
+                continue;
+            }
+            entered.push_back({nullptr, entry.existingPath,
+                               known.title.isEmpty() ? QString::fromStdString(entry.offered.file.filename) : known.title});
+            staged.addedToPlaylist.push_back(source);
+            continue;
+        }
         if (entry.verdict != domain::ImportVerdict::Import) {
             continue;
         }
-        const std::string &source = entry.offered.file.filePath;
-        const auto leave = [&](std::string why) { staged.leftOut.push_back({source, std::move(why)}); };
         const std::optional<domain::TrackTags> fileTags = tags.read(source);
         const auto metadata = probe.read(source);
         if (!fileTags || !metadata) {
@@ -130,6 +185,9 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         audio.bitrate = metadata->bitrate;
         audio.sampleRateHz = metadata->sampleRate;
         audio.fileSizeBytes = entry.offered.file.fileSizeBytes;
+#ifdef SEABASS_HAVE_TAGLIB
+        audio.bitsPerSample = infrastructure::audio::bitsPerSampleOf(source);
+#endif
         domain::ImportedTrack track;
         try {
             track = domain::describeImportedTrack(*fileTags, audio, "/" + entry.destination, date);
@@ -164,12 +222,12 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
                 continue;
             }
         }
-        std::string refusal = ImportTrackChange::rowRefusal(track, target.libraries, audio.fileSizeBytes);
+        std::string refusal = ImportTrackChange::rowRefusal(track, target.libraries, audio.fileSizeBytes, target.analysisPlanned);
         if (!refusal.empty() && track.comment.size() > 250) {
             // The one text that is long in real files (a tracklist, a
             // licence): shortened in the row, whole in the file.
             track.comment = domain::storableText(firstCharacters(track.comment, 250));
-            refusal = ImportTrackChange::rowRefusal(track, target.libraries, audio.fileSizeBytes);
+            refusal = ImportTrackChange::rowRefusal(track, target.libraries, audio.fileSizeBytes, target.analysisPlanned);
         }
         if (!refusal.empty()) {
             leave(refusal);
@@ -183,16 +241,23 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             leave(e.what());
             continue;
         }
+#ifdef SEABASS_HAVE_TAGLIB
+        // Asked now, so that the rehearsal counts the artwork row; read
+        // and scaled at the save.
+        if (target.coverReader && infrastructure::audio::hasEmbeddedArtwork(source)) {
+            change->setCover(target.coverReader);
+        }
+#endif
         // Last, so that only a track that is staged takes room in it.
-        if (const std::string full = rehearsal.add(track, audio.fileSizeBytes); !full.empty()) {
+        if (const std::string full = rehearsal.add(track, audio.fileSizeBytes, change->withCover(), target.analysisPlanned); !full.empty()) {
             leave(full);
             continue;
         }
-        imports.push_back(std::move(change));
+        entered.push_back({change, change->destinationFile(), change->subject()});
         staged.staged.push_back(source);
     }
 
-    if (imports.empty()) {
+    if (entered.empty()) {
         return staged;
     }
     if (playlist && playlist->create) {
@@ -201,21 +266,29 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         // does not leave the playlist behind empty.
         auto made = std::make_shared<CreatePlaylistChange>(target.pioneerRoot, target.enginePath, playlist->path,
                                                            target.libraries, toImport);
-        made->tieTo(imports.front()->unitKeys().last());
+        for (const Entered &first : entered) {
+            if (first.import) {
+                made->tieTo(first.import->unitKeys().last());
+                break;
+            }
+        }
         staged.changes.push_back(made);
     }
     std::vector<std::string> placed;
-    for (const auto &change : imports) {
-        staged.changes.push_back(change);
+    for (const Entered &one : entered) {
+        if (one.import) {
+            staged.changes.push_back(one.import);
+        }
         if (playlist) {
-            const std::string file = change->destinationFile();
             // At the end, each: the run is put at its place once, below.
             auto entry = std::make_shared<AddToPlaylistChange>(target.pioneerRoot, target.enginePath, playlist->path,
-                                                               file, change->subject(), target.libraries);
-            // "/Contents/..." is what the import's own unit key is made of.
-            entry->tieTo(change->unitKeys().last());
+                                                               one.file, one.title, target.libraries);
+            if (one.import) {
+                // "/Contents/..." is what the import's own unit key is made of.
+                entry->tieTo(one.import->unitKeys().last());
+            }
             staged.changes.push_back(entry);
-            placed.push_back(file);
+            placed.push_back(one.file);
         }
     }
     if (playlist && playlist->atIndex) {

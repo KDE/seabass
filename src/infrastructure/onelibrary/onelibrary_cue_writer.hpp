@@ -374,8 +374,10 @@ public:
     //   - the content row, every column named. What rekordbox fills from
     //     its own collection and an imported file has no truth for is
     //     written as "none": masterDbId, masterContentId and contentLink
-    //     0, analysedBits 0, the three update counters NULL (as on
-    //     rekordbox's own rows that were never analysed);
+    //     0, the three update counters NULL (as on rekordbox's own rows
+    //     that were never analysed), analysedBits 0 for a row without an
+    //     analysis file and 41 for one with, which is what rekordbox's
+    //     rows with an analysis file and NULL counters hold;
     //   - property.numberOfContents goes up by one.
     // Then everything bound is read back through the verify connection;
     // a row that is not as written is removed again before the throw,
@@ -395,6 +397,16 @@ public:
     // 7.2.18's (a newer schema is not guessed at), or a property table
     // that is not one row with a track count.
     int64_t addTrack(const NewTrack &track);
+
+    // The id addTrack() gives the next image row it makes, for a caller
+    // that names the cover's file after it ("bN.jpg",
+    // rekordbox::PdbRowWriter::artworkPathFor).
+    int64_t nextImageId();
+
+    // Whether some content row names `analysisFile`
+    // ("/PIONEER/USBANLZ/.../ANLZ0000.DAT"), compared as the stick's
+    // filesystem compares names: addTrack() refuses a second row for it.
+    bool namesAnalysisFile(const std::string &analysisFile);
 
     // Why addTrack() would refuse `track` for what it is, whatever the
     // stick and the library hold (its texts, numbers, date, file type and

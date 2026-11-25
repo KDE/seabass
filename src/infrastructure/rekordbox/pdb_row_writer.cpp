@@ -2712,6 +2712,18 @@ std::string PdbRowWriter::newTrackRefusal(const NewTrack &track)
     return {};
 }
 
+uint32_t PdbRowWriter::nextArtworkId() const
+{
+    return idAfter(highestIdEverIn(m_buffer, ArtworkTableType, 0), "lookup");
+}
+
+std::string PdbRowWriter::artworkPathFor(char letter, std::uint64_t id)
+{
+    std::string folder = std::to_string(id / 20 + 1);
+    folder.insert(0, folder.size() < 5 ? 5 - folder.size() : 0, '0');
+    return "/PIONEER/Artwork/" + folder + "/" + letter + std::to_string(id) + ".jpg";
+}
+
 uint32_t PdbRowWriter::addTrack(const NewTrack &track)
 {
     if (m_format != Format::Export) {

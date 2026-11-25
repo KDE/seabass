@@ -10,6 +10,10 @@
 
 #include <filesystem>
 
+#include <taglib/wavproperties.h>
+#include <taglib/mp4properties.h>
+#include <taglib/flacproperties.h>
+#include <taglib/aiffproperties.h>
 #include <taglib/audioproperties.h>
 #include <taglib/fileref.h>
 #include <taglib/mpegproperties.h>
@@ -111,6 +115,29 @@ void fillMp3LeadIn(application::FileMetadata &metadata, const std::string &absol
     const Mp3LeadInLook look = lookForMp3LeadIn(absoluteFilePath);
     metadata.mp3LeadInRead = look.looked;
     metadata.mp3LeadIn = look.leadIn;
+}
+
+int bitsPerSampleOf(const std::string &absoluteFilePath)
+{
+    const std::filesystem::path path = pathFromUtf8(absoluteFilePath);
+    TagLib::FileRef file(path.c_str(), true, TagLib::AudioProperties::Fast);
+    if (file.isNull() || file.file() == nullptr || !file.file()->isValid()) {
+        return 0;
+    }
+    TagLib::AudioProperties *properties = file.audioProperties();
+    if (const auto *wav = dynamic_cast<TagLib::RIFF::WAV::Properties *>(properties)) {
+        return wav->bitsPerSample();
+    }
+    if (const auto *aiff = dynamic_cast<TagLib::RIFF::AIFF::Properties *>(properties)) {
+        return aiff->bitsPerSample();
+    }
+    if (const auto *flac = dynamic_cast<TagLib::FLAC::Properties *>(properties)) {
+        return flac->bitsPerSample();
+    }
+    if (const auto *mp4 = dynamic_cast<TagLib::MP4::Properties *>(properties)) {
+        return mp4->codec() == TagLib::MP4::Properties::ALAC ? mp4->bitsPerSample() : 0;
+    }
+    return 0;
 }
 
 }  // namespace seabass::infrastructure::audio

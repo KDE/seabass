@@ -7,6 +7,7 @@
 #include <QString>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -35,6 +36,13 @@ struct ImportRequest
     std::set<std::string> importAnyway;
     // The day of the import, "YYYY-MM-DD".
     std::string date;
+    // Reads a file's cover (ImportTrackChange::setCover). Unset: no
+    // covers.
+    CoverReader coverReader;
+    // Analyses each file that is staged (ImportTrackChange::setAnalysis),
+    // one after the other, once everything else is settled. Unset: the
+    // tracks go in unanalysed.
+    ImportAnalyser analyser;
 };
 
 struct PreparedImport
@@ -51,7 +59,38 @@ struct PreparedImport
     // may ask for them all the same (ImportRequest::importAnyway).
     std::vector<std::string> possibleDuplicates;
     std::uint64_t bytesToCopy = 0;
+    // Of the staged tracks, how many have an analysis and how many a
+    // beat grid in it.
+    int analysed = 0;
+    int withGrid = 0;
 };
+
+// How far the preparing of an import is, for a bar that is not in the
+// way: which step, and how many of its files are done. `total` 0 for a
+// step that cannot count ahead.
+struct ImportProgress
+{
+    enum class Step {
+        // The stick's libraries and files are read.
+        Stick,
+        // The offered files are found and their tags read.
+        Files,
+        // The plan is made and rehearsed against the stick's libraries.
+        Check,
+        // The staged files are decoded and analysed: beat grid and
+        // waveform.
+        Analysis,
+    };
+    Step step = Step::Stick;
+    std::size_t done = 0;
+    std::size_t total = 0;
+    // The file in hand, by its name; empty between files.
+    std::string file;
+};
+
+// Called on the thread that prepares, often: a sink for another thread
+// passes it on itself.
+using ImportProgressSink = std::function<void(const ImportProgress &)>;
 
 // From what was dropped to the changes of one save: the offered folders
 // are walked, each file's tags read, the stick's libraries and audio
@@ -64,6 +103,7 @@ struct PreparedImport
 // cannot be read cannot be written with any confidence either.
 //
 // Throws application::OperationCancelled on a cancel.
-PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel);
+PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel,
+                                  const ImportProgressSink &progress = {});
 
 }  // namespace seabass::gui

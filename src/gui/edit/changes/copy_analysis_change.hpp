@@ -435,3 +435,23 @@ private:
 };
 
 }  // namespace seabass::gui
+
+namespace seabass::infrastructure::engine
+{
+class LibdjinteropEngineCueWriter;
+}
+
+namespace seabass::gui
+{
+
+class FormatWriteSession;
+class SaveContext;
+
+// The save's one analysis writer for the stick's Engine library, as the
+// changes above use it: overview files written and backed up through the
+// save, the player's own analysis kept before a row loses it. For another
+// change of the same save that writes an analysis (the track import).
+infrastructure::engine::LibdjinteropEngineCueWriter &engineAnalysisWriterFor(SaveContext &ctx, FormatWriteSession &session,
+                                                                             const std::string &stickRoot);
+
+}  // namespace seabass::gui

@@ -7,6 +7,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -15,6 +16,7 @@
 #include "application/ports/track_metadata_probe.hpp"
 #include "application/ports/track_tag_reader.hpp"
 #include "domain/track_import_plan.hpp"
+#include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/pending_change.hpp"
 
 namespace seabass::gui
@@ -30,6 +32,13 @@ struct ImportTarget
     QString enginePath;
     // "rekordbox", "onelibrary", "engine": every library on the stick.
     QStringList libraries;
+    // Reads a file's cover for the libraries (ImportTrackChange::setCover).
+    // Unset: imported tracks get no cover.
+    CoverReader coverReader;
+    // The tracks will be analysed before the save
+    // (ImportTrackChange::setAnalysis): their rows are checked and
+    // rehearsed with an analysis file's name in them.
+    bool analysisPlanned = false;
 };
 
 // The playlist the imported tracks go into, by its full path.
@@ -51,6 +60,24 @@ struct LeftOut
     std::string why;
 };
 
+// What the stick's libraries say about an audio file that is on it.
+struct OnStickTrack
+{
+    // The libraries with a row for the file, and those of them that
+    // already list it in the playlist asked about.
+    QStringList listedIn;
+    QStringList inPlaylist;
+    // Those with more than one row for it: a playlist change finds a
+    // track by its file, and leaves a library alone where that is not
+    // one row.
+    QStringList severalRowsIn;
+    QString title;
+};
+
+// `file`: absolute, as the plan's existingPath spells it. `playlist`: by
+// its full path.
+using OnStickLookup = std::function<OnStickTrack(const std::string &file, const std::string &playlist)>;
+
 struct StagedImport
 {
     // Why nothing at all is staged, in words for the person: the stick's
@@ -67,6 +94,9 @@ struct StagedImport
     std::vector<std::shared_ptr<PendingChange>> changes;
     // The source files that are staged, in order.
     std::vector<std::string> staged;
+    // The source files that are on the stick already and are staged to
+    // go into the playlist, in order. Nothing of them is copied.
+    std::vector<std::string> addedToPlaylist;
     std::vector<LeftOut> leftOut;
 };
 
@@ -94,6 +124,13 @@ struct StagedImport
 // and `refusal` says why: tracks listed in a playlist in two libraries
 // and not in the third is the disagreement this app is for removing.
 //
+// A file the plan found on the stick already (AlreadyOnStick) is not
+// imported again, and with a playlist and `onStick` given it is put into
+// the playlist like the others, at its place among them: by its row in
+// every library, so only when every library has exactly one, and not a second
+// time into a playlist every library already lists it in. Otherwise it
+// is left out with the reason.
+//
 // Entries with any other verdict are not this function's: the plan
 // already says what happens to them.
 //
@@ -103,6 +140,7 @@ struct StagedImport
 // the stick is taken by now is left out.
 StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget &target,
                               application::TrackTagReader &tags, application::TrackMetadataProbe &probe,
-                              const std::string &date, const std::optional<ImportPlaylist> &playlist);
+                              const std::string &date, const std::optional<ImportPlaylist> &playlist,
+                              const OnStickLookup &onStick = {});
 
 }  // namespace seabass::gui

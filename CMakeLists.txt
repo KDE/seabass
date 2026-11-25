@@ -3951,6 +3951,8 @@ if(TARGET seabass_edit)
         add_executable(track_import_controller_test
             src/gui/track_import_controller.hpp
             src/gui/track_import_controller.cpp
+            src/gui/track_import_analysis.cpp
+            src/gui/track_import_cover.cpp
             src/gui/edit/track_import_prepare.cpp
             src/gui/stick_catalogs.cpp
             tests/track_import_controller_test.cpp
@@ -3958,6 +3960,9 @@ if(TARGET seabass_edit)
         target_include_directories(track_import_controller_test PRIVATE src tests)
         target_link_libraries(track_import_controller_test PRIVATE seabass_gui_edit_session_testing seabass_edit
             seabass_taglib Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+        if(TARGET seabass_audio_qt)
+            target_link_libraries(track_import_controller_test PRIVATE seabass_audio_qt)
+        endif()
         add_test(NAME track_import_controller_test COMMAND track_import_controller_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
         set_tests_properties(track_import_controller_test PROPERTIES LABELS "integration"

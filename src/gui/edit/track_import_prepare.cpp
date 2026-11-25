@@ -18,6 +18,7 @@
 #include "application/ports/track_metadata_probe.hpp"
 #include "application/ports/track_tag_reader.hpp"
 #include "domain/track_import_plan.hpp"
+#include "gui/edit/changes/import_track_change.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/cleanup/audio_file_walk.hpp"
@@ -111,8 +112,15 @@ std::string whyNot(const domain::ImportPlanEntry &entry, const std::string &root
 
 }  // namespace
 
-PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel)
+PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel,
+                                  const ImportProgressSink &progress)
 {
+    const auto report = [&](ImportProgress::Step step, std::size_t done, std::size_t total, const std::string &file) {
+        if (progress) {
+            progress({step, done, total, file});
+        }
+    };
+    report(ImportProgress::Step::Stick, 0, 0, {});
     PreparedImport prepared;
     const std::string libraryPath =
         request.rekordboxPath.isEmpty() ? request.enginePath.toStdString() : request.rekordboxPath.toStdString();
@@ -143,6 +151,8 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
 
     ImportTarget target;
     target.stickRoot = pathToQString(root);
+    target.coverReader = request.coverReader;
+    target.analysisPlanned = static_cast<bool>(request.analyser);
     std::set<std::string> formats;
     for (const std::string &format : present) {
         formats.insert(format);
@@ -225,6 +235,7 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
     std::vector<domain::ImportFile> files;
     for (const std::string &source : sources) {
         cancel.throwIfCancelled();
+        report(ImportProgress::Step::Files, files.size(), sources.size(), nameOf(source));
         domain::ImportFile file;
         file.file.format = "disk";
         file.file.sourceId = source;
@@ -241,6 +252,7 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
         files.push_back(std::move(file));
     }
 
+    report(ImportProgress::Step::Check, 0, 0, {});
     domain::ImportPlanTools tools;
     tools.pathKey = [](const std::string &path) { return application::normalizedPathKey(path); };
     tools.sameBytes = sameBytes;
@@ -249,7 +261,50 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
     const domain::ImportPlan plan = planTrackImport(files, stick, tools, choices);
     cancel.throwIfCancelled();
 
-    prepared.staged = stageTrackImport(plan, target, tags, probe, request.date, request.playlist);
+    // What each library says of a file the stick has, for the files
+    // offered that are on it already.
+    struct Listed
+    {
+        OnStickTrack track;
+        std::map<std::string, std::set<std::string>> playlistsIn;  // by library
+    };
+    std::map<std::string, Listed> listed;
+    const std::pair<const char *, const std::optional<std::vector<domain::Track>> *> byLibrary[] = {
+        {"rekordbox", &read.catalogs.rekordbox}, {"onelibrary", &read.catalogs.oneLibrary}, {"engine", &read.catalogs.engine}};
+    for (const auto &[library, catalog] : byLibrary) {
+        if (!*catalog) {
+            continue;
+        }
+        for (const domain::Track &row : **catalog) {
+            Listed &known = listed[application::normalizedPathKey(row.filePath)];
+            if (!known.track.listedIn.contains(QLatin1String(library))) {
+                known.track.listedIn << QLatin1String(library);
+            } else if (!known.track.severalRowsIn.contains(QLatin1String(library))) {
+                known.track.severalRowsIn << QLatin1String(library);
+            }
+            if (known.track.title.isEmpty()) {
+                known.track.title = QString::fromStdString(row.title);
+            }
+            for (const auto &membership : row.playlists) {
+                known.playlistsIn[library].insert(membership.name);
+            }
+        }
+    }
+    const OnStickLookup onStick = [&](const std::string &file, const std::string &playlist) {
+        const auto known = listed.find(application::normalizedPathKey(file));
+        if (known == listed.end()) {
+            return OnStickTrack{};
+        }
+        OnStickTrack track = known->second.track;
+        for (const auto &[library, playlists] : known->second.playlistsIn) {
+            if (playlists.count(playlist) > 0) {
+                track.inPlaylist << QString::fromStdString(library);
+            }
+        }
+        return track;
+    };
+
+    prepared.staged = stageTrackImport(plan, target, tags, probe, request.date, request.playlist, onStick);
     if (!prepared.staged.refusal.empty()) {
         prepared.refusal = prepared.staged.refusal;
         return prepared;
@@ -260,15 +315,45 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
     }
     for (const domain::ImportPlanEntry &entry : plan.entries) {
         const std::string &source = entry.offered.file.filePath;
-        if (entry.verdict != domain::ImportVerdict::Import) {
+        const auto left = leftOut.find(source);
+        if (entry.verdict == domain::ImportVerdict::AlreadyOnStick
+            && (left != leftOut.end()
+                || std::find(prepared.staged.addedToPlaylist.begin(), prepared.staged.addedToPlaylist.end(), source)
+                       != prepared.staged.addedToPlaylist.end())) {
+            // Staged into the playlist, or left out of it with a reason
+            // of its own.
+            if (left != leftOut.end()) {
+                prepared.notImported.push_back({source, left->second});
+            }
+        } else if (entry.verdict != domain::ImportVerdict::Import) {
             prepared.notImported.push_back({source, whyNot(entry, rootText)});
             if (entry.verdict == domain::ImportVerdict::PossibleDuplicate) {
                 prepared.possibleDuplicates.push_back(source);
             }
-        } else if (const auto left = leftOut.find(source); left != leftOut.end()) {
+        } else if (left != leftOut.end()) {
             prepared.notImported.push_back({source, left->second});
         } else {
             prepared.bytesToCopy += entry.offered.file.fileSizeBytes;
+        }
+    }
+    if (request.analyser) {
+        std::vector<std::shared_ptr<ImportTrackChange>> imports;
+        for (const auto &change : prepared.staged.changes) {
+            if (auto import = std::dynamic_pointer_cast<ImportTrackChange>(change)) {
+                imports.push_back(std::move(import));
+            }
+        }
+        // prepared.staged.staged names their source files, in the same
+        // order.
+        for (std::size_t i = 0; i < imports.size() && i < prepared.staged.staged.size(); ++i) {
+            cancel.throwIfCancelled();
+            const std::string &source = prepared.staged.staged[i];
+            report(ImportProgress::Step::Analysis, i, imports.size(), nameOf(source));
+            if (auto analysis = request.analyser(source, cancel)) {
+                ++prepared.analysed;
+                prepared.withGrid += analysis->beats.empty() ? 0 : 1;
+                imports[i]->setAnalysis(std::move(analysis));
+            }
         }
     }
     return prepared;

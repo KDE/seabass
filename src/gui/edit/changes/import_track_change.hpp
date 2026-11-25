@@ -8,10 +8,15 @@
 #include <QStringList>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "application/ports/cancellation_token.hpp"
+#include "domain/beat_grid.hpp"
 #include "domain/imported_track.hpp"
+#include "domain/waveform_from_audio.hpp"
 #include "gui/edit/pending_change.hpp"
 
 namespace seabass::gui
@@ -49,9 +54,11 @@ namespace seabass::gui
 // failed save and Undo Last Save both take it away with the rows. The
 // folders the copy made stay, empty.
 //
+// The cover from the file's own tags goes with the rows (setCover).
+//
 // Not this change's: playlists (AddToPlaylistChange and
 // EngineMembershipChange find the new rows by their file, staged after
-// this one and tied to it by unitKeys()), covers and analysis files.
+// this one and tied to it by unitKeys()).
 // A rehearsal of a batch of imports against the stick's export.pdb as it
 // is now: each track's row is added to a copy of the file in memory that
 // is never written, so what only the library can refuse a row for, and
@@ -89,9 +96,20 @@ public:
     // when a playlist is in use. Empty when they went in; otherwise why
     // not. A row whose entry could not follow it stays in the copy: the
     // table that refused it refuses every later one as well.
-    std::string add(const domain::ImportedTrack &track, std::uint64_t fileSizeBytes);
+    // `withCover`: the track's import makes an artwork row as well
+    // (ImportTrackChange::setCover).
+    // `withAnalysisFile`: its row will name an analysis file
+    // (ImportTrackChange::setAnalysis), which makes the row longer.
+    std::string add(const domain::ImportedTrack &track, std::uint64_t fileSizeBytes, bool withCover = false,
+                    bool withAnalysisFile = false);
 
-    // Moves the entries add() made to `toIndex` in the playlist, in their
+    // The playlist entry of a track export.pdb already has, by its file
+    // (absolute, under the stick `pioneerRoot` is on), as an
+    // AddToPlaylistChange for it writes one. Empty when it went in, or
+    // was there; otherwise why not.
+    std::string enter(const QString &pioneerRoot, const std::string &file);
+
+    // Moves the entries add() and enter() made to `toIndex` in the playlist, in their
     // order, as PlaceInPlaylistChange does once for the batch. Empty when
     // the copy took it (or there is nothing to move); otherwise why not.
     std::string place(int toIndex);
@@ -100,6 +118,44 @@ private:
     struct Rows;
     std::unique_ptr<Rows> m_rows;
 };
+
+// A track's cover as JPEGs in the sizes the libraries keep: rekordbox's
+// two squares of 80 and 240 pixels, and a larger one for Engine.
+struct CoverPictures
+{
+    std::string small;
+    std::string medium;
+    std::string large;
+};
+
+// Reads the picture in an audio file's tags and scales it; nullopt when
+// there is none or it is no picture. Given from outside: scaling a
+// picture takes Qt Gui, which this library does not link
+// (gui/track_import_cover.hpp has the one the app uses).
+using CoverReader = std::function<std::optional<CoverPictures>(const std::string &audioFile)>;
+
+// What Seabass's own analysis made of an audio file (a test version: the
+// grid is domain::SeabassGridAnalyser's, the waveform
+// domain::waveformFromSamples').
+struct ImportAnalysis
+{
+    // Every beat, on the decoder's timeline, which is Engine's
+    // (infrastructure/audio/playback_timeline.hpp). Empty: no grid.
+    std::vector<domain::Beat> beats;
+    domain::AudioWaveform waveform;
+    // The tempo of the grid, the median of its beat spacings; 0 without
+    // one. Not rounded.
+    double bpm = 0.0;
+    // As the analyser gives it, 0 to 1.
+    double confidence = 0.0;
+};
+
+// Decodes and analyses a file; null when it cannot be decoded. Given from
+// outside: decoding takes Qt Multimedia, which this library does not
+// link (gui/track_import_analysis.hpp has the one the app uses). Throws
+// application::OperationCancelled on a cancel.
+using ImportAnalyser = std::function<std::shared_ptr<const ImportAnalysis>(const std::string &audioFile,
+                                                                         const application::CancellationToken &cancel)>;
 
 class ImportTrackChange : public PendingChange
 {
@@ -113,12 +169,51 @@ public:
     ImportTrackChange(std::string sourceFile, QString stickRoot, QString pioneerRoot, QString enginePath,
                       domain::ImportedTrack track, QStringList libraries, int itemCountHint);
 
+    // The source file has a picture in its tags: apply() reads it with
+    // `reader` and gives the track that cover in every library. For
+    // rekordbox's two the pictures go under /PIONEER/Artwork/ by the id
+    // of the artwork row made for them (aN.jpg and aN_m.jpg for
+    // export.pdb, bN.jpg and bN_m.jpg for OneLibrary); for Engine the
+    // large one goes into the library's own storage. One cover per
+    // track: two tracks of one album each get their own files.
+    //
+    // A picture that cannot be read by then, or whose file name on the
+    // stick is taken, is no cover and no failure. Without a reader the
+    // track gets none.
+    void setCover(CoverReader reader) { m_coverReader = std::move(reader); }
+    bool withCover() const { return static_cast<bool>(m_coverReader); }
+
+    // The file's analysis, made before the save: apply() then writes
+    //   - for rekordbox's libraries, new analysis files (.DAT, .EXT,
+    //     .2EX, infrastructure::rekordbox::buildAnlzFiles) in a free
+    //     folder under /PIONEER/USBANLZ/, named in both rows, with the
+    //     beat grid moved onto rekordbox's timeline (an MP3's lead-in)
+    //     and no cues;
+    //   - for Engine, grid and overview waveform into the new row through
+    //     the analysis writer the beat grid copy uses, which marks the
+    //     row analysed.
+    // The rows' tempo is then the grid's, not the tag's. A track
+    // without a grid (none found, or an MP3 whose lead-in cannot be
+    // read, which has no known place on rekordbox's timeline) gets
+    // waveforms in rekordbox's files and nothing in Engine, whose row
+    // stays for the player to analyse. With the MP3 timing correction
+    // switched off in Preferences the grid of an MP3 is written as
+    // decoded, which is Engine's timeline and not rekordbox's. Without
+    // an analysis the track goes in unanalysed, as before.
+    //
+    // A folder whose files are on the stick is never written into; with
+    // none found free, or a USBANLZ folder that cannot be read to its
+    // end, the track gets no analysis files and the log says so.
+    void setAnalysis(std::shared_ptr<const ImportAnalysis> analysis);
+    bool analysed() const { return static_cast<bool>(m_analysis); }
+
     // Why the libraries named would refuse a row for `track`, a file of
     // `fileSizeBytes`, for what it is; empty when none would. What
     // apply() asks before it copies, for a caller that plans: a file
     // refused here is left out of the save rather than failing it.
+    // `withAnalysisFile`: asked for a row that names an analysis file.
     static std::string rowRefusal(const domain::ImportedTrack &track, const QStringList &libraries,
-                                  std::uint64_t fileSizeBytes);
+                                  std::uint64_t fileSizeBytes, bool withAnalysisFile = false);
 
     static QString idFor(const std::string &stickPath);
     // What ties the playlist changes of this track to it.
@@ -143,6 +238,9 @@ public:
     std::uint32_t deviceLibraryId() const { return m_deviceLibraryId; }
     std::int64_t oneLibraryId() const { return m_oneLibraryId; }
     std::int64_t engineId() const { return m_engineId; }
+    // After an apply() with an analysis: whether Engine's row took it and
+    // is marked analysed.
+    bool engineAnalysed() const { return m_engineAnalysed; }
 
 private:
     std::string m_sourceFile;
@@ -152,9 +250,12 @@ private:
     domain::ImportedTrack m_track;
     QStringList m_libraries;
     int m_itemCountHint = 1;
+    CoverReader m_coverReader;
+    std::shared_ptr<const ImportAnalysis> m_analysis;
     std::uint32_t m_deviceLibraryId = 0;
     std::int64_t m_oneLibraryId = -1;
     std::int64_t m_engineId = -1;
+    bool m_engineAnalysed = false;
 };
 
 }  // namespace seabass::gui

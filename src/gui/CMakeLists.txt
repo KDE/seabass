@@ -81,6 +81,7 @@ set(SEABASS_GUI_QML_FILES
     qml/common/MetadataTrackDelegate.qml
     qml/common/PlayableCover.qml
     qml/common/ProgressReport.qml
+    qml/common/PassiveProgress.qml
     qml/common/ProgressTrack.qml
     qml/common/RowHoverShade.qml
     qml/common/SelectableText.qml
@@ -237,6 +238,8 @@ set(SEABASS_GUI_SOURCES
     track_edit_controller.cpp
     track_import_controller.hpp
     track_import_controller.cpp
+    track_import_analysis.cpp
+    track_import_cover.cpp
     edit/track_import_prepare.hpp
     edit/track_import_prepare.cpp
     library_consistency_controller.hpp

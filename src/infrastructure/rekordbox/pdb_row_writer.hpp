@@ -485,6 +485,20 @@ public:
     // table holds one at the top of the range).
     uint32_t addTrack(const NewTrack &track);
 
+    // The id addTrack() gives the next artwork row it makes, so that a
+    // caller can name the cover's file after it before the row exists:
+    // rekordbox calls the file of artwork row N "aN.jpg"
+    // (artworkPathFor). Throws std::runtime_error when the table holds an
+    // id at the top of the range.
+    uint32_t nextArtworkId() const;
+
+    // "/PIONEER/Artwork/00001/a7.jpg" for letter 'a' and id 7: the folder
+    // is id / 20 + 1 in five digits, as in rekordbox's exports (00001
+    // holds 1 to 19, 00002 holds 20 to 39). Letter 'a' is export.pdb's,
+    // 'b' OneLibrary's image row of that id. The larger picture is the
+    // same name with "_m" before ".jpg".
+    static std::string artworkPathFor(char letter, std::uint64_t id);
+
     // Why addTrack() would refuse `track` for what it is, whatever the
     // library holds: every std::invalid_argument above but the two that
     // need the library (a file or an analysis file a row already names),

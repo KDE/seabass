@@ -39,6 +39,12 @@ public:
     std::optional<application::FileMetadata> read(const std::string &absoluteFilePath) override;
 };
 
+// The bits a sample of a lossless file has, as its container says (WAV,
+// AIFF, FLAC, an Apple Lossless M4A); 0 for any other file and for one
+// that cannot be read. Not in FileMetadata: every field there is a field
+// of the stick's metadata cache, and this is read once per imported file.
+int bitsPerSampleOf(const std::string &absoluteFilePath);
+
 // The probe's lead-in step (#50), for an .mp3: fills metadata.mp3LeadIn
 // and sets mp3LeadInRead, which the stick's metadata cache stores as
 // "looked" for the file's size and mtime.
