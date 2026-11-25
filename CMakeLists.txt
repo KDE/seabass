@@ -489,6 +489,7 @@ add_library(seabass_core STATIC
     src/domain/beat_grid.cpp
     src/domain/beat_grid_comparison.cpp
     src/domain/seabass_grid_analyser.cpp
+    src/domain/waveform_from_audio.cpp
     src/domain/camelot_key.cpp
     src/domain/engine_overview.cpp
     src/domain/hidden_engine_cues.cpp
@@ -2400,6 +2401,13 @@ add_executable(rekordbox_waveform_looks_test tests/rekordbox_waveform_looks_test
 target_include_directories(rekordbox_waveform_looks_test PRIVATE src tests)
 target_link_libraries(rekordbox_waveform_looks_test PRIVATE seabass_core seabass_core_testing)
 add_test(NAME rekordbox_waveform_looks_test COMMAND rekordbox_waveform_looks_test)
+
+# Waveforms measured from audio, and the analysis files built from them
+# for a track Seabass puts on a stick itself (track import).
+add_executable(waveform_from_audio_test tests/waveform_from_audio_test.cpp)
+target_include_directories(waveform_from_audio_test PRIVATE src)
+target_link_libraries(waveform_from_audio_test PRIVATE seabass_core)
+add_test(NAME waveform_from_audio_test COMMAND waveform_from_audio_test)
 
 # Issue #38: how many tracks an Engine player will have to analyse. Takes
 # the fixture path, because its real distribution (1214 of 1564) is what
