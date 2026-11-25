@@ -245,6 +245,11 @@ class BeatGridsController : public QObject
     Q_PROPERTY(bool replaceEngineEdits READ replaceEngineEdits WRITE setReplaceEngineEdits NOTIFY optionsChanged)
     Q_PROPERTY(bool replacePlayerWaveforms READ replacePlayerWaveforms WRITE setReplacePlayerWaveforms
                    NOTIFY optionsChanged)
+    // Both of the above as the page offers them, one box: a grid set on
+    // the player and a waveform the player drew are the player's analysis,
+    // overwritten together or not at all.
+    Q_PROPERTY(bool overwriteEngineAnalysis READ overwriteEngineAnalysis WRITE setOverwriteEngineAnalysis
+                   NOTIFY optionsChanged)
 
     // Moves whenever a tick does, for bindings that ask playlistCheckState().
     Q_PROPERTY(int tickRevision READ tickRevision NOTIFY ticksChanged)
@@ -330,6 +335,11 @@ public:
     void setReplaceEngineEdits(bool on);
     bool replacePlayerWaveforms() const { return m_options.overwritePlayerWaveforms; }
     void setReplacePlayerWaveforms(bool on);
+    bool overwriteEngineAnalysis() const
+    {
+        return m_options.overwriteEngineEdits && m_options.overwritePlayerWaveforms;
+    }
+    void setOverwriteEngineAnalysis(bool on);
     int tickRevision() const { return m_tickRevision; }
     bool previewBusy() const { return m_preview.busy(); }
     int previewCurrent() const { return m_previewCurrent; }

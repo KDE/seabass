@@ -363,37 +363,24 @@ Page {
                                 checked = Qt.binding(() => root.controller.waveforms);
                             }
                         }
+                        // A grid locked or moved on the player and a waveform
+                        // the player drew: the player's own analysis, left
+                        // alone unless this is ticked.
                         SeabassCheckBox {
-                            objectName: "replaceEditsCheckBox"
+                            objectName: "overwriteCheckBox"
                             width: Math.min(implicitWidth, optionsRow.width)
-                            text: "Overwrite Beat Grids"
-                            checked: root.controller.replaceEngineEdits
-                            enabled: root.ticksEnabled
+                            text: "Overwrite Engine's Analysis"
+                            checked: root.controller.overwriteEngineAnalysis
+                            // Only for a copy of something.
+                            enabled: root.ticksEnabled && (root.controller.grids || root.controller.waveforms)
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: root.staged ? "Unstage to change what is copied"
-                                : "Also replace a grid the DJ locked or moved on the player. Off, such a grid is "
-                                  + "left as it is"
+                                : "Also replace a beat grid the DJ locked or moved on the player, and a waveform "
+                                  + "the player drew. Off, they are left as they are"
                             onToggled: {
-                                root.controller.replaceEngineEdits = checked;
-                                checked = Qt.binding(() => root.controller.replaceEngineEdits);
-                            }
-                        }
-                        SeabassCheckBox {
-                            objectName: "replaceWaveformsCheckBox"
-                            width: Math.min(implicitWidth, optionsRow.width)
-                            text: "Overwrite Waveforms"
-                            checked: root.controller.replacePlayerWaveforms
-                            // Only for a copy of the waveforms.
-                            enabled: root.ticksEnabled && root.controller.waveforms
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 400
-                            ToolTip.text: root.staged ? "Unstage to change what is copied"
-                                : "Also replace a waveform the player drew of its own. Off, such a waveform is "
-                                  + "left as it is"
-                            onToggled: {
-                                root.controller.replacePlayerWaveforms = checked;
-                                checked = Qt.binding(() => root.controller.replacePlayerWaveforms);
+                                root.controller.overwriteEngineAnalysis = checked;
+                                checked = Qt.binding(() => root.controller.overwriteEngineAnalysis);
                             }
                         }
                     }
@@ -405,6 +392,8 @@ Page {
                         // On a page too narrow even for the actions, the
                         // combo gives way.
                         Layout.maximumWidth: controlsRow.width
+                        // As wide as it asks, the boxes take the rest.
+                        Layout.fillWidth: false
                         spacing: Theme.rowSpacing
                         // Which playlist's tracks are listed, picked as on Sync
                         // Cue Points and Clean Up Duplicates (#115), with a box on
@@ -416,7 +405,6 @@ Page {
                             objectName: "playlistPicker"
                             Layout.preferredWidth: Theme.snap(Math.max(Theme.scaled(180), Math.min(Theme.scaled(280), controlsRow.width * 0.25)))
                             Layout.alignment: Qt.AlignVCenter
-                            Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             model: root.playlistPickerModel
                             currentIndex: root.controller.shownPlaylist.length === 0 ? 0

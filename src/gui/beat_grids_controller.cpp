@@ -577,12 +577,12 @@ Words gridWords(const BeatGridTrackState &s)
         return leftWords(s);
     case Outcome::RowLocked:
         return {QStringLiteral("Locked on the player"), QStringLiteral("warn"),
-                QStringLiteral("The beat grid is locked on the player. \"Overwrite Beat Grids\" replaces it "
-                               "all the same.")};
+                QStringLiteral("The beat grid is locked on the player. \"Overwrite Engine's Analysis\" "
+                               "replaces it all the same.")};
     case Outcome::RowEditedOnEngine:
         return {QStringLiteral("Changed on the player"), QStringLiteral("warn"),
-                QStringLiteral("The beat grid was moved on the player. \"Overwrite Beat Grids\" replaces it "
-                               "all the same.")};
+                QStringLiteral("The beat grid was moved on the player. \"Overwrite Engine's Analysis\" "
+                               "replaces it all the same.")};
     case Outcome::UnsupportedSchema:
         return {QStringLiteral("Engine library too old"), QStringLiteral("warn"), QString()};
     case Outcome::NotRequested:
@@ -632,7 +632,7 @@ Words waveformWords(const BeatGridTrackState &s)
     case Waveform::PlayersWaveform:
         return {QStringLiteral("Drawn by the player"), QStringLiteral("warn"),
                 QStringLiteral("The player drew its own waveform of this track, and it stays. \"Overwrite "
-                               "Waveforms\" replaces it all the same.")};
+                               "Engine's Analysis\" replaces it all the same.")};
     case Waveform::DiffersFromEngine:
         return {QStringLiteral("Differs on Engine"), QStringLiteral("warn"),
                 QStringLiteral("Engine has its own waveform for this track, and it differs from rekordbox's.")};
@@ -1661,6 +1661,18 @@ void BeatGridsController::setReplacePlayerWaveforms(bool on)
     if (m_options.overwritePlayerWaveforms == on || !m_stagedIds.isEmpty()) {
         return;
     }
+    m_options.overwritePlayerWaveforms = on;
+    emit optionsChanged();
+    invalidateStates();
+}
+
+void BeatGridsController::setOverwriteEngineAnalysis(bool on)
+{
+    if ((m_options.overwriteEngineEdits == on && m_options.overwritePlayerWaveforms == on)
+        || !m_stagedIds.isEmpty()) {
+        return;
+    }
+    m_options.overwriteEngineEdits = on;
     m_options.overwritePlayerWaveforms = on;
     emit optionsChanged();
     invalidateStates();
