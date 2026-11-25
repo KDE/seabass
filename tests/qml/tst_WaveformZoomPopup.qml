@@ -627,6 +627,45 @@ TestCase {
         compare(popup.centerMs, player.position);
     }
 
+    // A drag while the track plays is a seek: where the waveform comes to
+    // rest, the music goes on from the moment under the line, and the view
+    // follows again. Paused, a drag only looks around. Either way the
+    // popup's time is that of the moment under the line.
+    function test_aDragWhilePlayingSeeks() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = openLoaded(player);
+        const a = area(popup);
+        const time = findChild(popup.contentItem, "zoomTime");
+        const flick = findChild(popup.contentItem, "zoomFlick");
+        const shown = (ms) => {
+            const s = Math.floor(ms / 1000);
+            return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " / 4:00";
+        };
+
+        // Paused: the view moves, the player does not, and the time says
+        // where the view is.
+        mouseDrag(a, popup.lineX, a.height / 2, 200, 0);
+        flick.cancelFlick();
+        compare(popup.attached, false, "paused, a drag looks around");
+        compare(player.position, 60000, "and does not seek");
+        verify(popup.centerMs < 60000 - 100 / popup.pxPerMs, "the view moved to " + popup.centerMs);
+        compare(time.text, shown(popup.centerMs), "the time is the line's, not the player's");
+        mouseClick(findChild(popup.contentItem, "followButton"));
+        compare(time.text, shown(60000));
+
+        // Playing: let go, and it plays on from there.
+        player.playing = true;
+        player.calls = [];
+        mouseDrag(a, popup.lineX, a.height / 2, 200, 0);
+        flick.cancelFlick();
+        tryCompare(popup, "attached", true, 2000, "it follows again once the waveform rests");
+        verify(player.calls.indexOf("seek") >= 0, "a seek: " + player.calls);
+        verify(player.position < 60000 - 100 / popup.pxPerMs && player.position > 60000 - 300 / popup.pxPerMs,
+               "to the dragged moment: " + player.position);
+        compare(time.text, shown(popup.centerMs));
+        player.playing = false;
+    }
+
     // ---- Closing ---------------------------------------------------------
 
     function test_escapeClosesAndPlaybackIsUntouched() {
