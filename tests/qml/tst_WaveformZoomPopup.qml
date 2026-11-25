@@ -653,16 +653,63 @@ TestCase {
         mouseClick(findChild(popup.contentItem, "followButton"));
         compare(time.text, shown(60000));
 
-        // Playing: let go, and it plays on from there.
+        // Playing: let go, and once the waveform comes to rest by itself it
+        // plays on from there.
         player.playing = true;
         player.calls = [];
         mouseDrag(a, popup.lineX, a.height / 2, 200, 0);
-        flick.cancelFlick();
+        tryVerify(() => !flick.moving, 5000, "the waveform comes to rest");
         tryCompare(popup, "attached", true, 2000, "it follows again once the waveform rests");
         verify(player.calls.indexOf("seek") >= 0, "a seek: " + player.calls);
-        verify(player.position < 60000 - 100 / popup.pxPerMs && player.position > 60000 - 300 / popup.pxPerMs,
-               "to the dragged moment: " + player.position);
-        compare(time.text, shown(popup.centerMs));
+        verify(player.position < 60000 - 100 / popup.pxPerMs, "to earlier music, where it came to rest: "
+               + player.position);
+        verify(Math.abs(popup.centerMs - player.position) < 200, "the line is where it plays on: "
+               + popup.centerMs + " at " + player.position);
+        compare(time.text, shown(player.position));
+        player.playing = false;
+    }
+
+    // A glide of a drag stopped by something else is no resting place, and
+    // seeks nothing: a seek from elsewhere, follow. Stopped by hand, it is.
+    function test_aStoppedGlideDoesNotSeek() {
+        const player = makeFakePlayer({position: 60000});
+        const popup = openLoaded(player);
+        const flick = findChild(popup.contentItem, "zoomFlick");
+        player.playing = true;
+        const glide = () => {
+            popup.flingAt(-2500);
+            popup.draggedByHand = true;   // as a drag by hand leaves it
+            tryVerify(() => flick.moving && !popup.attached, 2000, "a glide");
+        };
+
+        // A seek from the player bar mid-glide stands.
+        glide();
+        player.calls = [];
+        player.seek(120000);
+        player.seeked(120000);
+        compare(popup.attached, true);
+        compare(player.position, 120000, "the bar's seek is not undone");
+        compare(player.calls.filter(c => c === "seek").length, 1, "no seek of the popup's own: " + player.calls);
+
+        // Follow mid-glide follows the playhead.
+        glide();
+        player.calls = [];
+        mouseClick(findChild(popup.contentItem, "followButton"));
+        compare(popup.attached, true);
+        compare(player.calls.indexOf("seek"), -1, "follow seeks nothing: " + player.calls);
+        compare(player.position, 120000);
+
+        // A hand that stops the glide and lets go is a resting place like
+        // any other: it plays on from there, as after a drag.
+        glide();
+        player.calls = [];
+        const a = area(popup);
+        mousePress(a, a.width / 2, a.height / 2);
+        compare(player.calls.indexOf("seek"), -1, "held: nothing yet: " + player.calls);
+        const held = popup.centerMs;
+        mouseRelease(a, a.width / 2, a.height / 2);
+        tryCompare(popup, "attached", true, 2000, "let go, it follows again");
+        verify(Math.abs(player.position - held) <= 1, "from where it was held: " + player.position + " for " + held);
         player.playing = false;
     }
 

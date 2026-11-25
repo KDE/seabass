@@ -348,23 +348,12 @@ TestCase {
     // Ticking a playlist's box ticks its tracks, and the summary counts
     // what the controller's previews say of them: 5 grids and 5 waveforms,
     // 4 of the 5 completed (B04 is analysed already).
-    // The note under the title says what the copy replaces and what it
-    // does not, and that the player's own analysis is kept: it used to
-    // say the page replaces the player's analysis, which is the replace
-    // boxes' doing (a grid set on the player, a waveform it drew) and
-    // nobody's without a way back.
-    function test_theExperimentalNoteSaysWhatIsReplacedAndKept() {
+    // The header explains in one paragraph; the orange experimental note
+    // under it is gone (the badge beside the title says it).
+    function test_noExperimentalNote() {
         const o = openOn(t73());
-        const note = findChild(o.page, "experimentalLabel");
-        verify(note !== null && note.visible, "the note is on the page");
-        verify(note.text.startsWith("Experimental: the beat grid and the waveform are converted"), note.text);
-        verify(note.text.includes("The grid goes beside Engine's own"), note.text);
-        verify(note.text.includes("a grid locked or changed on the player, and a waveform the player drew, are "
-                                  + "replaced only when you tick their box"), note.text);
-        verify(!note.text.includes("takes the place of the player's"), "no longer says the waveform always replaces: "
-               + note.text);
-        verify(note.text.includes("keeps the player's own analysis on the stick first"), note.text);
-        verify(note.text.includes("Restore Engine's Analysis can put it back"), note.text);
+        compare(findChild(o.page, "experimentalLabel"), null, "no note");
+        verify(findChild(o.page, "introLabel").visible, "the intro stays");
     }
 
     function test_tickingAPlaylistTicksItsTracks() {
@@ -1192,7 +1181,7 @@ TestCase {
         const bar = findChild(o.page, "previewProgress");
         verify(bar !== null);
         // The 1161 tracks of All tracks take a while to work out.
-        tryVerify(() => bar.visible, 30000, "the bar shows while the tracks are worked out");
+        tryVerify(() => bar.active && bar.visible, 30000, "the bar shows while the tracks are worked out");
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-progress.png");
         }
@@ -1207,15 +1196,19 @@ TestCase {
         // Each box change works the tracks out again, under the same bar.
         clickOn(findChild(o.page, "gridsCheckBox"));
         compare(o.c.grids, false);
-        tryVerify(() => bar.visible, 30000, "the tracks are worked out again");
+        tryVerify(() => bar.active && bar.visible, 30000, "the tracks are worked out again");
         compare(words.text, "Converting waveform data to check what syncing would change...");
         waitSettled(o.c);
         clickOn(findChild(o.page, "gridsCheckBox"));
         clickOn(findChild(o.page, "waveformsCheckBox"));
         compare(o.c.grids, true);
         compare(o.c.waveforms, false);
-        tryVerify(() => bar.visible, 30000, "the tracks are worked out again");
+        tryVerify(() => bar.active && bar.visible, 30000, "the tracks are worked out again");
         compare(words.text, "Converting beat grid data to check what syncing would change...");
+        // Done, it fades out rather than vanishing.
+        tryVerify(() => !bar.active, 30000, "the preview is done");
+        verify(bar.visible && bar.opacity > 0, "still fading: " + bar.opacity);
+        tryVerify(() => !bar.visible, 3000, "then gone");
         waitSettled(o.c);
     }
 
@@ -1231,9 +1224,8 @@ TestCase {
         const list = findChild(o.page, "trackList");
         verify(list.contentHeight > list.height, "the tracks overflow the list: something to scroll");
         const intro = findChild(o.page.header, "introLabel");
-        const note = findChild(o.page.header, "experimentalLabel");
         const details = findChild(o.page.header, "headerDetails");
-        verify(intro.visible && note.visible, "the intro shows before any scroll");
+        verify(intro.visible, "the intro shows before any scroll");
         const fullHeader = o.page.header.height;
         // A wheel step at a time, each waited for (see
         // tst_RekordboxExportSyncPage's test_scrollingFoldsTheHeader).
@@ -1251,10 +1243,11 @@ TestCase {
         verify(details !== null, "the explanation is one block that folds");
         tryVerify(() => !details.visible, 2000, "scrolling folds the intro away");
         compare(intro.visible, false);
-        compare(note.visible, false);
+        compare(findChild(o.page.header, "summaryLabel").visible, false, "and \"Nothing is ticked\" with it");
         verify(o.page.header.height < fullHeader - 40, "folded " + o.page.header.height + ", was " + fullHeader);
-        for (const name of ["breadcrumb", "optionsRow", "summaryRow", "stageButton", "selectAllButton",
-                            "playlistPicker"]) {
+        compare(findChild(o.page.header, "summaryRow").visible, false,
+                "nothing ticked: the summary's row is gone, gap and all");
+        for (const name of ["breadcrumb", "optionsRow", "stageButton", "selectAllButton", "playlistPicker"]) {
             const control = findChild(o.page.header, name);
             verify(control.visible, name + " stays");
             const top = control.mapToItem(o.page, 0, 0).y;
@@ -1269,7 +1262,8 @@ TestCase {
 
         list.positionViewAtBeginning();
         tryCompare(o.page.header, "height", fullHeader, 2000, "the header unfolds at the top");
-        verify(details.visible && intro.visible && note.visible);
+        verify(details.visible && intro.visible);
+        tryVerify(() => findChild(o.page.header, "summaryLabel").visible, 2000, "the line is back at the top");
     }
 
     // The boxes, the playlist and the buttons on the ticks share one row
@@ -1321,7 +1315,7 @@ TestCase {
         verify(waitForPolish(o.page.Window.window));
         const label = findChild(o.page.header, "engineAnalysisLabel");
         const restore = findChild(o.page.header, "restoreButton");
-        verify(label.visible && label.text.length > 0, "the note shows before any scroll");
+        verify(label.visible && label.height > 0 && label.text.length > 0, "the note shows before any scroll");
         verify(restore.visible);
         const list = findChild(o.page, "trackList");
         const details = findChild(o.page.header, "headerDetails");
@@ -1332,14 +1326,15 @@ TestCase {
             tryVerify(() => !list.moving, 2000, "the wheel step settles");
         }
         tryVerify(() => !details.visible, 2000, "scrolling folds the intro away");
-        compare(label.visible, false, "the note folds with it");
+        compare(label.height, 0, "the note folds with it");
+        compare(label.opacity, 0);
         compare(findChild(o.page.header, "leftAloneLabel").visible, false);
         verify(restore.visible, "the actions stay");
         const top = restore.mapToItem(o.page, 0, 0).y;
         verify(top >= 0 && top + restore.height <= o.page.header.height + 0.5, "inside the folded header");
 
         list.positionViewAtBeginning();
-        tryVerify(() => details.visible && label.visible, 2000, "the note unfolds at the top");
+        tryVerify(() => details.visible && label.height > 0 && label.opacity === 1, 2000, "the note unfolds at the top");
     }
 
     // The edge states, each with its own sentence.
@@ -2411,6 +2406,9 @@ TestCase {
         const o = openOn(t73(), {playbackController: realPlayback});
         showPlaylist(o.page, "T73 Renamed");
         waitSettled(o.c);
+        // The preview's bar fades out and gives back its room: the rows
+        // move up meanwhile.
+        tryVerify(() => !findChild(o.page, "previewProgress").visible, 5000, "the bar is gone");
         const item = delegateInView(o.page, b01);
         tryVerify(() => o.c.rowAnalysis(b01).ready === true, 30000, "B01 is read");
         const key = findChild(item, "rowPlayButton");
