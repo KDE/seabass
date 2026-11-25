@@ -1293,7 +1293,7 @@ public:
             }
             ol::SqlCipherLibrary lib;
             ol::SqlCipherDb db(lib, ol::OneLibraryCueWriter::dbPathFor(pioneer), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + ol::deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(ol::OneLibraryCueWriter::dbPathFor(pioneer)));
             const std::string usec = std::to_string(static_cast<long long>(positionMs * 1000.0));
             db.exec("INSERT INTO cue (content_id, kind, colorTableIndex, isActiveLoop, inUsec, outUsec) VALUES ("
                     + row->sourceId + ", " + std::to_string(kind) + ", 0, 0, " + usec + ", " + usec + ");");
@@ -2421,7 +2421,7 @@ public:
         try {
             onelibrary::SqlCipherLibrary lib;
             onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), /*readOnly=*/true);
-            db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(onelibrary::OneLibraryCueWriter::dbPathFor(pioneer)));
             onelibrary::SqlCipherStatement first(db, "SELECT count(*) FROM playlist");
             first.step();
         } catch (const std::exception &) {

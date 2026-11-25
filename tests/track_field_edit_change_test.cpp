@@ -217,7 +217,7 @@ struct FixtureStick
     {
         infrastructure::onelibrary::SqlCipherLibrary lib;
         infrastructure::onelibrary::SqlCipherDb db(lib, oneLibraryDb(), true);
-        db.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+        db.exec(infrastructure::onelibrary::oneLibraryKeyPragma(oneLibraryDb()));
         infrastructure::onelibrary::SqlCipherStatement s(db, "SELECT rating, path FROM content");
         std::optional<std::int64_t> out;
         bool found = false;
@@ -241,13 +241,30 @@ void oneLibraryExec(const FixtureStick &s, const std::string &sql, const std::ve
 {
     infrastructure::onelibrary::SqlCipherLibrary lib;
     infrastructure::onelibrary::SqlCipherDb db(lib, s.oneLibraryDb(), false);
-    db.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+    db.exec(infrastructure::onelibrary::oneLibraryKeyPragma(s.oneLibraryDb()));
     infrastructure::onelibrary::SqlCipherStatement st(db, sql);
     int i = 1;
     for (const auto &t : texts) {
         st.bindText(i++, t);
     }
     st.run();
+}
+
+// The same statement once for each set of texts, in one session: each
+// open of the encrypted database pays its key derivation.
+void oneLibraryExecEach(const FixtureStick &s, const std::string &sql, const std::vector<std::vector<std::string>> &rows)
+{
+    infrastructure::onelibrary::SqlCipherLibrary lib;
+    infrastructure::onelibrary::SqlCipherDb db(lib, s.oneLibraryDb(), false);
+    db.exec(infrastructure::onelibrary::oneLibraryKeyPragma(s.oneLibraryDb()));
+    for (const auto &texts : rows) {
+        infrastructure::onelibrary::SqlCipherStatement st(db, sql);
+        int i = 1;
+        for (const auto &t : texts) {
+            st.bindText(i++, t);
+        }
+        st.run();
+    }
 }
 
 // The catalog's own stored path for the file: OneLibrary's content.path.
@@ -903,17 +920,42 @@ int main(int argc, char **argv)
         }
         std::vector<std::shared_ptr<PendingChange>> changes;
         std::vector<std::string> files;
+        // Each catalog read once for the setup, not once a track: every
+        // read decrypts OneLibrary afresh, and fifteen tracks made this
+        // case 23 s of the test's 55.
+        std::map<std::string, std::set<std::string>> formatsOf;
+        for (const auto &t : s.readAll()) {
+            if (!t.filePath.empty()) {
+                formatsOf[key(t.filePath)].insert(t.format);
+            }
+        }
+        std::map<std::string, std::string> storedOf;
+        for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pathToUtf8(s.pioneer))) {
+            storedOf[key(pathToUtf8(s.stick) + path)] = path;
+        }
+        std::vector<std::vector<std::string>> moves;
         for (const auto &t : s.inBothRekordbox()) {
             if (files.size() == 15) {
                 break;
             }
-            if (s.copiesOf(t.filePath).count("engine")) {
+            if (formatsOf[key(t.filePath)].count("engine")) {
                 continue;
             }
-            const std::string stored = oneLibraryPathOf(s, t.filePath);
-            oneLibraryExec(s, "UPDATE content SET path = ? WHERE path = ?", {"/Elsewhere" + stored, stored});
-            assert(s.copiesOf(t.filePath).size() == 1);
+            const std::string stored = storedOf.at(key(t.filePath));
+            moves.push_back({"/Elsewhere" + stored, stored});
             files.push_back(t.filePath);
+        }
+        oneLibraryExecEach(s, "UPDATE content SET path = ? WHERE path = ?", moves);
+        {
+            std::map<std::string, int> listed;
+            for (const auto &t : s.readAll()) {
+                if (!t.filePath.empty()) {
+                    ++listed[key(t.filePath)];
+                }
+            }
+            for (const auto &f : files) {
+                assert(listed[key(f)] == 1 && "export.pdb alone lists it now");
+            }
         }
         for (const auto &f : files) {
             changes.push_back(ratingChange(s, f, 5));
@@ -968,8 +1010,16 @@ int main(int argc, char **argv)
                 }
             }
         }
-        for (const auto &f : files) {
-            assert(s.copiesOf(f).at("rekordbox").rating == std::optional<int>(5));
+        {
+            std::map<std::string, std::optional<int>> pdbRating;
+            for (const auto &t : s.readAll()) {
+                if (t.format == "rekordbox" && !t.filePath.empty()) {
+                    pdbRating[key(t.filePath)] = t.rating;
+                }
+            }
+            for (const auto &f : files) {
+                assert(pdbRating.at(key(f)) == std::optional<int>(5));
+            }
         }
         std::cout << "case 16 (a track only export.pdb lists leaves OneLibrary and Engine untouched) OK\n";
     }
@@ -1077,7 +1127,7 @@ int main(int argc, char **argv)
         {
             infrastructure::onelibrary::SqlCipherLibrary lib;
             auto held = std::make_unique<infrastructure::onelibrary::SqlCipherDb>(lib, s.oneLibraryDb(), false);
-            held->exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+            held->exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(s.oneLibraryDb()));
             {
                 infrastructure::onelibrary::SqlCipherStatement mode(*held, "PRAGMA journal_mode;");
                 assert(mode.step() && mode.columnText(0) == "wal" && "OneLibrary is in WAL mode");

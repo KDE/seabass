@@ -232,7 +232,8 @@ int spellOneLibraryRows(const fs::path &pioneer, const std::string &stickPath, c
     infrastructure::onelibrary::SqlCipherLibrary lib;
     infrastructure::onelibrary::SqlCipherDb db(
         lib, infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer)), false);
-    db.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+    db.exec(infrastructure::onelibrary::oneLibraryKeyPragma(
+        infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer))));
     int rows = 0;
     {
         infrastructure::onelibrary::SqlCipherStatement count(db, "SELECT count(*) FROM content WHERE path = ?");

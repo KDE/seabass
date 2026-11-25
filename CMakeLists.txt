@@ -604,6 +604,7 @@ add_library(seabass_core STATIC
     src/infrastructure/system/stick_hardware_info.cpp
     src/infrastructure/zip_archive_writer.cpp
     src/infrastructure/hashing/sha256.cpp
+    src/infrastructure/hashing/sha512.cpp
     src/infrastructure/hashing/sha1.cpp
     src/infrastructure/stick_backup/posix_archive_file.cpp
     src/infrastructure/stick_backup/zip_format.cpp
@@ -754,6 +755,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/file_placement.cpp
     src/infrastructure/fs_remove.cpp
     src/infrastructure/hashing/sha256.cpp
+    src/infrastructure/hashing/sha512.cpp
     src/infrastructure/hashing/sha1.cpp
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/local/browsed_backup_root.cpp
@@ -784,6 +786,7 @@ add_library(seabass_core_testing STATIC
     # (database_read_copy.hpp).
     src/infrastructure/system/process_liveness.cpp
     src/infrastructure/onelibrary/onelibrary_key.cpp
+    src/infrastructure/hashing/sha512.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
     src/infrastructure/rekordbox/anlz_byte_source.cpp
@@ -919,6 +922,7 @@ endif()
 
 target_sources(seabass_core PRIVATE
     src/infrastructure/onelibrary/onelibrary_key.cpp
+    src/infrastructure/hashing/sha512.cpp
     src/infrastructure/onelibrary/sqlcipher_dyn.cpp
     src/infrastructure/onelibrary/onelibrary_cue_writer.cpp
     src/infrastructure/onelibrary/onelibrary_reader.cpp
@@ -4772,6 +4776,22 @@ add_executable(sha256_test
 target_link_libraries(sha256_test PRIVATE seabass_core_testing)
 target_include_directories(sha256_test PRIVATE src)
 add_test(NAME sha256_test COMMAND sha256_test)
+
+# SHA-512 is compiled optimised in every build: OneLibrary's SQLCipher key
+# is derived with it (256,000 rounds of PBKDF2), 155 ms optimised against
+# 1.2 s at -O0, and a Debug build opening a fresh database must not pay
+# ten times what SQLCipher's own OpenSSL derivation costs (115 ms). MSVC
+# refuses /O2 beside its Debug runtime checks; its packages are Release.
+if(NOT MSVC)
+    set_source_files_properties(src/infrastructure/hashing/sha512.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
+
+add_executable(sha512_test
+    tests/sha512_test.cpp
+)
+target_link_libraries(sha512_test PRIVATE seabass_core_testing)
+target_include_directories(sha512_test PRIVATE src)
+add_test(NAME sha512_test COMMAND sha512_test)
 
 # The icons the QML names are all bundled (see the script for why a
 # missing one would otherwise go unnoticed). A script, not a target, so

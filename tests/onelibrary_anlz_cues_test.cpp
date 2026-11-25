@@ -85,7 +85,7 @@ void plantTableCues(const std::string &pioneerRoot, const std::string &contentId
 {
     onelibrary::SqlCipherLibrary lib;
     onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/false);
-    db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot)));
     db.exec("DELETE FROM cue WHERE content_id = " + contentId + ";");
     for (const auto &cue : cues) {
         const long long in = static_cast<long long>(cue.positionMs * 1000.0);
@@ -100,7 +100,7 @@ std::multiset<std::pair<long long, long long>> tableCues(const std::string &pion
 {
     onelibrary::SqlCipherLibrary lib;
     onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot)));
     onelibrary::SqlCipherStatement rows(db, "SELECT kind, inUsec FROM cue WHERE content_id = ?");
     rows.bindInt64(1, std::stoll(contentId));
     std::multiset<std::pair<long long, long long>> out;
@@ -397,7 +397,7 @@ int main(int argc, char **argv)
                 sabotaged = true;
                 onelibrary::SqlCipherLibrary lib;
                 onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(root), /*readOnly=*/false);
-                db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+                db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(onelibrary::OneLibraryCueWriter::dbPathFor(root)));
                 db.exec("DROP TABLE cue;");
             });
             bool threw = false;

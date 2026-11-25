@@ -71,7 +71,7 @@ void createFixture(const fs::path &pioneerRoot)
     const std::string key = deriveOneLibraryKey();
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-    db.exec("PRAGMA key = '" + key + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
     db.exec(
         "CREATE TABLE content(content_id integer primary key, title varchar, path varchar, "
         "rating integer, djComment varchar);");
@@ -93,7 +93,7 @@ int cueCount(const fs::path &pioneerRoot)
 {
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
     SqlCipherStatement stmt(db, "SELECT COUNT(*) FROM cue WHERE content_id = 1");
     assert(stmt.step());
     return static_cast<int>(stmt.columnInt64(0));
@@ -103,7 +103,7 @@ std::optional<int> storedRating(const fs::path &pioneerRoot)
 {
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
     SqlCipherStatement stmt(db, "SELECT rating FROM content WHERE content_id = 1");
     assert(stmt.step());
     if (stmt.columnIsNull(0)) {
@@ -116,7 +116,7 @@ std::string storedComment(const fs::path &pioneerRoot)
 {
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
     SqlCipherStatement stmt(db, "SELECT djComment FROM content WHERE content_id = 1");
     assert(stmt.step());
     return stmt.columnText(0);

@@ -36,7 +36,7 @@ void createFixture(const std::string &pioneerRoot)
     std::string key = deriveOneLibraryKey();
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-    db.exec("PRAGMA key = '" + key + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
     db.exec("CREATE TABLE content(content_id integer primary key, title varchar, path varchar);");
     db.exec(
         "CREATE TABLE cue(cue_id integer primary key, content_id integer, kind integer, "
@@ -76,10 +76,9 @@ int main()
         OneLibraryCueWriterAdapter adapter(seabass::pathToUtf8(pioneerRoot), sourceIdToPath);
         adapter.writeHotCues("1", sampleCues());
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(seabass::pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(seabass::pathToUtf8(pioneerRoot))));
         SqlCipherStatement countStmt(db, "SELECT count(*) FROM cue WHERE content_id = 1");
         countStmt.step();
         assert(countStmt.columnInt64(0) == 1);

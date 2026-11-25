@@ -205,7 +205,7 @@ OneLibraryCueTables::OneLibraryCueTables(const std::string &pioneerRoot)
     const StickDatabaseRead read = oneLibraryDatabaseRead(pioneerRoot);
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, read.pathUtf8(), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(oneLibraryKeyPragma(read.pathUtf8()));
     SqlCipherStatement select(db, std::string(CueTableColumns) + " ORDER BY content_id, cue_id");
     while (select.step()) {
         m_tables[select.columnInt64(0)].push_back(cueTableEntry(select));
@@ -308,7 +308,7 @@ SqlCipherDb &OneLibraryCueWriter::writeConnection()
     }
     if (!m_writeDb) {
         m_writeDb = std::make_unique<SqlCipherDb>(*m_lib, m_dbPath, /*readOnly=*/false);
-        m_writeDb->exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        m_writeDb->exec(oneLibraryKeyPragma(m_dbPath));
     }
     return *m_writeDb;
 }
@@ -325,7 +325,7 @@ SqlCipherDb &OneLibraryCueWriter::verifyConnection()
     }
     if (!m_verifyDb) {
         m_verifyDb = std::make_unique<SqlCipherDb>(*m_lib, m_dbPath, /*readOnly=*/true);
-        m_verifyDb->exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        m_verifyDb->exec(oneLibraryKeyPragma(m_dbPath));
     }
     return *m_verifyDb;
 }
@@ -846,7 +846,7 @@ std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::s
     const StickDatabaseRead read = oneLibraryDatabaseRead(pioneerRoot);
     SqlCipherLibrary lib;
     SqlCipherDb opened(lib, read.pathUtf8(), /*readOnly=*/true);
-    opened.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    opened.exec(oneLibraryKeyPragma(read.pathUtf8()));
     return contentPathsIn(opened);
 }
 
@@ -1806,7 +1806,7 @@ std::optional<std::uint64_t> OneLibraryCueWriter::foldLogOf(const std::string &d
     try {
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        db.exec(oneLibraryKeyPragma(dbPath));
         try {
             db.exec("PRAGMA busy_timeout = 1000;");
             SqlCipherStatement checkpoint(db, "PRAGMA wal_checkpoint(TRUNCATE);");

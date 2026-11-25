@@ -39,7 +39,7 @@ struct Db
     SqlCipherDb db;
     explicit Db(const fs::path &path, bool readOnly = false) : db(lib, seabass::pathToUtf8(path), readOnly)
     {
-        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        db.exec(oneLibraryKeyPragma(seabass::pathToUtf8(path)));
     }
 };
 

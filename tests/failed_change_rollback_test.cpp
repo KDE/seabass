@@ -97,7 +97,7 @@ int64_t cueCount(const fs::path &dbPath, int64_t contentId)
 {
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, pathToUtf8(dbPath), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(pathToUtf8(dbPath)));
     SqlCipherStatement count(db, "SELECT count(*) FROM cue WHERE content_id = ?");
     count.bindInt64(1, contentId);
     count.step();
@@ -116,7 +116,7 @@ void makeWalFixture(const std::filesystem::path &dbPath)
 {
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, pathToUtf8(dbPath), /*readOnly=*/false);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(pathToUtf8(dbPath)));
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("CREATE TABLE content(content_id integer primary key, title varchar, path varchar);");
     db.exec("CREATE TABLE cue(cue_id integer primary key, content_id integer, kind integer, "
@@ -267,7 +267,7 @@ int main()
         {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, pathToUtf8(dbPath), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(pathToUtf8(dbPath)));
             db.exec("PRAGMA journal_mode = WAL;");
             db.exec("CREATE TABLE content(content_id integer primary key, title varchar, path varchar);");
             db.exec("CREATE TABLE cue(cue_id integer primary key, content_id integer, kind integer, "
@@ -339,7 +339,7 @@ int main()
         SqlCipherLibrary readerLib;
         std::optional<SqlCipherDb> reader;
         reader.emplace(readerLib, pathToUtf8(dbPath), /*readOnly=*/true);
-        reader->exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        reader->exec(oneLibraryKeyPragma(pathToUtf8(dbPath)));
         std::optional<SqlCipherStatement> holdOpen;
         holdOpen.emplace(*reader, "SELECT content_id, title FROM content;");
         assert(holdOpen->step() && "the reader holds a read transaction open across the save");

@@ -160,7 +160,7 @@ int mirroredCueCount(const fs::path &db)
     using namespace seabass::infrastructure::onelibrary;
     SqlCipherLibrary lib;
     SqlCipherDb conn(lib, seabass::pathToUtf8(db), /*readOnly=*/true);
-    conn.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    conn.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(seabass::pathToUtf8(db)));
     SqlCipherStatement count(conn, "SELECT COUNT(*) FROM cue;");
     return count.step() ? static_cast<int>(count.columnInt64(0)) : -1;
 }

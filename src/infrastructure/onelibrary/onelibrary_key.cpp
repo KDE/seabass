@@ -4,6 +4,15 @@
 
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 
+#include "infrastructure/hashing/sha512.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+
+#include <algorithm>
+#include <array>
+#include <fstream>
+#include <map>
+#include <mutex>
+
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
@@ -92,6 +101,44 @@ std::string deriveOneLibraryKey()
                                   std::to_string(rc) + ")");
     }
     return std::string(reinterpret_cast<char *>(dest.data()), destLen);
+}
+
+std::string oneLibraryKeyPragma(const std::string &dbPath)
+{
+    const std::string passphrase = deriveOneLibraryKey();
+    std::array<char, 16> salt{};
+    {
+        std::ifstream in(pathFromUtf8(dbPath), std::ios::binary);
+        if (!in.read(salt.data(), static_cast<std::streamsize>(salt.size()))) {
+            return "PRAGMA key = '" + passphrase + "';";
+        }
+    }
+    // A plain SQLite file starts with its format string, not a salt.
+    static constexpr char plainHeader[16] = {'S', 'Q', 'L', 'i', 't', 'e', ' ', 'f',
+                                             'o', 'r', 'm', 'a', 't', ' ', '3', '\0'};
+    if (std::equal(salt.begin(), salt.end(), plainHeader)) {
+        return "PRAGMA key = '" + passphrase + "';";
+    }
+    const std::string saltKey(salt.data(), salt.size());
+    static std::mutex mutex;
+    static std::map<std::string, std::string> rawKeyBySalt;
+    const std::lock_guard<std::mutex> lock(mutex);
+    auto found = rawKeyBySalt.find(saltKey);
+    if (found == rawKeyBySalt.end()) {
+        // SQLCipher 4's defaults, which OneLibrary uses unchanged (see
+        // deriveOneLibraryKey): PBKDF2-HMAC-SHA512, 256000 rounds, a
+        // 32-byte key.
+        const std::vector<std::uint8_t> saltBytes(salt.begin(), salt.end());
+        const auto key = hashing::pbkdf2HmacSha512(passphrase, saltBytes, 256000, 32);
+        static const char *digits = "0123456789ABCDEF";
+        std::string hex;
+        for (const std::uint8_t b : key) {
+            hex += digits[b >> 4];
+            hex += digits[b & 15];
+        }
+        found = rawKeyBySalt.emplace(saltKey, hex).first;
+    }
+    return "PRAGMA key = \"x'" + found->second + "'\";";
 }
 
 }  // namespace seabass::infrastructure::onelibrary

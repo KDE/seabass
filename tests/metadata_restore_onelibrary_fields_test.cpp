@@ -82,7 +82,8 @@ void oneLibraryExec(const Stick &s, const std::string &sql, const std::vector<st
     infrastructure::onelibrary::SqlCipherLibrary lib;
     infrastructure::onelibrary::SqlCipherDb db(lib, infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(s.pioneer)),
                                                false);
-    db.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+    db.exec(infrastructure::onelibrary::oneLibraryKeyPragma(
+        infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(s.pioneer))));
     infrastructure::onelibrary::SqlCipherStatement st(db, sql);
     int i = 1;
     for (const auto &t : texts) {

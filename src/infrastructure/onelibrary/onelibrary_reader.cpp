@@ -81,7 +81,7 @@ std::optional<size_t> OneLibraryReader::countTracks()
         const StickDatabaseRead read = oneLibraryDatabaseRead(m_pioneerRoot, m_purpose);
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, read.pathUtf8(), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        db.exec(oneLibraryKeyPragma(read.pathUtf8()));
         SqlCipherStatement count(db, "SELECT count(*) FROM content");
         if (count.step()) {
             return static_cast<size_t>(count.columnInt64(0));
@@ -170,7 +170,7 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
         try {
             SqlCipherDb db(lib, dbPath, readOnly);
             try {
-                db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+                db.exec(oneLibraryKeyPragma(dbPath));
                 SqlCipherStatement read(db, "SELECT count(*) FROM sqlite_master");
                 read.step();
             } catch (const std::exception &e) {
@@ -200,7 +200,7 @@ std::vector<Track> OneLibraryReader::readCatalog(application::ProgressReporter &
     // above, so it holds what the stick holds now.
     const StickDatabaseRead read = oneLibraryDatabaseRead(m_pioneerRoot, m_purpose);
     SqlCipherDb db(lib, read.pathUtf8(), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(oneLibraryKeyPragma(read.pathUtf8()));
 
     // Playlist tree, built once up front -- same shape as every other
     // reader in this codebase (id -> {name, parent}, then a second pass

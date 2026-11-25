@@ -41,7 +41,7 @@ void createFixture(const fs::path &pioneerRoot)
     std::string key = deriveOneLibraryKey();
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-    db.exec("PRAGMA key = '" + key + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
     db.exec(
         "CREATE TABLE content(content_id integer primary key, title varchar, path varchar, "
         "bpmx100 integer, key_id integer, image_id integer);");
@@ -100,10 +100,9 @@ int main()
         std::string filePath = pathToUtf8(scratch / "Contents" / "Test Track.mp3");
         writer.writeCuesForPath(filePath, sampleCues());
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
 
         SqlCipherStatement countStmt(db, "SELECT count(*) FROM cue WHERE content_id = 1");
         countStmt.step();
@@ -132,10 +131,9 @@ int main()
         OneLibraryCueWriter writer(pathToUtf8(pioneerRoot));
 
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec("INSERT INTO content (content_id, title, path) VALUES (2, 'Other', '/Contents/Other.mp3');");
         }
 
@@ -165,10 +163,9 @@ int main()
         }
         assert(threw);
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
         SqlCipherStatement contentCount(db, "SELECT count(*) FROM content");
         contentCount.step();
         assert(contentCount.columnInt64(0) == 1);
@@ -198,10 +195,9 @@ int main()
             writer.writeCuesForPath(filePath, single);
         }
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
         SqlCipherStatement countStmt(db, "SELECT count(*) FROM cue WHERE content_id = 1");
         countStmt.step();
         assert(countStmt.columnInt64(0) == 1);
@@ -222,10 +218,9 @@ int main()
         fs::path pioneerRoot = scratch / "PIONEER";
         createFixture(pioneerRoot);
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec("INSERT INTO content (content_id, title, path) VALUES (2, 'Second Track', '/Contents/Second Track.mp3');");
         }
 
@@ -235,10 +230,9 @@ int main()
         // first write above) if the baseline weren't refreshed.
         writer.writeCuesForPath(pathToUtf8(scratch / "Contents" / "Second Track.mp3"), sampleCues());
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
         SqlCipherStatement c1(db, "SELECT count(*) FROM cue WHERE content_id = 1");
         c1.step();
         assert(c1.columnInt64(0) == 3);
@@ -265,10 +259,9 @@ int main()
             writer.writeCuesForPath(filePath, sampleCues());
         }
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec("INSERT INTO playlist_content (content_id, playlist_id, sequenceNo) VALUES (1, 99, 0);");
         }
 
@@ -277,10 +270,9 @@ int main()
             writer.removeTrackByPath(filePath);
         }
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
 
         SqlCipherStatement contentCount(db, "SELECT count(*) FROM content WHERE content_id = 1");
         contentCount.step();
@@ -320,10 +312,9 @@ int main()
         }
         assert(threw);
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
         SqlCipherStatement contentCount(db, "SELECT count(*) FROM content");
         contentCount.step();
         assert(contentCount.columnInt64(0) == 1);
@@ -340,10 +331,9 @@ int main()
         OneLibraryCueWriter writer(pathToUtf8(pioneerRoot));
 
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec("INSERT INTO content (content_id, title, path) VALUES (2, 'Other', '/Contents/Other.mp3');");
         }
 
@@ -385,10 +375,9 @@ int main()
         OneLibraryCueWriter writer(pathToUtf8(relocated), pathToUtf8(scratch));
         writer.writeCuesForPath(realFilePath, sampleCues());
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(relocated)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(relocated))));
         SqlCipherStatement countStmt(db, "SELECT count(*) FROM cue WHERE content_id = 1");
         countStmt.step();
         assert(countStmt.columnInt64(0) == 3);
@@ -412,10 +401,9 @@ int main()
         std::string survivorPath = pathToUtf8(scratch / "Contents" / "Survivor Track.mp3");
 
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec(
                 "INSERT INTO content (content_id, title, path) VALUES (2, 'Survivor', "
                 "'/Contents/Survivor Track.mp3');");
@@ -429,10 +417,9 @@ int main()
             writer.removeTrackByPathReplacingWith(doomedPath, survivorPath);
         }
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
 
         SqlCipherStatement doomedGone(db, "SELECT count(*) FROM content WHERE content_id = 1");
         doomedGone.step();
@@ -462,10 +449,9 @@ int main()
         std::string survivorPath = pathToUtf8(scratch / "Contents" / "Survivor Track.mp3");
 
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec(
                 "INSERT INTO content (content_id, title, path) VALUES (2, 'Survivor', "
                 "'/Contents/Survivor Track.mp3');");
@@ -480,10 +466,9 @@ int main()
             writer.removeTrackByPathReplacingWith(doomedPath, survivorPath);
         }
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
 
         // Exactly one row for (playlist 99, survivor) -- not duplicated.
         SqlCipherStatement survivorInPlaylist(db, "SELECT count(*) FROM playlist_content WHERE content_id = 2 AND playlist_id = 99");
@@ -508,10 +493,9 @@ int main()
         std::string targetPath = pathToUtf8(scratch / "Contents" / "Target Track.mp3");
 
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             // Donor (content_id 1, from createFixture) gets real values;
             // target (content_id 2) starts with none.
             db.exec("UPDATE content SET bpmx100 = 12800, key_id = 7, image_id = 42 WHERE content_id = 1;");
@@ -529,7 +513,7 @@ int main()
         std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
 
         SqlCipherStatement target(db, "SELECT bpmx100, key_id, image_id FROM content WHERE content_id = 2");
         assert(target.step());
@@ -557,10 +541,9 @@ int main()
         std::string targetPath = pathToUtf8(scratch / "Contents" / "Target Track.mp3");
 
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec("UPDATE content SET bpmx100 = 12800, key_id = 7, image_id = 42 WHERE content_id = 1;");
             db.exec(
                 "INSERT INTO content (content_id, title, path) VALUES (2, 'Target', "
@@ -573,10 +556,9 @@ int main()
                                                   /*copyArtwork=*/false);
         }
 
-        std::string key = deriveOneLibraryKey();
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + key + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
 
         SqlCipherStatement target(db, "SELECT bpmx100, key_id, image_id FROM content WHERE content_id = 2");
         assert(target.step());
@@ -668,10 +650,9 @@ int main()
         // "Test Track" -> "Xest Track": same length, so the row and its
         // page keep their size and the file's length cannot change.
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, pathToUtf8(dbPath), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(pathToUtf8(dbPath)));
             db.exec("UPDATE content SET title = 'Xest Track' WHERE content_id = 1;");
         }
         fs::last_write_time(dbPath, originalMtime);
@@ -718,10 +699,9 @@ int main()
             writer.writeCuesForPath(filePath, {loop, point});
         }
         {
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             SqlCipherStatement check(db, "SELECT kind, isActiveLoop, inUsec, outUsec FROM cue ORDER BY kind");
             assert(check.step());
             assert(check.columnInt64(0) == 0 && check.columnInt64(1) == 0 && check.columnInt64(2) == check.columnInt64(3));
@@ -736,10 +716,9 @@ int main()
             // this track): the loop's colour index survives.
             OneLibraryCueWriter writer(pathToUtf8(pioneerRoot));
             writer.writeCuesForPath(filePath, {loop, point});
-            std::string key = deriveOneLibraryKey();
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-            db.exec("PRAGMA key = '" + key + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             SqlCipherStatement check(db, "SELECT colorTableIndex FROM cue WHERE kind = 2");
             assert(check.step() && check.columnInt64(0) == 5);
         }
@@ -755,7 +734,7 @@ int main()
         {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             // The real schema's column, which the minimal fixture leaves out.
             db.exec("ALTER TABLE content ADD COLUMN djPlayCount integer;");
             db.exec("UPDATE content SET djPlayCount = 3 WHERE content_id = 1;");
@@ -766,7 +745,7 @@ int main()
         }
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
         SqlCipherStatement check(db, "SELECT djPlayCount FROM content WHERE content_id = 1");
         assert(check.step() && check.columnInt64(0) == 12);
         std::cout << "case: writePlayCountForPath sets djPlayCount OK\n";
@@ -785,7 +764,7 @@ int main()
         auto seed = [&]() {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             db.exec("DELETE FROM content; DELETE FROM playlist_content;");
             db.exec("INSERT INTO content (content_id, title, path) VALUES "
                     "(1, 'Doomed', '/Contents/Test Track.mp3'), (3, 'Doomed', '/Contents/Test Track.mp3'), "
@@ -795,7 +774,7 @@ int main()
         auto remaining = [&]() {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
             std::vector<int64_t> ids;
             SqlCipherStatement rows(db, "SELECT content_id FROM content ORDER BY content_id");
             while (rows.step()) {
@@ -849,7 +828,7 @@ int main()
         {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
             db.exec("ALTER TABLE content ADD COLUMN rating integer;");
             db.exec("ALTER TABLE content ADD COLUMN djComment varchar;");
             db.exec("ALTER TABLE content ADD COLUMN djPlayCount integer;");
@@ -862,7 +841,7 @@ int main()
         auto value = [&](const std::string &sql) {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
             SqlCipherStatement statement(db, sql);
             statement.step();
             return statement.columnInt64(0);
@@ -905,7 +884,7 @@ int main()
         {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
             db.exec("INSERT INTO content (content_id, title, path) VALUES "
                     "(17, 'Midnight', '/Contents/Akki (De)/Midnight/AKKI (DE) - Midnight.mp3'), "
                     "(20, 'Same', '/Contents/Same.mp3'), (21, 'Same', '/Contents/SAME.mp3'), "
@@ -915,7 +894,7 @@ int main()
         auto value = [&](const std::string &sql) {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
             SqlCipherStatement statement(db, sql);
             statement.step();
             return statement.columnInt64(0);
@@ -976,7 +955,7 @@ int main()
 
         SqlCipherLibrary lib;
         SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot))));
         SqlCipherStatement stmt(db, "SELECT hex(CAST(cueComment AS BLOB)) FROM cue WHERE content_id = 1");
         assert(stmt.step());
         const std::string stored = stmt.columnText(0);

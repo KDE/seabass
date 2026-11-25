@@ -25,4 +25,16 @@ namespace seabass::infrastructure::onelibrary
 // SQLCipher 4's own compiled-in defaults and no other PRAGMA overrides.
 std::string deriveOneLibraryKey();
 
+// The PRAGMA that keys a connection to the OneLibrary database at
+// `dbPath`, to exec right after opening it. SQLCipher 4 stretches the
+// passphrase with 256,000 rounds of PBKDF2-HMAC-SHA512 over the file's
+// 16-byte salt (its first 16 bytes) on every open: about 115 ms, paid
+// again by every reader, writer and check of the same file. The key it
+// arrives at depends on the passphrase and the salt alone, so it is
+// derived here once per salt for the life of the process and handed to
+// SQLCipher as a raw key, which it uses as is. A file with no salt to
+// read (missing, shorter than 16 bytes, or a plain SQLite file) gets the
+// passphrase, as before.
+std::string oneLibraryKeyPragma(const std::string &dbPath);
+
 }  // namespace seabass::infrastructure::onelibrary

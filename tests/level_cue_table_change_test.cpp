@@ -80,7 +80,7 @@ struct Db
     ol::SqlCipherDb db;
     Db(const std::string &pioneer, bool readOnly) : db(lib, ol::OneLibraryCueWriter::dbPathFor(pioneer), readOnly)
     {
-        db.exec("PRAGMA key = '" + ol::deriveOneLibraryKey() + "';");
+        db.exec(ol::oneLibraryKeyPragma(ol::OneLibraryCueWriter::dbPathFor(pioneer)));
     }
 };
 

@@ -165,7 +165,7 @@ int main()
             sabotaged = true;
             onelibrary::SqlCipherLibrary lib;
             onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(root), /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(onelibrary::OneLibraryCueWriter::dbPathFor(root)));
             db.exec("DROP TABLE cue;");
         });
         const auto result = addCue(pioneer, target);

@@ -353,7 +353,7 @@ int main(int argc, char **argv)
             using namespace seabass::infrastructure::onelibrary;
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(pioneerUtf8), /*readOnly=*/true);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(pioneerUtf8)));
             SqlCipherStatement rows(db, "SELECT content_id, rating, djComment FROM content");
             std::map<std::string, std::pair<std::optional<int>, std::string>> stored;
             while (rows.step()) {

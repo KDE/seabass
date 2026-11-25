@@ -162,7 +162,7 @@ int main()
     {
         onelibrary::SqlCipherLibrary lib;
         onelibrary::SqlCipherDb db(lib, onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), /*readOnly=*/true);
-        db.exec("PRAGMA key = '" + onelibrary::deriveOneLibraryKey() + "';");
+        db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(onelibrary::OneLibraryCueWriter::dbPathFor(pioneer)));
         const auto rows = [&](const std::string &contentId) {
             std::vector<std::string> out;
             onelibrary::SqlCipherStatement select(

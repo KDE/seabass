@@ -54,7 +54,7 @@ void createFixture(const std::string &pioneerRoot)
     std::string key = deriveOneLibraryKey();
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-    db.exec("PRAGMA key = '" + key + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
 
     db.exec("CREATE TABLE artist(artist_id integer primary key, name varchar);");
     db.exec("CREATE TABLE key(key_id integer primary key, name varchar);");
@@ -249,7 +249,7 @@ int main()
         {
             SqlCipherLibrary lib;
             SqlCipherDb db(lib, liveDb, /*readOnly=*/false);
-            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(liveDb));
             db.exec("PRAGMA journal_mode=DELETE;");
             // Spill after one page, so the transaction reaches the file
             // and the journal gets its live header before any commit.

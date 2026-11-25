@@ -130,7 +130,7 @@ std::vector<CuePoint> cueTableOf(const fs::path &pioneerRoot, const std::string 
     using namespace seabass::infrastructure::onelibrary;
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, OneLibraryCueWriter::dbPathFor(seabass::pathToUtf8(pioneerRoot)), /*readOnly=*/true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(OneLibraryCueWriter::dbPathFor(seabass::pathToUtf8(pioneerRoot))));
     std::vector<CuePoint> cues;
     for (const CueTableEntry &entry : readCueTable(db, std::stoll(contentId))) {
         if (entry.understood()) {
