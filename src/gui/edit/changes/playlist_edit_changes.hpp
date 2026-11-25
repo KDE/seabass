@@ -72,7 +72,19 @@ QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const
 class CreatePlaylistChange : public PendingChange
 {
 public:
-    CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries);
+    // itemCountHint: how many changes the save this is staged in writes
+    // to each library, when it is the first of them: the first change to
+    // write a library decides whether the save works on a scratch copy of
+    // it, and a lone playlist's 1 would decide "no" for a batch of two
+    // hundred imports staged behind it.
+    CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries,
+                         int itemCountHint = 1);
+
+    // Makes this playlist one unit with the changes that carry `key`: a
+    // playlist made for the tracks imported into it is not left behind
+    // empty by a cancel before the first of them.
+    void tieTo(const QString &key) { m_unitKey = key; }
+    QStringList unitKeys() const override;
 
     static QString idFor(const std::string &playlist);
 
@@ -93,6 +105,8 @@ private:
     QString m_enginePath;
     std::string m_playlist;
     QStringList m_libraries;
+    int m_itemCountHint = 1;
+    QString m_unitKey;
 };
 
 // Deletes a playlist (or a folder, with everything in it) from every

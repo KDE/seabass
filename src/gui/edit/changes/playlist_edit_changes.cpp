@@ -330,10 +330,16 @@ QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const
     return created;
 }
 
-CreatePlaylistChange::CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries)
+CreatePlaylistChange::CreatePlaylistChange(QString pioneerRoot, QString enginePath, std::string playlist, QStringList libraries,
+                                           int itemCountHint)
     : m_pioneerRoot(std::move(pioneerRoot)), m_enginePath(std::move(enginePath)), m_playlist(std::move(playlist)),
-      m_libraries(std::move(libraries))
+      m_libraries(std::move(libraries)), m_itemCountHint(itemCountHint)
 {
+}
+
+QStringList CreatePlaylistChange::unitKeys() const
+{
+    return m_unitKey.isEmpty() ? QStringList{id()} : QStringList{id(), m_unitKey};
 }
 
 QString CreatePlaylistChange::idFor(const std::string &playlist)
@@ -391,7 +397,8 @@ ChangeOutcome CreatePlaylistChange::apply(SaveContext &ctx)
     int created = 0;
     try {
         created = static_cast<int>(
-            createPlaylistIn(ctx, m_pioneerRoot, m_enginePath, m_playlist, m_libraries, 1, CreateLabel).size());
+            createPlaylistIn(ctx, m_pioneerRoot, m_enginePath, m_playlist, m_libraries, m_itemCountHint, CreateLabel)
+                .size());
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }

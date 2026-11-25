@@ -166,7 +166,11 @@ int main(int argc, char **argv)
            && staged.leftOut[2].why.find("sample rate") != std::string::npos);
     // The playlist first, then import and entry per file, tied together.
     assert(staged.changes.size() == 1 + 3 * 2);
-    assert(std::dynamic_pointer_cast<CreatePlaylistChange>(staged.changes[0]));
+    assert(std::dynamic_pointer_cast<CreatePlaylistChange>(staged.changes[0]) && staged.refusal.empty());
+    // The new playlist is one unit with the first import: a cancel
+    // before it would otherwise leave the playlist behind, empty.
+    assert(staged.changes[0]->unitKeys().contains(staged.changes[1]->unitKeys().last())
+           && !staged.changes[0]->unitKeys().contains(staged.changes[3]->unitKeys().last()));
     for (size_t i = 1; i < staged.changes.size(); i += 2) {
         const auto import = std::dynamic_pointer_cast<ImportTrackChange>(staged.changes[i]);
         const auto entry = std::dynamic_pointer_cast<AddToPlaylistChange>(staged.changes[i + 1]);
@@ -233,6 +237,85 @@ int main(int argc, char **argv)
     assert(playlistOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)), "Staged Import") == expected);
     assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()), "Staged Import") == expected);
     std::cout << "case 4 (Undo: the dropped file and its entry are gone, the playlist as before) OK\n";
+
+    // 4b. Three files dropped between the first and the second track:
+    //     they stand there in the order offered.
+    {
+        domain::ImportPlan middle;
+        for (const char *name : {"m1", "m2", "m3"}) {
+            middle.entries.push_back(offer(computer, std::string(name) + ".mp3", name,
+                                           std::string("Contents/Stager/Staged/") + name + ".mp3"));
+        }
+        const StagedImport dropped =
+            stageTrackImport(middle, target, tags, probe, "2026-11-25", ImportPlaylist{"Staged Import", false, 1});
+        assert(dropped.refusal.empty() && dropped.changes.size() == 6);
+        const SaveLoopResult savedDrop = testing::saveChanges(dropped.changes, stick.pioneerPath(), stick.enginePath());
+        assert(savedDrop.error.isEmpty() && savedDrop.appliedIds.size() == 6);
+        const std::vector<std::string> order = {expected[0],
+                                                onStick("Contents/Stager/Staged/m1.mp3"),
+                                                onStick("Contents/Stager/Staged/m2.mp3"),
+                                                onStick("Contents/Stager/Staged/m3.mp3"),
+                                                expected[1],
+                                                expected[2]};
+        assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)), "Staged Import") == order);
+        assert(playlistOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)), "Staged Import") == order);
+        assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()), "Staged Import") == order);
+    }
+    std::cout << "case 4b (three files dropped at a place stand there in the order offered) OK\n";
+
+    // 4c. The playlist asked of the stick: nothing is staged for one
+    //     that is not in every library, for a new one in a folder, or for
+    //     libraries that are not the stick's.
+    {
+        domain::ImportPlan one;
+        one.entries.push_back(offer(computer, "p.mp3", "P", "Contents/Stager/Staged/p.mp3"));
+        const auto refusalOf = [&](const ImportTarget &where, const ImportPlaylist &playlist) {
+            const StagedImport result = stageTrackImport(one, where, tags, probe, "2026-11-25", playlist);
+            assert((result.refusal.empty()) == (!result.changes.empty()));
+            return result.refusal;
+        };
+        assert(refusalOf(target, {"Never Made", false, std::nullopt}).find("is not in every library") != std::string::npos);
+        assert(refusalOf(target, {"A Folder/New", true, std::nullopt}).find("names a folder") != std::string::npos);
+        ImportTarget two = target;
+        two.libraries = QStringList{QStringLiteral("rekordbox"), QStringLiteral("engine")};
+        assert(refusalOf(two, {"Staged Import", false, std::nullopt}).find("are not the ones") != std::string::npos);
+        // A playlist only Engine has.
+        auto engineOnly = std::make_shared<CreatePlaylistChange>(stick.pioneerPath(), stick.enginePath(), "Engine Alone",
+                                                                 QStringList{QStringLiteral("engine")});
+        assert(testing::saveChanges({engineOnly}, stick.pioneerPath(), stick.enginePath()).error.isEmpty());
+        const std::string alone = refusalOf(target, {"Engine Alone", false, std::nullopt});
+        assert(alone.find("is not in every library") != std::string::npos && alone.find("rekordbox") != std::string::npos
+               && alone.find("onelibrary") != std::string::npos);
+        // Made new, it is made where it is missing, and the tracks listed everywhere.
+        assert(refusalOf(target, {"Engine Alone", true, std::nullopt}).empty());
+        assert(refusalOf(target, {"Staged Import", false, std::nullopt}).empty());
+    }
+    std::cout << "case 4c (a playlist not in every library, a new one in a folder, other libraries than the stick's: "
+                 "nothing staged, with the reason) OK\n";
+
+    // 4d. Undo of a save that made the playlist, on a stick of its own:
+    //     the playlist, the files and the rows are gone.
+    {
+        const testing::EngineChangeStick other = testing::makeEngineChangeStick(fixture, "track_import_staging_undo");
+        testing::levelImportCounter(other);
+        ImportTarget there{pathToQString(other.root), other.pioneerPath(), other.enginePath(), AllThree};
+        domain::ImportPlan two;
+        two.entries.push_back(offer(computer, "u1.mp3", "U1", "Contents/Stager/Undo/u1.mp3"));
+        two.entries.push_back(offer(computer, "u2.mp3", "U2", "Contents/Stager/Undo/u2.mp3"));
+        const size_t rowsBefore = infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(other.pioneer)).readAll().size();
+        const StagedImport made = stageTrackImport(two, there, tags, probe, "2026-11-25", ImportPlaylist{"To Undo", true, std::nullopt});
+        const SaveLoopResult savedMade = testing::saveChanges(made.changes, other.pioneerPath(), other.enginePath());
+        assert(savedMade.error.isEmpty() && savedMade.appliedIds.size() == 5);
+        assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(other.engineUtf8()), "To Undo").size() == 2);
+        const SaveLoopResult undoneMade = testing::undoSave(savedMade, other.pioneerPath(), other.enginePath());
+        assert(undoneMade.error.isEmpty());
+        assert(!fs::exists(other.root / "Contents" / "Stager" / "Undo" / "u1.mp3")
+               && !fs::exists(other.root / "Contents" / "Stager" / "Undo" / "u2.mp3"));
+        assert(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(other.pioneer)).readAll().size() == rowsBefore);
+        const PlaylistWhereabouts gone = playlistWhereabouts(other.pioneerPath(), other.enginePath(), "To Undo");
+        assert(gone.having.isEmpty() && gone.onStick.size() == 3 && "the playlist is in no library again");
+    }
+    std::cout << "case 4d (Undo of the save that made the playlist: playlist, files and rows gone) OK\n";
 
     // 5. Nothing to stage is no change at all, not a lone playlist.
     domain::ImportPlan none;

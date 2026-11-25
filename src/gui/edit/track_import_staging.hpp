@@ -53,6 +53,10 @@ struct LeftOut
 
 struct StagedImport
 {
+    // Why nothing at all is staged, in words for the person: the stick's
+    // libraries are not the ones named, or the playlist cannot take the
+    // tracks in every library. Empty otherwise.
+    std::string refusal;
     // In save order: the playlist made first when it has to be, then per
     // file its import and its playlist entry.
     std::vector<std::shared_ptr<PendingChange>> changes;
@@ -72,6 +76,13 @@ struct StagedImport
 // A comment too long for export.pdb's page is cut to its first 250
 // characters rather than costing the track; the file's own tag is not
 // touched.
+//
+// The playlist is asked of the stick as it is now (playlistWhereabouts,
+// which reads each library: not for the GUI thread). An existing one has
+// to be in every library the stick has, once; a new one is made at the
+// top level in the libraries that lack it. Otherwise nothing is staged
+// and `refusal` says why: tracks listed in a playlist in two libraries
+// and not in the third is the disagreement this app is for removing.
 //
 // Entries with any other verdict are not this function's: the plan
 // already says what happens to them.

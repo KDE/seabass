@@ -4,6 +4,8 @@
 
 #include "gui/edit/track_import_staging.hpp"
 
+#include <QSet>
+
 #include <filesystem>
 #include <stdexcept>
 
@@ -55,6 +57,39 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
     }
 
     StagedImport staged;
+    if (playlist) {
+        const QString name = QString::fromStdString(playlist->path);
+        const PlaylistWhereabouts where = playlistWhereabouts(target.pioneerRoot, target.enginePath, playlist->path);
+        const auto asSet = [](const QStringList &list) { return QSet<QString>(list.begin(), list.end()); };
+        if (asSet(where.onStick) != asSet(target.libraries)) {
+            staged.refusal = "The libraries on the stick (" + where.onStick.join(QStringLiteral(", ")).toStdString()
+                             + ") are not the ones this import was planned for ("
+                             + target.libraries.join(QStringLiteral(", ")).toStdString() + ").";
+            return staged;
+        }
+        if (!where.several.isEmpty()) {
+            staged.refusal = "More than one playlist is called \"" + playlist->path + "\" in "
+                             + where.several.join(QStringLiteral(", ")).toStdString()
+                             + ", so the tracks cannot be put into one of them by name.";
+            return staged;
+        }
+        if (playlist->create && playlist->path.find('/') != std::string::npos) {
+            staged.refusal = "A new playlist is made at the top level; \"" + playlist->path + "\" names a folder.";
+            return staged;
+        }
+        if (!playlist->create && asSet(where.having) != asSet(where.onStick)) {
+            QStringList lacking;
+            for (const QString &library : where.onStick) {
+                if (!where.having.contains(library)) {
+                    lacking << library;
+                }
+            }
+            staged.refusal = "The playlist \"" + playlist->path + "\" is not in every library on the stick (not in "
+                             + lacking.join(QStringLiteral(", ")).toStdString()
+                             + "), so the tracks would be listed in some libraries and not in others.";
+            return staged;
+        }
+    }
     std::vector<std::shared_ptr<ImportTrackChange>> imports;
     for (const auto &entry : plan.entries) {
         if (entry.verdict != domain::ImportVerdict::Import) {
@@ -119,8 +154,13 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         return staged;
     }
     if (playlist && playlist->create) {
-        staged.changes.push_back(std::make_shared<CreatePlaylistChange>(target.pioneerRoot, target.enginePath,
-                                                                        playlist->path, target.libraries));
+        // The batch's size, so the save's scratch-copy decision is made
+        // for the batch; and one unit with the first import, so a cancel
+        // does not leave the playlist behind empty.
+        auto made = std::make_shared<CreatePlaylistChange>(target.pioneerRoot, target.enginePath, playlist->path,
+                                                           target.libraries, toImport);
+        made->tieTo(imports.front()->unitKeys().last());
+        staged.changes.push_back(made);
     }
     int offset = 0;
     for (const auto &change : imports) {
