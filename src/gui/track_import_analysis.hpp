@@ -21,13 +21,16 @@ namespace seabass::gui
 // decoded, or this build has no decoder. A grid the analyser could not
 // make leaves the waveform alone in the result.
 //
-// A file longer than ImportAnalysisMaxSeconds (a recorded set) is not
-// analysed: it would be held in memory whole.
+// A file longer than ImportAnalysisMaxSeconds is not analysed: it is
+// held in memory whole, and the analyser's own working memory comes on
+// top (measured: a 65 minute mix takes 2.8 GB and 1 min 42 s on one
+// core). An hour and a half covers a recorded mix; two of them analysed
+// at once are about 8 GB.
 //
 // Needs a QCoreApplication; runs a nested event loop in the calling
 // thread. Throws application::OperationCancelled on a cancel, which is
 // asked between the steps, not inside them.
-constexpr int ImportAnalysisMaxSeconds = 20 * 60;
+constexpr int ImportAnalysisMaxSeconds = 90 * 60;
 
 //
 // `range`: the tempos a grid may have (domain::TempoRange); the default

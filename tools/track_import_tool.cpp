@@ -181,7 +181,7 @@ int main(int argc, char **argv)
     std::ofstream tsv;
     if (!tsvPath.empty()) {
         tsv.open(pathFromUtf8(tsvPath));
-        tsv << "status\tsource\ton_stick\tbpm\tbeats\tfollowed\tconfidence\treason\n";
+        tsv << "status\tsource\ton_stick\tbpm\tbeats\tfollowed\tconfidence\treason\theard_key\n";
     }
     std::size_t at = 0;
     for (const auto &change : prepared.staged.changes) {
@@ -195,7 +195,8 @@ int main(int argc, char **argv)
             std::snprintf(numbers, sizeof numbers, "%.4f\t%zu\t%d\t%.3f", analysis ? analysis->bpm : 0.0,
                           analysis ? analysis->beats.size() : std::size_t{0}, analysis && analysis->followsTempo ? 1 : 0,
                           analysis ? analysis->confidence : 0.0);
-            tsv << "imported\t" << prepared.staged.staged[at] << '\t' << import->destinationFile() << '\t' << numbers << "\t\n";
+            tsv << "imported\t" << prepared.staged.staged[at] << '\t' << import->destinationFile() << '\t' << numbers << "\t\t"
+                << (analysis ? analysis->key : std::string()) << '\n';
         }
         ++at;
     }
