@@ -397,6 +397,16 @@ bool LibraryEditSession::stage(std::unique_ptr<PendingChange> change)
 
 bool LibraryEditSession::stageAll(std::vector<std::unique_ptr<PendingChange>> changes)
 {
+    std::vector<std::shared_ptr<PendingChange>> shared;
+    shared.reserve(changes.size());
+    for (auto &change : changes) {
+        shared.push_back(std::shared_ptr<PendingChange>(std::move(change)));
+    }
+    return stageAll(std::move(shared));
+}
+
+bool LibraryEditSession::stageAll(std::vector<std::shared_ptr<PendingChange>> changes)
+{
     if (changes.empty() || m_writing) {
         return false;
     }
@@ -436,10 +446,10 @@ bool LibraryEditSession::stageAll(std::vector<std::unique_ptr<PendingChange>> ch
         }
         const QString id = change->id();
         if (auto existing = indexById.find(id); existing != indexById.end()) {
-            m_changes[existing->second] = std::shared_ptr<PendingChange>(std::move(change));
+            m_changes[existing->second] = std::move(change);
         } else {
             indexById.emplace(id, m_changes.size());
-            m_changes.push_back(std::shared_ptr<PendingChange>(std::move(change)));
+            m_changes.push_back(std::move(change));
         }
     }
     emit pendingChanged();

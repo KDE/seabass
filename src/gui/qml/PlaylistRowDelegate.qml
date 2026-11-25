@@ -37,6 +37,12 @@ Rectangle {
     property bool heldDropTarget: false
     readonly property bool dropTarget: (trackDropArea.containsDrag && root.acceptsTrackDrop) || root.heldDropTarget
     signal trackDropped()
+    // Audio files dragged in from the computer (Browse's track import)
+    // may be dropped here; the row wears the same outline while they
+    // hover.
+    property bool acceptsFileDrop: false
+    readonly property bool fileDropTarget: fileDropArea.containsDrag
+    signal filesDropped(var urls)
     // Staged to be renamed, listed under the new name: in italics like a
     // new one, its count as it is (a rename alone changes no count, so it
     // shows none in parentheses).
@@ -81,8 +87,8 @@ Rectangle {
     color: mouseArea.pressed ? Theme.rowPressed
         : rowHover.hovered ? Theme.rowHover
         : (root.index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
-    border.color: root.isCurrent || root.dropTarget ? Theme.accent : "transparent"
-    border.width: root.isCurrent || root.dropTarget ? 2 : 0
+    border.color: root.isCurrent || root.dropTarget || root.fileDropTarget ? Theme.accent : "transparent"
+    border.width: root.isCurrent || root.dropTarget || root.fileDropTarget ? 2 : 0
     radius: Theme.cornerRadius
 
     MouseArea {
@@ -169,6 +175,20 @@ Rectangle {
         onDropped: drop => {
             drop.accept(Qt.CopyAction);
             root.trackDropped();
+        }
+    }
+
+    DropArea {
+        id: fileDropArea
+        objectName: "playlistFileDropArea"
+        anchors.fill: parent
+        enabled: root.acceptsFileDrop
+        keys: ["text/uri-list"]
+        onDropped: drop => {
+            if (drop.hasUrls) {
+                drop.accept(Qt.CopyAction);
+                root.filesDropped(drop.urls);
+            }
         }
     }
 

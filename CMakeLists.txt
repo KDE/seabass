@@ -3944,6 +3944,26 @@ if(TARGET seabass_edit)
     set_tests_properties(add_cue_pending_test PROPERTIES
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
 
+    # The track import's controller with the real session: a folder
+    # offered as a drop offers it, staged, saved, and found in all three
+    # libraries. Needs TagLib to read the files it makes.
+    if(TARGET seabass_taglib)
+        add_executable(track_import_controller_test
+            src/gui/track_import_controller.hpp
+            src/gui/track_import_controller.cpp
+            src/gui/edit/track_import_prepare.cpp
+            src/gui/stick_catalogs.cpp
+            tests/track_import_controller_test.cpp
+        )
+        target_include_directories(track_import_controller_test PRIVATE src tests)
+        target_link_libraries(track_import_controller_test PRIVATE seabass_gui_edit_session_testing seabass_edit
+            seabass_taglib Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+        add_test(NAME track_import_controller_test COMMAND track_import_controller_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+        set_tests_properties(track_import_controller_test PROPERTIES LABELS "integration"
+            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+    endif()
+
     # The #73 hardware round of 2026-11-13 replayed on what the stick
     # TESTSHARK held at each step (tests/fixtures/testshark_t73): the audio
     # heads and the chain checker, the 24-row proposal, save, undo and save

@@ -189,6 +189,9 @@ public:
     // QML rebuild the whole pending-description list for the Save
     // button's tooltip -- which froze the window on one button press.
     bool stageAll(std::vector<std::unique_ptr<PendingChange>> changes);
+    // The same for changes a caller made as shared ones (a batch built
+    // and inspected before it is staged: stageTrackImport).
+    bool stageAll(std::vector<std::shared_ptr<PendingChange>> changes);
     Q_INVOKABLE void unstage(const QString &changeId);
     // Same, for taking a batch back out again.
     void unstageAll(const QStringList &changeIds);

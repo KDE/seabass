@@ -235,6 +235,10 @@ set(SEABASS_GUI_SOURCES
     playlist_edit_controller.cpp
     track_edit_controller.hpp
     track_edit_controller.cpp
+    track_import_controller.hpp
+    track_import_controller.cpp
+    edit/track_import_prepare.hpp
+    edit/track_import_prepare.cpp
     library_consistency_controller.hpp
     library_consistency_controller.cpp
     beat_grids_controller.hpp

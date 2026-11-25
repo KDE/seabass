@@ -4,6 +4,7 @@
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtQuick.Templates as T
 import SeabassGui
@@ -152,6 +153,166 @@ Page {
         objectName: "playlistEditMessage"
     }
 
+    // Track import (experimental): audio files and folders from the
+    // computer, dropped on a playlist, on the track list or on the empty
+    // part of the playlist list, or picked from a playlist's menu. Staged
+    // into the same session; Save copies them to the stick and lists them
+    // in every library on it.
+    readonly property bool trackImportEnabled: root.appSettingsController.experimentalFeaturesEnabled === true
+    property var trackImportController: TrackImportController {}
+    Connections {
+        target: ("objectName" in root.trackImportController) ? root.trackImportController : null
+        ignoreUnknownSignals: true
+        function onTracksImported() {
+            root.rescan();
+        }
+        function onErrorMessageChanged() {
+            if (root.trackImportController.errorMessage.length > 0) {
+                playlistEditMessage.show(root.trackImportController.errorMessage, true, qsTr("Not imported"));
+            }
+        }
+        function onResultReady() {
+            importResultDialog.outcome = root.trackImportController.lastResult;
+            importResultDialog.open();
+        }
+    }
+    // `files` into `playlist` ("" for none), which the save makes when
+    // `create`; atIndex below 0 for its end.
+    function importFiles(files, playlist, create, atIndex) {
+        if (playlist.length > 0 && !create && root.newPlaylistNames.indexOf(playlist) >= 0) {
+            playlistEditMessage.show(qsTr("\"%1\" is not on the stick yet. Save first, then import into it.").arg(playlist),
+                                     true, qsTr("Not imported"));
+            return;
+        }
+        root.trackImportController.importFiles(root.rekordboxPath, root.enginePath, files, playlist, create, atIndex);
+    }
+    // The dropped files go into a playlist still to be named.
+    function importIntoNewPlaylist(files) {
+        importPlaylistDialog.files = files;
+        importPlaylistDialog.open();
+    }
+    FileDialog {
+        id: importFileDialog
+        objectName: "importFileDialog"
+        property string playlist: ""
+        title: qsTr("Import tracks")
+        fileMode: FileDialog.OpenFiles
+        nameFilters: [qsTr("Audio files (%1)").arg(root.trackImportController.fileDialogFilter()), qsTr("All files (*)")]
+        onAccepted: root.importFiles(selectedFiles, importFileDialog.playlist, false, -1)
+    }
+    FolderDialog {
+        id: importFolderDialog
+        objectName: "importFolderDialog"
+        property string playlist: ""
+        title: qsTr("Import a folder of tracks")
+        onAccepted: root.importFiles([selectedFolder], importFolderDialog.playlist, false, -1)
+    }
+    SeabassDialog {
+        id: importPlaylistDialog
+        objectName: "importPlaylistDialog"
+        property var files: []
+        severity: SeabassDialog.Question
+        title: qsTr("Import into a new playlist")
+        headline: qsTr("The tracks go into a new playlist, made in every library on this stick.")
+        detailText: qsTr("Nothing is copied until you Save.")
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAboutToShow: importPlaylistNameField.text = root.trackImportController.suggestedPlaylistName(files)
+        onOpened: Qt.callLater(() => {
+            importPlaylistDialog.markFooterDefault(importPlaylistDialog.standardButton(Dialog.Ok));
+            importPlaylistNameField.forceActiveFocus();
+            importPlaylistNameField.selectAll();
+        })
+        Component.onCompleted: standardButton(Dialog.Ok).enabled = Qt.binding(
+            () => importPlaylistNameField.text.trim().length > 0)
+        TextField {
+            id: importPlaylistNameField
+            objectName: "importPlaylistNameField"
+            Layout.fillWidth: true
+            placeholderText: qsTr("Playlist name")
+            onAccepted: {
+                if (text.trim().length > 0) {
+                    importPlaylistDialog.accept();
+                }
+            }
+        }
+        onAccepted: root.importFiles(importPlaylistDialog.files, importPlaylistNameField.text.trim(), true, -1)
+    }
+    // What an import came to: what waits for Save, and every file left
+    // out with its reason.
+    SeabassDialog {
+        id: importResultDialog
+        objectName: "importResultDialog"
+        property var outcome: ({})
+        readonly property int staged: outcome.staged ?? 0
+        readonly property var notImported: outcome.notImported ?? []
+        readonly property int possibleDuplicates: outcome.possibleDuplicates ?? 0
+        readonly property string playlist: outcome.playlist ?? ""
+        severity: staged > 0 ? SeabassDialog.Info : SeabassDialog.Warning
+        title: qsTr("Import tracks")
+        headline: staged === 0 ? qsTr("None of these files can be imported.")
+            : playlist.length === 0 ? qsTr("%n track(s) ready to import.", "", staged)
+            : (outcome.playlistIsNew ? qsTr("%n track(s) ready to import into the new playlist \"%1\".", "", staged)
+                                    : qsTr("%n track(s) ready to import into \"%1\".", "", staged)).arg(playlist)
+        detailText: (staged > 0
+                ? qsTr("Save copies them to the stick (%1 MB) and lists them in every library on it. "
+                       + "They have no beat grid or waveform yet.").arg(Math.ceil(outcome.megabytes ?? 0))
+                : "")
+            + ((outcome.note ?? "").length > 0 ? (staged > 0 ? "\n\n" : "") + outcome.note : "")
+        Label {
+            objectName: "importNotImportedHeading"
+            visible: importResultDialog.notImported.length > 0
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: qsTr("%n file(s) left out:", "", importResultDialog.notImported.length)
+        }
+        ScrollView {
+            visible: importResultDialog.notImported.length > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.min(notImportedList.contentHeight, 200)
+            clip: true
+            ListView {
+                id: notImportedList
+                objectName: "importNotImportedList"
+                model: importResultDialog.notImported
+                delegate: Label {
+                    required property var modelData
+                    width: ListView.view.width
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: modelData.name + ": " + modelData.why
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "importDuplicatesButton"
+                visible: importResultDialog.possibleDuplicates > 0
+                text: qsTr("Import possible duplicates too")
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: {
+                    importResultDialog.close();
+                    root.trackImportController.importPossibleDuplicates();
+                }
+            }
+            Button {
+                objectName: "importTakeBackButton"
+                visible: importResultDialog.staged > 0
+                text: qsTr("Take back")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: {
+                    root.trackImportController.dropStaged();
+                    importResultDialog.close();
+                }
+            }
+            Button {
+                objectName: "importResultOkButton"
+                text: qsTr("OK")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+    }
+
     Menu {
         id: playlistMenu
         objectName: "playlistMenu"
@@ -165,6 +326,40 @@ Page {
         readonly property string oldName: root.playlistEditController.pendingRevision >= 0 && playlist.length > 0
             && ("pendingRenames" in root.playlistEditController)
             ? root.oldPlaylistName(playlist) : ""
+        // Tracks waiting to be imported into this playlist.
+        readonly property int importing: root.trackImportController.pendingRevision >= 0 && playlist.length > 0
+            ? root.trackImportController.trackCountChange(playlist) : 0
+        MenuItem {
+            objectName: "importTracksItem"
+            visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
+            height: visible ? implicitHeight : 0
+            text: qsTr("Import tracks...")
+            onTriggered: {
+                importFileDialog.playlist = playlistMenu.playlist;
+                importFileDialog.open();
+            }
+        }
+        MenuItem {
+            objectName: "importFolderItem"
+            visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
+            height: visible ? implicitHeight : 0
+            text: qsTr("Import a folder...")
+            onTriggered: {
+                importFolderDialog.playlist = playlistMenu.playlist;
+                importFolderDialog.open();
+            }
+        }
+        MenuItem {
+            objectName: "takeBackImportItem"
+            visible: playlistMenu.importing > 0
+            height: visible ? implicitHeight : 0
+            text: qsTr("Don't import the %n track(s)", "", playlistMenu.importing)
+            onTriggered: root.trackImportController.dropStaged()
+        }
+        MenuSeparator {
+            visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
+            height: visible ? implicitHeight : 0
+        }
         MenuItem {
             objectName: "renamePlaylistItem"
             text: qsTr("Rename playlist...")
@@ -709,8 +904,9 @@ Page {
             .filter(n => n !== shown || inPlaylists.indexOf(n) < 0);
     }
 
-    readonly property var newPlaylistNames: ("newPlaylists" in root.playlistEditController)
-        ? root.playlistEditController.newPlaylists : []
+    readonly property var newPlaylistNames: (("newPlaylists" in root.playlistEditController)
+            ? root.playlistEditController.newPlaylists : [])
+        .concat(root.trackImportController.stagedPlaylistIsNew === true ? [root.trackImportController.stagedPlaylist] : [])
     // The tracks staged into a playlist show in it, greyed, until Save.
     readonly property var pendingAdditions: ("pendingAdditions" in root.playlistEditController)
         ? root.playlistEditController.pendingAdditions : ({})
@@ -1514,11 +1710,16 @@ Page {
                     isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
                     isRenamed: name => ("isRenameStaged" in root.playlistEditController)
                         && root.playlistEditController.isRenameStaged(name)
-                    isEdited: name => ("isPlaylistEdited" in root.playlistEditController)
-                        && root.playlistEditController.isPlaylistEdited(name)
-                    trackCountChange: name => ("trackCountChange" in root.playlistEditController)
-                        ? root.playlistEditController.trackCountChange(name) : 0
-                    pendingRevision: root.playlistEditController.pendingRevision
+                    isEdited: name => (("isPlaylistEdited" in root.playlistEditController)
+                            && root.playlistEditController.isPlaylistEdited(name))
+                        || root.trackImportController.trackCountChange(name) > 0
+                    trackCountChange: name => (("trackCountChange" in root.playlistEditController)
+                            ? root.playlistEditController.trackCountChange(name) : 0)
+                        + root.trackImportController.trackCountChange(name)
+                    pendingRevision: root.playlistEditController.pendingRevision + root.trackImportController.pendingRevision
+                    fileDropsEnabled: root.trackImportEnabled
+                    onFilesDropped: (name, urls) => root.importFiles(urls, name, false, -1)
+                    onFilesDroppedForNew: urls => root.importIntoNewPlaylist(urls)
                     onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
                     canCreate: true
                     newPlaylists: root.newPlaylistNames
@@ -2029,6 +2230,73 @@ Page {
                         if (dropGap.release()) {
                             drop.accept(Qt.MoveAction);
                         }
+                    }
+                }
+                // Audio files from the computer dropped on the track
+                // list (the track import): into the playlist shown, at the
+                // row they are dropped before when the list is in the
+                // playlist's own order, else at its end; into no playlist
+                // on "All tracks". The list wears an outline meanwhile, and
+                // a line marks the place.
+                DropArea {
+                    id: fileDropArea
+                    objectName: "trackFileDropArea"
+                    parent: trackListView
+                    anchors.fill: parent
+                    enabled: root.trackImportEnabled
+                    keys: ["text/uri-list"]
+                    // The place counts only where a row's place is its
+                    // place in the playlist, and nothing staged moves it.
+                    readonly property bool placed: root.shownPlaylist.length > 0 && dropGap.orderShown
+                        && root.newPlaylistNames.indexOf(root.shownPlaylist) < 0
+                    // The row the files would go before; the count for the end.
+                    readonly property int targetIndex: {
+                        if (!containsDrag || !placed) {
+                            return -1;
+                        }
+                        const y = drag.y + trackListView.contentY;
+                        const at = trackListView.indexAt(trackListView.width / 2, y);
+                        if (at < 0) {
+                            return trackListView.count;
+                        }
+                        const row = trackListView.itemAtIndex(at);
+                        return row !== null && y > row.y + row.height / 2 ? at + 1 : at;
+                    }
+                    readonly property real lineY: {
+                        if (targetIndex < 0) {
+                            return 0;
+                        }
+                        const last = targetIndex >= trackListView.count;
+                        const row = trackListView.itemAtIndex(last ? trackListView.count - 1 : targetIndex);
+                        return row === null ? 0 : row.y + (last ? row.height : 0) - trackListView.contentY;
+                    }
+                    onDropped: drop => {
+                        if (!drop.hasUrls) {
+                            return;
+                        }
+                        const to = fileDropArea.targetIndex;
+                        drop.accept(Qt.CopyAction);
+                        root.importFiles(drop.urls, root.shownPlaylist, false,
+                                         to >= 0 && to < trackListView.count ? to : -1);
+                    }
+                    Rectangle {
+                        objectName: "trackFileDropOutline"
+                        anchors.fill: parent
+                        visible: fileDropArea.containsDrag
+                        color: "transparent"
+                        border.color: Theme.accent
+                        border.width: 2
+                        radius: Theme.cornerRadius
+                    }
+                    Rectangle {
+                        objectName: "trackFileDropLine"
+                        visible: fileDropArea.targetIndex >= 0
+                        x: root.trackRowInset
+                        width: parent.width - 2 * root.trackRowInset
+                        y: Theme.snap(fileDropArea.lineY) - 1
+                        height: 3
+                        radius: 1
+                        color: Theme.accent
                     }
                 }
                 PlaylistDropGap {

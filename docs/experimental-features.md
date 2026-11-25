@@ -37,6 +37,28 @@ from day one.
 
 ## Currently experimental
 
+- **Track import** (added 2026-11-25) — audio files and folders from
+  the computer put onto the stick as tracks, without rekordbox. Ways in,
+  all in Browse and all shown only with Experimental on: a playlist's
+  menu ("Import tracks...", "Import a folder..."), files dropped on a
+  playlist row, on "All tracks" (no playlist), on the empty part of the
+  playlist list or its last row (a new playlist, named in a dialog), and
+  on the track list (the playlist shown, at the row dropped before when
+  the list is in the playlist's own order). `TrackImportController`
+  plans and rehearses the batch off the GUI thread and stages it into
+  the stick's session; Save copies each file, verified, and writes a row
+  into every library the stick has (`ImportTrackChange`: export.pdb,
+  exportLibrary.db, Engine's m.db), then the playlist entries. One batch
+  at a time, into a session with nothing else staged. The tracks have
+  tags, tempo and key as the file's tags give them, and no beat grid,
+  waveform or cover yet. Verified with this app's own readers and, for
+  export.pdb's rows, byte for byte against rekordbox's
+  (`pdb_row_encoding_test`, `track_import_controller_test`); no player
+  has loaded an imported track. Promote once one has on each family
+  (XDJ-RX2, OMNIS-DUO, Prime 4), and rekordbox has opened the stick.
+  Still owed besides: a WAV's file type measured from a rekordbox export
+  (11 is the published number), covers, the analysis.
+
 - **Moved files: Point Library at File** (added 2026-11-19, #103) — the
   second repair on Library Health's Moved files page (`MovedFilesPage.qml`,
   `RelinkMovedFileChange`): every catalog's row for a track whose file

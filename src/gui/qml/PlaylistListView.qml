@@ -62,6 +62,30 @@ ListView {
     }
     property string heldDropTarget: ""
     signal trackDropped(string name)
+    // Audio files dragged in from the computer (Browse's track import):
+    // every playlist row takes them but one staged for deletion, "All
+    // tracks" takes them for no playlist (filesDropped with ""), and the
+    // empty part of the list and its last row take them for a playlist
+    // still to be named (filesDroppedForNew).
+    property bool fileDropsEnabled: false
+    signal filesDropped(string name, var urls)
+    signal filesDroppedForNew(var urls)
+    DropArea {
+        id: newPlaylistFileDropArea
+        objectName: "newPlaylistFileDropArea"
+        // The list itself, under its rows: theirs are on top of it.
+        parent: root
+        anchors.fill: parent
+        z: -1
+        enabled: root.fileDropsEnabled && root.canCreate
+        keys: ["text/uri-list"]
+        onDropped: drop => {
+            if (drop.hasUrls) {
+                drop.accept(Qt.CopyAction);
+                root.filesDroppedForNew(drop.urls);
+            }
+        }
+    }
     // Spring-loaded playlists: a dragged track held over a row that takes
     // it for springLoadDelay opens that playlist (springLoaded) while the
     // drag goes on, so it can be dropped at its place there. Another row
@@ -315,6 +339,8 @@ ListView {
             && (modelData !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(modelData) < 0)
         heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
         onTrackDropped: root.trackDropped(modelData)
+        acceptsFileDrop: root.fileDropsEnabled && !pendingDelete
+        onFilesDropped: urls => root.filesDropped(index === 0 ? "" : modelData, urls)
         onContextRequested: {
             if (index > 0) {
                 root.playlistContextRequested(modelData, this);
@@ -332,6 +358,14 @@ ListView {
             height: 32
             leftPadding: 8
             onClicked: root.createRequested()
+            // Files held over the empty part of the list go into a
+            // new playlist: this row says so.
+            background: Rectangle {
+                color: "transparent"
+                border.color: Theme.accent
+                border.width: newPlaylistFileDropArea.containsDrag ? 2 : 0
+                radius: Theme.cornerRadius
+            }
             contentItem: Row {
                 spacing: Theme.tightSpacing
                 SeabassIcon {
