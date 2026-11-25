@@ -316,6 +316,18 @@ SeabassDialog {
         root.detach();
         root.manualMs = root.clampTime(root.manualMs + px / root.pxPerMs);
     }
+    // A drag (or its glide) while the track plays is a seek: once the
+    // waveform comes to rest, the moment under the line is where it plays
+    // on, and the view follows again. Paused, a drag only looks around.
+    function seekWhereDragged() {
+        if (!root.playing || root.attached || root.durationMs <= 0 || !root.controller) {
+            return;
+        }
+        const ms = Math.round(root.clampTime(root.manualMs));
+        root.controller.seek(ms);
+        root.resync(ms);
+        root.attach();
+    }
     // A click on the waveform: that moment goes to the line.
     function seekToX(x) {
         if (root.pxPerMs <= 0 || root.durationMs <= 0) {
@@ -835,7 +847,10 @@ SeabassDialog {
                 contentWidth: root.durationMs * root.pxPerMs + width
                 contentHeight: height
                 pressDelay: 0
-                onMovementEnded: root.gliding = false
+                onMovementEnded: {
+                    root.gliding = false;
+                    root.seekWhereDragged();
+                }
                 onContentXChanged: {
                     if (flick.moving && root.pxPerMs > 0) {
                         root.detach();
@@ -952,11 +967,12 @@ SeabassDialog {
             }
         }
 
-        // The time, under the waveform at the right.
+        // The time, under the waveform at the right: of the moment under
+        // the line, so it says where the waveform is, scrolled or not.
         TrackTimeLabel {
             objectName: "zoomTime"
             Layout.alignment: Qt.AlignRight
-            positionMs: root.controller ? root.controller.position || 0 : 0
+            positionMs: root.centerMs
             durationMs: root.durationMs
             settings: root.settings
         }
