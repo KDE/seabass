@@ -209,6 +209,7 @@ public:
     // end, the track gets no analysis files and the log says so.
     void setAnalysis(std::shared_ptr<const ImportAnalysis> analysis);
     bool analysed() const { return static_cast<bool>(m_analysis); }
+    const std::shared_ptr<const ImportAnalysis> &analysis() const { return m_analysis; }
 
     // Why the libraries named would refuse a row for `track`, a file of
     // `fileSizeBytes`, for what it is; empty when none would. What

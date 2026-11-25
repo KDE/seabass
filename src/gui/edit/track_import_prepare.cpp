@@ -6,9 +6,13 @@
 
 #include <QCollator>
 #include <QStorageInfo>
+#include <QThread>
 #include <QStringList>
 
 #include <algorithm>
+#include <atomic>
+#include <exception>
+#include <mutex>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -344,18 +348,59 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
             }
         }
         // prepared.staged.staged names their source files, in the same
-        // order.
-        for (std::size_t i = 0; i < imports.size() && i < prepared.staged.staged.size(); ++i) {
-            cancel.throwIfCancelled();
-            const std::string &source = prepared.staged.staged[i];
-            report(ImportProgress::Step::Analysis, i, imports.size(), nameOf(source));
-            if (auto analysis = request.analyser(source, cancel)) {
-                ++prepared.analysed;
-                prepared.withGrid += analysis->beats.empty() ? 0 : 1;
-                if (analysis->followsTempo && !analysis->beats.empty()) {
-                    prepared.followedGrids.push_back(nameOf(source));
+        // order. Several at once, each worker a thread of its own (the
+        // decoder runs an event loop in the thread that reads it).
+        const std::size_t count = std::min(imports.size(), prepared.staged.staged.size());
+        std::vector<std::shared_ptr<const ImportAnalysis>> made(count);
+        std::atomic<std::size_t> next{0};
+        std::atomic<std::size_t> done{0};
+        std::mutex reporting;
+        std::exception_ptr thrown;
+        const auto work = [&]() {
+            for (;;) {
+                const std::size_t index = next.fetch_add(1);
+                if (index >= count || cancel.cancelled()) {
+                    return;
                 }
-                imports[i]->setAnalysis(std::move(analysis));
+                try {
+                    made[index] = request.analyser(prepared.staged.staged[index], cancel);
+                } catch (...) {
+                    const std::lock_guard<std::mutex> lock(reporting);
+                    if (!thrown) {
+                        thrown = std::current_exception();
+                    }
+                    return;
+                }
+                const std::lock_guard<std::mutex> lock(reporting);
+                report(ImportProgress::Step::Analysis, done.fetch_add(1) + 1, count, nameOf(prepared.staged.staged[index]));
+            }
+        };
+        report(ImportProgress::Step::Analysis, 0, count, {});
+        const int jobs = static_cast<int>(std::min<std::size_t>(std::max(1, request.analysisJobs), count));
+        if (jobs <= 1) {
+            work();
+        } else {
+            std::vector<std::unique_ptr<QThread>> workers;
+            for (int w = 0; w < jobs; ++w) {
+                workers.emplace_back(QThread::create(work));
+                workers.back()->start();
+            }
+            for (const auto &worker : workers) {
+                worker->wait();
+            }
+        }
+        if (thrown) {
+            std::rethrow_exception(thrown);
+        }
+        cancel.throwIfCancelled();
+        for (std::size_t i = 0; i < count; ++i) {
+            if (made[i]) {
+                ++prepared.analysed;
+                prepared.withGrid += made[i]->beats.empty() ? 0 : 1;
+                if (made[i]->followsTempo && !made[i]->beats.empty()) {
+                    prepared.followedGrids.push_back(nameOf(prepared.staged.staged[i]));
+                }
+                imports[i]->setAnalysis(std::move(made[i]));
             }
         }
     }

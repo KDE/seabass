@@ -40,9 +40,13 @@ struct ImportRequest
     // covers.
     CoverReader coverReader;
     // Analyses each file that is staged (ImportTrackChange::setAnalysis),
-    // one after the other, once everything else is settled. Unset: the
+    // once everything else is settled. Unset: the
     // tracks go in unanalysed.
     ImportAnalyser analyser;
+    // How many files are analysed at once. Each holds its whole audio in
+    // memory while it is (about 10 MB a minute of music, and as much
+    // again in the analyser).
+    int analysisJobs = 2;
 };
 
 struct PreparedImport
@@ -91,8 +95,8 @@ struct ImportProgress
     std::string file;
 };
 
-// Called on the thread that prepares, often: a sink for another thread
-// passes it on itself.
+// Called on the thread that prepares, often, and never from two threads
+// at once: a sink for another thread passes it on itself.
 using ImportProgressSink = std::function<void(const ImportProgress &)>;
 
 // From what was dropped to the changes of one save: the offered folders

@@ -3963,6 +3963,20 @@ if(TARGET seabass_edit)
         if(TARGET seabass_audio_qt)
             target_link_libraries(track_import_controller_test PRIVATE seabass_audio_qt)
         endif()
+        # The import without the app, for running many files through it
+        # (tools/track_import_tool.cpp says how).
+        if(TARGET seabass_audio_qt)
+            add_executable(track_import_tool
+                tools/track_import_tool.cpp
+                src/gui/track_import_analysis.cpp
+                src/gui/track_import_cover.cpp
+                src/gui/edit/track_import_prepare.cpp
+                src/gui/stick_catalogs.cpp
+            )
+            target_include_directories(track_import_tool PRIVATE src)
+            target_link_libraries(track_import_tool PRIVATE seabass_edit seabass_taglib seabass_audio_qt
+                Qt6::Core Qt6::Gui)
+        endif()
         add_test(NAME track_import_controller_test COMMAND track_import_controller_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
         set_tests_properties(track_import_controller_test PROPERTIES LABELS "integration"
