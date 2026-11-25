@@ -276,7 +276,10 @@ std::string importDestination(const Track &file)
 
 std::set<std::string> importableExtensions(const std::set<std::string> &formats)
 {
-    static const std::set<std::string> Pioneer = {".mp3", ".m4a", ".mp4", ".wav", ".aif", ".aiff", ".flac"};
+    // What the Pioneer row writers have a file type number for: an .mp4
+    // has none anyone measured, so a stick with a Pioneer library takes
+    // none (PdbRowWriter and OneLibraryCueWriter refuse it).
+    static const std::set<std::string> Pioneer = {".mp3", ".m4a", ".wav", ".aif", ".aiff", ".flac"};
     static const std::set<std::string> Engine = {".mp3", ".m4a", ".mp4", ".wav", ".aif", ".aiff", ".flac", ".ogg"};
 
     std::optional<std::set<std::string>> accepted;

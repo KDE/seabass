@@ -130,6 +130,13 @@ int main()
         engineOnly.acceptedExtensions = importableExtensions({"engine"});
         const auto ogg = planTrackImport({offer("/home/dj/in/set.OGG", 1000)}, engineOnly, tools(), {});
         assert(ogg.entries[0].verdict == ImportVerdict::Import);
+        // An .mp4 only where no Pioneer library has to list it: its
+        // writers have no file type number for one.
+        assert(importableExtensions({"engine"}).count(".mp4") == 1);
+        assert(importableExtensions({"rekordbox"}).count(".mp4") == 0);
+        assert(importableExtensions({"onelibrary", "engine"}).count(".mp4") == 0);
+        assert((importableExtensions({"rekordbox", "onelibrary", "engine"})
+                == std::set<std::string>{".mp3", ".m4a", ".wav", ".aif", ".aiff", ".flac"}));
         assert(importableExtensions({}).empty());
         assert(importableExtensions({"engine", "traktor"}).empty());
         std::cout << "case 2 (unsupported and unreadable files are refused first) OK\n";
