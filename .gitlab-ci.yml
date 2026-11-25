@@ -1261,6 +1261,18 @@ linux:package:
     # (the macOS bundle lives there too); the CLI stays at the top.
     - cp build-rel/src/gui/seabass build-rel/seabass-cli "stage/$name/bin/"
     - cp README.md LICENSES/* "stage/$name/" 2>/dev/null || true
+    # TagLib 2 goes in the package: Ubuntu 24.04 (and KDE neon on it) has
+    # no TagLib 2 at all, only 1.x, and the binary would not start there
+    # ("libtag.so.2: cannot open shared object file"). Everything else it
+    # links is in 24.04 already, at the versions this build asks for. The
+    # binaries look in ../lib first; the build tree's run path (empty
+    # entries, which mean the current directory) is replaced, not kept.
+    - apt-get install -y -qq --no-install-recommends patchelf
+    - mkdir -p "stage/$name/lib"
+    - cp -P /usr/lib/x86_64-linux-gnu/libtag.so.2* "stage/$name/lib/"
+    - cp /usr/share/doc/libtag2/copyright "stage/$name/lib/libtag2-copyright.txt"
+    - patchelf --set-rpath '$ORIGIN/../lib' "stage/$name/bin/seabass" "stage/$name/bin/seabass-cli"
+    - patchelf --print-rpath "stage/$name/bin/seabass"
     - |
       # The line ends below are \\ because this heredoc is unquoted (the
       # $ variables must expand), and a single backslash before a newline
@@ -1270,8 +1282,9 @@ linux:package:
 
       Run bin/seabass. This package carries Seabass only: it uses the Qt 6
       your distribution ships (Qt 6.5 or newer, with QtQuick, QtMultimedia
-      and QtSvg), plus sqlite3, zlib, SQLCipher 4 and TagLib 2. It was built
-      on Ubuntu 26.04, where this is everything it needs:
+      and QtSvg), plus sqlite3, zlib and SQLCipher 4; TagLib 2 is in lib/
+      (its licence beside it). It was built on Ubuntu 26.04, where this is
+      everything it needs, and runs on Ubuntu 24.04 with the same packages:
 
         sudo apt install libqt6gui6 libqt6qml6 libqt6quick6 libqt6svg6 \\
              libqt6multimedia6 libqt6network6 libqt6concurrent6 \\
@@ -1281,7 +1294,7 @@ linux:package:
              qml6-module-qtquick-dialogs qml6-module-qtquick-window \\
              qml6-module-qtqml-workerscript qml6-module-qtmultimedia \\
              qml6-module-qtquick-shapes qml6-module-qtcore \\
-             libsqlcipher2 libtag2 libsqlite3-0 zlib1g
+             libsqlcipher2 libsqlite3-0 zlib1g
 
       Without SQLCipher it still starts and reads export.pdb and Engine
       libraries, but cannot open rekordbox's OneLibrary (exportLibrary.db).
