@@ -8,6 +8,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTextBoundaryFinder>
@@ -26,6 +27,7 @@
 #include "gui/qt_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/sleep_inhibitor.hpp"
+#include "infrastructure/audio/recording_temp_names.hpp"
 #include "infrastructure/local/local_keep_recording_files.hpp"
 
 #if defined(SEABASS_HAVE_RECORDING_ENCODER)
@@ -102,25 +104,26 @@ private:
 };
 
 // How many bytes the longest temporary name the encoder and the tag
-// writer give beside a FLAC adds to its name: asked of the function that
-// makes those names, with each of their suffixes.
+// writer give beside a FLAC adds to its name: computed from the suffix
+// constants (recording_temp_names.hpp), which uniqueTempBeside() uses;
+// recording_tag_writer_test proves the two agree.
 std::size_t tempNameExtraBytes()
 {
-#if defined(SEABASS_HAVE_RECORDING_ENCODER)
-    static const std::size_t extra = []() {
-        namespace audio = infrastructure::audio;
-        const std::string target = "x";
-        std::size_t most = 0;
-        for (const char *suffix : {audio::RecordingEncodeTempSuffix, audio::RecordingTagTempSuffix}) {
-            const std::string temp = pathToUtf8(audio::uniqueTempBeside(pathFromUtf8(target), suffix).filename());
-            most = std::max(most, temp.size() - target.size());
-        }
-        return most;
-    }();
-    return extra;
-#else
-    return 0;  // nothing is kept: available() is false
-#endif
+    return infrastructure::audio::recordingTempNameExtraBytes();
+}
+
+// The WAV's identity in this session: its path, size and modification
+// time, so that another recording that appears under the same path later
+// (a stick plugged in again, another stick at the same mount point) is not
+// taken for the one that was kept.
+QString wavKey(const QString &path)
+{
+    const QFileInfo info(path);
+    if (!info.exists()) {
+        return path + QStringLiteral("|missing");
+    }
+    return path + QLatin1Char('|') + QString::number(info.size()) + QLatin1Char('|')
+        + QString::number(info.lastModified().toMSecsSinceEpoch());
 }
 
 // The longest start of a UTF-8 text, of at most `maxBytes`, that ends
@@ -258,7 +261,34 @@ void KeepRecordingController::setStickRoot(const QString &root)
         return;
     }
     m_stickRoot = root;
+    clearSessionRecords();
     emit stickRootChanged();
+}
+
+void KeepRecordingController::clearSessionRecords()
+{
+    // What the session knows of recordings is of the stick it was on; the
+    // jobs that run or wait keep theirs, and record their end as usual.
+    QSet<QString> inHand;
+    if (m_running) {
+        inHand.insert(m_running->wavKey);
+    }
+    for (const Job &job : m_queue) {
+        inHand.insert(job.wavKey);
+    }
+    bool changed = !m_keptCopies.isEmpty();
+    m_keptCopies.clear();
+    for (auto it = m_outcomes.begin(); it != m_outcomes.end();) {
+        if (inHand.contains(it.key())) {
+            ++it;
+        } else {
+            it = m_outcomes.erase(it);
+            changed = true;
+        }
+    }
+    if (changed) {
+        bumpRevision();
+    }
 }
 
 bool KeepRecordingController::available() const
@@ -586,13 +616,15 @@ bool KeepRecordingController::keep(const QVariantMap &form)
     job.request.coverPicturePath = m_coverPath.isEmpty() ? std::string() : pathToUtf8(pathFromQString(m_coverPath));
     job.request.stickRoot = pathToUtf8(pathFromQString(m_stickRoot));
     job.request.tempNameExtraBytes = tempNameExtraBytes();
+    job.request.keepUnfinished = form.value("keepUnfinished").toBool();
+    job.wavKey = wavKey(wavPath);
 
     QSettings settings = openSeabassSettings();
     settings.setValue(QLatin1String(KeepRecordingArtistKey), artist);
     settings.setValue(QLatin1String(KeepRecordingGenreKey), genre);
     settings.setValue(QLatin1String(KeepRecordingFolderKey), QDir::toNativeSeparators(folder));
 
-    m_outcomes.insert(wavPath, QVariantMap{
+    m_outcomes.insert(job.wavKey, QVariantMap{
                                    {"state", QStringLiteral("queued")},
                                    {"recording", job.recording},
                                    {"fileName", QString::fromStdString(job.request.fileName)},
@@ -618,9 +650,9 @@ void KeepRecordingController::startNext()
     m_cancel = application::CancellationToken();
     m_progress = 0.0;
     m_progressStep = QStringLiteral("space");
-    QVariantMap outcome = m_outcomes.value(m_running->wavPath);
+    QVariantMap outcome = m_outcomes.value(m_running->wavKey);
     outcome.insert("state", QStringLiteral("running"));
-    m_outcomes.insert(m_running->wavPath, outcome);
+    m_outcomes.insert(m_running->wavKey, outcome);
 
     auto relay = makeMainThreadShared<KeepRecordingProgressRelay>();
     connect(relay.get(), &KeepRecordingProgressRelay::progressed, this,
@@ -684,7 +716,7 @@ void KeepRecordingController::cancel()
                 {"leftBehind", QString()},
                 {"message", QString()},
             };
-            m_outcomes.insert(job.wavPath, outcome);
+            m_outcomes.insert(job.wavKey, outcome);
             m_finishedJobs.append(outcome);
         }
         m_queue.clear();
@@ -716,19 +748,33 @@ void KeepRecordingController::onJobFinished()
 
     const QString folder = QDir::toNativeSeparators(QString::fromStdString(job.request.folder));
     const bool kept = result.status == KeepRecordingResult::Status::Kept;
+    QStringList notes;
+    for (const std::string &note : result.notes) {
+        notes << QString::fromStdString(note);
+    }
+    const QString flacPath = kept ? QDir::toNativeSeparators(QString::fromStdString(result.flacPath)) : QString();
     const QVariantMap outcome{
         {"state", stateKey(result.status)},
         {"wavPath", job.wavPath},
         {"recording", job.recording},
         {"fileName", QString::fromStdString(job.request.fileName)},
         {"folder", folder},
-        {"flacPath", kept ? QDir::toNativeSeparators(QString::fromStdString(result.flacPath)) : QString()},
+        {"flacPath", flacPath},
         {"leftBehind", kept ? QString() : QDir::toNativeSeparators(QString::fromStdString(result.leftBehind))},
         {"message", QString::fromStdString(result.message)},
+        {"notes", notes},
+        {"unfinished", result.unfinished},
+        {"keptSeconds", result.keptSeconds},
     };
-    m_outcomes.insert(job.wavPath, outcome);
+    m_outcomes.insert(job.wavKey, outcome);
     if (kept) {
-        m_keptCopies.insert(job.wavPath, outcome);
+        // The FLAC as it was when the job ended: the delete confirmation
+        // counts it as kept only while it is still there like this.
+        const QFileInfo flac(QString::fromStdString(result.flacPath));
+        QVariantMap copy = outcome;
+        copy.insert("flacSize", flac.exists() ? flac.size() : qint64(-1));
+        copy.insert("flacModified", flac.exists() ? flac.lastModified().toMSecsSinceEpoch() : qint64(-1));
+        m_keptCopies.insert(job.wavKey, copy);
     }
     m_finishedJobs.append(outcome);
     m_progressStep.clear();
@@ -746,31 +792,40 @@ void KeepRecordingController::onJobFinished()
 
 QVariantMap KeepRecordingController::outcomeFor(const QString &wavPath) const
 {
-    return m_outcomes.value(localPath(wavPath));
+    return m_outcomes.value(wavKey(localPath(wavPath)));
 }
 
 QVariantMap KeepRecordingController::keepNotesFor(const QStringList &wavPaths) const
 {
     QStringList notKept;
     QVariantList kept;
+    QVariantList keptGone;
     for (const QString &given : wavPaths) {
         const QString path = localPath(given);
-        if (m_keptCopies.contains(path)) {
-            const QVariantMap copy = m_keptCopies.value(path);
-            kept.append(QVariantMap{
+        const QString key = wavKey(path);
+        if (m_keptCopies.contains(key)) {
+            const QVariantMap copy = m_keptCopies.value(key);
+            const QVariantMap named{
                 {"recording", copy.value("recording")},
                 {"fileName", copy.value("fileName")},
                 {"folder", copy.value("folder")},
-            });
+            };
+            // Asked of the disk now: a FLAC moved, deleted, changed, or on
+            // a drive that is gone is not a kept copy any more.
+            const QFileInfo flac(copy.value("flacPath").toString());
+            const bool stillThere = flac.exists() && flac.isFile()
+                && flac.size() == copy.value("flacSize").toLongLong()
+                && flac.lastModified().toMSecsSinceEpoch() == copy.value("flacModified").toLongLong();
+            (stillThere ? kept : keptGone).append(named);
             continue;
         }
-        const QVariantMap outcome = m_outcomes.value(path);
+        const QVariantMap outcome = m_outcomes.value(key);
         if (!outcome.isEmpty()) {
             const QString name = outcome.value("recording").toString();
             notKept.append(name.isEmpty() ? QFileInfo(path).fileName() : name);
         }
     }
-    return {{"notKept", notKept}, {"kept", kept}};
+    return {{"notKept", notKept}, {"kept", kept}, {"keptGone", keptGone}};
 }
 
 void KeepRecordingController::dismissFinished()

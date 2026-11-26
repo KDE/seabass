@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "application/ports/cancellation_token.hpp"
 
@@ -25,6 +26,11 @@ struct RecordingEncodeOptions
     // thread that called encode(). The encoding and the check of what was
     // written are both in it.
     std::function<void(double)> progress;
+    // The person chose to keep the audio of a recording the player did
+    // not finish (its header unfinished): every whole frame the file holds
+    // after the data chunk's header is encoded, and checked against
+    // exactly those. Without it such a recording is refused (unfinished).
+    bool keepUnfinished = false;
 };
 
 // What RecordingEncoder::encode did. Exactly one of the three is the
@@ -46,6 +52,16 @@ struct RecordingEncodeResult
     // one. Equal when encoded.
     std::uint64_t framesInWav = 0;
     std::uint64_t framesVerified = 0;
+    // The player did not finish the recording: its header is unfinished.
+    // When encoded, framesInWav is the whole frames the file held and
+    // partialFrameBytesDropped the bytes of a last, partial frame that
+    // were left out; when refused for it, keepUnfinished was not set, and
+    // framesInWav is what the file holds.
+    bool unfinished = false;
+    std::uint64_t partialFrameBytesDropped = 0;
+    // Things the person should know of an encoding that succeeded, in
+    // words (a second name of the FLAC that could not be removed).
+    std::vector<std::string> notes;
 };
 
 // Encodes a recording, a PCM WAV as a DJ player writes it, to a lossless

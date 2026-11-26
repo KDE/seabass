@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "application/ports/cancellation_token.hpp"
 #include "application/ports/cover_art_preparer.hpp"
@@ -37,7 +38,8 @@ namespace seabass::application
 // or a FLAC that another job in this process has in hand is refused
 // before it touches anything.
 //
-// The target folder is never on the stick the recording is on (compared
+// The recording must be on the stick named (stickRoot), and the target
+// folder is never on the stick the recording is on (compared
 // as files: links followed, letters as the filesystem compares them, the
 // nearest folder that is there for one still to be made). The recordings
 // page lists every audio file in the stick's recording folders, so a FLAC
@@ -76,7 +78,18 @@ public:
     virtual std::string makeFolder(const std::string &folder) = 0;
     // Removes one file this job made.
     virtual std::string removeFile(const std::string &path) = 0;
+    // Removes Seabass's own leftover temporary files in `folder` (not
+    // below it, links never followed): regular files named as the
+    // encoder and the tag writer name theirs, older than a day, whose
+    // FLAC's name `inHand` does not claim for a job of this process.
+    // Answers a sentence per file removed, or found and not removable.
+    virtual std::vector<std::string>
+    sweepLeftovers(const std::string &folder, const std::function<bool(const std::string &flacName)> &inHand) = 0;
 };
+
+// How old a leftover temporary file must be before a keep job removes it:
+// a younger one may be another Seabass's, writing right now.
+inline constexpr int KeepRecordingLeftoverAgeHours = 24;
 
 // What is kept, as the form asked for it. Text is UTF-8.
 struct KeepRecordingRequest
@@ -96,6 +109,10 @@ struct KeepRecordingRequest
     // writer give beside the FLAC adds to its name: the name and that
     // must fit the filesystem's longest name.
     std::size_t tempNameExtraBytes = 0;
+    // The person chose to keep the audio of a recording the player did
+    // not finish (RecordingEncodeOptions::keepUnfinished). Without it such
+    // a recording is refused.
+    bool keepUnfinished = false;
 };
 
 enum class KeepRecordingStep
@@ -136,6 +153,14 @@ struct KeepRecordingResult
     // the job's own unfinished FLAC). Empty when nothing is there; the
     // message says so when that could not be told.
     std::string leftBehind;
+    // Things to know about the job, kept or not, a sentence each: the
+    // recording was not finished by the player and how much of it was
+    // kept, a leftover temporary file of an earlier job that was removed.
+    std::vector<std::string> notes;
+    // The player did not finish the recording; when kept, the FLAC holds
+    // keptSeconds of audio, every whole frame the file held.
+    bool unfinished = false;
+    double keptSeconds = 0.0;
 };
 
 // The longest name a filesystem gives a file, in bytes: ext4, btrfs,

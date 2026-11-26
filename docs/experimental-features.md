@@ -161,11 +161,18 @@ from day one.
   the QImage cover preparer and the TagLib tag writer. Nothing under the
   target's name is ever replaced; a failure or a cancel leaves no file in
   the folder; the recording on the stick is only read and never deleted
-  here. Shown only with Experimental on. Verified with synthetic WAVs
+  here. A recording the player did not finish (switched off or the stick
+  pulled while it recorded, so its WAV header was never completed) is
+  marked on its row and kept only when "Keep the audio the file holds" is
+  ticked: every whole frame the file holds, the WAV never repaired.
+  Leftover temporary files (`*.seabass-encode-tmp`, `*.seabass-tag-tmp`)
+  older than a day are swept from the target folder at the start of a
+  job. Shown only with Experimental on. Verified with synthetic WAVs
   (`keep_recording_test`, `keep_recording_controller_test`,
-  `recording_encoder_test`, `recording_tag_writer_test`); no real
-  recording has been kept yet. Promote once Sebastian has kept real
-  recordings of each kind (Engine OS 16 and 24 bit, a Pioneer REC file)
+  `recording_encoder_test`, `recording_tag_writer_test`,
+  `local_keep_recording_files_test`); no real recording has been kept
+  yet. Promote once Sebastian has kept real recordings of each kind
+  (Engine OS 16 and 24 bit, an unfinished one, a Pioneer REC file)
   and a Bluesound player has shown the cover. Still owed: the FLAC put
   onto the stick into an "Own Recordings" playlist, Free Up Space naming a
   recording that has been kept, and Windows and macOS.

@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <mutex>
 #include <system_error>
 
 #include "infrastructure/long_paths.hpp"
@@ -22,6 +23,7 @@
 #else
 #include <cstdio>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #if defined(__linux__)
 #include <sys/syscall.h>
@@ -36,15 +38,28 @@ namespace
 
 namespace fs = std::filesystem;
 using Status = NoReplaceRename::Status;
+using Way = NoReplaceRename::Way;
 
 std::atomic<NoReplaceRenameWays> g_ways{NoReplaceRenameWays::All};
 
-NoReplaceRename answer(Status status, std::string error = {}, bool checked = false)
+std::mutex &callsMutex()
+{
+    static std::mutex m;
+    return m;
+}
+
+NoReplaceRenameCalls &callsForTests()
+{
+    static NoReplaceRenameCalls calls;
+    return calls;
+}
+
+NoReplaceRename answer(Status status, Way way, std::string error = {})
 {
     NoReplaceRename result;
     result.status = status;
+    result.way = way;
     result.error = std::move(error);
-    result.checkedThenRenamed = checked;
     return result;
 }
 
@@ -56,16 +71,16 @@ NoReplaceRename checkThenRename(const fs::path &from, const fs::path &to)
     const fs::file_status status = fs::symlink_status(to, ec);
     if (status.type() != fs::file_type::not_found) {
         if (ec || status.type() == fs::file_type::none) {
-            return answer(Status::Failed, "the place of the new name could not be looked at", true);
+            return answer(Status::Failed, Way::CheckThenRename, "the place of the new name could not be looked at");
         }
-        return answer(Status::TargetExists, {}, true);
+        return answer(Status::TargetExists, Way::CheckThenRename);
     }
     ec.clear();
     fs::rename(from, to, ec);
     if (ec) {
-        return answer(Status::Failed, ec.message(), true);
+        return answer(Status::Failed, Way::CheckThenRename, ec.message());
     }
-    return answer(Status::Renamed, {}, true);
+    return answer(Status::Renamed, Way::CheckThenRename);
 }
 
 }  // namespace
@@ -73,6 +88,12 @@ NoReplaceRename checkThenRename(const fs::path &from, const fs::path &to)
 void setNoReplaceRenameWaysForTests(NoReplaceRenameWays ways)
 {
     g_ways = ways;
+}
+
+void setNoReplaceRenameCallsForTests(NoReplaceRenameCalls calls)
+{
+    const std::lock_guard<std::mutex> lock(callsMutex());
+    callsForTests() = std::move(calls);
 }
 
 #if defined(_WIN32)
@@ -86,13 +107,13 @@ NoReplaceRename renameNoReplace(const fs::path &fromPath, const fs::path &toPath
     }
     // Without MOVEFILE_REPLACE_EXISTING the move fails when `to` exists.
     if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) {
-        return answer(Status::Renamed);
+        return answer(Status::Renamed, Way::Atomic);
     }
     const DWORD error = GetLastError();
     if (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS) {
-        return answer(Status::TargetExists);
+        return answer(Status::TargetExists, Way::Atomic);
     }
-    return answer(Status::Failed, std::system_category().message(static_cast<int>(error)));
+    return answer(Status::Failed, Way::Atomic, std::system_category().message(static_cast<int>(error)));
 }
 
 #else
@@ -101,67 +122,89 @@ namespace
 {
 
 // Whether an error of the atomic rename or of link() means the filesystem
-// or the kernel does not offer it, rather than that it failed.
+// or the kernel does not offer it, rather than that it failed. EPERM is
+// among them: a seccomp profile (a container, a Flatpak sandbox) answers a
+// call it does not know with EPERM. Where EPERM is a real refusal, the
+// fallback is refused as well and says so.
 bool notSupported(int error)
 {
     return error == EINVAL || error == ENOSYS || error == ENOTSUP || error == EOPNOTSUPP || error == EPERM;
 }
 
-// -1 with errno set when the call failed; -2 when this platform or build
-// has no such call.
-int atomicRename(const fs::path &from, const fs::path &to)
+// -1 with errno set when the call failed, or when this platform or build
+// has no such call (errno ENOSYS).
+int atomicRename(const char *from, const char *to)
 {
 #if defined(__linux__) && defined(SYS_renameat2)
     constexpr unsigned int NoReplace = 1U;  // RENAME_NOREPLACE
-    return static_cast<int>(::syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), NoReplace));
+    return static_cast<int>(::syscall(SYS_renameat2, AT_FDCWD, from, AT_FDCWD, to, NoReplace));
 #elif defined(__APPLE__)
-    return ::renamex_np(from.c_str(), to.c_str(), RENAME_EXCL);
+    return ::renamex_np(from, to, RENAME_EXCL);
 #else
     (void)from;
     (void)to;
-    return -2;
+    errno = ENOSYS;
+    return -1;
 #endif
+}
+
+// Whether `a` and `b` are one file: the same device and inode, links not
+// followed.
+bool sameInode(const char *a, const char *b)
+{
+    struct stat sa{};
+    struct stat sb{};
+    return ::lstat(a, &sa) == 0 && ::lstat(b, &sb) == 0 && sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 }
 
 }  // namespace
 
 NoReplaceRename renameNoReplace(const fs::path &from, const fs::path &to)
 {
+    NoReplaceRenameCalls calls;
+    {
+        const std::lock_guard<std::mutex> lock(callsMutex());
+        calls = callsForTests();
+    }
+    const char *f = from.c_str();
+    const char *t = to.c_str();
     const NoReplaceRenameWays ways = g_ways.load();
     if (ways == NoReplaceRenameWays::All) {
-        const int renamed = atomicRename(from, to);
-        if (renamed == 0) {
-            return answer(Status::Renamed);
+        if ((calls.atomicRename ? calls.atomicRename(f, t) : atomicRename(f, t)) == 0) {
+            return answer(Status::Renamed, Way::Atomic);
         }
-        if (renamed == -1) {
-            const int error = errno;
-            if (error == EEXIST) {
-                return answer(Status::TargetExists);
-            }
-            // EPERM from rename itself is a real refusal (a sticky folder),
-            // not a missing flag.
-            if (error == EPERM || !notSupported(error)) {
-                return answer(Status::Failed, std::strerror(error));
-            }
+        const int error = errno;
+        if (error == EEXIST) {
+            return answer(Status::TargetExists, Way::Atomic);
+        }
+        if (!notSupported(error)) {
+            return answer(Status::Failed, Way::Atomic, std::strerror(error));
         }
     }
     if (ways != NoReplaceRenameWays::CheckThenRenameOnly) {
         // link() refuses an existing `to` with EEXIST, atomically.
-        if (::link(from.c_str(), to.c_str()) == 0) {
-            if (::unlink(from.c_str()) != 0) {
+        bool linked = (calls.link ? calls.link(f, t) : ::link(f, t)) == 0;
+        const int linkError = linked ? 0 : errno;
+        if (!linked && linkError == EEXIST && sameInode(f, t)) {
+            // `to` is `from` itself: the link was made, and the answer to
+            // it was lost and the call sent again (NFS).
+            linked = true;
+        }
+        if (linked) {
+            if ((calls.unlink ? calls.unlink(f) : ::unlink(f)) != 0) {
                 // The new name holds the file, which is what was asked
                 // for; the old name is left as a second name for it.
-                const int error = errno;
-                return answer(Status::Renamed, std::string("the old name stays: ") + std::strerror(error));
+                NoReplaceRename result = answer(Status::Renamed, Way::HardLink, std::strerror(errno));
+                result.oldNameRemains = true;
+                return result;
             }
-            return answer(Status::Renamed);
+            return answer(Status::Renamed, Way::HardLink);
         }
-        const int error = errno;
-        if (error == EEXIST) {
-            return answer(Status::TargetExists);
+        if (linkError == EEXIST) {
+            return answer(Status::TargetExists, Way::HardLink);
         }
-        if (!notSupported(error)) {
-            return answer(Status::Failed, std::strerror(error));
+        if (!notSupported(linkError)) {
+            return answer(Status::Failed, Way::HardLink, std::strerror(linkError));
         }
     }
     return checkThenRename(from, to);

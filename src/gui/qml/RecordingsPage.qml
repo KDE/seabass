@@ -113,7 +113,7 @@ Page {
 
     // Opens the form for a row of the list.
     function openKeepForm(row) {
-        keepDialog.openFor(row.path, row.fileName, row.modified);
+        keepDialog.openFor(row.path, row.fileName, row.modified, row.unfinished, row.heldSeconds);
     }
 
     // What the strip says, for the job in hand or the ones that ended.
@@ -196,10 +196,11 @@ Page {
         // What Keep made of the ticked recordings in this session, read
         // as the dialog opens: {notKept: [names], kept: [{recording,
         // fileName, folder}]}.
-        property var keepNotes: ({notKept: [], kept: []})
+        property var keepNotes: ({notKept: [], kept: [], keptGone: []})
         function openWithNotes() {
             confirmDeleteDialog.keepNotes = root.keepController !== null
-                ? root.keepController.keepNotesFor(root.controller.selectedPaths()) : ({notKept: [], kept: []});
+                ? root.keepController.keepNotesFor(root.controller.selectedPaths())
+                : ({notKept: [], kept: [], keptGone: []});
             confirmDeleteDialog.open();
         }
         onAccepted: {
@@ -217,6 +218,18 @@ Page {
             text: confirmDeleteDialog.keepNotes.notKept.length === 0 ? ""
                 : qsTr("Not kept on this computer, though you asked for it: %1.")
                     .arg(confirmDeleteDialog.keepNotes.notKept.join(", "))
+        }
+        Label {
+            objectName: "keptGoneLabel"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            wrapMode: Text.WordWrap
+            color: Theme.danger
+            font.bold: true
+            text: (confirmDeleteDialog.keepNotes.keptGone ?? []).length === 0 ? ""
+                : qsTr("Kept earlier, but that file is no longer there as it was kept: %1.")
+                    .arg(confirmDeleteDialog.keepNotes.keptGone
+                        .map(k => qsTr("%1 as %2 in %3").arg(k.recording).arg(k.fileName).arg(k.folder)).join("; "))
         }
         Label {
             objectName: "keptNotesLabel"
@@ -243,6 +256,10 @@ Page {
 
         property string wavPath: ""
         property string recording: ""
+        // The player did not finish the recording: the audio the file
+        // holds is kept only when the person ticks the box for it.
+        property bool unfinished: false
+        property double heldSeconds: -1
         // Shown once the person has tried to start, or has typed.
         property bool tried: false
         readonly property var keep: root.keepController
@@ -260,11 +277,15 @@ Page {
             .concat([yearProblem, folderProblem, targetProblem, coverProblem])
             .filter(p => p.length > 0)
         readonly property bool ready: problems.length === 0 && keep !== null && keep.coverPreparing !== true
+            && (!keepDialog.unfinished || keepUnfinishedBox.checked)
 
-        function openFor(path, name, recorded) {
+        function openFor(path, name, recorded, unfinished, heldSeconds) {
             const suggested = root.keepController.suggestionsFor(name, recorded);
             keepDialog.wavPath = path;
             keepDialog.recording = name;
+            keepDialog.unfinished = unfinished === true;
+            keepDialog.heldSeconds = heldSeconds ?? -1;
+            keepUnfinishedBox.checked = false;
             keepDialog.tried = false;
             artistField.text = suggested.artist;
             titleField.text = suggested.title;
@@ -289,6 +310,7 @@ Page {
                 genre: genreField.text,
                 year: yearField.text,
                 folder: folderField.text,
+                keepUnfinished: keepDialog.unfinished && keepUnfinishedBox.checked,
             });
             if (taken) {
                 keepDialog.close();
@@ -320,6 +342,29 @@ Page {
             }
         }
         ExperimentalBadge {}
+
+        // A recording the player did not finish: said first, and kept only
+        // with the box ticked.
+        ColumnLayout {
+            objectName: "keepUnfinishedNotice"
+            Layout.fillWidth: true
+            visible: keepDialog.unfinished
+            spacing: Theme.tightSpacing
+            Label {
+                objectName: "keepUnfinishedLabel"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.danger
+                text: qsTr("The player did not finish this recording: it was switched off or the stick was pulled "
+                    + "while it recorded. The file holds %1 of audio. The recording on the stick is not changed.")
+                    .arg(root.duration(keepDialog.heldSeconds))
+            }
+            SeabassCheckBox {
+                id: keepUnfinishedBox
+                objectName: "keepUnfinishedBox"
+                text: qsTr("Keep the audio the file holds")
+            }
+        }
 
         GridLayout {
             Layout.fillWidth: true
@@ -622,6 +667,8 @@ Page {
                 required property var modified
                 required property double durationSeconds
                 required property bool included
+                required property bool unfinished
+                required property double heldSeconds
 
                 readonly property var kept: root.keepController !== null
                     ? (root.keepRevision, root.keepController.outcomeFor(row.path)) : ({})
@@ -644,6 +691,10 @@ Page {
                     const parts = [row.folderName + " (" + root.sourceLabel(row.source) + ")"];
                     if (row.modified && !isNaN(row.modified.getTime())) {
                         parts.push(row.modified.toLocaleString(Qt.locale(), Locale.ShortFormat));
+                    }
+                    if (row.unfinished) {
+                        parts.push(qsTr("not finished by the player, %1 of audio").arg(root.duration(row.heldSeconds)));
+                        return parts.join(" · ");
                     }
                     const length = root.duration(row.durationSeconds);
                     if (length.length > 0) {
@@ -822,7 +873,10 @@ Page {
                 }
                 return lines.concat(root.keepEndedLines());
             }
-            note: finishedShown ? (state === "kept" ? "" : (last.message ?? ""))
+            // A kept job's notes (an unfinished recording and how much was
+            // kept, leftovers swept); a failure's message before them.
+            note: finishedShown ? [state === "kept" ? "" : (last.message ?? "")].concat(last.notes ?? [])
+                    .filter(line => line.length > 0).join("\n")
                 : qsTr("The recording on the stick is only read. Leaving this page stops the work.")
             actions: !finishedShown ? []
                 : state === "kept" ? [{key: "show", text: qsTr("Show in Folder")}, {key: "close", text: qsTr("Close")}]

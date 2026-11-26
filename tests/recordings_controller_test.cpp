@@ -385,8 +385,20 @@ int main(int argc, char **argv)
         assert(!keep.keep(second));
         assert(keep.errorMessage().contains(QStringLiteral("deleted")));
         assert(!keep.hasWork());
+        // Let go of while the delete runs: it still keeps nothing until the
+        // delete has ended.
+        wired.setKeepController(nullptr);
+        assert(!keep.keep(second));
+        assert(keep.errorMessage().contains(QStringLiteral("deleted")));
+        std::cout << "ok: a keep controller let go of during a delete still keeps nothing meanwhile\n";
         letDelete = true;
         assert(waitFor(finished, 1));
+        // Told when it ended: the refusal is another one now.
+        QVariantMap noFolder = second;
+        noFolder.insert("folder", QString());
+        assert(!keep.keep(noFolder));
+        assert(!keep.errorMessage().contains(QStringLiteral("deleted")));
+        std::cout << "ok: and is told when the delete has ended\n";
         RecordingsController::setDeleteHooksForTesting({});
         assert(!fs::exists(stick / "Sessions" / "K1.wav"));
         assert(fs::exists(keptFolder / "K1.flac"));
@@ -397,6 +409,39 @@ int main(int argc, char **argv)
         wired.setKeepController(nullptr);
         KeepRecordingController::setPartsForTesting({});
     }
+
+#if defined(SEABASS_HAVE_RECORDING_ENCODER)
+    // A recording the player did not finish: its row says so, with the
+    // seconds of audio the file holds.
+    {
+        for (int i = 0; i < 300 && controller.busy(); ++i) {
+            listed.wait(100);
+        }
+        std::string unfinished = wav(44100 * 2, 'u');
+        unfinished.replace(40, 4, std::string(4, '\xff'));
+        write(stick / "Sessions" / "U1.wav", unfinished);
+        write(stick / "Sessions" / "F1.wav", wav(44100, 'f'));
+        const int listedBefore = listed.count();
+        controller.load(QStringLiteral("STICK"), QString(), pathToQString(engine));
+        assert(waitFor(listed, listedBefore + 1));
+        auto *model = controller.recordings();
+        bool sawUnfinished = false;
+        bool sawFinished = false;
+        for (int i = 0; i < model->rowCount(); ++i) {
+            const QString name = model->data(model->index(i), seabass::gui::RecordingListModel::FileNameRole).toString();
+            const bool rowUnfinished = model->data(model->index(i), seabass::gui::RecordingListModel::UnfinishedRole).toBool();
+            const double held = model->data(model->index(i), seabass::gui::RecordingListModel::HeldSecondsRole).toDouble();
+            if (name == QStringLiteral("U1.wav")) {
+                sawUnfinished = rowUnfinished && held > 1.99 && held < 2.01;
+            } else if (name == QStringLiteral("F1.wav")) {
+                sawFinished = !rowUnfinished && held < 0;
+            }
+        }
+        assert(sawUnfinished);
+        assert(sawFinished);
+        std::cout << "ok: a recording the player did not finish is marked, with the audio the file holds\n";
+    }
+#endif
 
     std::cout << "recordings_controller_test: all passed\n";
     return 0;

@@ -11,6 +11,14 @@ namespace seabass::infrastructure
 
 // application::KeepRecordingFiles on this computer's file systems, through
 // std::filesystem, long paths prefixed. Paths are UTF-8.
+//
+// isWithin() compares as files, each folder up the way with the root, and
+// on Linux and macOS also by device: when the root is a mount point (the
+// stick's), anything on the same device is within it, so a bind mount of a
+// folder of the stick elsewhere is caught. Any error on the way is "cannot
+// tell" (nullopt), never "not within". On Windows the comparison is by
+// file (fs::equivalent compares the volume serial and the file index) and
+// no device rule is added.
 class LocalKeepRecordingFiles : public application::KeepRecordingFiles
 {
 public:
@@ -22,6 +30,8 @@ public:
     std::optional<std::uint64_t> maxNameBytes(const std::string &folder) override;
     std::string makeFolder(const std::string &folder) override;
     std::string removeFile(const std::string &path) override;
+    std::vector<std::string> sweepLeftovers(const std::string &folder,
+                                            const std::function<bool(const std::string &)> &inHand) override;
 };
 
 }  // namespace seabass::infrastructure

@@ -10,10 +10,14 @@
 #include <iterator>
 #include <system_error>
 
+#include <chrono>
+
 #if !defined(_WIN32)
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
+#include "infrastructure/audio/recording_temp_names.hpp"
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/long_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -59,6 +63,18 @@ std::optional<fs::path> nearestThere(const std::string &utf8)
     }
 }
 
+#if !defined(_WIN32)
+// The device `path` is on; nullopt when it cannot be told.
+std::optional<dev_t> deviceOf(const fs::path &path)
+{
+    struct stat info{};
+    if (::stat(path.c_str(), &info) != 0) {
+        return std::nullopt;
+    }
+    return info.st_dev;
+}
+#endif
+
 }  // namespace
 
 std::optional<bool> LocalKeepRecordingFiles::isWithin(const std::string &path, const std::string &folder)
@@ -77,13 +93,32 @@ std::optional<bool> LocalKeepRecordingFiles::isWithin(const std::string &path, c
     // reached through.
     for (fs::path step = *there;; step = step.parent_path()) {
         std::error_code same;
-        if (fs::equivalent(step, root, same) && !same) {
+        const bool equivalent = fs::equivalent(step, root, same);
+        if (same) {
+            return std::nullopt;
+        }
+        if (equivalent) {
             return true;
         }
         if (!step.has_parent_path() || step.parent_path() == step) {
-            return false;
+            break;
         }
     }
+#if !defined(_WIN32)
+    // A root that is a mount point is a whole device: whatever is on that
+    // device is on it, through a bind mount of one of its folders too.
+    const std::optional<dev_t> rootDevice = deviceOf(root);
+    const std::optional<dev_t> aboveRoot = deviceOf(root.parent_path());
+    const std::optional<dev_t> thereDevice = deviceOf(*there);
+    if (!rootDevice || !aboveRoot || !thereDevice) {
+        return std::nullopt;
+    }
+    const bool rootIsMount = *rootDevice != *aboveRoot || root == root.parent_path();
+    if (rootIsMount && *thereDevice == *rootDevice) {
+        return true;
+    }
+#endif
+    return false;
 }
 
 std::optional<std::uint64_t> LocalKeepRecordingFiles::maxNameBytes(const std::string &folder)
@@ -193,6 +228,44 @@ std::string LocalKeepRecordingFiles::removeFile(const std::string &path)
         return failure;
     }
     return {};
+}
+
+std::vector<std::string> LocalKeepRecordingFiles::sweepLeftovers(const std::string &folderText,
+                                                                 const std::function<bool(const std::string &)> &inHand)
+{
+    std::vector<std::string> notes;
+    const fs::path folder = local(folderText);
+    const auto oldest = fs::file_time_type::clock::now() - std::chrono::hours(application::KeepRecordingLeftoverAgeHours);
+    std::error_code ec;
+    // Not recursive, and an entry that is a link is never followed: only
+    // regular files in the folder itself.
+    for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+        const fs::path entry = it->path();
+        const std::string name = pathToUtf8(entry.filename());
+        const std::optional<std::string> flacName = audio::recordingTempTargetName(name);
+        if (!flacName) {
+            continue;
+        }
+        std::error_code statusEc;
+        if (fs::symlink_status(entry, statusEc).type() != fs::file_type::regular || statusEc) {
+            continue;
+        }
+        if (inHand && inHand(*flacName)) {
+            continue;  // a job of this process is writing it
+        }
+        const fs::file_time_type modified = fs::last_write_time(entry, statusEc);
+        if (statusEc || modified > oldest) {
+            continue;  // younger than a day: another Seabass may be writing it
+        }
+        const std::string path = pathToUtf8(entry);
+        std::string failure;
+        if (removeEntry(entry, failure)) {
+            notes.push_back("A temporary file an earlier keep left behind, more than a day old, was removed: " + path);
+        } else {
+            notes.push_back("A temporary file an earlier keep left behind could not be removed (" + failure + "): " + path);
+        }
+    }
+    return notes;
 }
 
 }  // namespace seabass::infrastructure

@@ -126,6 +126,10 @@ TestCase {
             property string coverError: ""
             property bool coverPreparing: false
             property var outcomes: ({})
+            // The kept copies, as the real one keeps them apart from the
+            // outcomes: path -> {recording, fileName, folder, there (the
+            // FLAC is still where and as it was kept)}.
+            property var keptCopies: ({})
             // File names already in the folder.
             property var taken: []
             property bool takes: true
@@ -157,19 +161,26 @@ TestCase {
                 return /[\u0000-\u001f\u007f\u0085\u2028\u2029]/.test(text.trim())
                     ? names[field] + " cannot hold a line break, a tab or another control character." : "";
             }
+            // The real rule: a kept copy first (kept while its FLAC is
+            // there as it was, gone otherwise), whatever came after it;
+            // else any outcome is a keep asked for and not ended kept.
             function keepNotesFor(paths) {
                 const notKept = [];
                 const kept = [];
+                const keptGone = [];
                 for (const path of paths) {
+                    const copy = fakeKeep.keptCopies[path];
+                    if (copy) {
+                        (copy.there ? kept : keptGone).push({recording: copy.recording, fileName: copy.fileName,
+                                                             folder: copy.folder});
+                        continue;
+                    }
                     const outcome = fakeKeep.outcomes[path];
-                    if (!outcome) continue;
-                    if (outcome.state === "kept") {
-                        kept.push({recording: outcome.recording, fileName: outcome.fileName, folder: outcome.folder});
-                    } else if (outcome.state !== "queued" && outcome.state !== "running") {
+                    if (outcome) {
                         notKept.push(outcome.recording);
                     }
                 }
-                return {notKept: notKept, kept: kept};
+                return {notKept: notKept, kept: kept, keptGone: keptGone};
             }
             function folderProblem(folder) {
                 if (folder.trim().length === 0) return "Choose a folder for the file.";
@@ -262,13 +273,16 @@ TestCase {
         const rows = controller.recordings;
         rows.append({path: "/media/u/WHALESHARK/Sessions/Milkshaken.wav", fileName: "Milkshaken.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 2239137764,
-                     modified: new Date(2026, 4, 7, 20, 6), durationSeconds: 12693.5, included: false});
+                     modified: new Date(2026, 4, 7, 20, 6), durationSeconds: 12693.5, included: false,
+                     unfinished: false, heldSeconds: -1});
         rows.append({path: "/media/u/WHALESHARK/Sessions/Session-0002.wav", fileName: "Session-0002.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 111384620,
-                     modified: new Date(2026, 6, 12, 2, 30), durationSeconds: 631.4, included: false});
+                     modified: new Date(2026, 6, 12, 2, 30), durationSeconds: 631.4, included: false,
+                     unfinished: false, heldSeconds: -1});
         rows.append({path: "/media/u/WHALESHARK/PIONEER REC/REC001.WAV", fileName: "REC001.WAV",
                      folderName: "PIONEER REC", source: "pioneer", sizeBytes: 457387052,
-                     modified: new Date(2017, 0, 1, 1, 0), durationSeconds: -1, included: false});
+                     modified: new Date(2017, 0, 1, 1, 0), durationSeconds: -1, included: false,
+                     unfinished: false, heldSeconds: -1});
         controller.recount();
     }
 
@@ -578,7 +592,8 @@ TestCase {
             addRecordings(controller);
             controller.recordings.append({path: "/media/u/WHALESHARK/Sessions/Set.mp3", fileName: "Set.mp3",
                                           folderName: "Sessions", source: "engine", sizeBytes: 1000,
-                                          modified: new Date(2026, 1, 1), durationSeconds: 10, included: false});
+                                          modified: new Date(2026, 1, 1), durationSeconds: 10, included: false,
+                                          unfinished: false, heldSeconds: -1});
         });
         for (let i = 0; i < 3; ++i) {
             verify(findChild(row(page, i), "keepButton").visible, "row " + i + " is a WAV and can be kept");
@@ -890,6 +905,10 @@ TestCase {
                 "/media/u/WHALESHARK/PIONEER REC/REC001.WAV": {state: "kept", recording: "REC001.WAV",
                                                                fileName: "C.flac", folder: "/home/dj/Music/Own Recordings"},
             };
+            keep.keptCopies = {
+                "/media/u/WHALESHARK/PIONEER REC/REC001.WAV": {recording: "REC001.WAV", fileName: "C.flac",
+                                                               folder: "/home/dj/Music/Own Recordings", there: true},
+            };
             keep.revision++;
         });
         mouseClick(findChild(page, "selectAllButton"));
@@ -1014,5 +1033,103 @@ TestCase {
         compare(findChild(row(page, 0), "keptLabel").text,
                 "Not kept: There is not enough room in /home/dj/Music/Own Recordings.");
         compare(findChild(row(page, 0), "showKeptButton").visible, false);
+    }
+
+    // Kept once, then a second keep that failed: the confirmation still
+    // says kept, the first FLAC being there. One whose FLAC is gone is
+    // said apart, in the warning's style, and not as kept.
+    function test_deleteSaysWhichKeptCopiesAreStillThere() {
+        const page = makePage(addRecordings, keep => {
+            keep.outcomes = {
+                "/media/u/WHALESHARK/Sessions/Milkshaken.wav": {state: "failed", recording: "Milkshaken.wav",
+                                                                fileName: "Again.flac", folder: "/f", message: "no room"},
+                "/media/u/WHALESHARK/Sessions/Session-0002.wav": {state: "kept", recording: "Session-0002.wav",
+                                                                  fileName: "B.flac", folder: "/f"},
+            };
+            keep.keptCopies = {
+                "/media/u/WHALESHARK/Sessions/Milkshaken.wav": {recording: "Milkshaken.wav", fileName: "A.flac",
+                                                                folder: "/f", there: true},
+                "/media/u/WHALESHARK/Sessions/Session-0002.wav": {recording: "Session-0002.wav", fileName: "B.flac",
+                                                                  folder: "/f", there: false},
+            };
+            keep.revision++;
+        });
+        mouseClick(findChild(row(page, 0), "includeBox"));
+        mouseClick(findChild(row(page, 1), "includeBox"));
+        mouseClick(findChild(page, "deleteButton"));
+        const dialog = findChild(page, "confirmDeleteDialog");
+        tryVerify(() => dialog.opened);
+        compare(findChild(dialog, "notKeptLabel").visible, false, "kept once and then failed: not named as not kept");
+        compare(findChild(dialog, "keptNotesLabel").text, "Kept on this computer: Milkshaken.wav as A.flac in /f.");
+        const gone = findChild(dialog, "keptGoneLabel");
+        verify(gone.visible, "a kept copy that is gone is said");
+        compare(gone.text, "Kept earlier, but that file is no longer there as it was kept: Session-0002.wav as B.flac in /f.");
+        compare(gone.color, Theme.danger, "in the warning's colour");
+        verify(gone.font.bold, "and weight");
+        saveScreenshot(page, "recordings-confirm-delete-kept-gone");
+        dialog.reject();
+    }
+
+    // A recording the player did not finish: the row says so with the
+    // audio the file holds; the form says it plainly and starts only once
+    // the box is ticked, and the choice goes with the job.
+    function test_anUnfinishedRecording() {
+        const page = makePage(controller => {
+            addRecordings(controller);
+            controller.recordings.setProperty(1, "unfinished", true);
+            controller.recordings.setProperty(1, "heldSeconds", 3723.4);
+        });
+        const details = findChild(row(page, 1), "detailsLabel").text;
+        verify(details.endsWith("not finished by the player, 1:02:03 of audio"), details);
+        verify(findChild(row(page, 0), "detailsLabel").text.indexOf("not finished") < 0, "a finished one says nothing of it");
+
+        const dialog = openForm(page, 1);
+        const notice = field(page, "keepUnfinishedNotice");
+        verify(notice.visible, "the form says the player did not finish it");
+        compare(field(page, "keepUnfinishedLabel").text,
+                "The player did not finish this recording: it was switched off or the stick was pulled while it "
+                + "recorded. The file holds 1:02:03 of audio. The recording on the stick is not changed.");
+        const box = field(page, "keepUnfinishedBox");
+        compare(box.text, "Keep the audio the file holds");
+        compare(box.checked, false, "the box starts unticked");
+        compare(field(page, "keepStartButton").enabled, false, "and the form does not start without it");
+        keyClick(Qt.Key_Return);
+        compare(page.keepController.calls.indexOf("keep"), -1, "Enter starts nothing either");
+        saveScreenshot(page, "recordings-keep-form-unfinished");
+        mouseClick(box);
+        verify(box.checked);
+        verify(field(page, "keepStartButton").enabled, "ticked, it can start");
+        mouseClick(field(page, "keepStartButton"));
+        compare(page.keepController.lastForm.keepUnfinished, true, "the choice goes with the job");
+        tryVerify(() => !dialog.visible, 2000);
+
+        // Opened again for it, or for another: the box starts unticked,
+        // and a finished recording shows no notice and sends no choice.
+        openForm(page, 1);
+        compare(field(page, "keepUnfinishedBox").checked, false, "opened again: unticked again");
+        findChild(page, "keepDialog").close();
+        tryVerify(() => !findChild(page, "keepDialog").visible, 2000);
+        openForm(page, 0);
+        compare(field(page, "keepUnfinishedNotice").visible, false, "a finished recording: no notice");
+        mouseClick(field(page, "keepStartButton"));
+        compare(page.keepController.lastForm.keepUnfinished, false, "and no choice sent");
+    }
+
+    // A kept job's notes show when it is done: the player did not finish
+    // it, and how much was kept.
+    function test_theNotesOfAKeptJob() {
+        const page = makePage(addRecordings, keep => {
+            keptKeep(keep);
+            const done = Object.assign({}, keep.finishedJobs[0]);
+            done.notes = ["The player did not finish this recording. The FLAC holds 1:02:03 of audio, every whole "
+                          + "frame the file held. The recording on the stick was not changed."];
+            keep.finishedJobs = [done];
+            keep.revision++;
+        });
+        const strip = findChild(page, "keepProgress");
+        mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
+        compare(findChild(strip, "passiveProgressNote").text,
+                "The player did not finish this recording. The FLAC holds 1:02:03 of audio, every whole frame the file "
+                + "held. The recording on the stick was not changed.");
     }
 }

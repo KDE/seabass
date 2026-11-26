@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "application/use_cases/keep_recording.hpp"
+#include "infrastructure/audio/recording_temp_names.hpp"
 
 using namespace seabass::application;
 
@@ -44,8 +45,10 @@ const std::string FileName = "DJ Kelp - Late Set.flac";
 const std::string Flac = Folder + "/" + FileName;
 const std::string Picture = "/home/dj/Pictures/cover.png";
 const std::string Stick = "/stick";
-// What the temporary names add to the FLAC's name, as the GUI hands it in.
-constexpr std::size_t TempExtra = 41;
+// What the temporary names add to the FLAC's name, as the GUI hands it in:
+// "." and 16 hex digits and ".seabass-encode-tmp", the longer suffix.
+constexpr std::size_t TempExtra = seabass::infrastructure::audio::recordingTempNameExtraBytes();
+static_assert(TempExtra == 1 + 16 + 19, "the temporary names' extra follows the suffix constants");
 constexpr std::uint64_t WavBytes = 500ULL * 1024 * 1024;
 
 // Everything the fakes did, in order: "read ...", "write ...", and the
@@ -63,8 +66,14 @@ public:
     bool pictureUnreadable = false;
     std::string folderRefusal;
     std::string removeRefusal;
-    // isWithin()'s answer for the folder and the stick.
+    // isWithin()'s answer for the folder and the stick, and for the
+    // recording and the stick.
     std::optional<bool> onStick = false;
+    std::optional<bool> wavOnStick = true;
+    // What sweepLeftovers() answers, and the FLAC names it asked about.
+    std::vector<std::string> sweepNotes;
+    std::vector<std::string> leftoverNames;
+    std::vector<bool> leftoverInHand;
     std::optional<std::uint64_t> nameMax = 255;
 
     std::optional<std::uint64_t> fileSize(const std::string &path) override
@@ -99,7 +108,7 @@ public:
     std::optional<bool> isWithin(const std::string &path, const std::string &folder) override
     {
         journal.push_back("read within " + path + " in " + folder);
-        return onStick;
+        return path == Wav ? wavOnStick : onStick;
     }
     std::optional<std::uint64_t> maxNameBytes(const std::string &folder) override
     {
@@ -125,6 +134,15 @@ public:
         sizes.erase(path);
         return {};
     }
+    std::vector<std::string> sweepLeftovers(const std::string &folder,
+                                            const std::function<bool(const std::string &)> &inHand) override
+    {
+        journal.push_back("write sweep " + folder);
+        for (const std::string &name : leftoverNames) {
+            leftoverInHand.push_back(inHand(name));
+        }
+        return sweepNotes;
+    }
 };
 
 constexpr std::uint64_t EncodedBytes = 300ULL * 1024 * 1024;
@@ -144,15 +162,41 @@ public:
     // With `error`: a file is left under the target's name, as the real
     // encoder leaves one whose size is wrong after the rename.
     bool leavesTarget = false;
+    // Throws after putting a file under the target's name.
+    bool throwsAfterTarget = false;
+    // The recording's header is unfinished: refused without the choice,
+    // and with it kept with `heldFrames` and `partialBytes` left out.
+    bool unfinished = false;
+    std::uint64_t heldFrames = 0;
+    std::uint64_t partialBytes = 0;
+    std::vector<std::string> notes;
+    // The option the job was given.
+    bool keepUnfinishedGiven = false;
 
     RecordingEncodeResult encode(const std::string &wavPath, const std::string &flacPath,
                                  const RecordingEncodeOptions &options) override
     {
         journal.push_back("encode " + wavPath + " -> " + flacPath);
+        keepUnfinishedGiven = options.keepUnfinished;
         if (during) {
             during();
         }
         RecordingEncodeResult result;
+        if (throwsAfterTarget) {
+            m_files.present.insert(flacPath);
+            m_files.sizes[flacPath] = 12;
+            throw std::runtime_error("the encoder broke down");
+        }
+        if (unfinished) {
+            result.unfinished = true;
+            result.sampleRate = 48000;
+            result.framesInWav = heldFrames;
+            result.partialFrameBytesDropped = partialBytes;
+            if (!options.keepUnfinished) {
+                result.error = "Session-0001.wav cannot be encoded: the player did not finish this recording";
+                return result;
+            }
+        }
         for (double f : {0.0, 0.3, 0.59, 0.6, 0.8, 1.0}) {
             if (cancelAt && f >= *cancelAt && token != nullptr) {
                 token->cancel();
@@ -176,6 +220,7 @@ public:
         m_files.present.insert(flacPath);
         m_files.sizes[flacPath] = EncodedBytes;
         result.encoded = true;
+        result.notes = notes;
         return result;
     }
 
@@ -326,9 +371,11 @@ void testTheWholeJobInOrder()
     check(run.result.message.empty(), "nothing to say when kept");
     const std::vector<std::string> expected = {
         "read within " + Folder + " in " + Stick,
+        "read within " + Wav + " in " + Stick,
         "read namemax " + Folder,
         "read size " + Wav,
         "write folder " + Folder,
+        "write sweep " + Folder,
         "read exists " + Flac,
         "read free " + Folder,
         "encode " + Wav + " -> " + Flac,
@@ -724,6 +771,120 @@ void testOneJobPerRecordingAndFlac()
     check(after.result.status == KeepRecordingResult::Status::Kept, "once the first has ended, the recording can be kept again");
 }
 
+// The recording is on the stick named; otherwise nothing is done.
+void testTheRecordingIsOnTheStick()
+{
+    for (const std::optional<bool> answer : {std::optional<bool>(false), std::optional<bool>()}) {
+        Run run;
+        run.files.wavOnStick = answer;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed
+                  && run.result.message.find("not on the stick") != std::string::npos,
+              "a recording not on the stick named (or not known to be): refused: " + run.result.message);
+        check(!run.called("write") && !run.called("encode"), "a recording not on the stick: nothing written");
+    }
+}
+
+// An exception out of the encoder after it put a file under the target's
+// name: the file is said, with its path, as after a failure.
+void testAnEncoderExceptionSaysWhatIsLeft()
+{
+    Run run;
+    run.encoder.throwsAfterTarget = true;
+    run.go();
+    check(run.result.status == KeepRecordingResult::Status::Failed
+              && run.result.message.find("broke down") != std::string::npos,
+          "an encoder that throws: failed, saying why: " + run.result.message);
+    check(run.result.leftBehind == Flac && run.result.message.find(Flac) != std::string::npos,
+          "an encoder that throws: the file under the target's name is said with its path: " + run.result.message);
+    check(!run.called("write remove"), "an encoder that throws: that file is not removed as the job's");
+}
+
+// A recording the player did not finish: refused unless the person chose
+// to keep what the file holds; when kept, the notes say so and how much.
+void testAnUnfinishedRecording()
+{
+    {
+        Run run;
+        run.encoder.unfinished = true;
+        run.encoder.heldFrames = 48000ULL * 3723;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed && !run.encoder.keepUnfinishedGiven,
+              "unfinished, no choice: refused, and the encoder was not told to keep it");
+        check(run.result.message.find("did not finish") != std::string::npos
+                  && run.result.message.find("1:02:03") != std::string::npos
+                  && run.result.message.find("Keep the audio the file holds") != std::string::npos,
+              "unfinished, no choice: the message says what the file holds and how to keep it: " + run.result.message);
+        check(run.result.unfinished && run.nothingLeft(), "unfinished, no choice: nothing left");
+    }
+    {
+        Run run;
+        run.encoder.unfinished = true;
+        run.encoder.heldFrames = 48000ULL * 3723 + 17;
+        run.encoder.partialBytes = 5;
+        KeepRecordingRequest r = request();
+        r.keepUnfinished = true;
+        run.go(r);
+        check(run.result.status == KeepRecordingResult::Status::Kept && run.encoder.keepUnfinishedGiven,
+              "unfinished, chosen: kept, the choice handed to the encoder");
+        check(run.result.unfinished && run.result.keptSeconds > 3723.0 && run.result.keptSeconds < 3723.01,
+              "unfinished, chosen: the kept length is reported");
+        const std::string notes = run.result.notes.empty() ? std::string() : run.result.notes.back();
+        check(notes.find("did not finish") != std::string::npos && notes.find("1:02:03") != std::string::npos
+                  && notes.find("5 bytes") != std::string::npos && notes.find("not changed") != std::string::npos,
+              "unfinished, chosen: the notes say so, how much was kept and the partial frame left out: " + notes);
+    }
+    {
+        Run run;
+        KeepRecordingRequest r = request();
+        r.keepUnfinished = true;
+        run.go(r);
+        check(run.result.status == KeepRecordingResult::Status::Kept && !run.result.unfinished
+                  && run.result.notes.empty(),
+              "a finished recording with the choice set: kept, nothing to note");
+    }
+}
+
+// The sweep of leftovers runs at the start, in the target folder; its
+// notes are the job's, and a FLAC in hand is reported as in hand.
+void testTheSweep()
+{
+    Run run;
+    run.files.sweepNotes = {"A temporary file an earlier keep left behind, more than a day old, was removed: x"};
+    run.files.leftoverNames = {FileName, "Other.flac"};
+    run.go();
+    check(run.result.status == KeepRecordingResult::Status::Kept, "with leftovers: kept");
+    check(run.result.notes == run.files.sweepNotes, "the sweep's notes are the job's");
+    check(run.files.leftoverInHand == std::vector<bool>{true, false},
+          "the job's own FLAC is in hand while it runs, another is not");
+    Run encoderNotes;
+    encoderNotes.encoder.notes = {"a second name"};
+    encoderNotes.go();
+    check(encoderNotes.result.notes == std::vector<std::string>{"a second name"}, "the encoder's notes are the job's");
+}
+
+// A job that ends in an exception lets go of its recording and its FLAC:
+// the next job for both is not refused as one in hand.
+void testTheRegistryLetsGoOnAnException()
+{
+    {
+        Run run;
+        run.tags.throws = true;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed, "a tag writer that throws: failed");
+    }
+    {
+        Run run;
+        run.encoder.throwsAfterTarget = true;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed, "an encoder that throws: failed");
+    }
+    Run after;
+    after.go();
+    check(after.result.status == KeepRecordingResult::Status::Kept,
+          "after jobs that threw, the same recording and FLAC can be kept: " + after.result.message);
+}
+
 // A cut for the use case's own test: on a code point boundary. The GUI's
 // cut by grapheme clusters is keep_recording_controller_test's.
 std::size_t codePointCut(std::string_view text, std::size_t maxBytes)
@@ -799,6 +960,11 @@ int main()
     testAFileLeftInPlaceIsSaid();
     testThePlaceAndTheText();
     testFileNames();
+    testTheRecordingIsOnTheStick();
+    testAnEncoderExceptionSaysWhatIsLeft();
+    testAnUnfinishedRecording();
+    testTheSweep();
+    testTheRegistryLetsGoOnAnException();
     if (failures > 0) {
         std::cout << "keep_recording_test: " << failures << " FAILED\n";
         return 1;

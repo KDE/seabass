@@ -19,6 +19,9 @@
 #include "gui/sleep_inhibitor.hpp"
 #include "gui/stick_path.hpp"
 #include "infrastructure/audio/duration_fill.hpp"
+#if defined(SEABASS_HAVE_RECORDING_ENCODER)
+#include "infrastructure/audio/wav_pcm_file.hpp"
+#endif
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/stick_write_lock.hpp"
 #include "infrastructure/logging/file_operation_log.hpp"
@@ -61,6 +64,10 @@ QVariant RecordingListModel::data(const QModelIndex &index, int role) const
             return row.durationSeconds ? *row.durationSeconds : -1.0;
         case IncludedRole:
             return static_cast<bool>(m_included[static_cast<std::size_t>(index.row())]);
+        case UnfinishedRole:
+            return m_states[static_cast<std::size_t>(index.row())].unfinished;
+        case HeldSecondsRole:
+            return m_states[static_cast<std::size_t>(index.row())].heldSeconds;
         default:
             return {};
     }
@@ -87,13 +94,17 @@ QHash<int, QByteArray> RecordingListModel::roleNames() const
         {ModifiedRole, "modified"},
         {DurationSecondsRole, "durationSeconds"},
         {IncludedRole, "included"},
+        {UnfinishedRole, "unfinished"},
+        {HeldSecondsRole, "heldSeconds"},
     };
 }
 
-void RecordingListModel::setRecordings(std::vector<application::Recording> recordings)
+void RecordingListModel::setRecordings(std::vector<application::Recording> recordings, std::vector<HeaderState> states)
 {
     beginResetModel();
     m_rows = std::move(recordings);
+    m_states = std::move(states);
+    m_states.resize(m_rows.size());
     m_included.assign(m_rows.size(), false);
     endResetModel();
 }
@@ -149,6 +160,28 @@ application::RecordingDeleteHooks &deleteHooks()
 {
     static application::RecordingDeleteHooks hooks;
     return hooks;
+}
+
+// For each WAV, whether the player finished it: its header only, a few
+// reads. A recording that could not be kept anyway says nothing here.
+std::vector<RecordingListModel::HeaderState> headerStates(const std::vector<application::Recording> &recordings)
+{
+    std::vector<RecordingListModel::HeaderState> states(recordings.size());
+#if defined(SEABASS_HAVE_RECORDING_ENCODER)
+    for (std::size_t i = 0; i < recordings.size(); ++i) {
+        const QString name = QString::fromUtf8(recordings[i].fileName);
+        if (!name.endsWith(QLatin1String(".wav"), Qt::CaseInsensitive)) {
+            continue;
+        }
+        const infrastructure::audio::WavPcmFile wav(pathFromUtf8(recordings[i].path));
+        if (const auto &unfinished = wav.unfinished(); unfinished && wav.layout().sampleRate > 0) {
+            states[i].unfinished = true;
+            states[i].heldSeconds =
+                static_cast<double>(unfinished->framesHeld) / static_cast<double>(wav.layout().sampleRate);
+        }
+    }
+#endif
+    return states;
 }
 
 RecordingsRunResult runTask(QString stickRootQt, std::vector<std::string> paths,
@@ -233,8 +266,12 @@ void RecordingsController::setKeepController(KeepRecordingController *keep)
     if (m_keep == keep) {
         return;
     }
-    if (m_keep) {
+    if (m_keep && !m_working) {
         m_keep->setDeleteRunning(false);
+    } else if (m_keep) {
+        // A delete runs: the controller let go of still may not keep until
+        // it has ended (onRunFinished() tells it).
+        m_detachedKeeps.append(m_keep);
     }
     m_keep = keep;
     if (m_keep) {
@@ -299,6 +336,7 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
             // millisecond for a 2.2 GB file, so every row gets a length.
             result.listing = infrastructure::audio::withDurationProbe(
                 [&stick](application::TrackDurationProbe &probe) { return application::listRecordings(stick, probe); });
+            result.states = headerStates(result.listing.recordings);
             // As CleanupController's stickSpace(): 0/0 when it cannot tell.
             std::error_code ec;
             const fs::space_info space = fs::space(stick, ec);
@@ -337,7 +375,7 @@ void RecordingsController::onListed()
     for (const auto &f : result.listing.unreadableFolders) {
         m_unreadableFolders << QString::fromUtf8(f);
     }
-    m_model.setRecordings(std::move(result.listing.recordings));
+    m_model.setRecordings(std::move(result.listing.recordings), std::move(result.states));
     setError(result.error);
     emit busyChanged();
     emit listingChanged();
@@ -448,6 +486,12 @@ void RecordingsController::onRunFinished()
     if (m_keep) {
         m_keep->setDeleteRunning(false);
     }
+    for (const QPointer<KeepRecordingController> &detached : std::as_const(m_detachedKeeps)) {
+        if (detached && detached != m_keep) {
+            detached->setDeleteRunning(false);
+        }
+    }
+    m_detachedKeeps.clear();
     emit busyChanged();
 
     const auto &report = result.report;

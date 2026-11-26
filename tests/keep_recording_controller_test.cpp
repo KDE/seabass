@@ -108,8 +108,13 @@ QString makeStick(const QString &scratch)
     return root;
 }
 
-std::string writeWav(const QString &dir, const QString &name, double seconds)
+// A WAV on the scratch folder's stick (makeStick()): a job keeps only a
+// recording that is on the stick it is told of. A folder already in the
+// stick is taken as it is.
+std::string writeWav(const QString &scratchOrFolder, const QString &name, double seconds)
 {
+    const QString dir = scratchOrFolder.endsWith(QStringLiteral("/Sessions"))
+        ? scratchOrFolder : scratchOrFolder + QStringLiteral("/STICK/Sessions");
     QDir().mkpath(dir);
     const std::string path = QDir(dir).filePath(name).toStdString();
     recording_test::WavSpec spec;
@@ -729,6 +734,95 @@ void lateCancelAndLeftFiles(const QString &scratch)
 
 }  // namespace
 
+// A recording the player did not finish is kept only with the choice; the
+// kept copy counts in the delete confirmation only while its FLAC is there
+// as it was kept; a recording is known by its path, size and time; and
+// the records are forgotten when the stick changes.
+void keptCopiesAndIdentity(const QString &scratch)
+{
+    const QString stick = makeStick(scratch);
+    const QString folder = scratch + QStringLiteral("/kept");
+    const QString sessions = stick + QStringLiteral("/Sessions");
+    const std::string wav = QDir(sessions).filePath(QStringLiteral("Unfinished.wav")).toStdString();
+    recording_test::WavSpec spec;
+    spec.frames = 44100;
+    spec.declaredDataBytes = 0xFFFFFFFFU;
+    recording_test::writeWav(wav, spec);
+    const QString wavPath = QString::fromStdString(wav);
+
+    KeepRecordingController controller;
+    controller.setStickRoot(stick);
+    QSignalSpy ended(&controller, &KeepRecordingController::finished);
+    const auto runJob = [&](const QVariantMap &f) {
+        const int before = static_cast<int>(ended.count());
+        if (!controller.keep(f)) {
+            return QVariantMap{{"refused", controller.errorMessage()}};
+        }
+        waitUntil([&]() { return ended.count() > before; });
+        return ended.count() > before ? ended.last().first().toMap() : QVariantMap{};
+    };
+
+    // Without the choice: not kept, saying why.
+    const QVariantMap refused = runJob(form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Unfinished")));
+    check(refused.value("state").toString() == QStringLiteral("failed")
+              && refused.value("message").toString().contains(QStringLiteral("did not finish")),
+          "an unfinished recording without the choice: not kept: " + refused.value("message").toString().toStdString());
+    // With it: kept, the notes say so.
+    QVariantMap chosen = form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Unfinished"));
+    chosen.insert("keepUnfinished", true);
+    const QVariantMap kept = runJob(chosen);
+    check(kept.value("state").toString() == QStringLiteral("kept") && kept.value("unfinished").toBool()
+              && kept.value("keptSeconds").toDouble() > 0.99 && kept.value("keptSeconds").toDouble() < 1.01,
+          "an unfinished recording with the choice: kept, with how much");
+    check(kept.value("notes").toStringList().join(QLatin1Char(' ')).contains(QStringLiteral("did not finish")),
+          "and its notes say the player did not finish it");
+    const QString flac = kept.value("flacPath").toString();
+
+    // Kept once, then a second keep that fails: the first copy still counts.
+    const QVariantMap second = runJob(form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Again")));
+    check(second.value("state").toString() == QStringLiteral("failed"), "a second keep without the choice fails");
+    QVariantMap notes = controller.keepNotesFor({wavPath});
+    check(notes.value("kept").toList().size() == 1 && notes.value("notKept").toList().isEmpty()
+              && notes.value("keptGone").toList().isEmpty(),
+          "kept once, then a failed keep: still kept, its FLAC is there");
+
+    // The FLAC changed: not counted as kept, said apart.
+    {
+        QFile file(flac);
+        file.open(QIODevice::Append);
+        file.write("x");
+    }
+    notes = controller.keepNotesFor({wavPath});
+    check(notes.value("kept").toList().isEmpty() && notes.value("keptGone").toList().size() == 1,
+          "a kept FLAC whose size changed: not counted as kept, said as gone");
+    // The FLAC gone.
+    QFile::remove(flac);
+    notes = controller.keepNotesFor({wavPath});
+    check(notes.value("kept").toList().isEmpty() && notes.value("keptGone").toList().size() == 1
+              && notes.value("keptGone").toList().first().toMap().value("fileName").toString()
+                  == QFileInfo(flac).fileName(),
+          "a kept FLAC that is gone: not counted as kept, said with its name");
+
+    // Another recording under the same path: not the one kept.
+    recording_test::WavSpec other;
+    other.frames = 22050;
+    recording_test::writeWav(wav, other);
+    check(controller.outcomeFor(wavPath).isEmpty(), "another file under the same path has no outcome");
+    notes = controller.keepNotesFor({wavPath});
+    check(notes.value("kept").toList().isEmpty() && notes.value("keptGone").toList().isEmpty()
+              && notes.value("notKept").toList().isEmpty(),
+          "and is named nowhere in the delete confirmation");
+
+    // A new stick root: the session's records are forgotten.
+    const QString wav2 = QString::fromStdString(writeWav(sessions, QStringLiteral("Plain.wav"), 0.5));
+    const QVariantMap plain = runJob(form(wav2.toStdString(), folder, QStringLiteral("DJ Kelp"), QStringLiteral("Plain")));
+    check(plain.value("state").toString() == QStringLiteral("kept"), "a plain recording is kept");
+    check(!controller.outcomeFor(wav2).isEmpty(), "and has its outcome");
+    controller.setStickRoot(scratch + QStringLiteral("/OTHER"));
+    check(controller.outcomeFor(wav2).isEmpty() && controller.keepNotesFor({wav2}).value("kept").toList().isEmpty(),
+          "another stick root: the outcomes and kept copies are forgotten");
+}
+
 int main(int argc, char **argv)
 {
     // The settings store, a scratch file on every platform: the
@@ -777,6 +871,7 @@ int main(int argc, char **argv)
     textChecks(dir + QStringLiteral("/text"));
     failureStaysWhileTheNextRuns(dir + QStringLiteral("/failure-stays"));
     lateCancelAndLeftFiles(dir + QStringLiteral("/late-cancel"));
+    keptCopiesAndIdentity(dir + QStringLiteral("/kept-copies"));
 
     if (failures > 0) {
         std::cout << "keep_recording_controller_test: " << failures << " FAILED\n";

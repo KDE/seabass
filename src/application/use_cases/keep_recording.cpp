@@ -37,6 +37,17 @@ std::string joinPath(const std::string &folder, const std::string &name)
     return (last == '/' || last == '\\') ? folder + name : folder + "/" + name;
 }
 
+// "1:02:03" or "2:03".
+std::string clockDuration(std::uint64_t frames, int sampleRate)
+{
+    const std::uint64_t seconds = sampleRate > 0 ? frames / static_cast<std::uint64_t>(sampleRate) : 0;
+    const auto two = [](std::uint64_t v) { return (v < 10 ? "0" : "") + std::to_string(v); };
+    const std::uint64_t h = seconds / 3600;
+    const std::uint64_t m = seconds / 60 % 60;
+    return h > 0 ? std::to_string(h) + ":" + two(m) + ":" + two(seconds % 60)
+                 : std::to_string(m) + ":" + two(seconds % 60);
+}
+
 std::string megabytes(std::uint64_t bytes)
 {
     const auto mb = static_cast<std::uint64_t>(std::ceil(static_cast<double>(bytes) / (1024.0 * 1024.0)));
@@ -82,6 +93,13 @@ public:
         Flac,
     };
     Refusal refusal() const { return m_refusal; }
+
+    // Whether a job of this process has the FLAC at `flacPath` in hand.
+    static bool flacHeld(const std::string &flacPath)
+    {
+        const std::lock_guard<std::mutex> lock(mutex());
+        return held().count("flac " + key(flacPath)) > 0;
+    }
 
 private:
     static std::string key(std::string path)
@@ -153,6 +171,7 @@ public:
         if (cancelled()) {
             return m_result;
         }
+        m_encodeStarted = true;
         if (!encode()) {
             sayWhatIsLeft();
             return m_result;
@@ -172,6 +191,14 @@ public:
         m_result.flacPath = m_flacPath;
         m_result.message.clear();
         m_result.leftBehind.clear();
+        if (m_result.unfinished) {
+            m_result.notes.push_back("The player did not finish this recording. The FLAC holds " + m_keptDuration
+                                     + " of audio, every whole frame the file held"
+                                     + (m_partialBytes > 0 ? "; the last " + std::to_string(m_partialBytes)
+                                                                 + " bytes, less than a frame, were left out."
+                                                           : ".")
+                                     + " The recording on the stick was not changed.");
+        }
         // A progress callback that throws now does not make it a failure.
         try {
             report(KeepRecordingStep::Tagging, 1.0);
@@ -248,6 +275,13 @@ private:
             return fail("The recording was not kept: " + m_request.folder
                         + " is on the stick. The FLAC file goes onto this computer; the stick keeps the recording.");
         }
+        // The stick named is the recording's: otherwise the check above
+        // would compare the folder with some other place.
+        const std::optional<bool> wavOnStick = m_files.isWithin(m_request.wavPath, m_request.stickRoot);
+        if (wavOnStick != std::optional<bool>(true)) {
+            return fail("The recording was not kept: it is not on the stick " + m_request.stickRoot
+                        + ", or that could not be told.");
+        }
         const std::uint64_t longest =
             std::min<std::uint64_t>(MaxFileNameBytes, m_files.maxNameBytes(m_request.folder).value_or(MaxFileNameBytes));
         const std::uint64_t needed = m_request.fileName.size() + m_request.tempNameExtraBytes;
@@ -268,6 +302,14 @@ private:
         const std::string made = m_files.makeFolder(m_request.folder);
         if (!made.empty()) {
             return fail("The folder " + m_request.folder + " could not be made: " + made);
+        }
+        // Leftovers of earlier jobs that were killed: in this folder only,
+        // older than a day, and none a job of this process has in hand.
+        const std::string folder = m_request.folder;
+        for (std::string &note : m_files.sweepLeftovers(folder, [&folder](const std::string &flacName) {
+                 return InHand::flacHeld(joinPath(folder, flacName));
+             })) {
+            m_result.notes.push_back(std::move(note));
         }
         const std::optional<bool> taken = m_files.exists(m_flacPath);
         if (!taken) {
@@ -298,8 +340,26 @@ private:
                 fraction < RecordingEncodingShare ? KeepRecordingStep::Encoding : KeepRecordingStep::Checking;
             report(step, EncoderShareOfJob * fraction);
         };
+        options.keepUnfinished = m_request.keepUnfinished;
         report(KeepRecordingStep::Encoding, 0.0);
         const RecordingEncodeResult encoded = m_encoder.encode(m_request.wavPath, m_flacPath, options);
+        m_result.unfinished = encoded.unfinished;
+        for (const std::string &note : encoded.notes) {
+            m_result.notes.push_back(note);
+        }
+        if (encoded.unfinished) {
+            m_keptDuration = clockDuration(encoded.framesInWav, encoded.sampleRate);
+            m_partialBytes = encoded.partialFrameBytesDropped;
+            if (encoded.sampleRate > 0) {
+                m_result.keptSeconds =
+                    static_cast<double>(encoded.framesInWav) / static_cast<double>(encoded.sampleRate);
+            }
+        }
+        if (encoded.unfinished && !m_request.keepUnfinished && !encoded.encoded && !encoded.cancelled) {
+            return fail("The recording was not kept: the player did not finish it, so its header does not describe "
+                        "the audio. The file holds " + m_keptDuration
+                        + " of audio. Choose \"Keep the audio the file holds\" to keep that.");
+        }
         if (encoded.cancelled) {
             m_result.status = KeepRecordingResult::Status::Cancelled;
             m_result.message.clear();
@@ -367,11 +427,29 @@ private:
     }
 
 public:
+    // After an exception: whatever the job had put in the folder is taken
+    // away or said, as after a failure.
+    void afterException()
+    {
+        if (m_flacMade) {
+            discardFlac();
+        } else if (m_encodeStarted) {
+            sayWhatIsLeft();
+        }
+    }
+
     // Takes the FLAC this job made away again; the person asked for a
     // tagged file, and a bare one is not that. Only while it is the file
     // the encoder made (its size unchanged): a file the tag writer put in
     // its place, or one that took its place otherwise, is left where it
     // is and said.
+    //
+    // That size guard covers every way the tag writer can fail: before its
+    // rename the FLAC is the encoder's, untouched; after it, the tagged
+    // copy has the size the writer checked, and a written=false then
+    // means another size is there. A file that vanished and was replaced
+    // by something else of exactly the encoder's size is not guarded
+    // against: far-fetched, and nothing short of a hash would tell it.
     void discardFlac()
     {
         if (!m_flacMade) {
@@ -414,7 +492,10 @@ private:
     KeepRecordingResult m_result;
     double m_fraction = 0.0;
     bool m_flacMade = false;
+    bool m_encodeStarted = false;
     std::optional<std::uint64_t> m_encodedBytes;
+    std::string m_keptDuration;
+    std::uint64_t m_partialBytes = 0;
 };
 
 }  // namespace
@@ -522,7 +603,7 @@ KeepRecordingResult keepRecording(const KeepRecordingRequest &request, KeepRecor
         job.result().status = KeepRecordingResult::Status::Failed;
         const std::string before = job.result().message;
         job.result().message = before.empty() ? why : why + " " + before;
-        job.discardFlac();
+        job.afterException();
         return job.result();
     } catch (...) {
         KeepRecordingResult result;

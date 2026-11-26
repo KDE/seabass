@@ -10,6 +10,7 @@
 #include <random>
 #include <system_error>
 
+#include "infrastructure/audio/recording_temp_names.hpp"
 #include "infrastructure/long_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
@@ -22,7 +23,7 @@ namespace
 
 namespace fs = std::filesystem;
 
-constexpr std::size_t TokenDigits = 16;
+constexpr std::size_t TokenDigits = RecordingTempTokenDigits;
 
 char foldAscii(char c)
 {
@@ -75,7 +76,7 @@ bool isTempNameOf(const std::string &name, const std::string &targetName, const 
     return std::all_of(first, first + static_cast<std::ptrdiff_t>(TokenDigits), isHexDigit);
 }
 
-std::optional<bool> somethingAt(const fs::path &path)
+std::optional<bool> somethingAt(const fs::path &path, std::error_code *error)
 {
     std::error_code ec;
     const fs::file_status status = fs::symlink_status(longPathSafe(path), ec);
@@ -83,22 +84,34 @@ std::optional<bool> somethingAt(const fs::path &path)
         return false;
     }
     if (ec || status.type() == fs::file_type::none) {
+        if (error != nullptr) {
+            *error = ec ? ec : std::make_error_code(std::errc::io_error);
+        }
         return std::nullopt;
     }
     return true;
 }
 
-bool sameFile(const fs::path &a, const fs::path &b)
+std::optional<bool> sameFile(const fs::path &a, const fs::path &b, std::error_code *error)
 {
-    const std::optional<bool> aThere = somethingAt(a);
-    const std::optional<bool> bThere = somethingAt(b);
-    if (!aThere || !bThere) {
-        return true;
+    const std::optional<bool> aThere = somethingAt(a, error);
+    if (!aThere) {
+        return std::nullopt;
+    }
+    const std::optional<bool> bThere = somethingAt(b, error);
+    if (!bThere) {
+        return std::nullopt;
     }
     std::error_code ec;
     if (*aThere && *bThere) {
         const bool same = fs::equivalent(longPathSafe(a), longPathSafe(b), ec);
-        return ec ? true : same;
+        if (ec) {
+            if (error != nullptr) {
+                *error = ec;
+            }
+            return std::nullopt;
+        }
+        return same;
     }
     if (*aThere != *bThere) {
         return false;
@@ -114,6 +127,27 @@ bool sameFile(const fs::path &a, const fs::path &b)
     }
     // A folder that is not there: as written.
     return equalIgnoringAsciiCase(pathToUtf8(aFolder.lexically_normal()), pathToUtf8(bFolder.lexically_normal()));
+}
+
+std::string lookError(const std::string &name, const std::error_code &error)
+{
+    if (error == std::errc::filename_too_long) {
+        return "the name " + name + " is too long for this drive";
+    }
+    return "the place for " + name + " could not be looked at (" + error.message() + ")";
+}
+
+bool removeSecondName(const fs::path &secondName, const fs::path &kept)
+{
+    std::error_code ec;
+    if (fs::symlink_status(longPathSafe(secondName), ec).type() == fs::file_type::not_found) {
+        return true;
+    }
+    if (fs::symlink_status(longPathSafe(secondName), ec).type() != fs::file_type::regular
+        || !fs::equivalent(longPathSafe(secondName), longPathSafe(kept), ec) || ec) {
+        return false;
+    }
+    return fs::remove(longPathSafe(secondName), ec) && !ec;
 }
 
 std::uint64_t flushExistingFile(const fs::path &path)

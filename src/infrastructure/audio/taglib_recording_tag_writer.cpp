@@ -157,56 +157,6 @@ std::string compareTags(const fs::path &path, const application::RecordingTags &
     return {};
 }
 
-// A FLAC that is not under its name, while a temporary copy of the tag
-// writer is: what a power cut leaves on FAT and exFAT, where replacing the
-// file by rename is a delete and then a rename on the disk. That copy may
-// be the only one, so it is never deleted: when it is the only one and a
-// FLAC, it is put back under the file's name; otherwise it is left alone.
-// Either way the answer is a failure that says what was found.
-//
-// What can be proven of a copy that is put back: that it is a FLAC whose
-// STREAMINFO block reads. Not whether it is the tagged copy that was
-// checked (the rename that was cut short) or one whose write was cut short
-// (and the file then removed by someone else): its audio and tags are not
-// checked again here.
-application::RecordingTagWriteResult recoverInterruptedWrite(const fs::path &target)
-{
-    application::RecordingTagWriteResult result;
-    const std::string name = pathToUtf8(target.filename());
-    const std::vector<fs::path> copies = tempsBeside(target.parent_path(), name, RecordingTagTempSuffix);
-    if (copies.empty()) {
-        result.error = "the tags of " + name + " were not written: it is not there";
-        return result;
-    }
-    if (copies.size() > 1) {
-        result.error = "the tags of " + name + " were not written: it is not there, and " + std::to_string(copies.size())
-            + " temporary copies of it are; they were left as they are";
-        return result;
-    }
-    const fs::path &copy = copies.front();
-    const std::string copyName = pathToUtf8(copy.filename());
-    if (!readFlacStreamInfo(copy)) {
-        result.error = "the tags of " + name + " were not written: it is not there, and its temporary copy " + copyName
-            + " is not a whole FLAC file; it was left as it is";
-        return result;
-    }
-    const NoReplaceRename back = renameNoReplace(copy, target);
-    if (back.status != NoReplaceRename::Status::Renamed) {
-        result.error = "the tags of " + name + " were not written: it is not there, and its temporary copy " + copyName
-            + " could not be put back under its name (" + (back.error.empty() ? "a file appeared there" : back.error)
-            + "); it was left as it is";
-        return result;
-    }
-    try {
-        fsyncDirectoryContaining(pathToUtf8(target));
-    } catch (...) {
-    }
-    result.error = "the tags of " + name + " were not written: an earlier write of them was cut short and left the "
-        "file only as its temporary copy " + copyName + ", which was put back under its name. Its audio and tags "
-        "were not checked again";
-    return result;
-}
-
 application::RecordingTagWriteResult write(const fs::path &target, const application::RecordingTags &tags,
                                            const std::function<void(const std::string &)> &beforePlace)
 {
@@ -216,7 +166,7 @@ application::RecordingTagWriteResult write(const fs::path &target, const applica
     const fs::path temp = uniqueTempBeside(target, RecordingTagTempSuffix);
     bool tempMade = false;
     const auto fail = [&](const std::string &why) {
-        if (tempMade && !sameFile(temp, target)) {
+        if (tempMade && sameFile(temp, target) == std::optional<bool>(false)) {
             std::error_code ignored;
             if (fs::symlink_status(longPathSafe(temp), ignored).type() == fs::file_type::regular) {
                 fs::remove(longPathSafe(temp), ignored);
@@ -228,12 +178,17 @@ application::RecordingTagWriteResult write(const fs::path &target, const applica
     };
 
     try {
-        const std::optional<bool> there = somethingAt(target);
+        std::error_code lookedAt;
+        const std::optional<bool> there = somethingAt(target, &lookedAt);
         if (!there) {
-            return fail("it could not be looked at");
+            return fail("it could not be looked at (" + lookedAt.message() + ")");
         }
+        // Never a recovery of a copy found beside it: inside a keep job a
+        // FLAC that is not there is one that vanished after the encoder
+        // placed it, and a copy of the same name is another, earlier
+        // job's. recoverInterruptedTagWrite() is a step of its own.
         if (!*there) {
-            return recoverInterruptedWrite(target);
+            return fail("it is not there");
         }
         const std::optional<FlacStreamInfo> before = readFlacStreamInfo(target);
         if (!before) {
@@ -280,7 +235,8 @@ application::RecordingTagWriteResult write(const fs::path &target, const applica
         }
         // Replaces the file: that is the point. On FAT and exFAT this is a
         // delete and a rename on the disk; a power cut between them leaves
-        // only the copy, which recoverInterruptedWrite() puts back.
+        // only the copy, which recoverInterruptedTagWrite() puts back when
+        // asked to.
         fs::rename(longPathSafe(temp), longPathSafe(target), ec);
         if (ec) {
             return fail("the tagged copy could not take the file's place: " + ec.message());
@@ -303,6 +259,63 @@ application::RecordingTagWriteResult write(const fs::path &target, const applica
 }
 
 }  // namespace
+
+InterruptedTagWriteRecovery recoverInterruptedTagWrite(const std::string &flacPath)
+{
+    InterruptedTagWriteRecovery result;
+    try {
+        const fs::path target = pathFromUtf8(flacPath);
+        const std::string name = pathToUtf8(target.filename());
+        std::error_code lookedAt;
+        const std::optional<bool> there = somethingAt(target, &lookedAt);
+        if (!there) {
+            result.message = name + " could not be looked at (" + lookedAt.message() + "); nothing was changed";
+            return result;
+        }
+        if (*there) {
+            result.message = name + " is there; nothing was changed";
+            return result;
+        }
+        const std::vector<fs::path> copies = tempsBeside(target.parent_path(), name, RecordingTagTempSuffix);
+        if (copies.empty()) {
+            result.message = name + " is not there, and no temporary copy of it is";
+            return result;
+        }
+        if (copies.size() > 1) {
+            result.message = name + " is not there, and " + std::to_string(copies.size())
+                + " temporary copies of it are; they were left as they are";
+            return result;
+        }
+        const fs::path &copy = copies.front();
+        const std::string copyName = pathToUtf8(copy.filename());
+        if (!readFlacStreamInfo(copy)) {
+            result.message = name + " is not there, and its temporary copy " + copyName
+                + " is not a whole FLAC file; it was left as it is";
+            return result;
+        }
+        const NoReplaceRename back = renameNoReplace(copy, target);
+        if (back.status != NoReplaceRename::Status::Renamed) {
+            result.message = name + " is not there, and its temporary copy " + copyName
+                + " could not be put back under its name (" + (back.error.empty() ? "a file appeared there" : back.error)
+                + "); it was left as it is";
+            return result;
+        }
+        try {
+            fsyncDirectoryContaining(pathToUtf8(target));
+        } catch (...) {
+        }
+        result.putBack = true;
+        result.message = "the temporary copy " + copyName + " was put back as " + name
+            + ". Its audio and tags were not checked again";
+        if (back.oldNameRemains && !removeSecondName(copy, target)) {
+            result.message += ". It also still has the name " + pathToUtf8(copy)
+                + ", which could not be removed; it is the same file";
+        }
+    } catch (const std::exception &e) {
+        result.message = std::string("nothing was put back: ") + e.what();
+    }
+    return result;
+}
 
 application::RecordingTagWriteResult TagLibRecordingTagWriter::write(const std::string &flacPath,
                                                                      const application::RecordingTags &tags)

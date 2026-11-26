@@ -43,6 +43,10 @@ public:
         ModifiedRole,          // QDateTime, invalid when unknown
         DurationSecondsRole,   // -1 when unknown
         IncludedRole,
+        // The player did not finish the recording (its WAV header was
+        // never completed), and the seconds of audio the file holds.
+        UnfinishedRole,
+        HeldSecondsRole,  // -1 unless unfinished
     };
 
     using QAbstractListModel::QAbstractListModel;
@@ -52,7 +56,13 @@ public:
     bool setData(const QModelIndex &index, const QVariant &value, int role) override;
     QHash<int, QByteArray> roleNames() const override;
 
-    void setRecordings(std::vector<application::Recording> recordings);
+    // What a WAV's header says beyond the listing, a row each.
+    struct HeaderState
+    {
+        bool unfinished = false;
+        double heldSeconds = -1.0;
+    };
+    void setRecordings(std::vector<application::Recording> recordings, std::vector<HeaderState> states = {});
     void setAllIncluded(bool included);
     std::vector<std::string> includedPaths() const;
     int includedCount() const;
@@ -60,6 +70,7 @@ public:
 
 private:
     std::vector<application::Recording> m_rows;
+    std::vector<HeaderState> m_states;
     std::vector<bool> m_included;
 };
 
@@ -81,6 +92,8 @@ signals:
 struct RecordingsListResult
 {
     application::RecordingListing listing;
+    // A row each, in the listing's order.
+    std::vector<RecordingListModel::HeaderState> states;
     // fs::space() on the stick, as Clean Up Duplicates reads it: 0/0 when
     // it cannot tell, which SpaceReclaimBar takes as "unknown".
     qlonglong stickTotalBytes = 0;
@@ -237,6 +250,8 @@ private:
     QString m_currentItem;
     QString m_errorMessage;
     QPointer<KeepRecordingController> m_keep;
+    // Keep controllers let go of while a delete ran: told when it ends.
+    QList<QPointer<KeepRecordingController>> m_detachedKeeps;
 };
 
 }  // namespace seabass::gui

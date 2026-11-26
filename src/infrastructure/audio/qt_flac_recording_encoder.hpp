@@ -8,18 +8,20 @@
 #include <string>
 
 #include "application/ports/recording_encoder.hpp"
+#include "infrastructure/audio/recording_temp_names.hpp"
 
 namespace seabass::infrastructure::audio
 {
 
-// The suffix of the file a FLAC is written to before it is proven, for a
-// scan that tidies leftovers. It ends in .flac, the extension the
-// recorder would otherwise add to a name it does not know. The whole name
-// is "<target's name>.<16 hex digits>.seabass-encode-tmp.flac", a name of
-// each job's own (uniqueTempBeside()), so that two jobs never write or
-// remove each other's file. The encoder removes only its own; a leftover
-// of a job that was killed stays for a scan.
-inline constexpr const char *RecordingEncodeTempSuffix = ".seabass-encode-tmp.flac";
+// The file a FLAC is written to before it is proven is named
+// "<target's name>.<16 hex digits>.seabass-encode-tmp"
+// (RecordingEncodeTempSuffix), a name of each job's own
+// (uniqueTempBeside()), so that two jobs never write or remove each
+// other's file. The recorder is given the FLAC format explicitly and
+// writes under this name as it is (measured with Qt 6.11 and FFmpeg 6.1:
+// no extension added; the actual location is compared all the same). The
+// encoder removes only its own; a leftover of a job that was killed is
+// swept by a later job (LocalKeepRecordingFiles::sweepLeftovers()).
 
 // RecordingEncoder through Qt Multimedia: the WAV's samples go into a
 // QMediaRecorder through a QAudioBufferInput (the FFmpeg backend's FLAC

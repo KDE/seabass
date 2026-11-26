@@ -20,10 +20,17 @@
 //     it was; another write's copy beside the file is left alone;
 //   - the copy taken away or changed after its check: a failure, the file
 //     byte for byte as it was, never an empty file in its place;
-//   - a file that is not there while one copy of the writer is (what a
-//     power cut leaves on FAT): the copy is put back under the file's
-//     name, never deleted; a copy that is no FLAC, or two copies, are
-//     left as they are;
+//   - a file that is not there: a failure, "it is not there", and a copy
+//     of the writer beside it (another job's) is left untouched: write()
+//     never recovers;
+//   - recoverInterruptedTagWrite(), asked for: a file that is not there
+//     while one copy of the writer is (what a power cut leaves on FAT):
+//     the copy is put back under the file's name, never deleted; a copy
+//     that is no FLAC, or two copies, are left as they are; a rename that
+//     leaves the copy's name as a second name removes it again;
+//   - the copy is named "<FLAC>.<16 hex>.seabass-tag-tmp", and the extra
+//     bytes the temporary names add are what recordingTempNameExtraBytes()
+//     says;
 //   - a large picture is decoded at the cover's size, absurd sizes are
 //     refused before decoding, and an extreme shape keeps a side of at
 //     least one pixel.
@@ -56,13 +63,20 @@
 #include "infrastructure/audio/flac_stream_info.hpp"
 #include "infrastructure/audio/qt_cover_art_preparer.hpp"
 #include "infrastructure/audio/qt_flac_recording_encoder.hpp"
+#include "infrastructure/audio/recording_file_steps.hpp"
 #include "infrastructure/audio/taglib_recording_tag_writer.hpp"
+#include "infrastructure/no_replace_rename.hpp"
 #include "recording_test_support.hpp"
+
+#if !defined(_WIN32)
+#include <cerrno>
+#endif
 
 using namespace seabass;
 using infrastructure::audio::QtCoverArtPreparer;
 using infrastructure::audio::QtFlacRecordingEncoder;
 using infrastructure::audio::RecordingTagTempSuffix;
+using infrastructure::audio::recoverInterruptedTagWrite;
 using infrastructure::audio::TagLibRecordingTagWriter;
 namespace fs = std::filesystem;
 
@@ -392,6 +406,25 @@ void placement(const std::string &dir)
         check(readAll(flac) == before, "copy changed: the file is as it was, byte for byte");
         check(copiesBeside(flac).empty(), "copy changed: the copy is taken away");
     }
+    {
+        TagLibRecordingTagWriter writer;
+        std::string seen;
+        writer.setBeforePlaceForTests([&seen](const std::string &copy) { seen = copy; });
+        const auto result = writer.write(flac, tags);
+        const std::string name = pathToUtf8(pathFromUtf8(seen).filename());
+        const std::string suffix = ".seabass-tag-tmp";  // as written, not the constant
+        check(result.written, "copy name: written (" + result.error + ")");
+        check(name.size() == std::string("placement.flac").size() + 1 + 16 + suffix.size()
+                  && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0,
+              "copy name: <FLAC>.<16 hex>.seabass-tag-tmp, no audio extension last: " + name);
+        std::size_t most = 0;
+        for (const char *s : infrastructure::audio::RecordingTempSuffixes) {
+            const std::string temp = pathToUtf8(infrastructure::audio::uniqueTempBeside(pathFromUtf8("x"), s).filename());
+            most = std::max(most, temp.size() - 1);
+        }
+        check(most == infrastructure::audio::recordingTempNameExtraBytes(),
+              "the name budget's extra bytes are the longest temporary name's: " + std::to_string(most));
+    }
 }
 
 // What a power cut leaves on FAT and exFAT, where the copy replaces the
@@ -417,9 +450,14 @@ void interruptedReplace(const std::string &dir)
         const std::string copy = flac + ".00112233445566aa" + RecordingTagTempSuffix;
         fs::rename(pathFromUtf8(flac), pathFromUtf8(copy));
         const std::string bytes = readAll(copy);
-        const auto result = writer.write(flac, tags);
-        check(!result.written && result.error.find("put back") != std::string::npos,
-              "interrupted, one copy: a failure that says it was put back (" + result.error + ")");
+        const auto plain = writer.write(flac, tags);
+        check(!plain.written && plain.error.find("it is not there") != std::string::npos,
+              "write() of a FLAC that is not there: a failure that says so (" + plain.error + ")");
+        check(readAll(copy) == bytes && !fs::exists(pathFromUtf8(flac)),
+              "write() of a FLAC that is not there: the copy beside it is untouched, nothing put back");
+        const auto result = recoverInterruptedTagWrite(flac);
+        check(result.putBack && result.message.find("put back") != std::string::npos,
+              "interrupted, one copy: put back, saying so (" + result.message + ")");
         check(readAll(flac) == bytes, "interrupted, one copy: the file is back under its name, byte for byte");
         check(copiesBeside(flac).empty(), "interrupted, one copy: the copy is now the file, none left");
         check(recording_test::compareWithSignal(recording_test::decodeAll(flac), spec).empty(),
@@ -432,9 +470,9 @@ void interruptedReplace(const std::string &dir)
         const std::string flac = dir + "/fat-cut.flac";
         const std::string copy = flac + ".00112233445566bb" + RecordingTagTempSuffix;
         writeAll(copy, "fLaC and then the power went");
-        const auto result = writer.write(flac, tags);
-        check(!result.written && result.error.find("left as it is") != std::string::npos,
-              "interrupted, damaged copy: a failure (" + result.error + ")");
+        const auto result = recoverInterruptedTagWrite(flac);
+        check(!result.putBack && result.message.find("left as it is") != std::string::npos,
+              "interrupted, damaged copy: nothing put back (" + result.message + ")");
         check(readAll(copy) == "fLaC and then the power went", "interrupted, damaged copy: left as it was");
         check(!fs::exists(pathFromUtf8(flac)), "interrupted, damaged copy: nothing under the file's name");
     }
@@ -449,12 +487,38 @@ void interruptedReplace(const std::string &dir)
         const std::string second = flac + ".00112233445566dd" + RecordingTagTempSuffix;
         fs::copy_file(pathFromUtf8(flac), pathFromUtf8(second));
         fs::rename(pathFromUtf8(flac), pathFromUtf8(first));
-        const auto result = writer.write(flac, tags);
-        check(!result.written && result.error.find("2 temporary copies") != std::string::npos,
-              "interrupted, two copies: a failure that says so (" + result.error + ")");
+        const auto result = recoverInterruptedTagWrite(flac);
+        check(!result.putBack && result.message.find("2 temporary copies") != std::string::npos,
+              "interrupted, two copies: nothing put back, saying so (" + result.message + ")");
         check(fs::exists(pathFromUtf8(first)) && fs::exists(pathFromUtf8(second)) && !fs::exists(pathFromUtf8(flac)),
               "interrupted, two copies: both left as they are");
     }
+#if !defined(_WIN32)
+    // Put back through a hard link whose old name could not be removed:
+    // removed again, nothing left beside the file.
+    {
+        const std::string flac = dir + "/fat-link.flac";
+        if (!encoder.encode(wav, flac, {}).encoded) {
+            check(false, "interrupted: the FLAC could not be made");
+            return;
+        }
+        const std::string copy = flac + ".00112233445566ee" + RecordingTagTempSuffix;
+        fs::rename(pathFromUtf8(flac), pathFromUtf8(copy));
+        infrastructure::setNoReplaceRenameCallsForTests({[](const char *, const char *) {
+                                                             errno = EINVAL;
+                                                             return -1;
+                                                         },
+                                                         {},
+                                                         [](const char *) {
+                                                             errno = EBUSY;
+                                                             return -1;
+                                                         }});
+        const auto result = recoverInterruptedTagWrite(flac);
+        infrastructure::setNoReplaceRenameCallsForTests({});
+        check(result.putBack && fs::exists(pathFromUtf8(flac)) && copiesBeside(flac).empty(),
+              "put back through a link, old name left: removed again (" + result.message + ")");
+    }
+#endif
 }
 
 void notFlac(const std::string &dir)
@@ -471,7 +535,8 @@ void notFlac(const std::string &dir)
     check(copiesBeside(path).empty(), "not a FLAC: no temporary copy");
 
     const auto missing = writer.write(dir + "/missing.flac", tags);
-    check(!missing.written && !missing.error.empty(), "missing: a failure");
+    check(!missing.written && missing.error.find("it is not there") != std::string::npos,
+          "missing: a failure that says it is not there (" + missing.error + ")");
 }
 
 }  // namespace

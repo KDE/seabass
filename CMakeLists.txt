@@ -5187,6 +5187,14 @@ target_link_libraries(keep_recording_test PRIVATE seabass_core_testing)
 target_include_directories(keep_recording_test PRIVATE src)
 add_test(NAME keep_recording_test COMMAND keep_recording_test)
 
+# Keep this recording's files on a real folder: the sweep of leftover
+# temporary files and whether a folder is on the stick.
+add_executable(local_keep_recording_files_test tests/local_keep_recording_files_test.cpp
+    src/infrastructure/local/local_keep_recording_files.cpp)
+target_link_libraries(local_keep_recording_files_test PRIVATE seabass_core_testing)
+target_include_directories(local_keep_recording_files_test PRIVATE src tests)
+add_test(NAME local_keep_recording_files_test COMMAND local_keep_recording_files_test)
+
 # The reader too (from seabass_core_testing): case 5 is about what it does
 # with an archive whose offsets are damaged, which is the other half of
 # this format.

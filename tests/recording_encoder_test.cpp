@@ -25,8 +25,22 @@
 //   - a valid FLAC of other audio with its MD5 zeroed, and a 24 bit FLAC
 //     that differs from the WAV in the lowest byte of one sample only, put
 //     in the place of the encoded file: the comparison itself refuses them;
-//   - a WAV with bytes after its data chunk: chunks are fine, anything else
-//     (a stale data size, garbage) is refused with the two lengths;
+//   - a WAV with bytes after its data chunk: chunks, zero bytes to the end,
+//     an ID3v1 block at the end, and after an odd data chunk a chunk
+//     without the pad byte that ends exactly at the end are fine; anything
+//     else is refused with the two lengths, counted in whole frames;
+//   - a recording the player did not finish (a data size of 0 or
+//     0xFFFFFFFF, one past the end, a stale one with whole frames after
+//     it), 16 and 24 bit, with a partial last frame: refused, saying so,
+//     without the choice; with it, every whole frame is kept, the partial
+//     frame reported, STREAMINFO's total the frames kept and the FLAC the
+//     signal of those frames;
+//   - the temporary file is named "<FLAC>.<16 hex>.seabass-encode-tmp",
+//     and the recorder writes under that name (no extension added);
+//   - a temporary name too long for the filesystem: refused, saying so;
+//   - a rename through a hard link whose old name could not be removed:
+//     the second name is removed again, and when that is not possible, its
+//     path is said;
 //   - the temporary file taken away or changed after the check: refused,
 //     no empty or other file under the target's name; a file that appears
 //     at the target right before the rename: not replaced;
@@ -70,7 +84,13 @@
 #include "infrastructure/audio/flac_stream_info.hpp"
 #include "infrastructure/audio/qt_flac_recording_encoder.hpp"
 #include "infrastructure/audio/wav_pcm_file.hpp"
+#include "infrastructure/no_replace_rename.hpp"
 #include "recording_test_support.hpp"
+
+#if !defined(_WIN32)
+#include <cerrno>
+#include <unistd.h>
+#endif
 
 using namespace seabass;
 using infrastructure::audio::QtFlacRecordingEncoder;
@@ -158,11 +178,12 @@ struct Run
 
 Run encode(QtFlacRecordingEncoder &encoder, const std::string &wav, const std::string &flac,
            application::CancellationToken cancel = application::CancellationToken::none(),
-           double cancelAt = 2.0)
+           double cancelAt = 2.0, bool keepUnfinished = false)
 {
     Run run;
     application::RecordingEncodeOptions options;
     options.cancel = cancel;
+    options.keepUnfinished = keepUnfinished;
     options.progress = [&run, cancel, cancelAt](double fraction) mutable {
         run.progress.push_back(fraction);
         if (fraction >= cancelAt) {
@@ -258,6 +279,22 @@ void formats(const std::string &dir)
     WavSpec oddAfter{48000, 2, 16, 48000};
     oddAfter.trailing = std::string("cue \x04\x00\x00\x00" "abcdjunk\x03\x00\x00\x00xyz", 23);
     roundTrip(dir, oddAfter);
+    // Zero bytes to the end (padding), after the audio and after a chunk.
+    WavSpec padded{44100, 2, 16, 44100 + 3};
+    padded.trailing = std::string(4093, '\0');
+    roundTrip(dir, padded);
+    WavSpec chunkThenPadding{44100, 1, 16, 44100 + 5};
+    chunkThenPadding.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12) + std::string(777, '\0');
+    roundTrip(dir, chunkThenPadding);
+    // An ID3v1 block at the very end.
+    WavSpec id3{44100, 2, 16, 44100 + 9};
+    id3.trailing = "TAG" + std::string("Late Set") + std::string(117, ' ');
+    roundTrip(dir, id3);
+    // An odd data chunk (24 bit mono, an odd number of frames) and a chunk
+    // right after it without the pad byte, ending at the end of the file.
+    WavSpec oddData{44100, 1, 24, 44101};
+    oddData.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12);
+    roundTrip(dir, oddData);
 }
 
 // 24 bit through Qt's 32 bit sample format: the low byte must survive.
@@ -291,7 +328,7 @@ void refusals(const std::string &dir)
         WavSpec spec{44100, 2, 16, 44100};
         spec.declaredDataBytes = 44100 * 4 * 2;
         recording_test::writeWav(wav, spec);
-        refused("cut short", wav, flac, "cut short");
+        refused("cut short", wav, flac, "did not finish");
         check(!exists(flac), "cut short: no FLAC");
     }
     // Not a WAV.
@@ -307,7 +344,7 @@ void refusals(const std::string &dir)
         WavSpec spec{44100, 2, 16, 44100};
         spec.declaredDataBytes = 0xFFFFFFFFU;
         recording_test::writeWav(wav, spec);
-        refused("unfinished", wav, dir + "/unfinished.flac", "not finished");
+        refused("unfinished", wav, dir + "/unfinished.flac", "did not finish");
     }
     // A sample format that is not read: 8 bit, written by hand.
     {
@@ -392,15 +429,195 @@ void trailingBytes(const std::string &dir)
     WavSpec stale{44100, 2, 16, 44100 * 120};
     stale.declaredDataBytes = 44100 * 4 * 60;
     refusedWith("stale-size", stale, "header says it holds 1:00 of audio, and the file has room for 2:00");
+    // Not zero, not a chunk, not whole frames: refused, the room counted
+    // in whole frames only.
     WavSpec garbage{44100, 2, 16, 44100};
-    garbage.trailing = std::string(4096, '\0');
+    garbage.trailing = std::string(4095, '\x7f');
     refusedWith("garbage-after", garbage, "not finished properly");
+    WavSpec roomInFrames{44100, 2, 16, 44100 * 2};
+    roomInFrames.declaredDataBytes = 44100 * 4;
+    roomInFrames.trailing = std::string(44100 * 4 * 59 + 3, '\x01');  // 59 s and 3 bytes of garbage
+    refusedWith("room-in-frames", roomInFrames, "header says it holds 0:01 of audio, and the file has room for 1:01");
+    // Zero bytes that stop short of the end are not padding.
+    WavSpec zerosThenJunk{44100, 2, 16, 44100};
+    zerosThenJunk.trailing = std::string(100, '\0') + "junk!";
+    refusedWith("zeros-then-junk", zerosThenJunk, "not finished properly");
+    // An ID3v1 block that is not at the very end.
+    WavSpec id3NotAtEnd{44100, 2, 16, 44100};
+    id3NotAtEnd.trailing = "TAG" + std::string(125, ' ') + "x";
+    refusedWith("id3-not-at-end", id3NotAtEnd, "not finished properly");
+    // After an odd data chunk, a chunk without the pad byte that does not
+    // end at the end of the file.
+    WavSpec oddDataRunsOn{44100, 1, 24, 44101};
+    oddDataRunsOn.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12) + "zz";
+    refusedWith("odd-data-runs-on", oddDataRunsOn, "not finished properly");
+    // ... nor with zero bytes after it: the walk without the pad byte
+    // takes chunks only, to the very end.
+    WavSpec oddDataThenZeros{44100, 1, 24, 44101};
+    oddDataThenZeros.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12) + std::string(4, '\0');
+    refusedWith("odd-data-then-zeros", oddDataThenZeros, "not finished properly");
     WavSpec runsPast{44100, 2, 16, 44100};
     runsPast.trailing = std::string("LIST\xff\x00\x00\x00INFO", 12);
     refusedWith("chunk-runs-past", runsPast, "not finished properly");
     WavSpec secondData{44100, 2, 16, 44100};
-    secondData.trailing = std::string("data\x04\x00\x00\x00" "abcd", 12);
+    secondData.trailing = std::string("data\x04\x00\x00\x00" "abcd", 12) + "x";
     refusedWith("second-data", secondData, "not finished properly");
+}
+
+// A recording the player did not finish, in each header state it leaves.
+void unfinishedHeaders(const std::string &dir)
+{
+    struct Case
+    {
+        std::string label;
+        WavSpec spec;
+        std::uint64_t partialBytes;
+    };
+    std::vector<Case> cases;
+    for (const int bits : {16, 24}) {
+        const std::uint64_t frames = 48000 * 2 + 77;
+        const std::uint32_t align = static_cast<std::uint32_t>(bits / 8 * 2);
+        const std::string b = std::to_string(bits);
+        // No size: 0 and 0xFFFFFFFF, a partial last frame after the audio.
+        WavSpec noSize{48000, 2, bits, frames};
+        noSize.declaredDataBytes = 0xFFFFFFFFU;
+        noSize.trailing = std::string(align - 1, '\x11');
+        cases.push_back({"unfinished-ffffffff-" + b, noSize, align - 1});
+        WavSpec zero{48000, 2, bits, frames};
+        zero.declaredDataBytes = 0;
+        cases.push_back({"unfinished-zero-" + b, zero, 0});
+        // More than the file holds, a partial frame at the end.
+        WavSpec past{48000, 2, bits, frames};
+        past.declaredDataBytes = static_cast<std::uint32_t>((frames + 48000) * align);
+        past.trailing = std::string(1, '\x22');
+        cases.push_back({"unfinished-past-end-" + b, past, 1});
+        // Less than the file holds, whole frames after it and no chunk.
+        WavSpec stale{48000, 2, bits, frames};
+        stale.declaredDataBytes = static_cast<std::uint32_t>(48000 * align);
+        cases.push_back({"unfinished-stale-" + b, stale, 0});
+    }
+    for (const Case &c : cases) {
+        const std::string wav = dir + "/" + c.label + ".wav";
+        if (!recording_test::writeWav(wav, c.spec)) {
+            check(false, c.label + ": the test could not write its WAV");
+            continue;
+        }
+        const std::string before = readAll(wav);
+        QtFlacRecordingEncoder encoder;
+        {
+            const std::string flac = dir + "/" + c.label + "-refused.flac";
+            const Run run = encode(encoder, wav, flac);
+            check(!run.result.encoded && run.result.unfinished
+                      && run.result.error.find("did not finish") != std::string::npos,
+                  c.label + ": without the choice, refused as unfinished (" + run.result.error + ")");
+            check(run.result.framesInWav == c.spec.frames, c.label + ": the frames the file holds are reported");
+            check(!exists(flac) && noTempBeside(flac), c.label + ": without the choice, nothing written");
+        }
+        const std::string flac = dir + "/" + c.label + ".flac";
+        const Run run = encode(encoder, wav, flac, application::CancellationToken::none(), 2.0, true);
+        check(run.result.encoded && run.result.unfinished, c.label + ": with the choice, encoded (" + run.result.error + ")");
+        check(run.result.framesInWav == c.spec.frames && run.result.framesVerified == c.spec.frames,
+              c.label + ": every whole frame kept and checked (" + std::to_string(run.result.framesVerified) + ")");
+        check(run.result.partialFrameBytesDropped == c.partialBytes,
+              c.label + ": the partial last frame is reported (" + std::to_string(run.result.partialFrameBytesDropped)
+                  + " bytes)");
+        const auto info = infrastructure::audio::readFlacStreamInfo(pathFromUtf8(flac));
+        check(info && info->totalFrames == c.spec.frames, c.label + ": STREAMINFO's total is the frames kept");
+        check(info && info->md5 == recording_test::signalMd5(c.spec), c.label + ": and its MD5 is of those frames");
+        const std::string mismatch = recording_test::compareWithSignal(recording_test::decodeAll(flac), c.spec);
+        check(mismatch.empty(), c.label + ": the FLAC decodes to the frames the file held: " + mismatch);
+        check(readAll(wav) == before, c.label + ": the WAV is not written to");
+    }
+    // A finished WAV with the choice set: read as declared, not to the end.
+    {
+        WavSpec spec{44100, 2, 16, 44100};
+        spec.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12);
+        const std::string wav = dir + "/finished-with-choice.wav";
+        recording_test::writeWav(wav, spec);
+        QtFlacRecordingEncoder encoder;
+        const Run run = encode(encoder, wav, dir + "/finished-with-choice.flac", application::CancellationToken::none(),
+                               2.0, true);
+        check(run.result.encoded && !run.result.unfinished && run.result.framesInWav == spec.frames,
+              "a finished WAV with the choice: read as its header declares");
+    }
+}
+
+// The temporary file's name, and what the filesystem cannot take.
+void temporaryNames(const std::string &dir)
+{
+    const WavSpec spec{44100, 2, 16, 44100};
+    const std::string wav = dir + "/names.wav";
+    recording_test::writeWav(wav, spec);
+    {
+        QtFlacRecordingEncoder encoder;
+        std::string seen;
+        bool there = false;
+        encoder.setBeforeCheckForTests([&](const std::string &temp) {
+            seen = temp;
+            there = exists(temp);
+        });
+        const std::string flac = dir + "/named.flac";
+        const Run run = encode(encoder, wav, flac);
+        const std::string name = pathToUtf8(pathFromUtf8(seen).filename());
+        const std::string suffix = ".seabass-encode-tmp";  // as written, not the constant
+        check(run.result.encoded, "temporary name: encoded (" + run.result.error + ")");
+        check(name.size() == std::string("named.flac").size() + 1 + 16 + suffix.size()
+                  && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0
+                  && name.find(".flac.") == std::string("named").size(),
+              "temporary name: <FLAC>.<16 hex>.seabass-encode-tmp, no audio extension last: " + name);
+        check(there, "temporary name: the recorder wrote under exactly that name");
+    }
+    // A name the FLAC fits and its temporary name does not.
+    {
+        QtFlacRecordingEncoder encoder;
+        const std::string flac = dir + "/" + std::string(230, 'n') + ".flac";
+        const Run run = encode(encoder, wav, flac);
+        check(!run.result.encoded && run.result.error.find("too long") != std::string::npos
+                  && run.result.error.find("recording itself") == std::string::npos,
+              "a temporary name too long: refused, saying so (" + run.result.error + ")");
+        check(!exists(flac), "a temporary name too long: nothing written");
+    }
+#if !defined(_WIN32)
+    using infrastructure::NoReplaceRenameCalls;
+    using infrastructure::setNoReplaceRenameCallsForTests;
+    const auto noAtomic = [](const char *, const char *) {
+        errno = EINVAL;
+        return -1;
+    };
+    // The old name could not be removed by the rename: removed again.
+    {
+        setNoReplaceRenameCallsForTests({noAtomic, {}, [](const char *) {
+                                             errno = EBUSY;
+                                             return -1;
+                                         }});
+        QtFlacRecordingEncoder encoder;
+        const std::string flac = dir + "/second-name.flac";
+        const Run run = encode(encoder, wav, flac);
+        setNoReplaceRenameCallsForTests({});
+        check(run.result.encoded && run.result.notes.empty(),
+              "old name left by the rename: encoded, nothing to say (" + run.result.error + ")");
+        check(noTempBeside(flac), "old name left by the rename: removed again");
+    }
+    // ... and when that is not possible either, its path is said. Here the
+    // old name is another file by then, which is never removed.
+    {
+        setNoReplaceRenameCallsForTests({noAtomic, {}, [](const char *path) {
+                                             ::unlink(path);
+                                             std::ofstream(path) << "another file now";
+                                             errno = EBUSY;
+                                             return -1;
+                                         }});
+        QtFlacRecordingEncoder encoder;
+        const std::string flac = dir + "/second-name-stays.flac";
+        const Run run = encode(encoder, wav, flac);
+        setNoReplaceRenameCallsForTests({});
+        const std::vector<std::string> left = tempsBeside(flac);
+        check(run.result.encoded && left.size() == 1 && run.result.notes.size() == 1
+                  && run.result.notes.front().find(left.empty() ? std::string("?") : left.front()) != std::string::npos,
+              "a second name that stays: encoded, and its path said: "
+                  + (run.result.notes.empty() ? std::string() : run.result.notes.front()));
+    }
+#endif
 }
 
 // The comparison itself, with the MD5 out of the way: a FLAC that is valid
@@ -678,6 +895,8 @@ int main(int argc, char **argv)
         twentyFourBit(dir);
         refusals(dir);
         trailingBytes(dir);
+        unfinishedHeaders(dir);
+        temporaryNames(dir);
         comparisonAlone(dir);
         placement(dir);
         damaged(dir);

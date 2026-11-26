@@ -226,6 +226,8 @@ private:
         result.channels = m_result.channels;
         result.bitsPerSample = m_result.bitsPerSample;
         result.framesInWav = m_result.framesInWav;
+        result.unfinished = m_result.unfinished;
+        result.partialFrameBytesDropped = m_result.partialFrameBytesDropped;
     }
 
     void report(double fraction)
@@ -262,7 +264,17 @@ private:
         if (ec) {
             return refuse("it could not be read");
         }
-        m_wav = std::make_unique<WavPcmFile>(m_wavPath);
+        // One reading for the encoding and for the check: the same object
+        // reads the frames for both, so the FLAC is compared with exactly
+        // the frames that were encoded, and STREAMINFO's total must be
+        // their number.
+        m_wav = std::make_unique<WavPcmFile>(
+            m_wavPath, m_options.keepUnfinished ? WavReading::ToEndOfFile : WavReading::AsDeclared);
+        if (const std::optional<WavUnfinished> &unfinished = m_wav->unfinished()) {
+            m_result.unfinished = true;
+            m_result.framesInWav = unfinished->framesHeld;
+            m_result.partialFrameBytesDropped = unfinished->partialFrameBytes;
+        }
         if (!m_wav->isOpen()) {
             return refuse(m_wav->error());
         }
@@ -273,14 +285,29 @@ private:
         m_result.framesInWav = layout.frames;
 
         const std::string targetName = pathToUtf8(m_target.filename());
+        const std::string tempName = pathToUtf8(m_temp.filename());
         // The recording is only ever read: neither the FLAC nor the
-        // temporary file may be it, under any spelling of its name.
-        if (sameFile(m_target, m_wavPath) || sameFile(m_temp, m_wavPath)) {
+        // temporary file may be it, under any spelling of its name. A
+        // question the filesystem cannot answer is refused with its
+        // reason, never taken as an answer.
+        std::error_code lookedAt;
+        const std::optional<bool> targetIsWav = sameFile(m_target, m_wavPath, &lookedAt);
+        if (!targetIsWav) {
+            return refuse(lookError(targetName, lookedAt));
+        }
+        const std::optional<bool> tempIsWav = sameFile(m_temp, m_wavPath, &lookedAt);
+        if (!tempIsWav) {
+            return refuse(lookedAt == std::errc::filename_too_long
+                              ? "the temporary name " + tempName + " beside " + targetName
+                                  + " is too long for this drive. Make the name shorter"
+                              : lookError(tempName, lookedAt));
+        }
+        if (*targetIsWav || *tempIsWav) {
             return refuse(targetName + " would be the recording itself");
         }
-        const std::optional<bool> there = somethingAt(m_target);
+        const std::optional<bool> there = somethingAt(m_target, &lookedAt);
         if (!there) {
-            return refuse("the place for " + targetName + " could not be looked at");
+            return refuse(lookError(targetName, lookedAt));
         }
         if (*there) {
             return refuse(targetName + " exists already, and is not replaced");
@@ -549,7 +576,8 @@ private:
                 // and goes as well, unless it is a file that was there
                 // before: the recording or the target.
                 if (fs::symlink_status(longPathSafe(actualPath), ec).type() == fs::file_type::regular
-                    && !sameFile(actualPath, m_wavPath) && !sameFile(actualPath, m_target)) {
+                    && sameFile(actualPath, m_wavPath) == std::optional<bool>(false)
+                    && sameFile(actualPath, m_target) == std::optional<bool>(false)) {
                     fs::remove(longPathSafe(actualPath), ec);
                 }
                 return fail("the encoder wrote to " + actual.toStdString() + " and not where it was asked to");
@@ -582,6 +610,8 @@ private:
                         + std::to_string(layout.channels) + " channel audio at " + std::to_string(layout.sampleRate)
                         + " Hz");
         }
+        // The frames read: for a recording the player did not finish, the
+        // whole frames the file holds, which is what was kept.
         if (info->totalFrames != layout.frames) {
             return fail("the encoded file says it holds " + std::to_string(info->totalFrames) + " frames, the WAV holds "
                         + std::to_string(layout.frames));
@@ -725,7 +755,14 @@ private:
         } catch (const std::exception &e) {
             return fail(std::string("the encoded file could not be flushed: ") + e.what());
         }
-        // The file that was flushed is the one that was checked.
+        // The file that was flushed is the one that was checked: its size
+        // and its STREAMINFO block, with the MD5 of every sample. Not its
+        // audio again, unlike the tag writer, which re-hashes its copy:
+        // decoding or hashing a FLAC of a whole set a second time costs
+        // the person minutes on every keep, for a file changed in the
+        // moment between the check and here by something else, which the
+        // size and the MD5 already catch unless it rewrote the audio with
+        // other bytes of the same length and left STREAMINFO alone.
         const std::optional<FlacStreamInfo> info = readFlacStreamInfo(m_temp);
         if (flushedSize != m_checkedSize || !info || info->raw != m_checkedInfo.raw) {
             return fail("the encoded file changed after it was checked");
@@ -747,6 +784,15 @@ private:
             return fail("the encoded file could not be given its name: " + renamed.error);
         }
         m_tempMayExist = false;
+        if (renamed.oldNameRemains) {
+            // Given its name through a hard link whose old name could not
+            // be removed: tried once more, and said when it stays.
+            if (!removeSecondName(m_temp, m_target)) {
+                m_result.notes.push_back(targetName + " also has a second name that could not be removed ("
+                                         + renamed.error + "): " + pathToUtf8(m_temp)
+                                         + ". It is the same file and can be deleted.");
+            }
+        }
         try {
             fsyncDirectoryContaining(pathToUtf8(m_target));
         } catch (...) {
@@ -762,7 +808,7 @@ private:
 
     void discardTemp()
     {
-        if (!m_tempMayExist || sameFile(m_temp, m_wavPath)) {
+        if (!m_tempMayExist || sameFile(m_temp, m_wavPath) != std::optional<bool>(false)) {
             return;
         }
         std::error_code ec;

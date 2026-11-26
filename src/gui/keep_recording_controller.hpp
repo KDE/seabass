@@ -134,7 +134,8 @@ class KeepRecordingController : public QObject
     // The jobs that ended in this session, oldest first, until
     // dismissFinished(): [{state ("kept", "failed", "cancelled",
     // "dropped"), wavPath, recording, fileName, folder, flacPath,
-    // leftBehind, message}]. A dropped job never started.
+    // leftBehind, message, notes (a list of sentences), unfinished,
+    // keptSeconds}]. A dropped job never started.
     Q_PROPERTY(QVariantList finishedJobs READ finishedJobs NOTIFY finishedJobsChanged)
     // Bumps whenever outcomeFor() may answer differently.
     Q_PROPERTY(int revision READ revision NOTIFY revisionChanged)
@@ -208,8 +209,9 @@ public:
     Q_INVOKABLE void pickCover(const QString &pathOrUrl);
 
     // Queues the recording to be kept: {wavPath, recording (its file
-    // name), artist, title, album, genre, year, folder}; the cover is the
-    // one picked. Starts at once when nothing runs. False, with
+    // name), artist, title, album, genre, year, folder, keepUnfinished
+    // (the person ticked "Keep the audio the file holds" for a recording
+    // the player did not finish)}; the cover is the one picked. Starts at once when nothing runs. False, with
     // errorMessage, when the form's checks refuse it, or when the
     // recording is being kept or waits to be kept already.
     Q_INVOKABLE bool keep(const QVariantMap &form);
@@ -218,12 +220,18 @@ public:
     // How the recording at `wavPath` fares in this session: {state
     // ("queued", "running", "kept", "failed", "cancelled", "dropped"; ""
     // for none), recording, fileName, folder, flacPath, leftBehind,
-    // message}.
+    // message, notes, unfinished, keptSeconds}. A recording is known by its
+    // path, size and modification time: another file that appears under
+    // the same path is another recording. Forgotten when the stick root
+    // changes, but for jobs that run or wait.
     Q_INVOKABLE QVariantMap outcomeFor(const QString &wavPath) const;
     // For the delete confirmation, of the recordings at `wavPaths`:
     // {notKept: [file names of those a keep was asked for in this session
     // and none ended kept], kept: [{recording, fileName, folder} of those
-    // kept in this session, the last copy each]}.
+    // kept in this session, the last copy each, while that FLAC is still
+    // there with the size and modification time it had when the job
+    // ended], keptGone: [{recording, fileName, folder} of those kept whose
+    // FLAC is not there like that any more]}.
     Q_INVOKABLE QVariantMap keepNotesFor(const QStringList &wavPaths) const;
     Q_INVOKABLE void dismissFinished();
     // Opens the folder of a kept FLAC in the file manager.
@@ -254,6 +262,8 @@ private:
     {
         int id = 0;
         QString wavPath;
+        // wavKey(): the path, size and modification time.
+        QString wavKey;
         QString recording;
         application::KeepRecordingRequest request;
     };
@@ -271,6 +281,7 @@ private:
     void onCoverPrepared();
     void setError(const QString &message);
     void bumpRevision();
+    void clearSessionRecords();
     void noteWork(bool hadWork);
     // Every check of the form, for keep(); "" when it may start.
     QString formProblem(const QVariantMap &form) const;
@@ -286,7 +297,8 @@ private:
     QString m_progressStep;
     double m_progress = 0.0;
     QVariantList m_finishedJobs;
-    // Per WAV path, how its last job ended, and its last kept copy.
+    // Per WAV (path, size and modification time), how its last job ended,
+    // and its last kept copy with the FLAC's size and modification time.
     QHash<QString, QVariantMap> m_outcomes;
     QHash<QString, QVariantMap> m_keptCopies;
     QString m_stickRoot;

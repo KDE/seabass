@@ -8,17 +8,17 @@
 #include <string>
 
 #include "application/ports/recording_tag_writer.hpp"
+#include "infrastructure/audio/recording_temp_names.hpp"
 
 namespace seabass::infrastructure::audio
 {
 
-// The suffix of the copy the tags are written into, for a scan that
-// tidies leftovers. The whole name is "<file's name>.<16 hex
-// digits>.seabass-tag-tmp.flac", a name of each write's own, so that two
-// writes never take each other's copy. The writer removes only its own
-// copy. A leftover beside its FLAC stays for a scan; one whose FLAC is
-// not there is never deleted (see write()).
-inline constexpr const char *RecordingTagTempSuffix = ".seabass-tag-tmp.flac";
+// The copy the tags are written into is named "<file's name>.<16 hex
+// digits>.seabass-tag-tmp" (RecordingTagTempSuffix), a name of each
+// write's own, so that two writes never take each other's copy. TagLib is
+// handed it as a FLAC (TagLib::FLAC::File), not by its extension. The
+// writer removes only its own copy; a leftover is swept by a later keep
+// job (LocalKeepRecordingFiles::sweepLeftovers()).
 
 // RecordingTagWriter through TagLib, for FLAC files: the text goes into
 // the Vorbis comment (ARTIST, TITLE, ALBUM, GENRE, DATE), the cover into
@@ -34,13 +34,9 @@ inline constexpr const char *RecordingTagTempSuffix = ".seabass-tag-tmp.flac";
 // the rename. The copy costs the file's size once more on the disk, for
 // the time of the write.
 //
-// On FAT and exFAT replacing a file by rename is a delete and then a
-// rename on the disk, and a power cut between the two leaves only the
-// copy. Asked to write the tags of a file that is not there, the writer
-// looks for that copy: when there is exactly one and it is a FLAC, it is
-// put back under the file's name; otherwise everything is left as it is.
-// It is never deleted. Either way the answer is a failure that says what
-// was found.
+// A file that is not there is a failure ("it is not there"), and nothing
+// beside it is looked at: a copy left by an interrupted write is put back
+// only by recoverInterruptedTagWrite(), when asked.
 class TagLibRecordingTagWriter : public application::RecordingTagWriter
 {
 public:
@@ -54,5 +50,30 @@ public:
 private:
     std::function<void(const std::string &)> m_beforePlace;
 };
+
+// What recoverInterruptedTagWrite() did.
+struct InterruptedTagWriteRecovery
+{
+    bool putBack = false;
+    // What was found and done, in words.
+    std::string message;
+};
+
+// On FAT and exFAT replacing a file by rename is a delete and then a
+// rename on the disk, and a power cut between the two leaves only the
+// tag writer's copy. Asked for a FLAC that is not there, this looks for
+// that copy beside it: when there is exactly one and it is a FLAC (its
+// STREAMINFO reads), it is put back under the file's name by a rename that
+// never replaces; otherwise everything is left as it is. A copy is never
+// deleted.
+//
+// What can be proven of a copy that is put back: that it is a FLAC whose
+// STREAMINFO block reads. Not whether it is the tagged copy that was
+// checked or one whose write was cut short: its audio and tags are not
+// checked again. So nothing calls this during a keep job: there a FLAC
+// that is not there vanished after the encoder placed it, and a copy of
+// the same name is an earlier job's. It is for a step the person asks
+// for. Never throws.
+InterruptedTagWriteRecovery recoverInterruptedTagWrite(const std::string &flacPath);
 
 }  // namespace seabass::infrastructure::audio
