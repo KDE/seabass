@@ -987,6 +987,73 @@ int main()
         std::cout << "case: a cue comment's trailing NUL is not written into OneLibrary OK\n";
     }
 
+    // #139: a removal takes the track's play history, My Tag rows and
+    // recommendation pairs with it, and restates numberOfContents; a
+    // duplicate replaced hands its history and tags to the survivor. On a
+    // copy of the anonymized rekordbox export, whose property row already
+    // says 1664 over 1644 content rows after twenty removals by an older
+    // Seabass.
+    {
+        fs::path scratch = freshScratch();
+        fs::path pioneerRoot = scratch / "PIONEER";
+        fs::create_directories(pioneerRoot / "rekordbox");
+        const fs::path fixtureDb = pathFromUtf8(SEABASS_SOURCE_DIR) / "tests" / "fixtures" / "anonymized_library"
+            / "rekordbox" / "rekordbox";
+        for (const char *name : {"exportLibrary.db", "exportLibrary.db-wal"}) {
+            fs::copy_file(fixtureDb / name, pioneerRoot / "rekordbox" / name);
+        }
+        const std::string dbPath = OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneerRoot));
+        auto value = [&](const std::string &sql) {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, dbPath, /*readOnly=*/true);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            SqlCipherStatement statement(db, sql);
+            statement.step();
+            return statement.columnInt64(0);
+        };
+        assert(value("SELECT count(*) FROM content") == 1644);
+        assert(value("SELECT numberOfContents FROM property") == 1664);
+        {
+            SqlCipherLibrary lib;
+            SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
+            db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            // Track 1 played twice and track 3 once; tag 1 on tracks 1 and
+            // 2, tag 2 on track 1 only; pairs 1-3, 3-1 and 2-3.
+            db.exec("INSERT INTO history_content (history_id, content_id, sequenceNo) "
+                    "VALUES (1, 1, 1), (1, 2, 2), (1, 1, 3), (1, 3, 4);");
+            db.exec("INSERT INTO myTag_content (myTag_id, content_id) VALUES (1, 1), (1, 2), (2, 1);");
+            db.exec("INSERT INTO recommendedLike (content_id_1, content_id_2, rating, createdDate) "
+                    "VALUES (1, 3, 1, 0), (3, 1, 1, 0), (2, 3, 1, 0);");
+        }
+        const std::string one = pathToUtf8(scratch / "Contents" / "cc8be4.mp3");
+        const std::string two = pathToUtf8(scratch / "Contents" / "48601.mp3");
+        const std::string three = pathToUtf8(scratch / "Contents" / "a0221d.mp3");
+        {
+            OneLibraryCueWriter writer(pathToUtf8(pioneerRoot));
+            writer.removeTrackByPathReplacingWith(one, two);
+        }
+        assert(value("SELECT count(*) FROM history_content WHERE content_id = 1") == 0);
+        assert(value("SELECT count(*) FROM history_content WHERE content_id = 2") == 3 && "both plays moved over");
+        assert(value("SELECT count(*) FROM myTag_content WHERE content_id = 1") == 0);
+        assert(value("SELECT count(*) FROM myTag_content WHERE content_id = 2 AND myTag_id = 1") == 1
+               && "a tag the survivor had is not given twice");
+        assert(value("SELECT count(*) FROM myTag_content WHERE content_id = 2 AND myTag_id = 2") == 1);
+        assert(value("SELECT count(*) FROM recommendedLike WHERE 1 IN (content_id_1, content_id_2)") == 0);
+        assert(value("SELECT count(*) FROM recommendedLike") == 1);
+        assert(value("SELECT numberOfContents FROM property") == 1643);
+        {
+            OneLibraryCueWriter writer(pathToUtf8(pioneerRoot));
+            writer.removeTrackByPath(three);
+        }
+        assert(value("SELECT count(*) FROM history_content WHERE content_id = 3") == 0);
+        assert(value("SELECT count(*) FROM history_content") == 3);
+        assert(value("SELECT count(*) FROM recommendedLike") == 0);
+        assert(value("SELECT count(*) FROM content") == 1642);
+        assert(value("SELECT numberOfContents FROM property") == 1642);
+        std::cout << "case: a removal takes history, My Tag and recommendation rows along, and restates "
+                     "numberOfContents OK\n";
+    }
+
     std::cout << "All onelibrary_cue_writer_test cases passed.\n";
     return 0;
 }

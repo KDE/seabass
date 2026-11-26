@@ -669,6 +669,78 @@ void OneLibraryCueWriter::setBeforeCueFileWrite(std::function<void(const std::st
     m_beforeCueFileWrite = std::move(hook);
 }
 
+namespace
+{
+
+bool hasColumn(SqlCipherDb &db, const std::string &table, const std::string &column)
+{
+    SqlCipherStatement stmt(db, "SELECT count(*) FROM pragma_table_info(?) WHERE name = ?");
+    stmt.bindText(1, table);
+    stmt.bindText(2, column);
+    return stmt.step() && stmt.columnInt64(0) > 0;
+}
+
+void runWithId(SqlCipherDb &db, const std::string &sql, int64_t id)
+{
+    SqlCipherStatement stmt(db, sql);
+    stmt.bindInt64(1, id);
+    stmt.run();
+}
+
+// The rows outside content, cue and playlist_content that name a removed
+// track (#139): its play history, its My Tag rows and the recommendation
+// pairs it is in. Left behind, they name a content_id no row has. With a
+// survivor (a duplicate replaced), history and My Tag move onto it the way
+// playlist entries do; a recommendation is a pair rekordbox computed for
+// the removed row, so it goes. A table this database lacks (the oldest
+// exports, and the minimal ones tests build) has nothing to clean up.
+void dropOtherReferences(SqlCipherDb &db, int64_t doomed, std::optional<int64_t> survivor)
+{
+    if (hasColumn(db, "history_content", "content_id")) {
+        if (survivor) {
+            // Every play stays a play, of the copy that is left; a track
+            // played twice is in a history twice, so nothing is merged.
+            SqlCipherStatement move(db, "UPDATE history_content SET content_id = ? WHERE content_id = ?");
+            move.bindInt64(1, *survivor);
+            move.bindInt64(2, doomed);
+            move.run();
+        } else {
+            runWithId(db, "DELETE FROM history_content WHERE content_id = ?", doomed);
+        }
+    }
+    if (hasColumn(db, "myTag_content", "content_id")) {
+        if (survivor) {
+            // The playlist rule: a tag the survivor already has is not
+            // given to it twice.
+            SqlCipherStatement move(db,
+                                    "UPDATE myTag_content SET content_id = ? WHERE content_id = ? AND myTag_id NOT IN "
+                                    "(SELECT myTag_id FROM myTag_content WHERE content_id = ?)");
+            move.bindInt64(1, *survivor);
+            move.bindInt64(2, doomed);
+            move.bindInt64(3, *survivor);
+            move.run();
+        }
+        runWithId(db, "DELETE FROM myTag_content WHERE content_id = ?", doomed);
+    }
+    if (hasColumn(db, "recommendedLike", "content_id_1") && hasColumn(db, "recommendedLike", "content_id_2")) {
+        SqlCipherStatement drop(db, "DELETE FROM recommendedLike WHERE content_id_1 = ? OR content_id_2 = ?");
+        drop.bindInt64(1, doomed);
+        drop.bindInt64(2, doomed);
+        drop.run();
+    }
+}
+
+// property.numberOfContents, which rekordbox keeps equal to the number of
+// content rows (#139), restated after a removal.
+void restateNumberOfContents(SqlCipherDb &db)
+{
+    if (hasColumn(db, "property", "numberOfContents")) {
+        db.exec("UPDATE property SET numberOfContents = (SELECT count(*) FROM content);");
+    }
+}
+
+}  // namespace
+
 void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
 {
     // Same staleness guard as writeCuesForPath(), see its own comment
@@ -707,12 +779,14 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
                     delPlaylist.bindInt64(1, contentId);
                     delPlaylist.run();
                 }
+                dropOtherReferences(db, contentId, std::nullopt);
                 {
                     SqlCipherStatement delContent(db, "DELETE FROM content WHERE content_id = ?");
                     delContent.bindInt64(1, contentId);
                     delContent.run();
                 }
             }
+            restateNumberOfContents(db);
             db.exec("COMMIT;");
         } catch (...) {
             try {
@@ -910,11 +984,13 @@ void OneLibraryCueWriter::removeTrackByIdReplacingWith(int64_t doomedContentId, 
                 delPlaylist.bindInt64(1, doomedContentId);
                 delPlaylist.run();
             }
+            dropOtherReferences(db, doomedContentId, survivorContentId);
             {
                 SqlCipherStatement delContent(db, "DELETE FROM content WHERE content_id = ?");
                 delContent.bindInt64(1, doomedContentId);
                 delContent.run();
             }
+            restateNumberOfContents(db);
             db.exec("COMMIT;");
         } catch (...) {
             try {

@@ -5007,6 +5007,7 @@ target_link_libraries(onelibrary_cue_writer_test PRIVATE ZLIB::ZLIB)
 if(NOT WIN32)
     target_link_libraries(onelibrary_cue_writer_test PRIVATE ${CMAKE_DL_LIBS})
 endif()
+target_compile_definitions(onelibrary_cue_writer_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME onelibrary_cue_writer_test COMMAND onelibrary_cue_writer_test)
 
 add_executable(onelibrary_playlist_tree_test tests/onelibrary_playlist_tree_test.cpp)
