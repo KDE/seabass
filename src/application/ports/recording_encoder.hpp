@@ -13,6 +13,11 @@
 namespace seabass::application
 {
 
+// How much of the progress encode() reports is the encoding: below this
+// share the FLAC is being written, from it on the written file is being
+// checked. The check decodes about as fast as the encoding runs.
+inline constexpr double RecordingEncodingShare = 0.6;
+
 struct RecordingEncodeOptions
 {
     CancellationToken cancel;

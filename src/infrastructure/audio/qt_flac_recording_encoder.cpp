@@ -47,9 +47,8 @@ namespace fs = std::filesystem;
 // Frames handed to the recorder at a time, and compared at a time in the
 // check: a third of a second at 48 kHz, 128 KB of 24 bit stereo.
 constexpr std::uint64_t FramesPerPiece = 16384;
-// How much of the progress the encoding is; the check is the rest. The
-// check decodes about as fast as the encoding runs.
-constexpr double EncodingShare = 0.6;
+// How much of the progress the encoding is; the check is the rest.
+constexpr double EncodingShare = application::RecordingEncodingShare;
 // What the recorder may hold back of the end of the audio until it is
 // stopped: FFmpeg's FLAC encoder takes blocks of about 105 ms, and the
 // recorder reports its duration in whole milliseconds.

@@ -667,6 +667,8 @@ add_library(seabass_core STATIC
     src/application/use_cases/real_file_sizes.cpp
     src/application/use_cases/fill_file_sizes.cpp
     src/application/use_cases/clean_up_recordings.cpp
+    src/application/use_cases/keep_recording.cpp
+    src/infrastructure/local/local_keep_recording_files.cpp
     src/infrastructure/file_placement.cpp
     src/application/use_cases/find_unreferenced_files.cpp
     src/infrastructure/stick_layout.cpp
@@ -732,6 +734,7 @@ add_library(seabass_core_testing STATIC
     src/application/phased_progress.cpp
     src/application/use_cases/backup_stick.cpp
     src/application/use_cases/clean_up_recordings.cpp
+    src/application/use_cases/keep_recording.cpp
     src/application/use_cases/fill_file_sizes.cpp
     src/application/use_cases/compact_stick_backup.cpp
     src/application/use_cases/restore_stick_backup.cpp
@@ -1133,6 +1136,9 @@ if(TARGET Qt6::Multimedia AND TARGET Qt6::Gui AND TARGET seabass_taglib)
         src/infrastructure/audio/qt_cover_art_preparer.cpp)
     target_include_directories(seabass_recording_qt PUBLIC src)
     target_link_libraries(seabass_recording_qt PUBLIC seabass_core seabass_taglib Qt6::Core Qt6::Gui Qt6::Multimedia)
+    # Whoever links it can keep a recording (KeepRecordingController);
+    # without it the page does not offer to.
+    target_compile_definitions(seabass_recording_qt PUBLIC SEABASS_HAVE_RECORDING_ENCODER)
 endif()
 
 # Diagnostic, not a test, so built with tests off too: what the audio
@@ -1385,6 +1391,9 @@ if(SEABASS_GUI AND Qt6_FOUND)
     if(TARGET seabass_audio_qt)
         target_link_libraries(seabass PRIVATE seabass_audio_qt)
     endif()
+    if(TARGET seabass_recording_qt)
+        target_link_libraries(seabass PRIVATE seabass_recording_qt)
+    endif()
     if(TARGET seabass_taglib)
         target_link_libraries(seabass PRIVATE seabass_taglib)
     endif()
@@ -1531,6 +1540,9 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # nobody can trust is worse than no screenshot.
         if(TARGET seabass_audio_qt)
             target_link_libraries(seabass_qml_tests PRIVATE seabass_audio_qt)
+        endif()
+        if(TARGET seabass_recording_qt)
+            target_link_libraries(seabass_qml_tests PRIVATE seabass_recording_qt)
         endif()
         # See the find_package(Qt6 ...) call above for why these two are
         # conditional rather than in the list above.
@@ -5148,6 +5160,14 @@ target_link_libraries(clean_up_recordings_test PRIVATE seabass_core_testing)
 target_include_directories(clean_up_recordings_test PRIVATE src)
 add_test(NAME clean_up_recordings_test COMMAND clean_up_recordings_test)
 
+# Keep this recording: the job's order, every point it can stop at and
+# what it leaves behind there, the free space refusal and the file name,
+# with fake ports (no Qt, no audio).
+add_executable(keep_recording_test tests/keep_recording_test.cpp)
+target_link_libraries(keep_recording_test PRIVATE seabass_core_testing)
+target_include_directories(keep_recording_test PRIVATE src)
+add_test(NAME keep_recording_test COMMAND keep_recording_test)
+
 # The reader too (from seabass_core_testing): case 5 is about what it does
 # with an archive whose offsets are damaged, which is the other half of
 # this format.
@@ -5766,6 +5786,27 @@ if(TARGET seabass_recording_qt)
     add_test(NAME recording_encoder_long_test COMMAND recording_encoder_test ${CMAKE_BINARY_DIR}/test-scratch --long)
     set_tests_properties(recording_encoder_test recording_encoder_long_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+
+    # Keep this recording through its controller with the real encoder,
+    # cover preparer and tag writer on short WAVs the test writes: the
+    # tagged FLAC, the progress, the queue, a cancel and the controller
+    # destroyed mid-job.
+    if(SEABASS_TESTS)
+        add_executable(keep_recording_controller_test
+            src/gui/keep_recording_controller.cpp
+            src/gui/sleep_inhibitor.cpp
+            tests/keep_recording_controller_test.cpp)
+        target_include_directories(keep_recording_controller_test PRIVATE src tests)
+        target_link_libraries(keep_recording_controller_test PRIVATE seabass_recording_qt Qt6::Core Qt6::Gui
+            Qt6::Concurrent Qt6::Qml Qt6::Test)
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(keep_recording_controller_test PRIVATE Qt6::DBus)
+        endif()
+        add_test(NAME keep_recording_controller_test COMMAND keep_recording_controller_test
+            ${CMAKE_BINARY_DIR}/test-scratch)
+        set_tests_properties(keep_recording_controller_test PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+    endif()
 
     add_executable(recording_tag_writer_test tests/recording_tag_writer_test.cpp)
     target_include_directories(recording_tag_writer_test PRIVATE src)

@@ -150,6 +150,26 @@ from day one.
   besides: a WAV's file type measured from a rekordbox export (11 is the
   published number), and cues moved by Analyse again checked on a player.
 
+- **Keep this recording** (added 2026-11-26, #147, Own Recordings step
+  3) — on Clean Up Recordings, a WAV the DJ hardware recorded onto the
+  stick becomes a FLAC with artist, track name, album, genre, year and a
+  front cover in a folder on this computer ("Keep…" on the row, a form,
+  then the passive progress strip: encoding, checking, tags and cover,
+  with Cancel and a queue). `KeepRecordingController` runs
+  `application::keepRecording` on a worker with the Qt Multimedia encoder
+  (the FLAC decoded again and compared with the WAV sample for sample),
+  the QImage cover preparer and the TagLib tag writer. Nothing under the
+  target's name is ever replaced; a failure or a cancel leaves no file in
+  the folder; the recording on the stick is only read and never deleted
+  here. Shown only with Experimental on. Verified with synthetic WAVs
+  (`keep_recording_test`, `keep_recording_controller_test`,
+  `recording_encoder_test`, `recording_tag_writer_test`); no real
+  recording has been kept yet. Promote once Sebastian has kept real
+  recordings of each kind (Engine OS 16 and 24 bit, a Pioneer REC file)
+  and a Bluesound player has shown the cover. Still owed: the FLAC put
+  onto the stick into an "Own Recordings" playlist, Free Up Space naming a
+  recording that has been kept, and Windows and macOS.
+
 - **Moved files: Point Library at File** (added 2026-11-19, #103) — the
   second repair on Library Health's Moved files page (`MovedFilesPage.qml`,
   `RelinkMovedFileChange`): every catalog's row for a track whose file

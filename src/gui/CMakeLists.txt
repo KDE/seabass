@@ -234,6 +234,8 @@ set(SEABASS_GUI_SOURCES
     cleanup_controller.cpp
     recordings_controller.hpp
     recordings_controller.cpp
+    keep_recording_controller.hpp
+    keep_recording_controller.cpp
     add_cue_controller.hpp
     add_cue_controller.cpp
     playlist_edit_controller.hpp

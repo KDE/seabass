@@ -720,6 +720,8 @@ ApplicationWindow {
         RecordingsPage {
             controller: RecordingsController {}
             playbackController: playbackCtrl
+            keepController: KeepRecordingController {}
+            keepEnabled: appSettingsCtrl.experimentalFeaturesEnabled === true
         }
     }
 
