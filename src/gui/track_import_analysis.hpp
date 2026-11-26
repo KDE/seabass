@@ -14,27 +14,19 @@
 namespace seabass::gui
 {
 
-// Seabass's own analysis of an audio file for the track import, a test
-// version: the file is decoded once (QtMultimediaPcmSource, whole into
-// memory: about 10 MB a minute) and given to domain::analyseAudio,
-// which makes grid, tempo and waveform. Null when the file cannot be
-// decoded, or this build has no decoder. A grid the analyser could not
-// make leaves the waveform alone in the result.
-//
-// A file longer than ImportAnalysisMaxSeconds is not analysed: it is
-// held in memory whole, and the analyser's own working memory comes on
-// top (measured: a 65 minute mix takes 2.8 GB and 1 min 42 s on one
-// core). An hour and a half covers a recorded mix; two of them analysed
-// at once are about 8 GB.
+// Seabass's own analysis of an audio file for the track import: the file
+// is decoded once (QtMultimediaPcmSource) and given to
+// domain::analyseAudio piece by piece as it is decoded, which makes
+// grid, tempo, key and waveform. The track is never held whole, so a
+// recorded mix of some hours is analysed like any track: 50 MB and
+// 3.5 MB a minute (analysis_resources.hpp). Null when the file cannot be
+// decoded, was cut short by a decode error, or this build has no
+// decoder. A grid the analyser could not make leaves the waveform alone
+// in the result.
 //
 // Needs a QCoreApplication; runs a nested event loop in the calling
 // thread. Throws application::OperationCancelled on a cancel, which is
-// asked between the steps, not inside them.
-constexpr int ImportAnalysisMaxSeconds = 90 * 60;
-// From this length on a file is a long one, and only one long file is
-// analysed at a time, however many are analysed at once: the others wait
-// their turn, so that several mixes do not take several GB each together.
-constexpr int ImportAnalysisLongSeconds = 20 * 60;
+// asked at every piece read.
 
 // How many files an import analyses at once on this computer
 // (analysisJobsFor: by its cores and their strength, two at least, eight

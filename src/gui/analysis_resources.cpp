@@ -194,6 +194,13 @@ std::optional<std::uint64_t> availableMemoryBytes()
 #endif
 }
 
+std::uint64_t analysisBytesFor(double seconds, int sampleRateHz)
+{
+    const double minutes = std::max(0.0, seconds) / 60.0;
+    return AnalysisBaseBytes + static_cast<std::uint64_t>(minutes * static_cast<double>(AnalysisBytesPerMinute))
+           + (sampleRateHz >= AnalysisHighRateHz ? AnalysisHighRateBytes : 0);
+}
+
 bool analysisMayStart(std::optional<std::uint64_t> availableBytes, std::uint64_t stillToTakeBytes, int inHand)
 {
     if (inHand <= 0) {
@@ -235,16 +242,15 @@ int AnalysisMemoryGate::enter(const application::CancellationToken &cancel)
     }
 }
 
-void AnalysisMemoryGate::noteRead(int ticket, double seconds, std::uint64_t heldBytes)
+void AnalysisMemoryGate::noteRead(int ticket, double seconds, int sampleRateHz)
 {
     const std::lock_guard<std::mutex> lock(m_mutex);
     const auto track = m_tracks.find(ticket);
     if (track == m_tracks.end()) {
         return;
     }
-    const auto peak = static_cast<std::uint64_t>(std::max(0.0, seconds) * static_cast<double>(AnalysisBytesPerSecond));
-    track->second.peakBytes = std::max(AnalysisTypicalBytes, peak);
-    track->second.heldBytes = heldBytes;
+    track->second.heldBytes = analysisBytesFor(seconds, sampleRateHz);
+    track->second.peakBytes = std::max(AnalysisTypicalBytes, track->second.heldBytes);
 }
 
 void AnalysisMemoryGate::leave(int ticket)

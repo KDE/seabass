@@ -84,20 +84,33 @@ int main()
         assert(gate.inHand() == 2);
         gate.leave(third);
 
-        // The track in hand turns out an hour long and holds a sixth of
-        // its peak: the rest counts against the next.
-        const std::uint64_t peak = 3600 * AnalysisBytesPerSecond;
-        gate.noteRead(second, 3600.0, peak / 6);
-        assert(gate.stillToTake() == peak - peak / 6);
+        // The track in hand has read a minute: the rest of a typical
+        // track's share counts against the next.
+        const std::uint64_t held = analysisBytesFor(60.0, 44100);
+        assert(held == AnalysisBaseBytes + AnalysisBytesPerMinute);
+        gate.noteRead(second, 60.0, 44100);
+        const std::uint64_t rest = AnalysisTypicalBytes - held;
+        assert(gate.stillToTake() == rest);
+        free = rest + AnalysisTypicalBytes + AnalysisMemoryMargin - 1;
         std::atomic<int> fourth{0};
         std::thread longWait([&]() { fourth = gate.enter(cancel); });
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         assert(fourth == 0);
         // Memory that something else gave back is seen without a leave.
-        free = peak + AnalysisTypicalBytes + AnalysisMemoryMargin;
+        free = rest + AnalysisTypicalBytes + AnalysisMemoryMargin;
         longWait.join();
         assert(fourth != 0);
         gate.leave(fourth);
+
+        // An hour in, nothing is held back for it any more: what it takes
+        // from there on shows in the free memory. An hour is 265 MB, and
+        // a high sample rate 40 MB more.
+        gate.noteRead(second, 3600.0, 44100);
+        assert(gate.stillToTake() == 0);
+        assert(analysisBytesFor(3600.0, 48000) == AnalysisBaseBytes + 60 * AnalysisBytesPerMinute);
+        assert(analysisBytesFor(3600.0, 48000) < 270ull * 1024 * 1024);
+        assert(analysisBytesFor(0.0, 96000) == AnalysisBaseBytes + AnalysisHighRateBytes);
+        assert(analysisBytesFor(-5.0, 44100) == AnalysisBaseBytes);
 
         // A cancel ends a wait.
         free = 0;

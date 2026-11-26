@@ -211,7 +211,7 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
     for (std::size_t i = 0; i < made.size(); ++i) {
         const PlaylistFile &file = *analysing[i];
         if (!made[i]) {
-            prepared.leftAlone.push_back({file.filePath, "could not be decoded, or is longer than an analysis takes"});
+            prepared.leftAlone.push_back({file.filePath, "could not be decoded"});
             continue;
         }
         if (made[i]->beats.empty()) {

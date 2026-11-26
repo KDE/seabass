@@ -50,11 +50,18 @@ void markAnalysisThread();
 // available physical memory on Windows. nullopt when it cannot be read.
 std::optional<std::uint64_t> availableMemoryBytes();
 
-// What a track takes at its peak while it is analysed whole, measured:
-// 2.8 GB for a mix of 65 minutes, 250 MB for six minutes.
-constexpr std::uint64_t AnalysisBytesPerSecond = 720ull * 1024;
+// What a track takes while it is analysed, read piece by piece and never
+// held whole (the analysis library's own numbers, lib/musicanalyze's
+// README, rounded up): 50 MB whatever its length, 3.5 MB for every minute
+// on top, and 40 MB more from 88.2 kHz on.
+constexpr std::uint64_t AnalysisBaseBytes = 50ull * 1024 * 1024;
+constexpr std::uint64_t AnalysisBytesPerMinute = 3584ull * 1024;
+constexpr std::uint64_t AnalysisHighRateBytes = 40ull * 1024 * 1024;
+constexpr int AnalysisHighRateHz = 88200;
+// For `seconds` of audio at that rate.
+std::uint64_t analysisBytesFor(double seconds, int sampleRateHz);
 // What a track not yet read is taken to need: eight minutes' worth.
-constexpr std::uint64_t AnalysisTypicalBytes = 8 * 60 * AnalysisBytesPerSecond;
+constexpr std::uint64_t AnalysisTypicalBytes = AnalysisBaseBytes + 8 * AnalysisBytesPerMinute;
 // Left to the rest of the computer.
 constexpr std::uint64_t AnalysisMemoryMargin = 1024ull * 1024 * 1024;
 // Assumed free when the system does not say.
@@ -71,9 +78,11 @@ bool analysisMayStart(std::optional<std::uint64_t> availableBytes, std::uint64_t
 //
 // The reading of free memory lags: a track just started has not taken
 // its memory yet. So each track in hand says how far it has got (noteRead)
-// and the gate takes off what it will still take: its peak for what was
-// read so far (a typical track's at least, its length is not known before
-// it is read), less what it holds already.
+// and the gate takes off what it will still take: a typical track's
+// share (its length is not known before it is read), less what it holds
+// for what it has read. A track past the typical length has nothing held
+// back for it: what it takes from there on, 3.5 MB a minute, is seen in
+// the free memory as it goes.
 class AnalysisMemoryGate
 {
 public:
@@ -83,9 +92,8 @@ public:
     // Blocks until a track may start; asks `cancel` while it waits and
     // throws application::OperationCancelled. Returns the track's ticket.
     int enter(const application::CancellationToken &cancel);
-    // The track of `ticket` has read `seconds` of audio and holds
-    // `heldBytes` for it.
-    void noteRead(int ticket, double seconds, std::uint64_t heldBytes);
+    // The track of `ticket` has read `seconds` of audio at that rate.
+    void noteRead(int ticket, double seconds, int sampleRateHz);
     void leave(int ticket);
 
     int inHand() const;
