@@ -252,6 +252,7 @@ bool TrackImportController::start(ImportRequest request)
         }
     }
     request.coverReader = readCoverPictures;
+    request.analysisJobs = importAnalysisJobs();
     // The tempo range as Preferences has it now: it may have changed
     // since the last import.
     const QSettings settings = openSeabassSettings();

@@ -39,6 +39,9 @@ Rectangle {
     visible: root.running
     implicitHeight: root.running ? column.implicitHeight + 2 * Theme.tightSpacing : 0
     color: Theme.surface
+    // Open, it may reach over what is beside it: an edge of its own.
+    border.color: Theme.borderSubtle
+    border.width: root.expanded ? 1 : 0
     onRunningChanged: {
         if (!root.running) {
             root.expanded = false;

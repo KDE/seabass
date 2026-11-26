@@ -273,20 +273,34 @@ Page {
                                 .arg(outcome.analysed).arg(outcome.withGrid ?? 0))
                 : "")
             + ((outcome.followedGrids ?? []).length > 0
-                ? "\n\n" + qsTr("The tempo of %n of them moves, so their grid follows it. Check these on the player: %1",
-                                 "", outcome.followedGrids.length).arg(outcome.followedGrids.join(", ")) : "")
+                ? "\n\n" + qsTr("The tempo of %n of them moves, so their grid follows it.", "",
+                                 outcome.followedGrids.length) : "")
             + (staged > 0 && added > 0
                 ? "\n\n" + qsTr("%n more are on the stick already and go into the playlist too.", "", added) : "")
             + ((outcome.note ?? "").length > 0 ? (staged + added > 0 ? "\n\n" : "") + outcome.note : "")
-        Label {
-            objectName: "importNotImportedHeading"
+        // The files left out: their number, and which ones on request.
+        property bool showNotImported: false
+        onAboutToShow: showNotImported = false
+        RowLayout {
             visible: importResultDialog.notImported.length > 0
             Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            text: qsTr("%n file(s) left out:", "", importResultDialog.notImported.length)
+            spacing: Theme.rowSpacing
+            Label {
+                objectName: "importNotImportedHeading"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("%n file(s) left out.", "", importResultDialog.notImported.length)
+            }
+            Button {
+                objectName: "importNotImportedToggle"
+                flat: true
+                text: importResultDialog.showNotImported ? qsTr("Hide them") : qsTr("Show them")
+                onClicked: importResultDialog.showNotImported = !importResultDialog.showNotImported
+            }
         }
         ScrollView {
-            visible: importResultDialog.notImported.length > 0
+            objectName: "importNotImportedScroll"
+            visible: importResultDialog.notImported.length > 0 && importResultDialog.showNotImported
             Layout.fillWidth: true
             Layout.preferredHeight: Math.min(notImportedList.contentHeight, 200)
             clip: true
@@ -1698,9 +1712,49 @@ Page {
             SplitView.preferredWidth: 240
             SplitView.minimumWidth: 160
             padding: 0
+            // The open import panel is wider than this pane, over the
+            // tracks beside it.
+            z: importProgress.expanded ? 1 : 0
 
+            // The import being prepared, out of the way under the list.
+            PassiveProgress {
+                id: importProgress
+                objectName: "importProgress"
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                // Open, it has the width to show a file's name whole,
+                // however narrow the sidebar is.
+                width: expanded ? Math.max(parent.width, Math.min(Theme.scaled(460), root.width - 2 * Theme.pageMargin))
+                                : parent.width
+                readonly property string step: root.trackImportController.progressStep ?? ""
+                readonly property int stepIndex: ["stick", "files", "check", "analysis"].indexOf(step)
+                running: root.trackImportController.busy === true
+                done: root.trackImportController.progressDone ?? 0
+                total: root.trackImportController.progressTotal ?? 0
+                readonly property string lastFile: root.trackImportController.progressFile ?? ""
+                detail: step === "analysis" && lastFile.length > 0 ? qsTr("Last done: %1").arg(lastFile) : ""
+                activity: (root.trackImportController.progressFiles ?? []).map(
+                    file => step === "analysis" ? qsTr("Analysing %1").arg(file) : qsTr("Reading %1").arg(file))
+                note: qsTr("Nothing is written until you save.")
+                summary: step === "files" && total > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(total, done + 1)).arg(total)
+                    : step === "analysis" && total > 0
+                        ? qsTr("Import: analysing track %1 of %2").arg(Math.min(total, done + 1)).arg(total)
+                    : step === "check" ? qsTr("Import: checking against the stick")
+                    : qsTr("Import: reading the stick")
+                steps: [qsTr("Read the stick"), qsTr("Read the files"), qsTr("Check against the stick"),
+                        qsTr("Analyse the tracks")].map((label, index) => ({
+                            label: label,
+                            count: index === importProgress.stepIndex && importProgress.total > 0
+                                ? qsTr("%1 of %2 done").arg(importProgress.done).arg(importProgress.total) : "",
+                            state: index < importProgress.stepIndex ? "done" : index === importProgress.stepIndex ? "now" : "later"
+                        }))
+                onCancelRequested: root.trackImportController.cancel()
+            }
             ColumnLayout {
-                anchors.fill: parent
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: importProgress.visible ? importProgress.top : parent.bottom
                 spacing: 0
 
                 // Narrows the playlists below by name, and nothing else: the
@@ -1773,36 +1827,6 @@ Page {
                         iconName: "edit-find"
                         text: "No playlists match."
                     }
-                }
-
-                // The import being prepared, out of the way under the list.
-                PassiveProgress {
-                    id: importProgress
-                    objectName: "importProgress"
-                    Layout.fillWidth: true
-                    readonly property string step: root.trackImportController.progressStep ?? ""
-                    readonly property int stepIndex: ["stick", "files", "check", "analysis"].indexOf(step)
-                    running: root.trackImportController.busy === true
-                    done: root.trackImportController.progressDone ?? 0
-                    total: root.trackImportController.progressTotal ?? 0
-                    readonly property string lastFile: root.trackImportController.progressFile ?? ""
-                    detail: step === "analysis" && lastFile.length > 0 ? qsTr("Last done: %1").arg(lastFile) : ""
-                    activity: (root.trackImportController.progressFiles ?? []).map(
-                        file => step === "analysis" ? qsTr("Analysing %1").arg(file) : qsTr("Reading %1").arg(file))
-                    note: qsTr("Nothing is written until you save.")
-                    summary: step === "files" && total > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(total, done + 1)).arg(total)
-                        : step === "analysis" && total > 0
-                            ? qsTr("Import: analysing track %1 of %2").arg(Math.min(total, done + 1)).arg(total)
-                        : step === "check" ? qsTr("Import: checking against the stick")
-                        : qsTr("Import: reading the stick")
-                    steps: [qsTr("Read the stick"), qsTr("Read the files"), qsTr("Check against the stick"),
-                            qsTr("Analyse the tracks")].map((label, index) => ({
-                                label: label,
-                                count: index === importProgress.stepIndex && importProgress.total > 0
-                                    ? qsTr("%1 of %2 done").arg(importProgress.done).arg(importProgress.total) : "",
-                                state: index < importProgress.stepIndex ? "done" : index === importProgress.stepIndex ? "now" : "later"
-                            }))
-                    onCancelRequested: root.trackImportController.cancel()
                 }
             }
         }

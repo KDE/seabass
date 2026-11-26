@@ -100,6 +100,44 @@ TestCase {
         compare(findChild(page, "trackFileDropArea").enabled, false);
     }
 
+    // Files held at the lower edge of a list longer than its room scroll
+    // it down to "Create new playlist"; at the end the edge is no scroll
+    // zone any more, so the row under it takes the drop.
+    function test_filesHeldAtAnEdgeScrollTheList() {
+        const page = makePage(true);
+        const list = findChild(page, "playlistList");
+        const down = findChild(page, "edgeScrollDown");
+        const up = findChild(page, "edgeScrollUp");
+        // Short: nothing to scroll to, no zone in the rows' way.
+        compare(down.enabled, false);
+        compare(up.enabled, false);
+        const names = [];
+        for (let i = 0; i < 60; ++i) {
+            names.push("New " + i);
+        }
+        list.newPlaylists = names;
+        tryVerify(() => list.contentHeight > list.height * 2);
+        compare(down.enabled, true);
+        compare(up.enabled, false);
+        const start = list.contentY;
+        list.edgeScrollStep(1);
+        verify(list.contentY > start, "a step scrolls down");
+        compare(up.enabled, true);
+        for (let i = 0; i < 1000; ++i) {
+            list.edgeScrollStep(1);
+        }
+        fuzzyCompare(list.contentY, list.edgeScrollBottom, 0.5);
+        compare(down.enabled, false);
+        const create = findChild(list, "createPlaylistRow");
+        const bottom = create.mapToItem(list, 0, create.height).y;
+        verify(bottom <= list.height + 1, "the row to create a playlist is in view: " + bottom + " of " + list.height);
+        for (let i = 0; i < 1000; ++i) {
+            list.edgeScrollStep(-1);
+        }
+        fuzzyCompare(list.contentY, list.edgeScrollTop, 0.5);
+        compare(up.enabled, false);
+    }
+
     // On: the playlist's menu offers files and a folder, and what the
     // file dialog gives goes into that playlist, at its end.
     function test_thePlaylistMenuImportsIntoThePlaylist() {
@@ -214,6 +252,8 @@ TestCase {
         compare(strip.steps.map(s => s.count).join("|"), "|11 of 40 done||");
         compare(findChild(strip, "passiveProgressNote").text, "Nothing is written until you save.");
         tryVerify(() => strip.height > closedHeight * 4, 1000, "the open panel takes room to read");
+        const sidebar = findChild(page, "playlistSidebar");
+        verify(strip.width > sidebar.width + 100, "open, it is wider than the sidebar: " + strip.width);
         compare(strip.steps.map(s => s.state).join(" "), "done now later later");
         waitForRendering(page);
         if (screenshotDir && screenshotDir.length > 0) {
@@ -243,6 +283,7 @@ TestCase {
         fake.busy = false;
         tryCompare(strip, "visible", false);
         compare(strip.expanded, false);
+        compare(strip.width, findChild(page, "playlistSidebar").width);
         tryCompare(list, "height", fullHeight);
     }
 
@@ -264,9 +305,19 @@ TestCase {
         compare(dialog.headline, "3 track(s) ready to import into \"Peak\".");
         verify(dialog.detailText.indexOf("42 MB") > 0, dialog.detailText);
         verify(dialog.detailText.indexOf("no beat grid or waveform yet") > 0, dialog.detailText);
+        // The files left out are counted; which ones, on request.
         const lines = findChild(page, "importNotImportedList");
-        compare(lines.count, 2);
+        const scroll = findChild(page, "importNotImportedScroll");
         compare(findChild(page, "importNotImportedHeading").visible, true);
+        compare(findChild(page, "importNotImportedHeading").text, "2 file(s) left out.");
+        compare(scroll.visible, false);
+        // The dialog comes in with a movement: the click waits for it.
+        const toggle = findChild(page, "importNotImportedToggle");
+        tryVerify(() => dialog.opacity === 1 && dialog.scale === 1);
+        waitForRendering(page);
+        mouseClick(toggle);
+        tryCompare(scroll, "visible", true);
+        compare(lines.count, 2);
         compare(findChild(page, "importDuplicatesButton").visible, true);
         compare(findChild(page, "importTakeBackButton").visible, true);
         waitForRendering(page);
@@ -294,7 +345,9 @@ TestCase {
         tryCompare(dialog, "opened", true);
         verify(dialog.detailText.indexOf("2 more are on the stick already") > 0, dialog.detailText);
         verify(dialog.detailText.indexOf("each has a beat grid and waveforms") > 0, dialog.detailText);
-        verify(dialog.detailText.indexOf("Check these on the player: live.flac") > 0, dialog.detailText);
+        // Counted, not named: a playlist of hundreds has dozens of them.
+        verify(dialog.detailText.indexOf("The tempo of 1 of them moves") > 0, dialog.detailText);
+        verify(dialog.detailText.indexOf("live.flac") < 0, dialog.detailText);
         dialog.close();
         tryCompare(dialog, "visible", false);
         fake.lastResult = {staged: 0, addedToPlaylist: 2, megabytes: 0, playlist: "Peak", playlistIsNew: false, note: "",

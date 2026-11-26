@@ -86,6 +86,48 @@ ListView {
             }
         }
     }
+    // Files held at the lower or upper edge of a list with more rows than
+    // fit scroll it, so that every row and "Create new playlist" below
+    // the last can be reached without letting go. An edge is a scroll
+    // zone only while there is somewhere to scroll to: at the list's end
+    // the rows under it take the drop again.
+    readonly property real edgeScrollZone: 36
+    readonly property real edgeScrollTop: root.originY
+    readonly property real edgeScrollBottom: Math.max(root.originY, root.originY + root.contentHeight - root.height)
+    function edgeScrollStep(direction) {
+        root.contentY = Math.max(root.edgeScrollTop, Math.min(root.edgeScrollBottom, root.contentY + direction * 12));
+    }
+    DropArea {
+        id: edgeScrollDown
+        objectName: "edgeScrollDown"
+        parent: root
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: root.edgeScrollZone
+        z: 2
+        enabled: root.fileDropsEnabled && root.contentY < root.edgeScrollBottom - 0.5
+        keys: ["text/uri-list"]
+    }
+    DropArea {
+        id: edgeScrollUp
+        objectName: "edgeScrollUp"
+        parent: root
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: root.edgeScrollZone
+        z: 2
+        enabled: root.fileDropsEnabled && root.contentY > root.edgeScrollTop + 0.5
+        keys: ["text/uri-list"]
+    }
+    Timer {
+        objectName: "edgeScrollTimer"
+        interval: 16
+        repeat: true
+        running: edgeScrollDown.containsDrag || edgeScrollUp.containsDrag
+        onTriggered: root.edgeScrollStep(edgeScrollDown.containsDrag ? 1 : -1)
+    }
     // Spring-loaded playlists: a dragged track held over a row that takes
     // it for springLoadDelay opens that playlist (springLoaded) while the
     // drag goes on, so it can be dropped at its place there. Another row

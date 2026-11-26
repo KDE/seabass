@@ -304,7 +304,14 @@ Dialog {
     }
     onOpened: Qt.callLater(root.focusDefaultFooterButton)
 
+    // Said outright: left to the style, the height of the content was
+    // the one it had when the dialog was made, and a dialog whose content
+    // grew afterwards (the import's result, set just before it opens) had
+    // its buttons on top of its text under the desktop style.
+    contentHeight: contentRow.implicitHeight
+
     RowLayout {
+        id: contentRow
         width: parent.width
         spacing: 14
 

@@ -4,6 +4,12 @@
 
 #include "track_import_analysis.hpp"
 
+#include <QThread>
+
+#include <algorithm>
+#include <chrono>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 #include "domain/audio_analysis.hpp"
@@ -15,6 +21,11 @@
 namespace seabass::gui
 {
 
+int importAnalysisJobs()
+{
+    return std::clamp(QThread::idealThreadCount() / 2, 2, 8);
+}
+
 std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioFile,
                                                        const application::CancellationToken &cancel,
                                                        domain::TempoRange range)
@@ -23,6 +34,10 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
     cancel.throwIfCancelled();
     std::vector<float> samples;
     int rate = 0;
+    // Held from the moment this file turns out to be a long one until its
+    // analysis is done.
+    static std::mutex longFiles;
+    std::unique_lock<std::mutex> longTurn(longFiles, std::defer_lock);
     {
         infrastructure::audio::QtMultimediaPcmSource decoder(audioFile);
         rate = decoder.sampleRate();
@@ -39,6 +54,12 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
             samples.insert(samples.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(got));
             if (samples.size() > static_cast<std::size_t>(rate) * ImportAnalysisMaxSeconds) {
                 return nullptr;
+            }
+            if (!longTurn.owns_lock() && samples.size() > static_cast<std::size_t>(rate) * ImportAnalysisLongSeconds) {
+                while (!longTurn.try_lock()) {
+                    cancel.throwIfCancelled();
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                }
             }
         }
         // A file cut short by a decode error is not the whole track.

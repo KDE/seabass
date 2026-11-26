@@ -31,6 +31,15 @@ namespace seabass::gui
 // thread. Throws application::OperationCancelled on a cancel, which is
 // asked between the steps, not inside them.
 constexpr int ImportAnalysisMaxSeconds = 90 * 60;
+// From this length on a file is a long one, and only one long file is
+// analysed at a time, however many are analysed at once: the others wait
+// their turn, so that several mixes do not take several GB each together.
+constexpr int ImportAnalysisLongSeconds = 20 * 60;
+
+// How many files an import analyses at once on this computer: half its
+// threads (a laptop's eight cores report sixteen), two at least, eight at
+// most. A track of six minutes takes about 250 MB while it is analysed.
+int importAnalysisJobs();
 
 //
 // `range`: the tempos a grid may have (domain::TempoRange); the default
