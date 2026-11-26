@@ -85,6 +85,12 @@ fs::path stickRekordboxBaseline(const fs::path &stickRoot);
 // one the DJ set on the player. Not in the caches directory either: it
 // cannot be rebuilt from the stick.
 fs::path stickBeatGridLedger(const fs::path &stickRoot);
+// <stick>/Seabass/analysis.tsv.gz: per track, what Seabass's own
+// analyser wrote for it and with which revision of the analyser, so a
+// later Seabass can tell an analysis it could improve from a grid changed
+// since by hand or on a player (local/analysis_ledger_file.hpp). Not in
+// the caches directory: it cannot be rebuilt from the stick.
+fs::path stickAnalysisLedger(const fs::path &stickRoot);
 // <stick>/Seabass/engine-analysis -- per track, the player's own analysis
 // of an Engine row as it was before Seabass first replaced any of it
 // (local/kept_engine_analysis_file.hpp), so Beat Grids & Waveforms can put

@@ -19,6 +19,7 @@
 #include "application/ports/analysis_writer.hpp"
 #include "application/use_cases/plan_engine_update.hpp"
 #include "domain/cue_tolerance.hpp"
+#include "gui/edit/changes/analysis_ledger_record.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/format_write_session.hpp"
@@ -251,6 +252,10 @@ std::vector<BackupTarget> ReanalyseTrackChange::filesToBackup(SaveContext &) con
             targets.push_back({kept, Label, true});
         }
         targets.push_back({beatGridLedgerFileOf(stickRoot), Label, true});
+    }
+    // The analysis ledger, which the save adds this track's analysis to.
+    if (m_analysis && m_analysis->provenance) {
+        targets.push_back(analysisLedgerBackupTarget(ledgerStickRoot(), Label));
     }
     return targets;
 }
@@ -591,6 +596,10 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
     const bool hasEngine = !m_enginePath.isEmpty()
                            && isFile(FormatWriteSession::databaseFileFor("engine", m_enginePath.toStdString()));
     auto &catalogs = LibraryCatalogCache::instance();
+    // For the analysis ledger: the grids the libraries are left with, and
+    // whether a row took the analyser's key.
+    std::string engineGridLeft;
+    bool keyWritten = false;
 
     try {
         // Engine's rows, read from the save's own copy of m.db (a scratch
@@ -892,9 +901,9 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             const std::vector<std::uint32_t> ids = rows.trackIdsWithFilePath(m_stickPath);
             int keys = 0;
             for (const std::uint32_t row : ids) {
-                bool keyWritten = false;
-                rows.setTrackTempoAndKey(row, bpm, m_analysedKey, &keyWritten);
-                keys += keyWritten ? 1 : 0;
+                bool rowTookKey = false;
+                rows.setTrackTempoAndKey(row, bpm, m_analysedKey, &rowTookKey);
+                keys += rowTookKey ? 1 : 0;
             }
             if (!ids.empty()) {
                 if (!rows.commit()) {
@@ -902,6 +911,7 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 }
                 session.noteItemApplied();
                 catalogs.invalidate("rekordbox", pioneer);
+                keyWritten = keyWritten || keys > 0;
                 done.push_back("export.pdb: tempo of " + std::to_string(ids.size()) + " row(s)"
                                + (keys > 0 ? ", key " + m_analysedKey + " into " + std::to_string(keys)
                                                  + " that named none"
@@ -917,6 +927,7 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 const int rows =
                     sharedOneLibraryWriter(ctx, pioneer).setTempoAndKeyForPath(m_audioFile, bpm, m_analysedKey, &keys);
                 catalogs.invalidateWithOneLibraryMirror("onelibrary", pioneer);
+                keyWritten = keyWritten || keys > 0;
                 done.push_back("exportLibrary.db: tempo of " + std::to_string(rows) + " row(s)"
                                + (keys > 0 ? ", key " + m_analysedKey + " into " + std::to_string(keys)
                                                  + " that named none"
@@ -945,7 +956,12 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             if (engineTookGrid(written)) {
                 recordGridInLedgerAfterCommit(ctx, stickRoot, id(), key, written.grid.gridFingerprint);
                 engineRowsOnNewGrid.insert(row.id);
+                if (engineGridLeft.empty()) {
+                    engineGridLeft = written.grid.gridFingerprint;
+                }
             }
+            // A row the writer completed takes the key it was handed.
+            keyWritten = keyWritten || (written.completedRow && row.analysis.key.has_value());
             const std::string what = "Engine id " + std::to_string(row.id) + ": " + gridInWords(written.grid.outcome)
                                      + (written.completedRow ? ", row completed" : "")
                                      + (written.tempoWritten ? ", tempo written" : "")
@@ -1052,6 +1068,34 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 }
                 engineSession->noteItemApplied();
                 catalogs.invalidate("engine", m_enginePath.toStdString());
+            }
+        }
+
+        // The analysis ledger: what made the analysis, of the file as it
+        // was analysed, and the grids the libraries were left with, the
+        // rekordbox one read back from the analysis files as they are on
+        // the stick now. A change that writes nothing is a skip, and the
+        // save records no entry for it.
+        if (m_analysis->provenance) {
+            std::string rekordboxGridLeft;
+            for (const MergedFiles &m : toWrite) {
+                if (rekordboxGridLeft.empty()) {
+                    rekordboxGridLeft = infrastructure::rekordbox::pqtzGridFingerprint(AnlzFile::readRaw(m.paths[0]));
+                }
+            }
+            std::error_code ec;
+            const std::uintmax_t sizeNow = fs::file_size(pathFromUtf8(m_audioFile), ec);
+            const std::string stickRootForLedger = ledgerStickRoot();
+            const std::string pathKey = analysisLedgerKeyOf(m_audioFile, stickRootForLedger);
+            if (ec || sizeNow != m_analysis->provenance->fileSize || pathKey.empty()) {
+                leftAlone("not recorded in the analysis ledger: the file on the stick is not the one analysed, or "
+                          "has no place under the stick's root");
+            } else {
+                recordAnalysisAfterCommit(ctx, stickRootForLedger, id(),
+                                          analysisLedgerEntry(pathKey, *m_analysis->provenance, sizeNow,
+                                                              m_analysis->provenance->fileMtimeUnix, rekordboxGridLeft,
+                                                              engineGridLeft, m_analysedKey, keyWritten),
+                                          Label);
             }
         }
     } catch (const std::exception &e) {

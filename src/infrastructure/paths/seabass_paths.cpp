@@ -153,6 +153,11 @@ fs::path stickBeatGridLedger(const fs::path &stickRoot)
     return stickDir(stickRoot) / "beat-grids.tsv";
 }
 
+fs::path stickAnalysisLedger(const fs::path &stickRoot)
+{
+    return stickDir(stickRoot) / "analysis.tsv.gz";
+}
+
 fs::path stickKeptEngineAnalysisDir(const fs::path &stickRoot)
 {
     return stickDir(stickRoot) / "engine-analysis";

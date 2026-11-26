@@ -221,6 +221,13 @@ public:
                                                  bool previewOnly = false) override;
     EngineAnalysisFacts engineAnalysisFacts(const std::string &trackSourceId, const std::string &keepKey) override;
 
+    // The fingerprint of the row's grid as it stands, the one
+    // BeatGridWriteResult::gridFingerprint reports for a grid written or
+    // found the same: what the beat grid ledger and the analysis ledger
+    // record. Empty when the row has no grid set or its beat data cannot be
+    // read. Throws when there is no such row.
+    std::string gridFingerprintOf(const std::string &trackSourceId);
+
     // Where the player's own analysis of a row is kept before Seabass first
     // replaces any of it (importAnalysis() and writeBeatGrid() on a row the
     // player has analysed; options' keepKey names the track). Not owned.

@@ -14,6 +14,20 @@
 namespace seabass::infrastructure::audio
 {
 
+// What Seabass's own analyser is given of a file: the samples this source
+// decodes, mixed to one channel as the mean of the file's, on the
+// decoder's timeline, and moved onto rekordbox's timeline afterwards by
+// cueTimelineOffsetMs() (playback_timeline.hpp) before a grid is written.
+// The analysis ledger records it beside the analyser's own revisions
+// (local/analysis_ledger_file.hpp), so a stick can say which tracks were
+// analysed from other samples than today's.
+//
+// RAISE IT by one with any change to what the analyser is given or to
+// where its result lands: another decoder or decoder setting, another
+// mono mix, a resampling, the timeline shift. Not for a change that
+// leaves every sample and every shift as it was (a faster read).
+inline constexpr int AnalysisInputRevision = 1;
+
 // A file's audio through QAudioDecoder (Qt Multimedia's FFmpeg backend,
 // the decoder the player and the silence probe use), as the PcmSource
 // port hands it to an analyser: one channel, the mean of the file's, as

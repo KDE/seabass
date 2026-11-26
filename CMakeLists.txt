@@ -616,6 +616,9 @@ add_library(seabass_core STATIC
     src/infrastructure/local/app_data_directory.cpp
     src/infrastructure/local/rekordbox_baseline_file.cpp
     src/infrastructure/local/beat_grid_ledger_file.cpp
+    src/infrastructure/local/gzip_text.cpp
+    src/infrastructure/local/analysis_ledger_file.cpp
+    src/infrastructure/local/analysis_ledger_status.cpp
     src/infrastructure/local/kept_engine_analysis_file.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/work_counters.cpp
@@ -794,6 +797,9 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/local/browsed_backup_root.cpp
     src/infrastructure/local/rekordbox_baseline_file.cpp
     src/infrastructure/local/beat_grid_ledger_file.cpp
+    src/infrastructure/local/gzip_text.cpp
+    src/infrastructure/local/analysis_ledger_file.cpp
+    src/infrastructure/local/analysis_ledger_status.cpp
     src/infrastructure/local/kept_engine_analysis_file.cpp
     src/infrastructure/long_paths.cpp
     src/infrastructure/paths/seabass_paths.cpp
@@ -1270,6 +1276,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/owned_change.cpp
         src/gui/edit/changes/record_rekordbox_baseline_change.hpp
         src/gui/edit/changes/record_rekordbox_baseline_change.cpp
+        src/gui/edit/changes/analysis_ledger_record.hpp
+        src/gui/edit/changes/analysis_ledger_record.cpp
         src/gui/edit/changes/add_engine_track_change.hpp
         src/gui/edit/changes/add_engine_track_change.cpp
         src/gui/edit/changes/import_track_change.cpp
@@ -4975,6 +4983,20 @@ add_executable(beat_grid_ledger_file_test tests/beat_grid_ledger_file_test.cpp)
 target_link_libraries(beat_grid_ledger_file_test PRIVATE seabass_core_testing)
 target_include_directories(beat_grid_ledger_file_test PRIVATE src)
 add_test(NAME beat_grid_ledger_file_test COMMAND beat_grid_ledger_file_test)
+
+# The analysis ledger on the stick: round trip, a missing file, every
+# damaged one refused with an error naming it, the writer's refusals.
+add_executable(analysis_ledger_file_test tests/analysis_ledger_file_test.cpp)
+target_link_libraries(analysis_ledger_file_test PRIVATE seabass_core_testing)
+target_include_directories(analysis_ledger_file_test PRIVATE src)
+add_test(NAME analysis_ledger_file_test COMMAND analysis_ledger_file_test)
+
+# What the analysis ledger says of a track today: every state, "-" never
+# a change, the modification time a hint only.
+add_executable(analysis_ledger_status_test tests/analysis_ledger_status_test.cpp)
+target_link_libraries(analysis_ledger_status_test PRIVATE seabass_core_testing)
+target_include_directories(analysis_ledger_status_test PRIVATE src)
+add_test(NAME analysis_ledger_status_test COMMAND analysis_ledger_status_test)
 
 # The player's own analyses kept on the stick: round trip of every SQLite
 # value, damaged files refused, the hook before each change.

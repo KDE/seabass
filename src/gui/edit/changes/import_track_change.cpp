@@ -19,6 +19,7 @@
 #include "application/path_key.hpp"
 #include "application/ports/analysis_writer.hpp"
 #include "domain/mp3_lead_in.hpp"
+#include "gui/edit/changes/analysis_ledger_record.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
@@ -28,7 +29,10 @@
 #include "infrastructure/audio/playback_timeline.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/rekordbox/anlz_analysis_merge.hpp"
 #include "infrastructure/rekordbox/anlz_builder.hpp"
+#include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/exact_sample_count.hpp"
@@ -441,7 +445,14 @@ void ImportTrackChange::setAnalysis(std::shared_ptr<const ImportAnalysis> analys
     }
     if (m_analysis && m_track.key.empty() && !m_analysis->key.empty()) {
         m_track.key = m_analysis->key;
+        m_keyFromAnalysis = true;
     }
+}
+
+std::string ImportTrackChange::ledgerStickRoot() const
+{
+    return infrastructure::paths::normalStickRootForCatalogPath(
+        (m_pioneerRoot.isEmpty() ? m_enginePath : m_pioneerRoot).toStdString());
 }
 
 std::string ImportTrackChange::destinationFile() const
@@ -475,6 +486,10 @@ std::vector<BackupTarget> ImportTrackChange::filesToBackup(SaveContext &) const
         BackupTarget audio{destination, Label};
         audio.removeOnRestoreIfAbsent = true;
         targets.push_back(std::move(audio));
+    }
+    // The analysis ledger, which the save adds this track to.
+    if (m_analysis && m_analysis->provenance) {
+        targets.push_back(analysisLedgerBackupTarget(ledgerStickRoot(), Label));
     }
     return targets;
 }
@@ -586,6 +601,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     std::optional<infrastructure::rekordbox::NewAnlzFiles> anlz;
     std::vector<domain::Beat> rekordboxBeats;
     std::optional<std::uint64_t> sampleCount;
+    std::string engineGrid;  // the fingerprint of the grid Engine's row took
     const bool isMp3 = domain::hasMp3Extension(source);
     if (m_analysis) {
         RekordboxAnalysisFiles built = rekordboxAnalysisFilesFor(*m_analysis, source, m_track.stickPath, m_track.durationSeconds);
@@ -804,8 +820,35 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                     engineAnalysisWriterFor(ctx, session, m_stickRoot.toStdString())
                         .importAnalysis(std::to_string(m_engineId), analysis, options);
                 m_engineAnalysed = written.completedRow;
+                if (written.grid.outcome == application::BeatGridWriteResult::Outcome::Written) {
+                    engineGrid = written.grid.gridFingerprint;
+                }
             }
             session.noteItemApplied();
+        }
+        // The analysis ledger: what made the analysis written here, and
+        // the grids the libraries were left with, read back from the
+        // analysis file as it is on the stick.
+        if (m_analysis && m_analysis->provenance && (!analysisFile.empty() || m_engineAnalysed)) {
+            std::string rekordboxGrid;
+            if (!analysisFile.empty()) {
+                rekordboxGrid = infrastructure::rekordbox::pqtzGridFingerprint(infrastructure::rekordbox::AnlzFile::readRaw(
+                    pathToUtf8(pictureFile(analysisFile.substr(0, analysisFile.size() - 3) + "DAT"))));
+            }
+            const std::string stickRootForLedger = ledgerStickRoot();
+            const std::string key = analysisLedgerKeyOf(destination, stickRootForLedger);
+            const std::optional<std::int64_t> mtime = fileMtimeUnixOf(destination);
+            if (key.empty() || !mtime) {
+                ctx.log().record(std::string(Label) + ": " + m_track.stickPath
+                                 + " is not recorded in the analysis ledger: its place or its time on the stick "
+                                   "cannot be read");
+            } else {
+                recordAnalysisAfterCommit(ctx, stickRootForLedger, id(),
+                                          analysisLedgerEntry(key, *m_analysis->provenance, copied.bytes, *mtime,
+                                                              rekordboxGrid, engineGrid, m_analysis->key,
+                                                              m_keyFromAnalysis),
+                                          Label);
+            }
         }
         ctx.log().record(std::string(Label) + ": imported \"" + m_track.title + "\" from " + source + " to "
                          + m_track.stickPath + " (" + std::to_string(copied.bytes) + " bytes): DeviceLibrary id "

@@ -2289,6 +2289,23 @@ EngineAnalysisRestoreResult LibdjinteropEngineCueWriter::restoreEngineAnalysis(c
     return result;
 }
 
+std::string LibdjinteropEngineCueWriter::gridFingerprintOf(const std::string &trackSourceId)
+{
+    auto track = database().track_by_id(std::stoll(trackSourceId));
+    if (!track) {
+        throw std::runtime_error("no Engine track with id=" + trackSourceId);
+    }
+    if (!m_tables) {
+        return {};  // a schema whose analysis columns this writer does not know
+    }
+    const RowNow now = readRowNow(track->id(), false);
+    const std::optional<BeatDataBlob> existing = decoded<BeatDataBlob>(now.columns.beatData);
+    if (!existing || existing->is_beatgrid_set != 1) {
+        return {};
+    }
+    return gridFingerprint(*existing);
+}
+
 LetPlayerAnalyseResult LibdjinteropEngineCueWriter::letPlayerAnalyseAgain(const std::string &trackSourceId,
                                                                          const std::string &keepKey, bool previewOnly)
 {

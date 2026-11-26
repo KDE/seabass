@@ -89,6 +89,8 @@ struct QtMultimediaPcmSource::State
             }
             const qsizetype frames = buffer.frameCount();
             samples.reserve(samples.size() + static_cast<std::size_t>(frames));
+            // The mono mix the analyser hears: a change here raises
+            // AnalysisInputRevision (the header).
             for (qsizetype frame = 0; frame < frames; ++frame) {
                 double sum = 0.0;
                 for (int channel = 0; channel < channels; ++channel) {

@@ -43,6 +43,17 @@ bool isReplacedAnalysisSection(std::uint32_t fourcc);
 // when there is none, or it cannot be read whole.
 std::vector<double> pqtzBeatTimes(const AnlzFile &dat);
 
+// The fingerprint of the beat grid a .DAT holds, as the analysis ledger
+// records it (local/analysis_ledger_file.hpp): SHA-256, as 64 lowercase
+// hex digits, of the PQTZ section's beat entries exactly as stored, each
+// 8 bytes (beat in the bar, tempo in hundredths of a BPM, time in ms, big
+// endian), in their order. The header around them (its length fields,
+// the unknown fields) does not count, so the same grid written by another
+// writer has the same fingerprint, and any beat moved, renumbered or
+// given another tempo changes it. Empty when the file has no PQTZ, has
+// one with no beats, or one that cannot be read whole.
+std::string pqtzGridFingerprint(const AnlzFile &dat);
+
 // Whether phrases counted on the grid `oldBeats` still fit the grid
 // `newBeats` (times in ms): its first beat, and the last beat both grids
 // have by number, each within a quarter of a beat of the old grid's. A

@@ -50,6 +50,11 @@ namespace seabass::gui
 // is first replaced.
 // The grid written is recorded in the beat grid ledger, so the next
 // Analyse again, or a copy, knows it for Seabass's.
+// The analysis written is recorded in the stick's analysis ledger once
+// the save has committed (analysis_ledger_record.hpp): the analyser's
+// revisions, the file as it was analysed, and the grid each library was
+// left with. A track left alone (a skip) gets no entry, and neither does
+// one whose file on the stick is no longer the size it was analysed at.
 //
 // The key: a key a row has is never replaced. It is rekordbox's analysis
 // or the DJ's choice, and the analyser's is a guess. The analyser's key

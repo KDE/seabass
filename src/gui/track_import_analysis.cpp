@@ -7,12 +7,21 @@
 #include <QThread>
 
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <span>
+#include <utility>
 #include <string>
 
 #include "analysis_resources.hpp"
 #include "domain/audio_analysis.hpp"
 #include "domain/pcm_source.hpp"
+
+#include "infrastructure/local/analysis_ledger_file.hpp"
+#include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/stick_backup/stick_tree_walker.hpp"
+#include "musicanalyze/version.hpp"
 
 #ifdef SEABASS_HAVE_QT_AUDIO
 #include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
@@ -43,6 +52,22 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
     };
     AnalysisMemoryGate &gate = AnalysisMemoryGate::shared();
     const Turn turn{gate, gate.enter(cancel)};
+    // The file as it was before the decoder opened it: an analysis gets
+    // a provenance only when it is the same after the last sample.
+    const auto measure = [&audioFile]() -> std::optional<std::pair<std::uint64_t, std::int64_t>> {
+        std::error_code ec;
+        const std::filesystem::path path = pathFromUtf8(audioFile);
+        const std::uintmax_t size = std::filesystem::file_size(path, ec);
+        if (ec) {
+            return std::nullopt;
+        }
+        const auto written = std::filesystem::last_write_time(path, ec);
+        if (ec) {
+            return std::nullopt;
+        }
+        return std::make_pair(static_cast<std::uint64_t>(size), infrastructure::stick_backup::toUnixSeconds(written));
+    };
+    const auto before = measure();
     infrastructure::audio::QtMultimediaPcmSource decoder(audioFile);
     if (decoder.sampleRate() <= 0) {
         return nullptr;
@@ -94,6 +119,20 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
     }
     if (made.key.key) {
         analysis->key = domain::keyName(*made.key.key);
+    }
+    if (const auto after = measure(); before && after == before) {
+        const domain::TempoRange used = musicanalyze::usableTempoRange(range);
+        ImportAnalysis::Provenance provenance;
+        provenance.inputRevision = infrastructure::audio::AnalysisInputRevision;
+        provenance.gridRevision = made.revisions.grid;
+        provenance.keyRevision = made.revisions.key;
+        provenance.waveformRevision = made.revisions.waveform;
+        provenance.libraryVersion = musicanalyze::version();
+        provenance.tempoMin = infrastructure::local::formatTempoBpm(used.lowBpm);
+        provenance.tempoMax = infrastructure::local::formatTempoBpm(used.highBpm);
+        provenance.fileSize = before->first;
+        provenance.fileMtimeUnix = before->second;
+        analysis->provenance = std::move(provenance);
     }
     return analysis;
 #else

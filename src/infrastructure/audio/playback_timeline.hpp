@@ -81,6 +81,9 @@ double cueToGridShiftMs(const std::string &filePath, GridTimeline grid);
 //     correction is never worse than none, a shift between two copies
 //     that is up to 52 ms out would be written into cues, and a value
 //     that cannot be known is not guessed.
+// The track import and Analyse again move Seabass's own analysis onto
+// rekordbox's timeline by this: a change to what it gives for a file
+// raises AnalysisInputRevision (qt_multimedia_pcm_source.hpp).
 std::optional<double> cueTimelineOffsetMs(const std::string &filePath);
 
 }  // namespace seabass::infrastructure::audio

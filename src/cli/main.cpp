@@ -50,6 +50,10 @@
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/file_clock.hpp"
+#include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
+#include "musicanalyze/version.hpp"
+#include "infrastructure/local/analysis_ledger_file.hpp"
+#include "infrastructure/local/analysis_ledger_status.hpp"
 #include "infrastructure/local/beat_grid_ledger_file.hpp"
 #include "infrastructure/local/analysis_file_facts.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
@@ -133,6 +137,7 @@ void printUsage()
     Console::info("                 [--no-overview-file] [--zero-loudness]");
     Console::info("                 [--restore-engine-analysis | --let-player-analyse]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
+    Console::info("  seabass-cli analysis-ledger [--rekordbox [PATH]] [--engine [PATH]]");
     Console::info("  seabass-cli export-xml [--rekordbox [PATH]] [--engine [PATH]] --out FILE");
     Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
     Console::info("                 [--keep-junk-cues]");
@@ -181,6 +186,12 @@ void printUsage()
     Console::info("           below). With --clean, deletes the oldest ones so at most --keep");
     Console::info("           N remain (default " + std::to_string(DefaultKeepBackups) +
                    "), freeing space on the stick.");
+    Console::info("  analysis-ledger  Prints the record Seabass keeps on a stick of the tracks its own");
+    Console::info("           analyser analysed (Seabass/analysis.tsv.gz): for each, the file as it");
+    Console::info("           was analysed, the revisions of the analyser, the tempo range, the beat");
+    Console::info("           grid each library was left with and the key heard. Says how many were");
+    Console::info("           analysed by an older analyser than this Seabass has. Read-only, always.");
+    Console::info("           Exits 1 when the record cannot be read.");
     Console::info("  export-xml  Writes a rekordbox collection XML (the DJ_PLAYLISTS file");
     Console::info("           rekordbox imports on a computer) covering every catalog given,");
     Console::info("           with their cues merged. This is the one route into rekordbox's own");
@@ -1050,6 +1061,87 @@ bool refuseIfLockedByGui(const std::string &catalogPath, bool force)
     Console::error("the library under " + seabass::pathToUtf8(stickRoot) + " is being edited by " + holder +
                    ". Save or discard those changes there first, or pass --force to write anyway.");
     return true;
+}
+
+// A time in seconds since 1970 as "2026-11-26 14:03:00 UTC".
+std::string utcText(std::int64_t unixSeconds)
+{
+    return seabass::infrastructure::utcTimestamp(
+        std::chrono::system_clock::time_point(std::chrono::seconds(unixSeconds)), "%Y-%m-%d %H:%M:%S UTC");
+}
+
+// analysis-ledger: the stick's record of Seabass's own analyses
+// (local/analysis_ledger_file.hpp), printed as it is. Read-only: it never
+// writes, not even to replace a ledger that cannot be read, which is the
+// next save's to do.
+int runAnalysisLedgerCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPathArg,
+                             const std::optional<std::string> &enginePathArg)
+{
+    namespace local = seabass::infrastructure::local;
+    namespace paths = seabass::infrastructure::paths;
+    auto resolved = resolveLibraryPaths(wantRekordbox, wantEngine, rekordboxPathArg, enginePathArg);
+    if (!resolved.ok || (!resolved.rekordboxPath && !resolved.enginePath)) {
+        Console::error("analysis-ledger needs a stick with a rekordbox export or an Engine library");
+        return 1;
+    }
+    const std::string stickRoot = paths::normalStickRootForCatalogPath(
+        resolved.rekordboxPath ? *resolved.rekordboxPath : *resolved.enginePath);
+    if (resolved.rekordboxPath && resolved.enginePath
+        && paths::normalStickRootForCatalogPath(*resolved.enginePath) != stickRoot) {
+        Console::error("analysis-ledger reads one stick; the rekordbox export and the Engine library given are on two: "
+                       + stickRoot + " and " + paths::normalStickRootForCatalogPath(*resolved.enginePath));
+        return 1;
+    }
+    const std::string file = seabass::pathToUtf8(paths::stickAnalysisLedger(seabass::pathFromUtf8(stickRoot)));
+    std::string error;
+    const local::AnalysisLedger ledger = local::readAnalysisLedger(seabass::pathFromUtf8(stickRoot), &error);
+    Console::heading("Analysis ledger (" + file + ")");
+    if (!error.empty()) {
+        Console::error("the record of the tracks Seabass analysed cannot be used: " + error);
+        Console::info("Nothing in it is believed. The next save that writes an analysis replaces it.");
+        return 1;
+    }
+    if (ledger.empty()) {
+        std::error_code ec;
+        Console::info(fs::exists(seabass::pathFromUtf8(file), ec)
+                          ? "It lists no track."
+                          : "There is none: Seabass has written no analysis of its own to this stick.");
+        return 0;
+    }
+
+    const musicanalyze::Revisions revisions = musicanalyze::revisions();
+    local::CurrentAnalyser now;
+    now.inputRevision = seabass::infrastructure::audio::AnalysisInputRevision;
+    now.gridRevision = revisions.grid;
+    now.keyRevision = revisions.key;
+    now.waveformRevision = revisions.waveform;
+    std::size_t older = 0;
+    for (const auto &[key, entry] : ledger) {
+        const bool behind = local::behindRevisions(entry, now);
+        older += behind ? 1 : 0;
+        Console::info("");
+        Console::info("  " + key);
+        Console::info("    file:      " + std::to_string(entry.fileSize) + " bytes, modified "
+                      + utcText(entry.fileMtimeUnix));
+        Console::info("    analysed:  " + utcText(entry.analysedAtUnix) + " by musicanalyze "
+                      + (entry.libraryVersion.empty() ? std::string("(version not recorded)") : entry.libraryVersion));
+        Console::info("    revisions: input " + std::to_string(entry.inputRevision) + ", grid "
+                      + std::to_string(entry.gridRevision) + ", key " + std::to_string(entry.keyRevision)
+                      + ", waveform " + std::to_string(entry.waveformRevision)
+                      + (behind ? "  (older than this Seabass's)" : ""));
+        Console::info("    tempo:     " + entry.tempoMin + " to " + entry.tempoMax + " BPM");
+        Console::info("    rekordbox: " + (entry.rekordboxGrid.empty() ? std::string("no grid recorded") : entry.rekordboxGrid));
+        Console::info("    Engine:    " + (entry.engineGrid.empty() ? std::string("no grid recorded") : entry.engineGrid));
+        Console::info("    key:       " + (entry.key.empty() ? std::string("none heard")
+                                           : entry.key + (entry.keyWritten ? ", written into the rows that named none"
+                                                                           : ", not written (the rows named a key)")));
+    }
+    Console::info("");
+    Console::info(std::to_string(ledger.size()) + " track(s) analysed by Seabass; " + std::to_string(older)
+                  + " of them by an older analyser than this Seabass has (input " + std::to_string(now.inputRevision)
+                  + ", grid " + std::to_string(now.gridRevision) + ", key " + std::to_string(now.keyRevision)
+                  + ", waveform " + std::to_string(now.waveformRevision) + ").");
+    return 0;
 }
 
 int runBackupsCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPath,
@@ -3092,7 +3184,7 @@ int main(int argc, char **argv)
     if (commands.size() != 1 ||
         (commands[0] != "scan" && commands[0] != "backups" && commands[0] != "sync" && commands[0] != "anonymize" &&
          commands[0] != "sync-after-export" && commands[0] != "copy-beatgrids" &&
-         commands[0] != "export-xml" && commands[0] != "digest"
+         commands[0] != "export-xml" && commands[0] != "digest" && commands[0] != "analysis-ledger"
          && commands[0] != "damage-filesystem")) {
         Console::error("unknown command: " + commands[0]);
         printUsage();
@@ -3101,6 +3193,10 @@ int main(int argc, char **argv)
 
     if (commands[0] == "backups") {
         return runBackupsCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, clean, keepCount, force);
+    }
+
+    if (commands[0] == "analysis-ledger") {
+        return runAnalysisLedgerCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath);
     }
 
     if (commands[0] == "sync") {

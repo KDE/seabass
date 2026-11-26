@@ -157,6 +157,33 @@ struct ImportAnalysis
     // no key: a tag is somebody's choice, the analysis is right on about
     // two tracks in three.
     std::string key;
+
+    // What made the analysis, and of which file, for the stick's analysis
+    // ledger (infrastructure/local/analysis_ledger_file.hpp).
+    struct Provenance
+    {
+        // infrastructure::audio::AnalysisInputRevision.
+        int inputRevision = 0;
+        // The result's musicanalyze::Revisions.
+        int gridRevision = 0;
+        int keyRevision = 0;
+        int waveformRevision = 0;
+        // musicanalyze::version().
+        std::string libraryVersion;
+        // The tempo range the analysis ran with (musicanalyze::
+        // usableTempoRange() of the one asked for), as
+        // formatTempoBpm() writes it.
+        std::string tempoMin;
+        std::string tempoMax;
+        // The file analysed, the same before and after it was decoded.
+        std::uint64_t fileSize = 0;
+        std::int64_t fileMtimeUnix = 0;
+    };
+    // Set by analyseForImport() for a file decoded whole that did not
+    // change while it was read. An analysis without it is written to the
+    // libraries all the same and gets no ledger entry: a record that
+    // cannot say what made it would be believed for the wrong revisions.
+    std::optional<Provenance> provenance;
 };
 
 // Decodes and analyses a file; null when it cannot be decoded. Given from
@@ -236,6 +263,11 @@ public:
     // A folder whose files are on the stick is never written into; with
     // none found free, or a USBANLZ folder that cannot be read to its
     // end, the track gets no analysis files and the log says so.
+    //
+    // An analysis that went into a library, and says what made it
+    // (ImportAnalysis::provenance), is recorded in the stick's analysis
+    // ledger once the save has committed (analysis_ledger_record.hpp),
+    // with the grid each library holds afterwards.
     void setAnalysis(std::shared_ptr<const ImportAnalysis> analysis);
     bool analysed() const { return static_cast<bool>(m_analysis); }
     const std::shared_ptr<const ImportAnalysis> &analysis() const { return m_analysis; }
@@ -289,6 +321,11 @@ private:
     std::int64_t m_oneLibraryId = -1;
     std::int64_t m_engineId = -1;
     bool m_engineAnalysed = false;
+    // The track's key is the analyser's: its tags named none.
+    bool m_keyFromAnalysis = false;
+    // The stick root the analysis ledger is kept under, as Analyse again
+    // finds it.
+    std::string ledgerStickRoot() const;
 };
 
 }  // namespace seabass::gui

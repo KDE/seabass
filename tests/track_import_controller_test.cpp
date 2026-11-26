@@ -70,6 +70,14 @@
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "application/path_key.hpp"
+#include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
+#include "infrastructure/local/analysis_ledger_file.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
+#include "infrastructure/rekordbox/anlz_analysis_merge.hpp"
+#include "infrastructure/rekordbox/anlz_file.hpp"
+#include "infrastructure/stick_backup/stick_tree_walker.hpp"
+#include "musicanalyze/version.hpp"
 
 #include <djinterop/engine/v3/track_data_blob.hpp>
 
@@ -2474,6 +2482,213 @@ int main(int argc, char **argv)
         assert(onBeat && std::abs(change.gridShiftMs() - offset) < 1e-6);
         std::cout << "case 17 (the strip of an MP3: waveform, grids and cues on rekordbox's timeline, the kick under "
                      "the new beat) OK\n";
+    }
+
+    // 18. The analysis ledger (<stick>/Seabass/analysis.tsv.gz). An import
+    //     records each track it analysed: the analyser's revisions, the
+    //     tempo range, the file on the stick, and the grids the libraries
+    //     hold afterwards, each fingerprint compared with the library's own.
+    //     Analyse again updates the entry; a track it leaves alone gets
+    //     none; a save that goes back, and Undo Last Save, leave the file as
+    //     it was before; a damaged ledger is replaced by the next save, and
+    //     one that cannot be written is a warning on a save that landed.
+    {
+        namespace local = infrastructure::local;
+        const fs::path ledgerFile = infrastructure::paths::stickAnalysisLedger(stick.root);
+        const fs::path onStick = stick.root / "Contents" / "UnknownArtist" / "UnknownAlbum";
+        const auto bytesOf = [](const fs::path &file) {
+            std::ifstream in(file, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        const auto readLedger = [&]() {
+            std::string error;
+            const local::AnalysisLedger ledger = local::readAnalysisLedger(stick.root, &error);
+            if (!error.empty()) {
+                std::cerr << "  ledger: " << error << std::endl;
+            }
+            assert(error.empty());
+            return ledger;
+        };
+        const auto keyOf = [&](const std::string &name) {
+            return application::normalizedPathKey("Contents/UnknownArtist/UnknownAlbum/" + name);
+        };
+        const auto saveNow = [&]() {
+            finished.clear();
+            session->save();
+            assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+            if (!session->lastSummary().value("error").toString().isEmpty()) {
+                std::cerr << "save: " << session->lastSummary().value("error").toString().toStdString() << "\n";
+            }
+            return session->lastSummary();
+        };
+        const auto undoNow = [&]() {
+            finished.clear();
+            session->undoLastSave();
+            assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        };
+        const auto analyseAgainOn = [&](const QString &playlist) {
+            assert(controller.analyseAgain(pioneer, engine, playlist));
+            assert(waitFor(&controller, &TrackImportController::busyChanged, [&] { return !controller.busy(); }));
+            assert(controller.errorMessage().isEmpty());
+            return controller.lastReanalysis();
+        };
+        const auto rowOf = [](auto &&reader, const std::string &name) {
+            for (const auto &track : reader.readAll()) {
+                if (pathToUtf8(pathFromUtf8(track.filePath).filename()) == name) {
+                    return track;
+                }
+            }
+            assert(false && "the track is in the library");
+            return domain::Track{};
+        };
+        const auto logText = [&]() { return bytesOf(stick.root / "Seabass" / "seabass.log"); };
+        // The entry against the stick and the libraries as they are now.
+        const auto checkEntry = [&](const std::string &name, const local::AnalysisLedgerEntry &entry) {
+            const fs::path file = onStick / name;
+            const musicanalyze::Revisions revisions = musicanalyze::revisions();
+            assert(entry.pathKey == keyOf(name));
+            assert(entry.inputRevision == infrastructure::audio::AnalysisInputRevision);
+            assert(entry.gridRevision == revisions.grid && entry.keyRevision == revisions.key
+                   && entry.waveformRevision == revisions.waveform);
+            assert(entry.libraryVersion == musicanalyze::version());
+            QSettings settings = openSeabassSettings();
+            const domain::TempoRange range = musicanalyze::usableTempoRange(storedAnalysisTempoRange(settings));
+            std::cerr << "  " << name << ": tempo " << entry.tempoMin << " to " << entry.tempoMax << ", key '" << entry.key
+                      << "' written " << entry.keyWritten << std::endl;
+            assert(entry.tempoMin == local::formatTempoBpm(range.lowBpm)
+                   && entry.tempoMax == local::formatTempoBpm(range.highBpm));
+            assert(entry.fileSize == fs::file_size(file));
+            assert(entry.fileMtimeUnix == infrastructure::stick_backup::toUnixSeconds(fs::last_write_time(file)));
+            const domain::Track pdb = rowOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)), name);
+            const domain::Track engineRow = rowOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()), name);
+            assert(!pdb.analysisFile.empty());
+            const std::string rekordboxNow = infrastructure::rekordbox::pqtzGridFingerprint(
+                infrastructure::rekordbox::AnlzFile::readRaw(pathToUtf8(stick.root / pathFromUtf8(pdb.analysisFile.substr(1)))));
+            const std::string engineNow =
+                infrastructure::engine::LibdjinteropEngineCueWriter(stick.engineUtf8()).gridFingerprintOf(engineRow.sourceId);
+            assert(!rekordboxNow.empty() && entry.rekordboxGrid == rekordboxNow);
+            assert(!engineNow.empty() && entry.engineGrid == engineNow);
+            assert(entry.keyWritten == (!entry.key.empty() && pdb.key == entry.key));
+            assert(entry.analysedAtUnix > 0);
+        };
+
+        // 18a. The import.
+        writeBeatWav(computer / "v one.wav", 37, 128.0);
+        writeBeatWav(computer / "v two.wav", 38, 128.0);
+        assert(offer(QVariantList{pathToQString(computer / "v one.wav"), pathToQString(computer / "v two.wav")},
+                     QStringLiteral("Ledger"), true));
+        assert(controller.lastResult().value("withGrid").toInt() == 2);
+        const local::AnalysisLedger beforeImport = readLedger();
+        assert(beforeImport.count(keyOf("v one.wav")) == 0);
+        assert(saveNow().value("error").toString().isEmpty());
+        const local::AnalysisLedger imported = readLedger();
+        assert(imported.size() == beforeImport.size() + 2);
+        checkEntry("v one.wav", imported.at(keyOf("v one.wav")));
+        checkEntry("v two.wav", imported.at(keyOf("v two.wav")));
+        for (const auto &[key, entry] : beforeImport) {
+            assert(imported.at(key) == entry && "the entries of other tracks stay as they were");
+        }
+        std::cout << "case 18a (an import records each track: revisions, tempo range, size and time, and the grids "
+                     "the libraries hold) OK\n";
+
+        // 18b. v two's entry taken out, then its file made longer and v one's
+        //      replaced by other music of the same size: Analyse again
+        //      stages v one alone. First in a save that goes back (an
+        //      import blocked by a folder where its file is to go).
+        {
+            local::AnalysisLedger without = imported;
+            without.erase(keyOf("v two.wav"));
+            std::string error;
+            assert(local::writeAnalysisLedger(stick.root, without, [](const std::string &) {}, &error));
+        }
+        const std::string ledgerBefore = bytesOf(ledgerFile);
+        writeBeatWav(onStick / "v one.wav", 37, 140.0);
+        writeBeatWav(onStick / "v two.wav", 41, 128.0);
+        QVariantMap again = analyseAgainOn(QStringLiteral("Ledger"));
+        assert(again.value("analysed").toInt() == 1 && again.value("leftAlone").toInt() == 1);
+        {
+            writeBeatWav(computer / "w blocked.wav", 42, 120.0);
+            ImportRequest request;
+            request.offered = {pathToUtf8(computer / "w blocked.wav")};
+            request.rekordboxPath = pioneer;
+            request.enginePath = engine;
+            request.date = "2026-11-26";
+            const PreparedImport prepared = prepareTrackImport(request, application::CancellationToken{});
+            assert(prepared.refusal.empty() && !prepared.staged.changes.empty());
+            assert(session->stageAll(prepared.staged.changes));
+            QStringList importIds;
+            fs::path destination;
+            for (const auto &staged : prepared.staged.changes) {
+                importIds << staged->id();
+                if (const auto import = std::dynamic_pointer_cast<ImportTrackChange>(staged)) {
+                    destination = pathFromUtf8(import->destinationFile());
+                }
+            }
+            assert(!destination.empty());
+            fs::create_directories(destination);  // in the way
+            const QVariantMap failed = saveNow();
+            assert(!failed.value("error").toString().isEmpty());
+            assert(bytesOf(ledgerFile) == ledgerBefore && "a save that went back leaves the ledger as it was");
+            fs::remove(destination);
+            session->unstageAll(importIds);
+        }
+        std::cout << "case 18b (a save that goes back: the ledger as it was) OK\n";
+
+        // 18c. Saved: v one's entry is the new analysis, v two has none.
+        {
+            const QVariantMap saved = saveNow();
+            assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1);
+            const local::AnalysisLedger after = readLedger();
+            assert(after.size() == imported.size() - 1);
+            assert(after.count(keyOf("v two.wav")) == 0 && "a track left alone gets no entry");
+            const local::AnalysisLedgerEntry &one = after.at(keyOf("v one.wav"));
+            checkEntry("v one.wav", one);
+            assert(one.rekordboxGrid != imported.at(keyOf("v one.wav")).rekordboxGrid);
+            assert(one.engineGrid != imported.at(keyOf("v one.wav")).engineGrid);
+            assert(one.analysedAtUnix >= imported.at(keyOf("v one.wav")).analysedAtUnix);
+            std::cout << "case 18c (Analyse again: the entry is the new analysis, the track left alone has none) OK\n";
+        }
+
+        // 18d. Undo Last Save: the ledger as it was before that save.
+        undoNow();
+        assert(bytesOf(ledgerFile) == ledgerBefore && "Undo Last Save puts the old ledger back");
+        std::cout << "case 18d (Undo Last Save puts the ledger back) OK\n";
+
+        // 18e. A damaged ledger: the save lands, and the ledger is replaced
+        //      by one that holds what this save wrote.
+        {
+            {
+                std::ofstream out(ledgerFile, std::ios::binary | std::ios::trunc);
+                out << "not a ledger at all";
+            }
+            again = analyseAgainOn(QStringLiteral("Ledger"));
+            assert(again.value("analysed").toInt() == 1);
+            const std::size_t logBefore = logText().size();
+            const QVariantMap saved = saveNow();
+            assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1);
+            const local::AnalysisLedger replaced = readLedger();
+            assert(replaced.size() == 1);
+            checkEntry("v one.wav", replaced.at(keyOf("v one.wav")));
+            assert(logText().substr(logBefore).find("replacing a ledger that could not be read") != std::string::npos);
+            std::cout << "case 18e (a damaged ledger does not fail the save and is replaced) OK\n";
+        }
+
+        // 18f. A ledger that cannot be written (a folder where it belongs):
+        //      the save lands, and says so in plain words.
+        {
+            fs::remove(ledgerFile);
+            fs::create_directories(ledgerFile / "in the way");
+            again = analyseAgainOn(QStringLiteral("Ledger"));
+            assert(again.value("analysed").toInt() == 1);
+            const QVariantMap saved = saveNow();
+            std::cerr << "  warning: " << saved.value("warning").toString().toStdString() << std::endl;
+            assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1);
+            assert(saved.value("warning").toString().contains(
+                QLatin1String("Your changes are saved, but Seabass could not record which tracks it analysed")));
+            assert(fs::is_directory(ledgerFile / "in the way"));
+            fs::remove_all(ledgerFile);
+            std::cout << "case 18f (a ledger that cannot be written: the save lands with a warning) OK\n";
+        }
     }
 
     std::cout << "track_import_controller_test: all cases passed\n";

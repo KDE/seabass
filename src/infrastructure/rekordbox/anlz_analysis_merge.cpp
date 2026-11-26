@@ -9,7 +9,9 @@
 #include <optional>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 
+#include "infrastructure/hashing/sha256.hpp"
 #include "infrastructure/rekordbox/big_endian.hpp"
 
 namespace seabass::infrastructure::rekordbox
@@ -146,6 +148,31 @@ std::vector<double> pqtzBeatTimes(const AnlzFile &dat)
             times.push_back(static_cast<double>(readU32BE(bytes, lenHeader + i * 8 + 4)));
         }
         return times;
+    } catch (const std::out_of_range &) {
+        return {};
+    }
+}
+
+std::string pqtzGridFingerprint(const AnlzFile &dat)
+{
+    const auto at = firstOf(dat.sections, Pqtz);
+    if (!at) {
+        return {};
+    }
+    const std::string &bytes = dat.sections[*at].rawBytes;
+    try {
+        // As pqtzBeatTimes() reads it: the header's length, then the beat
+        // count, then 8 bytes a beat.
+        const std::uint32_t lenHeader = readU32BE(bytes, 4);
+        if (lenHeader < 24 || lenHeader > bytes.size()) {
+            return {};
+        }
+        const std::uint32_t count = readU32BE(bytes, 20);
+        if (count == 0 || static_cast<std::uint64_t>(count) * 8 > bytes.size() - lenHeader) {
+            return {};
+        }
+        const std::string_view beats(bytes.data() + lenHeader, static_cast<std::size_t>(count) * 8);
+        return hashing::toHex(hashing::Sha256::of(beats));
     } catch (const std::out_of_range &) {
         return {};
     }
