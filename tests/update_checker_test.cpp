@@ -17,7 +17,12 @@
 
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QHostAddress>
+#include <QList>
+#include <QMap>
 #include <QSettings>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTimer>
 #include <QUrl>
 
@@ -620,8 +625,8 @@ int main(int argc, char **argv)
             assert(settings.value(key("automaticAnswered")).toBool());
         }
 
-        // A checkbox set before this question existed is an answer: the
-        // setting's key is there, off, and nothing is asked.
+        // A stored setting is an answer: the setting's key is there, off,
+        // and nothing is asked.
         forgetSettings();
         {
             QSettings settings = seabass::gui::openSeabassSettings();
@@ -662,7 +667,79 @@ int main(int argc, char **argv)
             assert(!settings.contains(key("useDays")));
             assert(!settings.contains(key("automaticAnswered")));
         }
+
+        // The checkbox changed in a build from a working tree is the same
+        // setting the released Seabass reads, so it settles the question
+        // there, off again or not.
+        forgetSettings();
+        {
+            UpdateChecker working(build("1.0.1", "dev", "v1.0.1-3-gabc"));
+            working.setAutomatic(true);
+            working.setAutomatic(false);
+        }
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            assert(settings.contains(key("automatic")) && !settings.value(key("automatic")).toBool());
+            assert(!settings.contains(key("automaticAnswered")) && "no question was answered there");
+            settings.setValue(key("useDays"), 5);
+            settings.setValue(key("lastUseDay"), first.toString(Qt::ISODate));
+        }
+        {
+            UpdateChecker released(build("1.0.1", "stable"));
+            assert(!released.askAboutAutomatic() && "the setting was chosen, in whichever build");
+        }
         std::cout << "case (the question about automatic checks) OK\n";
+    }
+
+    // What a check sends, as a web server on this computer receives it:
+    // the version in the User-Agent, no language of this system, and
+    // nothing beyond what any HTTP request carries. The home page and
+    // Preferences promise that much.
+    {
+        forgetSettings();
+        QTcpServer server;
+        const bool listening = server.listen(QHostAddress::LocalHost, 0);
+        assert(listening && "a port on this computer for the test's own web server");
+        (void)listening;
+        QByteArray received;
+        const QByteArray body = QByteArray::fromStdString(channels(entry("1.0.2", "stable", true), ""));
+        QObject::connect(&server, &QTcpServer::newConnection, [&] {
+            QTcpSocket *socket = server.nextPendingConnection();
+            QObject::connect(socket, &QTcpSocket::readyRead, [&, socket] {
+                received += socket->readAll();
+                if (received.contains("\r\n\r\n")) {
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n"
+                                  "Content-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+                    socket->disconnectFromHost();
+                }
+            });
+        });
+        UpdateChecker checker(build("1.0.1", "stable"));
+        check(checker, QStringLiteral("http://127.0.0.1:%1/seabass/releases.json").arg(server.serverPort()));
+        assert(checker.state() == QStringLiteral("updateAvailable") && "the request was answered and read");
+
+        const QList<QByteArray> lines = received.left(received.indexOf("\r\n\r\n")).split('\n');
+        assert(lines.first().trimmed() == "GET /seabass/releases.json HTTP/1.1");
+        QMap<QByteArray, QByteArray> headers;
+        for (qsizetype i = 1; i < lines.size(); ++i) {
+            const qsizetype colon = lines[i].indexOf(':');
+            assert(colon > 0);
+            headers[lines[i].left(colon).trimmed().toLower()] = lines[i].mid(colon + 1).trimmed();
+        }
+        std::cout << "  sent: " << headers.keys().join(", ").toStdString() << "\n";
+        assert(headers.value("user-agent") == "Seabass/1.0.1 (update check)");
+        assert(headers.value("accept-language") == "*" && "not the language this system is set to");
+        for (auto header = headers.cbegin(); header != headers.cend(); ++header) {
+            const bool expected = header.key() == "host" || header.key() == "user-agent"
+                || header.key() == "accept-language" || header.key() == "accept-encoding"
+                || header.key() == "connection";
+            if (!expected) {
+                std::cerr << "unexpected request header: " << header.key().toStdString() << ": "
+                          << header.value().toStdString() << "\n";
+            }
+            assert(expected && "nothing rides along beyond what an HTTP request needs");
+        }
+        std::cout << "case (a check sends the version and nothing else of this computer) OK\n";
     }
 
     // The hidden switch on a stable build: the tenth quick tap turns the

@@ -64,9 +64,10 @@ UpdateChecker::UpdateChecker(RunningBuild build, QObject *parent)
     QSettings settings = openSeabassSettings();
     m_automatic = settings.value(AutomaticKey, false).toBool();
     m_lastChecked = settings.value(LastCheckedKey).toDateTime();
-    // Somebody who set the checkbox before this question existed has
-    // answered it too: the setting's own key is only ever written by a
-    // change to it.
+    // The setting's own key is only ever written by a change to it, so
+    // a key that is there is an answer: the checkbox in Preferences was
+    // set, in any Seabass that shares these settings, a build from a
+    // working tree included.
     m_automaticAnswered = settings.value(AutomaticAnsweredKey, false).toBool() || settings.contains(AutomaticKey);
     m_useDays = UseDays{settings.value(UseDaysKey, 0).toInt(), settings.value(LastUseDayKey).toString()};
     m_includeTesting = settings.value(IncludeTestingKey, false).toBool();
@@ -225,9 +226,9 @@ void UpdateChecker::answerAutomaticQuestion(bool allow)
 void UpdateChecker::rememberAnswered()
 {
     // A build from a working tree never asks, so it records no answer
-    // of its own. (Its checkbox still writes the setting itself, as it
-    // always has, and a setting somebody chose is an answer wherever it
-    // was chosen.)
+    // to a question. The checkbox changed there is still an answer for
+    // the released Seabass that shares these settings: setAutomatic
+    // writes the setting's key, and the constructor reads that as one.
     if (m_automaticAnswered || !m_build.isRelease()) {
         return;
     }
@@ -307,6 +308,10 @@ void UpdateChecker::checkNow()
     // so nothing about this machine beyond the version rides along.
     request.setHeader(QNetworkRequest::UserAgentHeader,
                       QStringLiteral("Seabass/%1 (update check)").arg(currentVersion()));
+    // Qt gives a request that names no language the system's own. The
+    // feed is one file in one language, so this one asks for any, and the
+    // language this computer is set to stays here.
+    request.setRawHeader("Accept-Language", "*");
     QNetworkReply *reply = m_network->get(request);
     connect(reply, &QNetworkReply::finished, this, [this, reply] { finish(reply); });
 }

@@ -680,9 +680,10 @@ Page {
                     wrapMode: Text.WordWrap
                     color: Theme.text
                     text: "This is switched off by default: Seabass does not go online unless you allow it. "
-                        + "If you say yes, it downloads one small file from vizzzion.org once a day and "
-                        + "compares version numbers on this computer. Nothing about you, your sticks or "
-                        + "your library is sent. You can change your mind in Preferences at any time."
+                        + "If you say yes, it downloads one small file from vizzzion.org now and once a day, and "
+                        + "compares version numbers on this computer. The website sees which version of "
+                        + "Seabass asks and, as any website does, your internet address. Nothing about your "
+                        + "sticks or your library is sent. You can change your mind in Preferences at any time."
                 }
                 RowLayout {
                     Layout.fillWidth: true

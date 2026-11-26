@@ -82,7 +82,7 @@ class UpdateChecker : public QObject
     Q_PROPERTY(bool testingOptionRevealed READ testingOptionRevealed NOTIFY includeTestingChanged)
     // True for an alpha, beta or published dev build: the ones that
     // follow test builds whatever includeTesting says. Never for a dev
-    // build from a working tree, which writes no setting at all.
+    // build from a working tree.
     Q_PROPERTY(bool runningPreRelease READ runningPreRelease CONSTANT)
 
     // idle, checking, upToDate, updateAvailable, withdrawn, failed, notARelease
@@ -126,7 +126,7 @@ public:
     // Counts today as a day Seabass was used on, once. The constructor
     // does this for the real date and an hourly timer repeats it, for an
     // app left open over midnight; a test hands it the days it wants.
-    // Does nothing on a build from a working tree, which writes no setting.
+    // Does nothing on a build from a working tree, which never asks.
     void countUseDay(const QDate &today);
     bool includeTesting() const { return m_includeTesting; }
     void setIncludeTesting(bool on);

@@ -1453,10 +1453,45 @@ TestCase {
         const yes = findByName(page, "askUpdatesYes");
         const no = findByName(page, "askUpdatesNo");
         verify(yes.visible && no.visible);
+        verify(waitForPolish(page.Window.window), "the buttons are laid out before they are clicked");
         mouseClick(yes);
         compare(answers, [true]);
         mouseClick(no);
         compare(answers, [true, false]);
+    }
+
+    // A checker whose properties notify, as the real one's do: the plain
+    // object of fakeUpdateChecker is read once and never again.
+    Component {
+        id: answeringChecker
+        QtObject {
+            property bool askAboutAutomatic: true
+            property bool updateAvailable: false
+            property bool runningWithdrawn: false
+            property string runningWithdrawnReason: ""
+            property string latestVersion: ""
+            property string latestNote: ""
+            property string latestNoteLevel: ""
+            property string currentVersion: "1.0.1"
+            property string downloadPage: "https://vizzzion.org/seabass/get-it.html"
+            property var answers: []
+            function answerAutomaticQuestion(allow) {
+                answers = answers.concat([allow]);
+                askAboutAutomatic = false;
+            }
+        }
+    }
+
+    function test_theUpdateQuestionGoesOnceItIsAnswered() {
+        const checker = createTemporaryObject(answeringChecker, testCase);
+        const page = makePage([], {}, {updateChecker: checker});
+        const banner = findByName(page, "askUpdatesBanner");
+        verify(banner.visible, "the checker asks, so the page does");
+        verify(waitForPolish(page.Window.window), "the buttons are laid out before they are clicked");
+        mouseClick(findByName(page, "askUpdatesNo"));
+        compare(checker.answers, [false]);
+        verify(!banner.visible, "answered, the question leaves the page without a restart");
+        compare(banner.implicitHeight, 0, "and gives its room back");
     }
 
     function test_aNewReleaseOutranksTheUpdateQuestion() {
