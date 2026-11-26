@@ -53,8 +53,13 @@ inline constexpr int RecordingSampleRates[] = {44100, 48000, 88200, 96000};
 // sample format (float, 8 or 32 bit, compressed), a data chunk that says
 // more than the file holds (a recording cut short), a data chunk whose
 // size the header leaves open (0 or 0xFFFFFFFF in a plain RIFF, what a
-// recorder that was stopped by a power cut leaves), and a plain RIFF over
-// 4 GB, whose data size cannot be told from its header.
+// recorder that was stopped by a power cut leaves), a plain RIFF over
+// 4 GB, whose data size cannot be told from its header, and a file that
+// holds more than its header describes: after the data chunk only whole
+// chunks may follow, to the end of the file (a stale data size, left by a
+// recorder that lost power, covers only part of the recording; the reason
+// then says how long the header says the audio is and how long the file
+// could hold).
 //
 // Never throws from the constructor; readFrames() throws on a read error
 // (the file was taken away meanwhile).
@@ -76,6 +81,10 @@ public:
     void readFrames(std::uint64_t firstFrame, std::span<std::byte> out) const;
 
 private:
+    // Whether the bytes from `at` to the end are whole chunks, none of
+    // them a second data chunk.
+    bool onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize) const;
+
     std::unique_ptr<stick_backup::PosixArchiveFile> m_file;
     WavLayout m_layout;
     std::string m_error;

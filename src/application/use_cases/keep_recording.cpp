@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <mutex>
+#include <set>
 
 #include "domain/track_import_plan.hpp"
 
@@ -41,6 +43,74 @@ std::string megabytes(std::uint64_t bytes)
     return std::to_string(mb) + " MB";
 }
 
+// The recordings and the FLACs that jobs in this process have in hand.
+// Two jobs never work on one: the second is refused before it touches
+// anything. Compared as written, with '\\' as '/' and ASCII letters folded,
+// so that a filesystem that ignores case is covered; the form compares the
+// paths as files before a job is queued.
+class InHand
+{
+public:
+    InHand(const std::string &wavPath, const std::string &flacPath)
+        : m_wav("wav " + key(wavPath)), m_flac("flac " + key(flacPath))
+    {
+        const std::lock_guard<std::mutex> lock(mutex());
+        if (held().count(m_wav) > 0) {
+            m_refusal = Refusal::Wav;
+        } else if (held().count(m_flac) > 0) {
+            m_refusal = Refusal::Flac;
+        } else {
+            held().insert(m_wav);
+            held().insert(m_flac);
+        }
+    }
+    ~InHand()
+    {
+        if (m_refusal == Refusal::None) {
+            const std::lock_guard<std::mutex> lock(mutex());
+            held().erase(m_wav);
+            held().erase(m_flac);
+        }
+    }
+    InHand(const InHand &) = delete;
+    InHand &operator=(const InHand &) = delete;
+
+    enum class Refusal
+    {
+        None,
+        Wav,
+        Flac,
+    };
+    Refusal refusal() const { return m_refusal; }
+
+private:
+    static std::string key(std::string path)
+    {
+        for (char &c : path) {
+            if (c == '\\') {
+                c = '/';
+            } else if (c >= 'A' && c <= 'Z') {
+                c = static_cast<char>(c - 'A' + 'a');
+            }
+        }
+        return path;
+    }
+    static std::mutex &mutex()
+    {
+        static std::mutex m;
+        return m;
+    }
+    static std::set<std::string> &held()
+    {
+        static std::set<std::string> keys;
+        return keys;
+    }
+
+    std::string m_wav;
+    std::string m_flac;
+    Refusal m_refusal = Refusal::None;
+};
+
 class Job
 {
 public:
@@ -61,7 +131,20 @@ public:
     KeepRecordingResult run()
     {
         report(KeepRecordingStep::Space, 0.0);
-        if (!checkRequest() || !makeRoom()) {
+        if (!checkRequest()) {
+            return m_result;
+        }
+        const InHand inHand(m_request.wavPath, m_flacPath);
+        if (inHand.refusal() == InHand::Refusal::Wav) {
+            fail("The recording was not kept: another job is keeping it right now.");
+            return m_result;
+        }
+        if (inHand.refusal() == InHand::Refusal::Flac) {
+            fail("The recording was not kept: another job is writing " + m_request.fileName + " in "
+                 + m_request.folder + " right now.");
+            return m_result;
+        }
+        if (!makeRoom()) {
             return m_result;
         }
         if (cancelled()) {

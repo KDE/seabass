@@ -11,12 +11,14 @@
 
 #include <QAudioBuffer>
 #include <QAudioDecoder>
+#include <QCryptographicHash>
 #include <QEventLoop>
 #include <QString>
 #include <QTimer>
 #include <QUrl>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -32,10 +34,13 @@ namespace recording_test
 // The signal of a test WAV: a tone per channel under noise that reaches
 // every bit, so a sample that lost its lowest bits does not compare equal.
 // Sample `frame`, `channel` at the WAV's width, as a signed value.
-inline std::int32_t signalSample(std::uint64_t frame, int channel, int bits, int rate)
+// `variant` gives another noise under the same tone: another recording
+// of the same format and length.
+inline std::int32_t signalSample(std::uint64_t frame, int channel, int bits, int rate, int variant = 0)
 {
     // A hash of the position: the same noise each time it is asked for.
-    std::uint64_t x = frame * 0x9E3779B97F4A7C15ULL + static_cast<std::uint64_t>(channel + 1) * 0xBF58476D1CE4E5B9ULL;
+    std::uint64_t x = frame * 0x9E3779B97F4A7C15ULL + static_cast<std::uint64_t>(channel + 1) * 0xBF58476D1CE4E5B9ULL
+        + static_cast<std::uint64_t>(variant) * 0xD6E8FEB86659FD93ULL;
     x ^= x >> 31;
     x *= 0x94D049BB133111EBULL;
     x ^= x >> 29;
@@ -64,6 +69,11 @@ struct WavSpec
     std::optional<std::uint32_t> declaredDataBytes;
     // A chunk before fmt, as recorders write (bext, LIST).
     bool extraChunk = false;
+    // Another noise under the tone (signalSample's `variant`).
+    int variant = 0;
+    // Bytes after the data chunk, as they are written; counted in the
+    // RIFF size.
+    std::string trailing;
 };
 
 inline void put16(std::ofstream &out, std::uint32_t v)
@@ -93,7 +103,7 @@ inline bool writeWav(const std::string &path, const WavSpec &spec)
     const std::uint64_t dataBytes = spec.frames * blockAlign;
     const std::uint32_t fmtSize = spec.extensible ? 40 : 16;
     const std::uint64_t riffSize = 4 + (spec.rf64 ? 8 + 28 : 0) + (spec.extraChunk ? 8 + 6 : 0) + 8 + fmtSize + 8
-        + dataBytes;
+        + dataBytes + spec.trailing.size();
     out.write(spec.rf64 ? "RF64" : "RIFF", 4);
     put32(out, spec.rf64 ? 0xFFFFFFFFU : static_cast<std::uint32_t>(riffSize));
     out.write("WAVE", 4);
@@ -136,7 +146,7 @@ inline bool writeWav(const std::string &path, const WavSpec &spec)
         piece.clear();
         for (std::uint64_t f = first; f < first + count; ++f) {
             for (int c = 0; c < spec.channels; ++c) {
-                const auto v = static_cast<std::uint32_t>(signalSample(f, c, spec.bits, spec.rate));
+                const auto v = static_cast<std::uint32_t>(signalSample(f, c, spec.bits, spec.rate, spec.variant));
                 for (std::uint32_t b = 0; b < bytesPerSample; ++b) {
                     piece.push_back(static_cast<char>((v >> (8 * b)) & 0xFF));
                 }
@@ -144,6 +154,7 @@ inline bool writeWav(const std::string &path, const WavSpec &spec)
         }
         out.write(piece.data(), static_cast<std::streamsize>(piece.size()));
     }
+    out.write(spec.trailing.data(), static_cast<std::streamsize>(spec.trailing.size()));
     return static_cast<bool>(out);
 }
 
@@ -224,13 +235,41 @@ inline std::string compareWithSignal(const Decoded &decoded, const WavSpec &spec
     }
     for (std::uint64_t f = 0; f < spec.frames; ++f) {
         for (int c = 0; c < spec.channels; ++c) {
-            const std::int32_t want = scaled32(signalSample(f, c, spec.bits, spec.rate), spec.bits);
+            const std::int32_t want = scaled32(signalSample(f, c, spec.bits, spec.rate, spec.variant), spec.bits);
             if (decoded.samples[f * static_cast<std::uint64_t>(spec.channels) + static_cast<std::uint64_t>(c)] != want) {
                 return "sample of frame " + std::to_string(f) + ", channel " + std::to_string(c) + " differs";
             }
         }
     }
     return {};
+}
+
+// The MD5 FLAC's STREAMINFO holds for the signal of `spec`, computed from
+// the generated samples (each little endian, in bits / 8 bytes,
+// interleaved), so that it goes through no decoder at all.
+inline std::array<std::uint8_t, 16> signalMd5(const WavSpec &spec)
+{
+    QCryptographicHash md5(QCryptographicHash::Md5);
+    const int bytes = spec.bits / 8;
+    std::vector<char> piece;
+    constexpr std::uint64_t PieceFrames = 65536;
+    for (std::uint64_t first = 0; first < spec.frames; first += PieceFrames) {
+        const std::uint64_t count = std::min(PieceFrames, spec.frames - first);
+        piece.clear();
+        for (std::uint64_t f = first; f < first + count; ++f) {
+            for (int c = 0; c < spec.channels; ++c) {
+                const auto v = static_cast<std::uint32_t>(signalSample(f, c, spec.bits, spec.rate, spec.variant));
+                for (int b = 0; b < bytes; ++b) {
+                    piece.push_back(static_cast<char>((v >> (8 * b)) & 0xFF));
+                }
+            }
+        }
+        md5.addData(QByteArrayView(piece.data(), static_cast<qsizetype>(piece.size())));
+    }
+    const QByteArray digest = md5.result();
+    std::array<std::uint8_t, 16> out{};
+    std::copy(digest.begin(), digest.end(), out.begin());
+    return out;
 }
 
 }  // namespace recording_test

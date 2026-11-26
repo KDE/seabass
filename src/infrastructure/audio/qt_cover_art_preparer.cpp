@@ -11,7 +11,9 @@
 #include <QImageReader>
 #include <QImageWriter>
 #include <QPainter>
+#include <QSize>
 
+#include <algorithm>
 #include <exception>
 #include <string>
 
@@ -26,6 +28,28 @@ namespace
 constexpr int FirstJpegQuality = 90;
 constexpr int LowestJpegQuality = 50;
 constexpr int JpegQualityStep = 5;
+// The largest picture decoded at all: a side of 16384 pixels and 64
+// megapixels (256 MB at four bytes a pixel). A phone's photo of 50
+// megapixels is in; a picture whose header claims more is refused before
+// anything is decoded.
+constexpr qint64 MaxSourceSidePixels = 16384;
+constexpr qint64 MaxSourcePixels = 64LL * 1000 * 1000;
+
+// `size` scaled down to fit MaxCoverSidePixels on its longer side, its
+// shape kept, never up, and never below one pixel on either side.
+QSize fitted(const QSize &size)
+{
+    const qint64 w = size.width();
+    const qint64 h = size.height();
+    const qint64 longer = std::max(w, h);
+    if (longer <= application::MaxCoverSidePixels) {
+        return size;
+    }
+    const auto scale = [longer](qint64 side) {
+        return static_cast<int>(std::max<qint64>(1, (side * application::MaxCoverSidePixels + longer / 2) / longer));
+    };
+    return {scale(w), scale(h)};
+}
 
 }  // namespace
 
@@ -42,14 +66,32 @@ application::CoverArtResult QtCoverArtPreparer::prepare(const std::string &pictu
         in.open(QIODevice::ReadOnly);
         QImageReader reader(&in);
         reader.setAutoTransform(true);
+        // The size from the picture's header, before anything is decoded.
+        const QSize stored = reader.size();
+        if (stored.isValid()) {
+            if (stored.width() > MaxSourceSidePixels || stored.height() > MaxSourceSidePixels
+                || static_cast<qint64>(stored.width()) * stored.height() > MaxSourcePixels) {
+                result.error = "the picture is " + std::to_string(stored.width()) + " x "
+                    + std::to_string(stored.height()) + " pixels, larger than a cover is made from";
+                return result;
+            }
+            // Decoded at the cover's size where the format can (JPEG),
+            // so a large photo does not cost its full size in memory.
+            const QSize cover = fitted(stored);
+            if (cover != stored) {
+                reader.setScaledSize(cover);
+            }
+        }
         QImage picture = reader.read();
         if (picture.isNull()) {
             result.error = "the picture could not be read: " + reader.errorString().toStdString();
             return result;
         }
-        if (picture.width() > application::MaxCoverSidePixels || picture.height() > application::MaxCoverSidePixels) {
-            picture = picture.scaled(application::MaxCoverSidePixels, application::MaxCoverSidePixels,
-                                     Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        // A format that did not tell its size, or a turn from the
+        // picture's orientation: fitted here.
+        const QSize cover = fitted(picture.size());
+        if (cover != picture.size()) {
+            picture = picture.scaled(cover, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         }
         // JPEG has no transparency: what is see-through is shown on white.
         QImage flat(picture.size(), QImage::Format_RGB32);

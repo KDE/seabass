@@ -46,7 +46,7 @@ namespace
 PosixArchiveFile::PosixArchiveFile(const std::filesystem::path &path, OpenMode mode) : m_path(path), m_mode(mode)
 {
     DWORD access = mode == OpenMode::ReadOnly ? GENERIC_READ : (GENERIC_READ | GENERIC_WRITE);
-    DWORD disposition = mode == OpenMode::ReadOnly ? OPEN_EXISTING : OPEN_ALWAYS;
+    DWORD disposition = mode == OpenMode::ReadWrite ? OPEN_ALWAYS : OPEN_EXISTING;
     // Share mode has to emulate POSIX open() semantics, which is what
     // every caller of this class was written against -- a POSIX fd puts
     // no restriction on anyone else opening, writing, or unlinking the
@@ -171,7 +171,7 @@ void PosixArchiveFile::barrier()
 
 PosixArchiveFile::PosixArchiveFile(const std::filesystem::path &path, OpenMode mode) : m_path(path), m_mode(mode)
 {
-    int flags = mode == OpenMode::ReadOnly ? O_RDONLY : (O_RDWR | O_CREAT);
+    int flags = mode == OpenMode::ReadOnly ? O_RDONLY : (mode == OpenMode::ReadWrite ? (O_RDWR | O_CREAT) : O_RDWR);
 #if defined(O_CLOEXEC)
     flags |= O_CLOEXEC;
 #endif
@@ -195,7 +195,7 @@ PosixArchiveFile::PosixArchiveFile(const std::filesystem::path &path, OpenMode m
     // to the stick itself, and FAT and exFAT have no POSIX modes at all,
     // so this fails there by nature. A backup that copied every byte must
     // not be failed over the permission bits of the file holding it.
-    if (mode != OpenMode::ReadOnly) {
+    if (mode == OpenMode::ReadWrite) {
         ::fchmod(fd, 0755);
     }
     struct stat st{};

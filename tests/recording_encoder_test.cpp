@@ -19,7 +19,19 @@
 //   - a FLAC damaged after the encoding (cut, or bytes changed): the check
 //     refuses it, nothing under the target's name;
 //   - a cancel while encoding and while checking: no temporary file, no
-//     target.
+//     target;
+//   - the FLAC's own MD5 (STREAMINFO) is the MD5 the test computes from the
+//     signal it generated, a check that goes through no decoder;
+//   - a valid FLAC of other audio with its MD5 zeroed, and a 24 bit FLAC
+//     that differs from the WAV in the lowest byte of one sample only, put
+//     in the place of the encoded file: the comparison itself refuses them;
+//   - a WAV with bytes after its data chunk: chunks are fine, anything else
+//     (a stale data size, garbage) is refused with the two lengths;
+//   - the temporary file taken away or changed after the check: refused,
+//     no empty or other file under the target's name; a file that appears
+//     at the target right before the rename: not replaced;
+//   - another job's temporary file beside the target is left alone; the
+//     FLAC is not executable.
 //
 //   recording_encoder_test SCRATCH_DIR [--long [MINUTES]]
 //
@@ -43,6 +55,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -54,6 +67,7 @@
 #include <sys/resource.h>
 #endif
 
+#include "infrastructure/audio/flac_stream_info.hpp"
 #include "infrastructure/audio/qt_flac_recording_encoder.hpp"
 #include "infrastructure/audio/wav_pcm_file.hpp"
 #include "recording_test_support.hpp"
@@ -88,10 +102,52 @@ std::string readAll(const std::string &path)
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
+// The encoder's temporary files beside `flac`: names that start with the
+// FLAC's name and end in the suffix.
+std::vector<std::string> tempsBeside(const std::string &flac)
+{
+    const fs::path path = pathFromUtf8(flac);
+    const std::string prefix = pathToUtf8(path.filename()) + ".";
+    const std::string suffix = RecordingEncodeTempSuffix;
+    std::vector<std::string> found;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(path.parent_path(), ec)) {
+        const std::string name = pathToUtf8(entry.path().filename());
+        if (name.size() > prefix.size() + suffix.size() && name.compare(0, prefix.size(), prefix) == 0
+            && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            found.push_back(name);
+        }
+    }
+    return found;
+}
+
 // Nothing of the encoder's is left beside `flac`.
 bool noTempBeside(const std::string &flac)
 {
-    return !exists(flac + RecordingEncodeTempSuffix);
+    return tempsBeside(flac).empty();
+}
+
+// The FLAC's STREAMINFO MD5 set to zero, as an encoder that did not
+// compute it leaves it. STREAMINFO is the first block, right after
+// "fLaC" and its four byte block header; the MD5 is its last 16 bytes.
+bool zeroMd5(const std::string &flac)
+{
+    const auto info = infrastructure::audio::readFlacStreamInfo(pathFromUtf8(flac));
+    std::fstream file(pathFromUtf8(flac), std::ios::in | std::ios::out | std::ios::binary);
+    char head[42] = {};
+    file.read(head, 42);
+    if (!info || !file || std::string(head, 4) != "fLaC"
+        || !std::equal(info->md5.begin(), info->md5.end(), reinterpret_cast<unsigned char *>(head) + 26)) {
+        return false;
+    }
+    file.seekp(26);
+    file.write(std::string(16, '\0').data(), 16);
+    return static_cast<bool>(file);
+}
+
+void copyOver(const std::string &from, const std::string &to)
+{
+    fs::copy_file(pathFromUtf8(from), pathFromUtf8(to), fs::copy_options::overwrite_existing);
 }
 
 struct Run
@@ -148,6 +204,15 @@ void roundTrip(const std::string &dir, const WavSpec &spec)
     check(noTempBeside(flac), label + ": no temporary file is left");
     const std::string mismatch = recording_test::compareWithSignal(recording_test::decodeAll(flac), spec);
     check(mismatch.empty(), label + ": the FLAC decodes to the signal: " + mismatch);
+    // Without any decoder: the FLAC's own MD5 against the signal's.
+    const auto info = infrastructure::audio::readFlacStreamInfo(pathFromUtf8(flac));
+    check(info && info->md5 == recording_test::signalMd5(spec),
+          label + ": the FLAC's STREAMINFO MD5 is the MD5 of the generated samples");
+#if !defined(_WIN32)
+    const fs::perms perms = fs::status(pathFromUtf8(flac)).permissions();
+    check((perms & (fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec)) == fs::perms::none,
+          label + ": the FLAC is not executable");
+#endif
 
     bool monotonic = true;
     for (std::size_t i = 1; i < run.progress.size(); ++i) {
@@ -185,6 +250,14 @@ void formats(const std::string &dir)
     WavSpec withList{44100, 1, 16, 44100};
     withList.extraChunk = true;
     roundTrip(dir, withList);
+    // Chunks after the audio, as recorders write them: a LIST, and an odd
+    // sized one at the end without its pad byte.
+    WavSpec listAfter{44100, 2, 16, 44100};
+    listAfter.trailing = std::string("LIST\x0a\x00\x00\x00INFOabcdef", 18);
+    roundTrip(dir, listAfter);
+    WavSpec oddAfter{48000, 2, 16, 48000};
+    oddAfter.trailing = std::string("cue \x04\x00\x00\x00" "abcdjunk\x03\x00\x00\x00xyz", 23);
+    roundTrip(dir, oddAfter);
 }
 
 // 24 bit through Qt's 32 bit sample format: the low byte must survive.
@@ -276,16 +349,165 @@ void refusals(const std::string &dir)
         std::ofstream(pathFromUtf8(folder)) << "x";
         refused("folder is a file", good, folder + "/out.flac", "not a folder");
     }
-    // A folder where the temporary file would go.
+    // Another job's temporary file (or a leftover of one that was
+    // killed) beside the target: left alone, and the encoding works.
     {
-        const std::string flac = dir + "/blocked.flac";
-        QDir().mkpath(QString::fromStdString(flac + RecordingEncodeTempSuffix + "/inside"));
+        const std::string flac = dir + "/beside.flac";
+        const std::string other = flac + ".0123456789abcdef" + RecordingEncodeTempSuffix;
+        std::ofstream(pathFromUtf8(other)) << "another job's file";
         const Run run = encode(encoder, good, flac);
-        check(!run.result.encoded && run.result.error.find("in the way") != std::string::npos,
-              "temporary blocked: refused (" + run.result.error + ")");
-        check(fs::is_directory(pathFromUtf8(flac + RecordingEncodeTempSuffix + "/inside")),
-              "temporary blocked: the folder in the way is left alone");
-        check(!exists(flac), "temporary blocked: no FLAC");
+        check(run.result.encoded, "another temporary file beside: encoded (" + run.result.error + ")");
+        check(readAll(other) == "another job's file", "another temporary file beside: left as it was");
+        check(tempsBeside(flac) == std::vector<std::string>{pathToUtf8(pathFromUtf8(other).filename())},
+              "another temporary file beside: only that one is there afterwards");
+    }
+    // The FLAC under the recording's own name: refused, the recording
+    // untouched.
+    {
+        const std::string wav = dir + "/own-name.wav";
+        recording_test::writeWav(wav, WavSpec{44100, 2, 16, 44100});
+        const std::string before = readAll(wav);
+        refused("the recording's own name", wav, wav, "the recording itself");
+        check(readAll(wav) == before, "the recording's own name: the recording is as it was");
+    }
+}
+
+// A stale data size, and garbage after the audio: the header does not
+// describe the file, which is refused with the two lengths.
+void trailingBytes(const std::string &dir)
+{
+    QtFlacRecordingEncoder encoder;
+    const auto refusedWith = [&](const std::string &label, const WavSpec &spec, const std::string &reason) {
+        const std::string wav = dir + "/" + label + ".wav";
+        const std::string flac = dir + "/" + label + ".flac";
+        recording_test::writeWav(wav, spec);
+        const Run run = encode(encoder, wav, flac);
+        check(!run.result.encoded && !run.result.cancelled, label + ": refused");
+        check(run.result.error.find(reason) != std::string::npos,
+              label + ": the reason says \"" + reason + "\": " + run.result.error);
+        check(!exists(flac) && noTempBeside(flac), label + ": nothing written");
+    };
+    // Two minutes recorded, the header still says one: what a recorder
+    // that lost power after an earlier update of the header leaves.
+    WavSpec stale{44100, 2, 16, 44100 * 120};
+    stale.declaredDataBytes = 44100 * 4 * 60;
+    refusedWith("stale-size", stale, "header says it holds 1:00 of audio, and the file has room for 2:00");
+    WavSpec garbage{44100, 2, 16, 44100};
+    garbage.trailing = std::string(4096, '\0');
+    refusedWith("garbage-after", garbage, "not finished properly");
+    WavSpec runsPast{44100, 2, 16, 44100};
+    runsPast.trailing = std::string("LIST\xff\x00\x00\x00INFO", 12);
+    refusedWith("chunk-runs-past", runsPast, "not finished properly");
+    WavSpec secondData{44100, 2, 16, 44100};
+    secondData.trailing = std::string("data\x04\x00\x00\x00" "abcd", 12);
+    refusedWith("second-data", secondData, "not finished properly");
+}
+
+// The comparison itself, with the MD5 out of the way: a FLAC that is valid
+// in every other respect but holds other samples is refused.
+void comparisonAlone(const std::string &dir)
+{
+    const auto refusedWith = [&](const std::string &label, const WavSpec &spec, const WavSpec &other,
+                                 const std::function<void(const std::string &)> &changeOtherWav) {
+        const std::string wav = dir + "/" + label + ".wav";
+        const std::string otherWav = dir + "/" + label + "-other.wav";
+        const std::string otherFlac = dir + "/" + label + "-other.flac";
+        recording_test::writeWav(wav, spec);
+        recording_test::writeWav(otherWav, other);
+        if (changeOtherWav) {
+            changeOtherWav(otherWav);
+        }
+        QtFlacRecordingEncoder plain;
+        const Run made = encode(plain, otherWav, otherFlac);
+        check(made.result.encoded, label + ": the other FLAC is made (" + made.result.error + ")");
+        check(zeroMd5(otherFlac), label + ": the other FLAC's MD5 is zeroed");
+        QtFlacRecordingEncoder encoder(5000);
+        encoder.setBeforeCheckForTests([&](const std::string &temp) { copyOver(otherFlac, temp); });
+        const std::string flac = dir + "/" + label + ".flac";
+        const Run run = encode(encoder, wav, flac);
+        check(!run.result.encoded && run.result.error.find("differs from the recording") != std::string::npos,
+              label + ": refused by the comparison (" + run.result.error + ")");
+        check(!exists(flac) && noTempBeside(flac), label + ": nothing under the target's name, no temporary file");
+    };
+    // Other audio of the same format and length.
+    WavSpec other{44100, 2, 16, 44100 * 2};
+    other.variant = 7;
+    refusedWith("other-audio", WavSpec{44100, 2, 16, 44100 * 2}, other, {});
+    // 24 bit, one sample's lowest byte one higher, the rest the same.
+    const WavSpec deep{48000, 2, 24, 48000 * 2};
+    refusedWith("lowest-byte", deep, deep, [](const std::string &path) {
+        std::fstream file(pathFromUtf8(path), std::ios::in | std::ios::out | std::ios::binary);
+        // Frame 30000, channel 2: its lowest byte, after the 44 byte header.
+        const std::streamoff at = 44 + 30000 * 6 + 3;
+        char byte = 0;
+        file.seekg(at);
+        file.read(&byte, 1);
+        byte = static_cast<char>(byte ^ 0x01);
+        file.seekp(at);
+        file.write(&byte, 1);
+    });
+}
+
+// The file that gets the target's name is the file that was checked.
+void placement(const std::string &dir)
+{
+    const WavSpec spec{44100, 2, 16, 44100 * 2};
+    const std::string wav = dir + "/place.wav";
+    recording_test::writeWav(wav, spec);
+    // The temporary file taken away after the check (another program, a
+    // sweep): no empty file is made and named.
+    {
+        QtFlacRecordingEncoder encoder;
+        encoder.setBeforePlaceForTests([](const std::string &temp) { fs::remove(pathFromUtf8(temp)); });
+        const std::string flac = dir + "/place-vanished.flac";
+        const Run run = encode(encoder, wav, flac);
+        check(!run.result.encoded && run.result.error.find("could not be flushed") != std::string::npos,
+              "temporary file vanished: refused at the flush (" + run.result.error + ")");
+        check(!exists(flac), "temporary file vanished: nothing under the target's name");
+        check(noTempBeside(flac), "temporary file vanished: no temporary file made either");
+    }
+    // The temporary file changed after the check: refused.
+    {
+        QtFlacRecordingEncoder encoder;
+        encoder.setBeforePlaceForTests([](const std::string &temp) {
+            fs::resize_file(pathFromUtf8(temp), fs::file_size(pathFromUtf8(temp)) / 2);
+        });
+        const std::string flac = dir + "/place-changed.flac";
+        const Run run = encode(encoder, wav, flac);
+        check(!run.result.encoded && run.result.error.find("changed after it was checked") != std::string::npos,
+              "temporary file changed: refused (" + run.result.error + ")");
+        check(!exists(flac) && noTempBeside(flac), "temporary file changed: nothing named, nothing left");
+    }
+    // A file appears at the target after the last look, right before the
+    // rename: the rename does not replace it.
+    {
+        QtFlacRecordingEncoder encoder;
+        const std::string flac = dir + "/place-appeared.flac";
+        encoder.setBeforeRenameForTests([&flac](const std::string &) {
+            std::ofstream(pathFromUtf8(flac)) << "someone else's file";
+        });
+        const Run run = encode(encoder, wav, flac);
+        check(!run.result.encoded && run.result.error.find("is not replaced") != std::string::npos,
+              "target appeared before the rename: refused (" + run.result.error + ")");
+        check(readAll(flac) == "someone else's file", "target appeared before the rename: it is not replaced");
+        check(noTempBeside(flac), "target appeared before the rename: the temporary file is taken away");
+    }
+    // A progress callback that throws at the end, after the FLAC has its
+    // name: the FLAC still counts.
+    {
+        QtFlacRecordingEncoder encoder;
+        const std::string flac = dir + "/place-throwing-progress.flac";
+        application::RecordingEncodeOptions options;
+        options.progress = [](double fraction) {
+            if (fraction >= 1.0) {
+                throw std::runtime_error("the progress bar broke");
+            }
+        };
+        const auto result = encoder.encode(wav, flac, options);
+        check(result.encoded && result.error.empty(),
+              "a throwing progress at the end: still encoded (" + result.error + ")");
+        check(recording_test::compareWithSignal(recording_test::decodeAll(flac), spec).empty(),
+              "a throwing progress at the end: the FLAC is there and whole");
     }
 }
 
@@ -455,6 +677,9 @@ int main(int argc, char **argv)
         formats(dir);
         twentyFourBit(dir);
         refusals(dir);
+        trailingBytes(dir);
+        comparisonAlone(dir);
+        placement(dir);
         damaged(dir);
         cancels(dir);
         workerThread(dir);

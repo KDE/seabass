@@ -30,11 +30,12 @@
 #include <vector>
 
 #include "infrastructure/audio/flac_stream_info.hpp"
+#include "infrastructure/audio/recording_file_steps.hpp"
 #include "infrastructure/audio/wav_pcm_file.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/long_paths.hpp"
+#include "infrastructure/no_replace_rename.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
-#include "infrastructure/stick_backup/posix_archive_file.hpp"
 
 namespace seabass::infrastructure::audio
 {
@@ -59,6 +60,9 @@ constexpr int QuietStopMs = 500;
 // How often the event loop looks at the cancellation token, which is
 // flipped from another thread.
 constexpr int CancelPollMs = 50;
+// The most the check reports: the whole job (1) is reported only once
+// the FLAC has its name.
+constexpr double LastCheckProgress = 0.999;
 
 QString qtPath(const fs::path &path)
 {
@@ -146,34 +150,18 @@ std::optional<qsizetype> firstDifference(const QAudioBuffer &buffer, const std::
     return std::nullopt;
 }
 
-// Whether something is under `path`, a dangling link included. nullopt
-// when the filesystem would not say.
-std::optional<bool> somethingAt(const fs::path &path)
-{
-    std::error_code ec;
-    const fs::file_status status = fs::symlink_status(longPathSafe(path), ec);
-    if (status.type() == fs::file_type::not_found) {
-        return false;
-    }
-    if (ec || status.type() == fs::file_type::none) {
-        return std::nullopt;
-    }
-    return true;
-}
-
 class EncodeJob
 {
 public:
     EncodeJob(const fs::path &wavPath, const fs::path &target, const application::RecordingEncodeOptions &options,
-              int stallTimeoutMs, std::function<void(const std::string &)> beforeCheck)
+              int stallTimeoutMs, const QtFlacRecordingEncoder::TestHooks &hooks)
         : m_wavPath(wavPath)
         , m_target(target)
+        , m_temp(uniqueTempBeside(target, RecordingEncodeTempSuffix))
         , m_options(options)
         , m_stallTimeoutMs(stallTimeoutMs)
-        , m_beforeCheck(std::move(beforeCheck))
+        , m_hooks(hooks)
     {
-        m_temp = target;
-        m_temp += RecordingEncodeTempSuffix;
         m_wavName = pathToUtf8(wavPath.filename());
     }
 
@@ -203,7 +191,12 @@ public:
         }
         m_result.encoded = true;
         m_result.error.clear();
-        report(1.0);
+        // The FLAC is in its place and proven: a progress callback that
+        // throws now does not make it a failure.
+        try {
+            report(1.0);
+        } catch (...) {
+        }
         return m_result;
     }
 
@@ -214,10 +207,14 @@ private:
     std::string m_wavName;
     application::RecordingEncodeOptions m_options;
     int m_stallTimeoutMs;
-    std::function<void(const std::string &)> m_beforeCheck;
+    QtFlacRecordingEncoder::TestHooks m_hooks;
     std::unique_ptr<WavPcmFile> m_wav;
     fs::file_time_type m_wavModified{};
     QByteArray m_wavMd5;
+    // The file the check proved: its size and its STREAMINFO block (with
+    // the MD5 of its samples), as read before it was decoded.
+    std::uint64_t m_checkedSize = 0;
+    FlacStreamInfo m_checkedInfo;
     application::RecordingEncodeResult m_result;
     bool m_cancelled = false;
     bool m_tempMayExist = false;
@@ -276,6 +273,11 @@ private:
         m_result.framesInWav = layout.frames;
 
         const std::string targetName = pathToUtf8(m_target.filename());
+        // The recording is only ever read: neither the FLAC nor the
+        // temporary file may be it, under any spelling of its name.
+        if (sameFile(m_target, m_wavPath) || sameFile(m_temp, m_wavPath)) {
+            return refuse(targetName + " would be the recording itself");
+        }
         const std::optional<bool> there = somethingAt(m_target);
         if (!there) {
             return refuse("the place for " + targetName + " could not be looked at");
@@ -287,16 +289,11 @@ private:
         if (!fs::is_directory(longPathSafe(folder), ec)) {
             return refuse("the folder " + pathToUtf8(folder) + " cannot be written to: it is not a folder");
         }
-        // A leftover of an earlier run goes, when it is a file; anything
-        // else under that name is not this encoder's to take away.
-        const fs::file_status leftover = fs::symlink_status(longPathSafe(m_temp), ec);
-        if (leftover.type() == fs::file_type::regular || leftover.type() == fs::file_type::symlink) {
-            fs::remove(longPathSafe(m_temp), ec);
-        } else if (leftover.type() != fs::file_type::not_found) {
-            return refuse("something is in the way of its temporary file " + pathToUtf8(m_temp.filename()));
-        }
+        // The temporary name is this job's own, so nothing is there; a
+        // leftover of an earlier run has another name and stays for a
+        // scan that tidies them.
         if (somethingAt(m_temp) != std::optional<bool>(false)) {
-            return refuse("its temporary file " + pathToUtf8(m_temp.filename()) + " could not be cleared");
+            return refuse("something is in the way of its temporary file " + pathToUtf8(m_temp.filename()));
         }
         if (QMediaFormat(QMediaFormat::FLAC).isSupported(QMediaFormat::Encode) == false) {
             return refuse("this system's Qt Multimedia cannot encode FLAC");
@@ -539,12 +536,24 @@ private:
             return fail("the encoder stopped before it was given the whole recording");
         }
         const QString actual = recorder.actualLocation().toLocalFile();
-        if (!actual.isEmpty() && pathFromUtf8(actual.toStdString()) != m_temp) {
-            // The recorder wrote somewhere else; that file is its, and
-            // goes as well.
+        if (!actual.isEmpty()) {
+            // Compared as files: another spelling of the same path (a UNC
+            // path, "..") is the temporary file all the same.
+            const fs::path actualPath = pathFromUtf8(actual.toStdString());
+            const std::optional<bool> tempThere = somethingAt(m_temp);
             std::error_code ec;
-            fs::remove(longPathSafe(pathFromUtf8(actual.toStdString())), ec);
-            return fail("the encoder wrote to " + actual.toStdString() + " and not where it was asked to");
+            const bool same = tempThere == std::optional<bool>(true)
+                && fs::equivalent(longPathSafe(actualPath), longPathSafe(m_temp), ec) && !ec;
+            if (!same) {
+                // The recorder wrote somewhere else. That file is its own
+                // and goes as well, unless it is a file that was there
+                // before: the recording or the target.
+                if (fs::symlink_status(longPathSafe(actualPath), ec).type() == fs::file_type::regular
+                    && !sameFile(actualPath, m_wavPath) && !sameFile(actualPath, m_target)) {
+                    fs::remove(longPathSafe(actualPath), ec);
+                }
+                return fail("the encoder wrote to " + actual.toStdString() + " and not where it was asked to");
+            }
         }
         m_wavMd5 = md5.result();
         return true;
@@ -554,14 +563,17 @@ private:
     // sample, every channel, and the number of frames.
     bool verifyTemp()
     {
-        if (m_beforeCheck) {
-            m_beforeCheck(pathToUtf8(m_temp));
+        if (m_hooks.beforeCheck) {
+            m_hooks.beforeCheck(pathToUtf8(m_temp));
         }
         const WavLayout &layout = m_wav->layout();
+        const std::optional<std::uint64_t> size = fileSizeOf(m_temp);
         const std::optional<FlacStreamInfo> info = readFlacStreamInfo(m_temp);
-        if (!info) {
+        if (!info || !size) {
             return fail("what the encoder wrote is not a FLAC file");
         }
+        m_checkedSize = *size;
+        m_checkedInfo = *info;
         if (info->sampleRate != layout.sampleRate || info->channels != layout.channels
             || info->bitsPerSample != layout.bitsPerSample) {
             return fail("the encoder wrote " + std::to_string(info->bitsPerSample) + " bit, "
@@ -629,8 +641,11 @@ private:
                     }
                     verified += frames;
                     waiter.alive();
-                    report(EncodingShare
-                           + (1.0 - EncodingShare) * static_cast<double>(verified) / static_cast<double>(layout.frames));
+                    // Short of 1 until the FLAC has its name: 1 is the
+                    // end of the whole job.
+                    report(std::min(LastCheckProgress, EncodingShare
+                                                           + (1.0 - EncodingShare) * static_cast<double>(verified)
+                                                               / static_cast<double>(layout.frames)));
                     if (m_options.cancel.cancelled()) {
                         waiter.cancelled = true;
                         break;
@@ -698,39 +713,60 @@ private:
             m_cancelled = true;
             return false;
         }
+        if (m_hooks.beforePlace) {
+            m_hooks.beforePlace(pathToUtf8(m_temp));
+        }
+        // Opened without being created: a temporary file that went away
+        // after the check is a failure, never an empty file under the
+        // target's name.
+        std::uint64_t flushedSize = 0;
         try {
-            stick_backup::PosixArchiveFile written(longPathSafe(m_temp), stick_backup::PosixArchiveFile::OpenMode::ReadWrite);
-            written.barrier();
+            flushedSize = flushExistingFile(m_temp);
         } catch (const std::exception &e) {
             return fail(std::string("the encoded file could not be flushed: ") + e.what());
         }
-        // Asked again: the encoding takes minutes. The rename itself would
-        // replace.
-        const std::optional<bool> there = somethingAt(m_target);
-        if (there != std::optional<bool>(false)) {
-            return fail(pathToUtf8(m_target.filename()) + " appeared while the recording was encoded, and is not replaced");
+        // The file that was flushed is the one that was checked.
+        const std::optional<FlacStreamInfo> info = readFlacStreamInfo(m_temp);
+        if (flushedSize != m_checkedSize || !info || info->raw != m_checkedInfo.raw) {
+            return fail("the encoded file changed after it was checked");
         }
-        std::error_code ec;
-        fs::rename(longPathSafe(m_temp), longPathSafe(m_target), ec);
-        if (ec) {
-            return fail("the encoded file could not be given its name: " + ec.message());
+        // Asked again for a plain answer: the encoding takes minutes. The
+        // rename below refuses a file that appears after this look too.
+        const std::string targetName = pathToUtf8(m_target.filename());
+        if (somethingAt(m_target) != std::optional<bool>(false)) {
+            return fail(targetName + " appeared while the recording was encoded, and is not replaced");
+        }
+        if (m_hooks.beforeRename) {
+            m_hooks.beforeRename(pathToUtf8(m_temp));
+        }
+        const NoReplaceRename renamed = renameNoReplace(m_temp, m_target);
+        if (renamed.status == NoReplaceRename::Status::TargetExists) {
+            return fail(targetName + " appeared while the recording was encoded, and is not replaced");
+        }
+        if (renamed.status != NoReplaceRename::Status::Renamed) {
+            return fail("the encoded file could not be given its name: " + renamed.error);
         }
         m_tempMayExist = false;
         try {
             fsyncDirectoryContaining(pathToUtf8(m_target));
         } catch (...) {
         }
+        // What has the name now is the size that was checked. Something
+        // else is left where it is: it may be another program's.
+        if (fileSizeOf(m_target) != std::optional<std::uint64_t>(m_checkedSize)) {
+            return fail(targetName + " does not have the size of the checked file after it was given its name; "
+                        "it was left as it is and does not count as kept");
+        }
         return true;
     }
 
     void discardTemp()
     {
-        if (!m_tempMayExist) {
+        if (!m_tempMayExist || sameFile(m_temp, m_wavPath)) {
             return;
         }
         std::error_code ec;
-        const fs::file_status status = fs::symlink_status(longPathSafe(m_temp), ec);
-        if (status.type() == fs::file_type::regular || status.type() == fs::file_type::symlink) {
+        if (fs::symlink_status(longPathSafe(m_temp), ec).type() == fs::file_type::regular) {
             fs::remove(longPathSafe(m_temp), ec);
         }
     }
@@ -758,7 +794,7 @@ application::RecordingEncodeResult QtFlacRecordingEncoder::encode(const std::str
     try {
         // Absolute: the recorder takes a URL, and a relative one is nowhere.
         EncodeJob job(fs::absolute(pathFromUtf8(wavPath)), fs::absolute(pathFromUtf8(flacPath)), options,
-                      m_stallTimeoutMs, m_beforeCheck);
+                      m_stallTimeoutMs, m_hooks);
         return job.run();
     } catch (const std::exception &e) {
         application::RecordingEncodeResult result;

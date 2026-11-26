@@ -648,6 +648,7 @@ add_library(seabass_core STATIC
     src/infrastructure/stick_backup/archive_recovery.cpp
     src/infrastructure/long_paths.cpp
     src/infrastructure/fs_remove.cpp
+    src/infrastructure/no_replace_rename.cpp
     src/infrastructure/stick_backup/stick_tree_walker.cpp
     src/infrastructure/stick_backup/stat_diff.cpp
     src/infrastructure/stick_backup/sqlite_db_set.cpp
@@ -794,6 +795,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/engine/rekordbox_key_parser.cpp
     src/infrastructure/file_placement.cpp
     src/infrastructure/fs_remove.cpp
+    src/infrastructure/no_replace_rename.cpp
     src/infrastructure/hashing/sha256.cpp
     src/infrastructure/hashing/sha512.cpp
     src/infrastructure/hashing/sha1.cpp
@@ -1131,6 +1133,7 @@ if(TARGET Qt6::Multimedia AND TARGET Qt6::Gui AND TARGET seabass_taglib)
     add_library(seabass_recording_qt STATIC
         src/infrastructure/audio/wav_pcm_file.cpp
         src/infrastructure/audio/flac_stream_info.cpp
+        src/infrastructure/audio/recording_file_steps.cpp
         src/infrastructure/audio/qt_flac_recording_encoder.cpp
         src/infrastructure/audio/taglib_recording_tag_writer.cpp
         src/infrastructure/audio/qt_cover_art_preparer.cpp)
@@ -5144,6 +5147,16 @@ add_executable(fs_remove_test
 target_link_libraries(fs_remove_test PRIVATE seabass_core_testing)
 target_include_directories(fs_remove_test PRIVATE src tests)
 add_test(NAME fs_remove_test COMMAND fs_remove_test)
+
+# The rename that never replaces (Own Recordings places its FLAC with it),
+# through each of its ways: the atomic call, a hard link, a look and a
+# rename.
+add_executable(no_replace_rename_test
+    tests/no_replace_rename_test.cpp
+)
+target_link_libraries(no_replace_rename_test PRIVATE seabass_core_testing)
+target_include_directories(no_replace_rename_test PRIVATE src tests)
+add_test(NAME no_replace_rename_test COMMAND no_replace_rename_test)
 
 add_executable(pending_deletion_applier_test
     src/infrastructure/cleanup/pending_deletion_applier.cpp

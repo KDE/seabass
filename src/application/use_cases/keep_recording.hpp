@@ -28,7 +28,8 @@ namespace seabass::application
 // and here for its size. A failure or a cancel at any point leaves no
 // file of this job in the target folder; the folder itself stays when it
 // was made for the job. A file under the target's name is never
-// replaced.
+// replaced. A job for a recording or a FLAC that another job in this
+// process has in hand is refused before it touches anything.
 
 // What the job needs of the file system, apart from what the encoder and
 // the tag writer do themselves. Read calls and write calls are apart, so

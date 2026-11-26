@@ -99,6 +99,23 @@ QString stateKey(KeepRecordingResult::Status status)
     return QStringLiteral("failed");
 }
 
+// A path as the filesystem compares it, for telling whether two jobs name
+// the same file: the folder resolved where it is there (a link, "..",
+// another spelling of it), the name as given, and the letters folded, as
+// a filesystem that ignores case (the usual one on Windows and macOS, FAT
+// and exFAT everywhere) takes them. Folded on every platform: two names
+// that differ only in case are refused as one, which costs at most a
+// rename in the form.
+QString comparablePath(const QString &path)
+{
+    const QFileInfo info(QDir::cleanPath(QDir::fromNativeSeparators(path)));
+    QString folder = QFileInfo(info.absolutePath()).canonicalFilePath();
+    if (folder.isEmpty()) {
+        folder = QDir::cleanPath(info.absolutePath());
+    }
+    return QDir(folder).filePath(info.fileName()).toCaseFolded();
+}
+
 QString defaultFolder()
 {
     QString music = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
@@ -124,8 +141,16 @@ KeepRecordingController::KeepRecordingController(QObject *parent) : QObject(pare
 KeepRecordingController::~KeepRecordingController()
 {
     m_queue.clear();
-    // A cover preview only reads and scales one picture: waited for.
-    awaitQuietly(m_coverWatcher);
+    // A cover preview only reads and scales one picture: waited for, as
+    // long as a job is. One still under way after that is left to end on
+    // its own: it uses nothing of this object, and the global pool is
+    // waited for at exit.
+    {
+        QDeadlineTimer coverDeadline(KeepRecordingStopWaitMs);
+        while (!m_coverWatcher.isFinished() && !coverDeadline.hasExpired()) {
+            QThread::msleep(5);
+        }
+    }
     if (!m_running) {
         return;
     }
@@ -268,9 +293,8 @@ QString KeepRecordingController::targetProblem(const QString &folderText, const 
     const QString folder = QDir::fromNativeSeparators(localPath(folderText.trimmed()));
     const QString fileName = fileNameFor(artist, title);
     const QString target = QDir(folder).filePath(fileName);
-    const auto sameTarget = [&target](const Job &job) {
-        return QDir::cleanPath(targetOf(job.request)) == QDir::cleanPath(target);
-    };
+    const QString key = comparablePath(target);
+    const auto sameTarget = [&key](const Job &job) { return comparablePath(targetOf(job.request)) == key; };
     if ((m_running && sameTarget(*m_running)) || std::any_of(m_queue.begin(), m_queue.end(), sameTarget)) {
         return tr("Another recording is being kept as %1 in this folder. Change the artist or the track name.")
             .arg(fileName);
@@ -380,8 +404,16 @@ bool KeepRecordingController::keep(const QVariantMap &form)
         setError(m_coverPreparing ? tr("The cover is still being prepared.") : m_coverError);
         return false;
     }
-    if (m_running && m_running->wavPath == wavPath) {
+    // One job per recording: a second one would encode it again beside
+    // the first, under another name.
+    const QString wavKey = comparablePath(wavPath);
+    const auto sameWav = [&wavKey](const Job &job) { return comparablePath(job.wavPath) == wavKey; };
+    if (m_running && sameWav(*m_running)) {
         setError(tr("This recording is being kept right now."));
+        return false;
+    }
+    if (std::any_of(m_queue.begin(), m_queue.end(), sameWav)) {
+        setError(tr("This recording is waiting to be kept already."));
         return false;
     }
     setError({});

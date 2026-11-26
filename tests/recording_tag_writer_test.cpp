@@ -16,8 +16,17 @@
 //   - writing again replaces them, and fields left empty are gone;
 //   - the audio is untouched: the same STREAMINFO (with its MD5), the
 //     same audio frames byte for byte, and it decodes to the signal;
-//   - a file that is not a FLAC, a folder in the way of the copy: a
-//     failure, the file left byte for byte as it was.
+//   - a file that is not a FLAC: a failure, the file left byte for byte as
+//     it was; another write's copy beside the file is left alone;
+//   - the copy taken away or changed after its check: a failure, the file
+//     byte for byte as it was, never an empty file in its place;
+//   - a file that is not there while one copy of the writer is (what a
+//     power cut leaves on FAT): the copy is put back under the file's
+//     name, never deleted; a copy that is no FLAC, or two copies, are
+//     left as they are;
+//   - a large picture is decoded at the cover's size, absurd sizes are
+//     refused before decoding, and an extreme shape keeps a side of at
+//     least one pixel.
 //
 //   recording_tag_writer_test SCRATCH_DIR
 //
@@ -37,6 +46,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include <taglib/flacfile.h>
 #include <taglib/flacpicture.h>
@@ -72,6 +82,30 @@ std::string readAll(const std::string &path)
 {
     std::ifstream in(pathFromUtf8(path), std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+void writeAll(const std::string &path, const std::string &bytes)
+{
+    std::ofstream(pathFromUtf8(path), std::ios::binary) << bytes;
+}
+
+// The writer's copies beside `flac`: names that start with the FLAC's
+// name and end in the suffix.
+std::vector<std::string> copiesBeside(const std::string &flac)
+{
+    const fs::path path = pathFromUtf8(flac);
+    const std::string prefix = pathToUtf8(path.filename()) + ".";
+    const std::string suffix = RecordingTagTempSuffix;
+    std::vector<std::string> found;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(path.parent_path(), ec)) {
+        const std::string name = pathToUtf8(entry.path().filename());
+        if (name.size() > prefix.size() + suffix.size() && name.compare(0, prefix.size(), prefix) == 0
+            && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            found.push_back(name);
+        }
+    }
+    return found;
 }
 
 std::string encoded(const QImage &image, const char *format)
@@ -176,6 +210,28 @@ void covers()
         const application::CoverArtResult result = preparer.prepare("this is not a picture");
         check(!result.cover && !result.error.empty(), "no picture: refused with a reason");
     }
+    // An extreme shape: the short side stays at least one pixel.
+    {
+        const application::CoverArtResult result = preparer.prepare(encoded(photo(6000, 2), "png"));
+        check(result.cover && result.cover->width == 1200 && result.cover->height == 1,
+              "a long thin picture: 1200 x 1 (" + result.error + ")");
+    }
+    // A header that claims an absurd size: refused before anything is
+    // decoded. A PNG's IHDR says 100000 x 100000; no pixel data follows.
+    {
+        const QByteArray png = QByteArray::fromHex("89504e470d0a1a0a0000000d49484452000186a0000186a0080200000027309c9f"
+                                                   "000000004944415435af061e");
+        const application::CoverArtResult result = preparer.prepare(std::string(png.constData(), static_cast<std::size_t>(png.size())));
+        check(!result.cover && result.error.find("100000 x 100000") != std::string::npos,
+              "an absurd size: refused before decoding (" + result.error + ")");
+    }
+    // A large JPEG is decoded at the cover's size: the result is the same
+    // picture, scaled.
+    {
+        const application::CoverArtResult result = preparer.prepare(encoded(photo(4800, 3600), "jpeg"));
+        check(result.cover && result.cover->width == 1200 && result.cover->height == 900,
+              "a large JPEG: 1200 x 900 (" + result.error + ")");
+    }
 }
 
 struct Audio
@@ -238,7 +294,12 @@ void tags(const std::string &dir)
     TagLibRecordingTagWriter writer;
     const auto written = writer.write(flac, tags);
     check(written.written && written.error.empty(), "tags: written (" + written.error + ")");
-    check(!fs::exists(pathFromUtf8(flac + RecordingTagTempSuffix)), "tags: no temporary copy left");
+    check(copiesBeside(flac).empty(), "tags: no temporary copy left");
+#if !defined(_WIN32)
+    const fs::perms perms = fs::status(pathFromUtf8(flac)).permissions();
+    check((perms & (fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec)) == fs::perms::none,
+          "tags: the tagged FLAC is not executable");
+#endif
     {
         const fs::path path = pathFromUtf8(flac);
         TagLib::FLAC::File file(path.c_str(), false);
@@ -284,15 +345,115 @@ void tags(const std::string &dir)
     check(rewritten.streamInfo == untagged.streamInfo && rewritten.frames == untagged.frames,
           "rewrite: the audio is as it was");
 
-    // A folder where the copy would go: a failure, the file as it was.
+    // Another write's copy beside the file (or a leftover of one that was
+    // killed): left alone, and the write works.
     {
-        const std::string before = readAll(flac);
-        QDir().mkpath(QString::fromStdString(flac + RecordingTagTempSuffix + "/inside"));
-        const auto blocked = writer.write(flac, tags);
-        check(!blocked.written && !blocked.error.empty(), "blocked copy: a failure (" + blocked.error + ")");
-        check(readAll(flac) == before, "blocked copy: the file is as it was, byte for byte");
-        check(fs::is_directory(pathFromUtf8(flac + RecordingTagTempSuffix + "/inside")),
-              "blocked copy: the folder in the way is left alone");
+        const std::string other = flac + ".fedcba9876543210" + RecordingTagTempSuffix;
+        writeAll(other, "another write's copy");
+        const auto beside = writer.write(flac, tags);
+        check(beside.written, "another copy beside: written (" + beside.error + ")");
+        check(readAll(other) == "another write's copy", "another copy beside: left as it was");
+        fs::remove(pathFromUtf8(other));
+    }
+}
+
+// The copy that takes the file's place is the copy that was checked.
+void placement(const std::string &dir)
+{
+    const recording_test::WavSpec spec{44100, 2, 16, 44100 * 2};
+    const std::string wav = dir + "/placement.wav";
+    const std::string flac = dir + "/placement.flac";
+    recording_test::writeWav(wav, spec);
+    QtFlacRecordingEncoder encoder;
+    if (!encoder.encode(wav, flac, {}).encoded) {
+        check(false, "placement: the FLAC to tag could not be made");
+        return;
+    }
+    const std::string before = readAll(flac);
+    application::RecordingTags tags;
+    tags.title = "Placed";
+    {
+        TagLibRecordingTagWriter writer;
+        writer.setBeforePlaceForTests([](const std::string &copy) { fs::remove(pathFromUtf8(copy)); });
+        const auto result = writer.write(flac, tags);
+        check(!result.written && result.error.find("could not be flushed") != std::string::npos,
+              "copy vanished: a failure at the flush (" + result.error + ")");
+        check(readAll(flac) == before, "copy vanished: the file is as it was, byte for byte, not empty");
+        check(copiesBeside(flac).empty(), "copy vanished: no copy made either");
+    }
+    {
+        TagLibRecordingTagWriter writer;
+        writer.setBeforePlaceForTests([](const std::string &copy) {
+            std::ofstream(pathFromUtf8(copy), std::ios::binary | std::ios::app) << "x";
+        });
+        const auto result = writer.write(flac, tags);
+        check(!result.written && result.error.find("changed after it was checked") != std::string::npos,
+              "copy changed: a failure (" + result.error + ")");
+        check(readAll(flac) == before, "copy changed: the file is as it was, byte for byte");
+        check(copiesBeside(flac).empty(), "copy changed: the copy is taken away");
+    }
+}
+
+// What a power cut leaves on FAT and exFAT, where the copy replaces the
+// file by a delete and a rename: the file gone, its copy there. The copy
+// may be the only one, and is never deleted.
+void interruptedReplace(const std::string &dir)
+{
+    const recording_test::WavSpec spec{44100, 2, 16, 44100 * 2};
+    const std::string wav = dir + "/fat.wav";
+    recording_test::writeWav(wav, spec);
+    QtFlacRecordingEncoder encoder;
+    TagLibRecordingTagWriter writer;
+    application::RecordingTags tags;
+    tags.title = "After the power cut";
+
+    // One copy, a FLAC: put back under the file's name.
+    {
+        const std::string flac = dir + "/fat-one.flac";
+        if (!encoder.encode(wav, flac, {}).encoded) {
+            check(false, "interrupted: the FLAC could not be made");
+            return;
+        }
+        const std::string copy = flac + ".00112233445566aa" + RecordingTagTempSuffix;
+        fs::rename(pathFromUtf8(flac), pathFromUtf8(copy));
+        const std::string bytes = readAll(copy);
+        const auto result = writer.write(flac, tags);
+        check(!result.written && result.error.find("put back") != std::string::npos,
+              "interrupted, one copy: a failure that says it was put back (" + result.error + ")");
+        check(readAll(flac) == bytes, "interrupted, one copy: the file is back under its name, byte for byte");
+        check(copiesBeside(flac).empty(), "interrupted, one copy: the copy is now the file, none left");
+        check(recording_test::compareWithSignal(recording_test::decodeAll(flac), spec).empty(),
+              "interrupted, one copy: it decodes to the recording");
+        const auto again = writer.write(flac, tags);
+        check(again.written, "interrupted, one copy: the tags can be written afterwards (" + again.error + ")");
+    }
+    // A copy that is not a whole FLAC: left as it is, nothing made.
+    {
+        const std::string flac = dir + "/fat-cut.flac";
+        const std::string copy = flac + ".00112233445566bb" + RecordingTagTempSuffix;
+        writeAll(copy, "fLaC and then the power went");
+        const auto result = writer.write(flac, tags);
+        check(!result.written && result.error.find("left as it is") != std::string::npos,
+              "interrupted, damaged copy: a failure (" + result.error + ")");
+        check(readAll(copy) == "fLaC and then the power went", "interrupted, damaged copy: left as it was");
+        check(!fs::exists(pathFromUtf8(flac)), "interrupted, damaged copy: nothing under the file's name");
+    }
+    // Two copies: which one is the file cannot be told; both stay.
+    {
+        const std::string flac = dir + "/fat-two.flac";
+        if (!encoder.encode(wav, flac, {}).encoded) {
+            check(false, "interrupted: the FLAC could not be made");
+            return;
+        }
+        const std::string first = flac + ".00112233445566cc" + RecordingTagTempSuffix;
+        const std::string second = flac + ".00112233445566dd" + RecordingTagTempSuffix;
+        fs::copy_file(pathFromUtf8(flac), pathFromUtf8(second));
+        fs::rename(pathFromUtf8(flac), pathFromUtf8(first));
+        const auto result = writer.write(flac, tags);
+        check(!result.written && result.error.find("2 temporary copies") != std::string::npos,
+              "interrupted, two copies: a failure that says so (" + result.error + ")");
+        check(fs::exists(pathFromUtf8(first)) && fs::exists(pathFromUtf8(second)) && !fs::exists(pathFromUtf8(flac)),
+              "interrupted, two copies: both left as they are");
     }
 }
 
@@ -307,7 +468,7 @@ void notFlac(const std::string &dir)
     check(!result.written && result.error.find("not a FLAC") != std::string::npos,
           "not a FLAC: a failure that says so (" + result.error + ")");
     check(readAll(path) == "fLaX this is not a FLAC file at all", "not a FLAC: left as it was");
-    check(!fs::exists(pathFromUtf8(path + RecordingTagTempSuffix)), "not a FLAC: no temporary copy");
+    check(copiesBeside(path).empty(), "not a FLAC: no temporary copy");
 
     const auto missing = writer.write(dir + "/missing.flac", tags);
     check(!missing.written && !missing.error.empty(), "missing: a failure");
@@ -340,6 +501,8 @@ int main(int argc, char **argv)
     const std::string dir = QDir(scratch.path()).absolutePath().toStdString();
     covers();
     tags(dir);
+    placement(dir);
+    interruptedReplace(dir);
     notFlac(dir);
     if (failures > 0) {
         std::cerr << failures << " check(s) FAILED\n";

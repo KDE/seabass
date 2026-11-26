@@ -146,7 +146,8 @@ public:
     // why not, in words for the form.
     Q_INVOKABLE QString folderProblem(const QString &folder) const;
     // "" when the FLAC's name is free in `folder`, or why not: a file of
-    // that name is there, or a job that waits or runs writes it.
+    // that name is there, or a job that waits or runs writes it (compared
+    // as files: the folder resolved, letters of either case as one).
     Q_INVOKABLE QString targetProblem(const QString &folder, const QString &artist, const QString &title) const;
     // "" for an empty year or one from 1900 to 2100, or why not.
     Q_INVOKABLE QString yearProblem(const QString &year) const;
@@ -158,7 +159,8 @@ public:
     // Queues the recording to be kept: {wavPath, recording (its file
     // name), artist, title, album, genre, year, folder}; the cover is the
     // one picked. Starts at once when nothing runs. False, with
-    // errorMessage, when the form's checks refuse it.
+    // errorMessage, when the form's checks refuse it, or when the
+    // recording is being kept or waits to be kept already.
     Q_INVOKABLE bool keep(const QVariantMap &form);
     // Stops the job in hand and drops the ones that wait.
     Q_INVOKABLE void cancel();
@@ -236,7 +238,8 @@ private:
     bool m_coverPreparing = false;
 };
 
-// How long the destructor waits for a job asked to stop.
+// How long the destructor waits for a job asked to stop, and for a cover
+// preview under way.
 inline constexpr int KeepRecordingStopWaitMs = 1000;
 
 // The settings the form remembers.

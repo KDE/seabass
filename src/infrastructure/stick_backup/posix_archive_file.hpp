@@ -27,6 +27,11 @@ public:
     {
         ReadOnly,   // must exist
         ReadWrite,  // created if missing, never truncated on open
+        // Must exist; opened for writing and never created or truncated,
+        // its permissions left as they are. For flushing a file that was
+        // written by someone else: a missing file is an error here, not a
+        // new empty one.
+        ReadWriteExisting,
     };
 
     PosixArchiveFile(const std::filesystem::path &path, OpenMode mode);

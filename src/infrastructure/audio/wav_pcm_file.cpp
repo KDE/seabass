@@ -51,6 +51,26 @@ constexpr std::array<unsigned char, 14> PcmSubFormatTail = {0x00, 0x00, 0x00, 0x
 // The largest plain RIFF: its size field counts the file less 8 bytes.
 constexpr std::uint64_t PlainRiffLimit = std::uint64_t{0xFFFFFFFF} + 8;
 
+// A chunk id as the RIFF format has them: four printable ASCII characters.
+bool isChunkId(const std::byte *p)
+{
+    return std::all_of(p, p + 4, [](std::byte b) {
+        const auto c = std::to_integer<unsigned>(b);
+        return c >= 0x20 && c <= 0x7E;
+    });
+}
+
+// A number of frames as a length a person reads: "1:02:03" or "2:03".
+std::string duration(std::uint64_t frames, int sampleRate)
+{
+    const std::uint64_t seconds = frames / static_cast<std::uint64_t>(sampleRate);
+    const std::uint64_t h = seconds / 3600;
+    const std::uint64_t m = seconds / 60 % 60;
+    const std::uint64_t sec = seconds % 60;
+    const auto two = [](std::uint64_t v) { return (v < 10 ? "0" : "") + std::to_string(v); };
+    return h > 0 ? std::to_string(h) + ":" + two(m) + ":" + two(sec) : std::to_string(m) + ":" + two(sec);
+}
+
 struct Fmt
 {
     int channels = 0;
@@ -149,6 +169,7 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path)
         std::optional<Fmt> fmt;
         std::optional<std::uint64_t> dataOffset;
         std::uint64_t dataBytes = 0;
+        // Where the chunks after the audio start, once both are found.
         std::uint64_t at = head.size();
         while (at + 8 <= fileSize && (!fmt || !dataOffset)) {
             std::array<std::byte, 8> chunk{};
@@ -216,6 +237,19 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path)
             m_error = "its audio ends in the middle of a frame";
             return;
         }
+        // The header must describe the whole file: after the audio, only
+        // whole chunks (a recorder's cue, LIST or bext) to the end. A
+        // recorder cut off by a power loss can leave a stale size that
+        // covers part of the audio; the rest would be lost without a word.
+        if (!onlyChunksFrom(at, fileSize)) {
+            const auto align = static_cast<std::uint64_t>(fmt->blockAlign);
+            m_error = "its header says it holds " + duration(dataBytes / align, fmt->sampleRate)
+                + " of audio, and the file has room for " + duration(held / align, fmt->sampleRate)
+                + ". The recording was not finished properly (the recorder was stopped by a power loss or the stick "
+                  "was pulled), so its header does not describe the whole file, and keeping it would keep only "
+                  "part of the set";
+            return;
+        }
         m_layout.sampleRate = fmt->sampleRate;
         m_layout.channels = fmt->channels;
         m_layout.bitsPerSample = fmt->bitsPerSample;
@@ -232,6 +266,30 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path)
 }
 
 WavPcmFile::~WavPcmFile() = default;
+
+bool WavPcmFile::onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize) const
+{
+    while (at < fileSize) {
+        if (at + 8 > fileSize) {
+            // A single pad byte of the chunk before is fine; any more is
+            // not a chunk.
+            return at + 1 == fileSize;
+        }
+        std::array<std::byte, 8> chunk{};
+        m_file->readAt(at, chunk);
+        if (!isChunkId(chunk.data()) || isId(chunk.data(), "data")) {
+            return false;
+        }
+        const std::uint64_t size = le32(chunk.data() + 4);
+        const std::uint64_t end = at + 8 + size;
+        if (end > fileSize) {
+            return false;
+        }
+        // The last chunk may leave out its pad byte.
+        at = end + (size & 1U);
+    }
+    return true;
+}
 
 void WavPcmFile::readFrames(std::uint64_t firstFrame, std::span<std::byte> out) const
 {

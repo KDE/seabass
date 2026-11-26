@@ -120,11 +120,16 @@ public:
     // report, as the real encoder polls).
     std::optional<double> cancelAt;
     CancellationToken *token = nullptr;
+    // Called while the encoder runs: another job asked for meanwhile.
+    std::function<void()> during;
 
     RecordingEncodeResult encode(const std::string &wavPath, const std::string &flacPath,
                                  const RecordingEncodeOptions &options) override
     {
         journal.push_back("encode " + wavPath + " -> " + flacPath);
+        if (during) {
+            during();
+        }
         RecordingEncodeResult result;
         for (double f : {0.0, 0.3, 0.59, 0.6, 0.8, 1.0}) {
             if (cancelAt && f >= *cancelAt && token != nullptr) {
@@ -520,6 +525,44 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
     }
 }
 
+// Two jobs never work on one recording or one FLAC: a second, asked for
+// while the first encodes, is refused before it touches anything.
+void testOneJobPerRecordingAndFlac()
+{
+    KeepRecordingResult sameWav;
+    KeepRecordingResult sameFlac;
+    std::vector<std::string> secondJournal;
+    Run run;
+    run.encoder.during = [&]() {
+        const std::vector<std::string> outer = journal;
+        Run other;
+        KeepRecordingRequest r = request();
+        r.fileName = "Another name.flac";
+        sameWav = other.go(r);
+        // The same FLAC, spelt with other letters' case and a backslash.
+        Run third;
+        KeepRecordingRequest t = request();
+        t.wavPath = "/stick/Sessions/Session-0002.wav";
+        t.fileName = "dj kelp - late set.FLAC";
+        t.folder = "/home/dj/Music\\Own Recordings";
+        sameFlac = third.go(t);
+        secondJournal = journal;
+        journal = outer;
+    };
+    run.go();
+    check(run.result.status == KeepRecordingResult::Status::Kept, "the first job is kept");
+    check(sameWav.status == KeepRecordingResult::Status::Failed
+              && sameWav.message.find("another job is keeping it") != std::string::npos,
+          "a second job for the same recording is refused: " + sameWav.message);
+    check(sameFlac.status == KeepRecordingResult::Status::Failed
+              && sameFlac.message.find("another job is writing") != std::string::npos,
+          "a second job for the same FLAC is refused: " + sameFlac.message);
+    check(secondJournal.empty(), "the refused jobs touched nothing");
+    Run after;
+    after.go();
+    check(after.result.status == KeepRecordingResult::Status::Kept, "once the first has ended, the recording can be kept again");
+}
+
 void testFileNames()
 {
     const auto name = [](const std::string &artist, const std::string &title) {
@@ -572,6 +615,7 @@ int main()
     testFreeSpace();
     testEncoderFailsOrIsCancelled();
     testFailuresAfterTheEncodingRemoveTheFlac();
+    testOneJobPerRecordingAndFlac();
     testFileNames();
     if (failures > 0) {
         std::cout << "keep_recording_test: " << failures << " FAILED\n";

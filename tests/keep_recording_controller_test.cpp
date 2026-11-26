@@ -249,6 +249,17 @@ void twoJobsQueued(const QString &scratch)
           "its row says it waits");
     check(controller.targetProblem(folder, QStringLiteral("DJ Kelp"), QStringLiteral("Early Set")).contains(QStringLiteral("Another recording")),
           "a third with the name of one that waits is refused before it starts");
+    check(controller.targetProblem(folder + QStringLiteral("/../") + QFileInfo(folder).fileName(), QStringLiteral("dj kelp"),
+                                   QStringLiteral("EARLY SET"))
+              .contains(QStringLiteral("Another recording")),
+          "the same name spelt with other case and another path to the folder is refused too");
+    check(!controller.keep(form(wav2, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Third Name")))
+              && controller.errorMessage().contains(QStringLiteral("waiting")),
+          "a second job for a recording that waits is refused: " + controller.errorMessage().toStdString());
+    check(!controller.keep(form(wav1, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Fourth Name")))
+              && controller.errorMessage().contains(QStringLiteral("right now")),
+          "a second job for the recording in hand is refused: " + controller.errorMessage().toStdString());
+    check(controller.queued().size() == 1, "and nothing more waits");
 
     check(waitUntil([&]() { return events.size() >= 4; }), "both jobs end");
     check(events
@@ -388,6 +399,45 @@ void destroyedMidTagging(const QString &scratch)
     KeepRecordingController::setPartsForTesting({});
 }
 
+// A cover preparer that takes its time, as a huge picture on a slow disk.
+class SlowCovers : public seabass::application::CoverArtPreparer
+{
+public:
+    seabass::application::CoverArtResult prepare(const std::string &) override
+    {
+        QThread::msleep(3000);
+        return {std::nullopt, "too slow"};
+    }
+};
+
+// Leaving the page while a cover preview is under way waits for it about
+// a second, not until it ends.
+void destroyedMidCoverPreview(const QString &scratch)
+{
+    QDir().mkpath(scratch);
+    const QString picture = scratch + QStringLiteral("/slow.png");
+    QImage(64, 64, QImage::Format_RGB32).save(picture);
+    KeepRecordingController::setPartsForTesting([]() {
+        KeepRecordingParts parts;
+        parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
+        parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
+        parts.covers = std::make_unique<SlowCovers>();
+        parts.tags = std::make_unique<SlowTags>();
+        return parts;
+    });
+    auto controller = std::make_unique<KeepRecordingController>();
+    controller->pickCover(picture);
+    check(controller->coverPreparing(), "a cover preview is under way");
+    QElapsedTimer timer;
+    timer.start();
+    controller.reset();
+    const qint64 ms = timer.elapsed();
+    check(ms < 1500, "the controller goes within a second and a half while a cover is prepared: " + std::to_string(ms)
+                         + " ms");
+    QThreadPool::globalInstance()->waitForDone();
+    KeepRecordingController::setPartsForTesting({});
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -419,6 +469,7 @@ int main(int argc, char **argv)
     cancelInTheMiddle(dir + QStringLiteral("/cancel"));
     destroyedMidEncoding(dir + QStringLiteral("/destroy"));
     destroyedMidTagging(dir + QStringLiteral("/destroy-tags"));
+    destroyedMidCoverPreview(dir + QStringLiteral("/destroy-cover"));
 
     if (failures > 0) {
         std::cout << "keep_recording_controller_test: " << failures << " FAILED\n";
