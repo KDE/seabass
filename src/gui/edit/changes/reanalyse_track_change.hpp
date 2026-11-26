@@ -63,14 +63,17 @@ namespace seabass::gui
 // (application::planCueGridMoves()), only where the person asked for it
 // for this track (setMoveCues(), off until then, settable until the
 // save). At the save, before anything is written, every library's cues
-// for the file are read as they are then (Engine's from the save's own
-// copy of m.db) and planned against the two grids the review showed, each
+// for the file are read as they are then, for this file alone (the
+// analysis files of its rows, Engine's rows from the save's own copy of
+// m.db at the file's own sample rate), never the whole catalog and planned against the two grids the review showed, each
 // library for the kinds it holds: rekordbox's two exactly as the review
 // (cuesMatchTheReview()), Engine by its pads, with its one main cue
 // following a memory cue the review moves and otherwise staying
 // (engineCuesOntoNewGrid()). The cues move only if every library that
-// holds cues for the track agrees, its rows hold one set, and every
-// library holding cues takes the new grid; otherwise no cue of the track
+// holds cues for the track agrees, each library's rows hold one set and
+// DeviceLibrary's is OneLibrary's (a cue only one of them holds would be
+// lost to the other's set), and every library holding cues takes the new
+// grid; otherwise no cue of the track
 // moves anywhere, the grid part still applies, and the log and the
 // save's summary say why. A track whose rows name an analysis file that
 // was not the track's when it was analysed (so not declared for backup)

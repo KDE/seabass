@@ -38,7 +38,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <chrono>
 #include <map>
+#include <mutex>
 #include <tuple>
 #include <unordered_set>
 
@@ -58,12 +60,15 @@
 #include "domain/mp3_lead_in.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/rekordbox/anlz_builder.hpp"
 #include "infrastructure/rekordbox/rekordbox_beat_grid_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
+#include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
 #include <djinterop/engine/v3/track_data_blob.hpp>
@@ -116,7 +121,7 @@ void writeWav(const fs::path &file, std::uint32_t frames, std::int16_t mark)
 }
 
 // A 16 bit, 44.1 kHz, mono WAV of `samples`.
-void writeMonoWav(const fs::path &file, const std::vector<std::int16_t> &samples)
+void writeMonoWav(const fs::path &file, const std::vector<std::int16_t> &samples, std::uint32_t rate = 44100)
 {
     fs::create_directories(file.parent_path());
     const std::uint32_t frames = static_cast<std::uint32_t>(samples.size());
@@ -129,8 +134,8 @@ void writeMonoWav(const fs::path &file, const std::vector<std::int16_t> &samples
     u32(16);
     u16(1);
     u16(1);
-    u32(44100);
-    u32(88200);
+    u32(rate);
+    u32(rate * 2);
     u16(2);
     u16(16);
     out << "data";
@@ -198,21 +203,21 @@ void writeChordWav(const fs::path &file, int seconds)
 
 // A WAV of `seconds` with a kick on every beat at `bpm` (as writeBeatWav(),
 // the first at `firstBeatSeconds`) over a chord of `notes` (Hz, each with
-// two overtones): a tempo and a key to hear.
+// two overtones): a tempo and a key to hear. `rate` samples a second.
 void writeBeatChordWav(const fs::path &file, int seconds, double bpm, const std::vector<double> &notes,
-                       double firstBeatSeconds = 0.25)
+                       double firstBeatSeconds = 0.25, std::uint32_t rate = 44100)
 {
-    const std::uint32_t frames = static_cast<std::uint32_t>(seconds) * 44100;
+    const std::uint32_t frames = static_cast<std::uint32_t>(seconds) * rate;
     std::vector<double> mix(frames, 0.0);
-    const double beat = 60.0 / bpm * 44100.0;
-    for (double at = firstBeatSeconds * 44100.0; at < frames; at += beat) {
-        for (std::uint32_t i = 0; i < 6615 && static_cast<std::uint32_t>(at) + i < frames; ++i) {
-            const double t = i / 44100.0;
+    const double beat = 60.0 / bpm * rate;
+    for (double at = firstBeatSeconds * rate; at < frames; at += beat) {
+        for (std::uint32_t i = 0; i < rate * 3 / 20 && static_cast<std::uint32_t>(at) + i < frames; ++i) {
+            const double t = i / static_cast<double>(rate);
             mix[static_cast<std::uint32_t>(at) + i] += 20000.0 * std::exp(-t * 30.0) * std::sin(2.0 * 3.14159265358979 * 60.0 * t);
         }
     }
     for (std::uint32_t i = 0; i < frames; ++i) {
-        const double t = i / 44100.0;
+        const double t = i / static_cast<double>(rate);
         double sum = 0.0;
         for (const double note : notes) {
             for (int overtone = 1; overtone <= 3; ++overtone) {
@@ -225,7 +230,7 @@ void writeBeatChordWav(const fs::path &file, int seconds, double bpm, const std:
     for (std::uint32_t i = 0; i < frames; ++i) {
         samples[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32000.0, 32000.0));
     }
-    writeMonoWav(file, samples);
+    writeMonoWav(file, samples, rate);
 }
 
 // Adds an ID3v2.3 tag of one frame to a WAV, in a chunk of its own.
@@ -1842,7 +1847,20 @@ int main(int argc, char **argv)
             writeBeatChordWav(onStick / "k missing.wav", 43, 120.0, aMinor, 0.29);
             analyseAgainOn(QStringLiteral("Kinds"));
             controller.setMoveCuesForAll(true);
+            const std::size_t from = logSize();
             const QVariantMap summary = saveNow();
+            // The log says what Engine itself moved: its pad, not rekordbox's
+            // memory cues it does not hold, nor its main cue that stayed.
+            {
+                const std::string log = logSince(from);
+                const std::string engineRow = "Engine id " + all[2].sourceId + ": moved ";
+                std::size_t lines = 0;
+                for (std::size_t at = log.find(engineRow); at != std::string::npos; at = log.find(engineRow, at + 1)) {
+                    ++lines;
+                }
+                std::cerr << "  Engine moves logged: " << lines << std::endl;
+                assert(lines == 1 && log.find(engineRow + "Hot cue 1") != std::string::npos);
+            }
             std::cerr << "  notes: " << summary.value("notes").toString().toStdString() << std::endl;
             assert(summary.value("written").toInt() == 3);
             const std::vector<domain::Track> after = rowsOf("k all.wav");
@@ -1924,6 +1942,189 @@ int main(int argc, char **argv)
             std::cerr << "  key column " << column << ", record " << record.key << std::endl;
             assert(record.key == column && testing::sqlScalar(mdb, "SELECT key FROM Track WHERE id = " + id) == column);
             std::cout << "case 16l (a completed row keeps its key in the column and the analysis record alike) OK\n";
+        }
+
+        // 16m. A save of twenty Analyse-again changes reads the stick's
+        //      rekordbox catalogs a bounded number of times, with cues
+        //      moved or not: never once per change. The catalog cache
+        //      counts its passes; the save is timed.
+        {
+            std::vector<std::pair<std::string, int>> twenty;
+            for (int i = 0; i < 20; ++i) {
+                twenty.emplace_back((i < 10 ? "v 0" : "v ") + std::to_string(i) + ".wav", 10 + i);
+            }
+            const auto onBeat = cuedTracks(twenty, QStringLiteral("Twenty"));
+            const double hotAt = onBeat.at("v 00.wav");
+            const auto countedSave = [&](const char *what) {
+                std::map<std::string, int> passes;
+                std::mutex counting;
+                const auto real = LibraryCatalogCache::realStageForTesting();
+                LibraryCatalogCache counted(
+                    [&](LibraryCatalogCache::Detail stage, const std::string &format, const std::string &path,
+                        std::vector<domain::Track> &tracks, LibraryCatalogCache::StageNotes &notes,
+                        application::ProgressReporter &progress, application::CancellationToken cancel) {
+                        {
+                            const std::lock_guard<std::mutex> lock(counting);
+                            ++passes[format];
+                        }
+                        real(stage, format, path, tracks, notes, progress, cancel);
+                    },
+                    LibraryCatalogCache::realMtimeForTesting());
+                LibraryCatalogCache::setInstanceForTesting(&counted);
+                const auto started = std::chrono::steady_clock::now();
+                const QVariantMap summary = saveNow();
+                const auto seconds =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+                LibraryCatalogCache::setInstanceForTesting(nullptr);
+                std::cerr << "  twenty, " << what << ": " << seconds << " s, catalog passes rekordbox "
+                          << passes["rekordbox"] << ", onelibrary " << passes["onelibrary"] << ", engine "
+                          << passes["engine"] << std::endl;
+                assert(summary.value("written").toInt() == 20);
+                assert(passes["rekordbox"] <= 3 && passes["onelibrary"] <= 3 && passes["engine"] <= 3);
+            };
+            for (const auto &[name, seconds] : twenty) {
+                writeBeatChordWav(onStick / name, seconds, 120.0, aMinor, 0.29);
+            }
+            analyseAgainOn(QStringLiteral("Twenty"));
+            assert(controller.lastReanalysis().value("cuesToMove").toInt() == 1);
+            controller.setMoveCuesForAll(true);
+            countedSave("one cue moved");
+            for (const domain::Track &row : rowsOf("v 00.wav")) {
+                assert(std::abs(cueAt(row, true) - (hotAt + 40.0)) < 4.0);
+            }
+            for (const auto &[name, seconds] : twenty) {
+                writeBeatChordWav(onStick / name, seconds, 120.0, aMinor, 0.33);
+            }
+            analyseAgainOn(QStringLiteral("Twenty"));
+            countedSave("no cue moved");
+            std::cout << "case 16m (twenty tracks analysed again in one save: the catalogs read a bounded number of "
+                         "times, cues moved or not) OK\n";
+        }
+
+        // 16n. A cue only OneLibrary holds, off the beats, beside a cue on a
+        //      beat both rekordbox libraries hold: OneLibrary's row names
+        //      an analysis file of its own. Nothing moves, and OneLibrary's
+        //      cue is still there.
+        {
+            const auto onBeat = cuedTracks({{"o split.wav", 44}}, QStringLiteral("Split"));
+            const double hotAt = onBeat.at("o split.wav");
+            const domain::Track one = rowsOf("o split.wav")[1];
+            // A copy of the track's analysis files in a folder of their own,
+            // named by OneLibrary's row alone.
+            const std::string ownDat = "/PIONEER/USBANLZ/P07E/0000AAAA/ANLZ0000.DAT";
+            const fs::path ownFolder = stick.root / "PIONEER" / "USBANLZ" / "P07E" / "0000AAAA";
+            fs::create_directories(ownFolder);
+            for (const char *extension : {"DAT", "EXT", "2EX"}) {
+                const fs::path from =
+                    stick.root / pathFromUtf8(one.analysisFile.substr(1, one.analysisFile.size() - 4) + extension);
+                if (fs::is_regular_file(from)) {
+                    fs::copy_file(from, ownFolder / (std::string("ANLZ0000.") + extension));
+                }
+            }
+            {
+                infrastructure::onelibrary::SqlCipherLibrary lib;
+                infrastructure::onelibrary::SqlCipherDb raw(lib, pathToUtf8(stick.pioneer / "rekordbox" / "exportLibrary.db"),
+                                                           false);
+                raw.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+                raw.exec("UPDATE content SET analysisDataFilePath = '" + ownDat + "' WHERE content_id = " + one.sourceId
+                         + ";");
+            }
+            std::vector<domain::CuePoint> cues = one.cues;
+            const double offBeatAt = hotAt + 700.0;
+            cues.push_back(domain::CuePoint{domain::CuePoint::Kind::Memory, 0, offBeatAt, "", ""});
+            {
+                infrastructure::onelibrary::OneLibraryCueWriter writer(pathToUtf8(stick.pioneer));
+                writer.writeCuesForPath(pathToUtf8(onStick / "o split.wav"), cues);
+                writer.finishWriting();
+            }
+            LibraryCatalogCache::instance().invalidateEveryCatalogOn(pathToUtf8(stick.root));
+            assert(rowsOf("o split.wav")[1].cues.size() == 2 && rowsOf("o split.wav")[0].cues.size() == 1);
+            writeBeatChordWav(onStick / "o split.wav", 44, 120.0, aMinor, 0.29);
+            analyseAgainOn(QStringLiteral("Split"));
+            assert(controller.lastReanalysis().value("cuesToMove").toInt() == 1);
+            controller.setMoveCuesForAll(true);
+            const std::size_t from = logSize();
+            const QVariantMap summary = saveNow();
+            assert(summary.value("written").toInt() == 1);
+            assert(logSince(from).find("DeviceLibrary and OneLibrary hold different cue points") != std::string::npos);
+            assert(summary.value("notes").toString().contains(
+                QLatin1String("The cue points of one track analysed again were left where they are")));
+            const std::vector<domain::Track> after = rowsOf("o split.wav");
+            for (const domain::Track &row : after) {
+                assert(std::abs(cueAt(row, true) - hotAt) < 1.0);
+            }
+            assert(after[1].cues.size() == 2 && std::abs(cueAt(after[1], false) - offBeatAt) < 1.0);
+            std::cout << "case 16n (a cue only OneLibrary holds: nothing moves, and it is still there) OK\n";
+        }
+
+        // 16o. A 48 kHz track whose Engine row the player has not analysed
+        //      (no rate stored) holds a hot cue on a beat: read at the
+        //      file's rate it is the cue rekordbox holds, and moves with it.
+        {
+            writeBeatChordWav(computer / "q 48k.wav", 45, 120.0, aMinor, 0.25, 48000);
+            assert(offer(QVariantList{pathToQString(computer / "q 48k.wav")}, QStringLiteral("Fortyeight"), true));
+            assert(saveNow().value("error").toString().isEmpty());
+            std::vector<domain::Track> rows = rowsOf("q 48k.wav");
+            const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), rows[0].sourceId);
+            const double hotAt = std::round(grid[8].timeMs);
+            stageCue(QStringLiteral("rekordbox"), rows[0], hotAt, true, 1);
+            assert(saveNow().value("written").toInt() == 1);
+            // Engine's row as the player leaves one it has not analysed,
+            // and its hot cue put there at the file's own rate.
+            const std::string mdb = pathToUtf8(stick.engine / "Database2" / "m.db");
+            assert(testing::sqlExec(mdb, "UPDATE Track SET isAnalyzed = 0 WHERE id = " + rows[2].sourceId));
+            assert(testing::sqlExec(mdb, "UPDATE PerformanceData SET trackData = NULL, beatData = NULL, "
+                                         "overviewWaveFormData = NULL WHERE trackId = " + rows[2].sourceId));
+            {
+                infrastructure::engine::LibdjinteropEngineCueWriter writer(stick.engineUtf8());
+                writer.writeHotCuesAtSampleRate(
+                    rows[2].sourceId, {domain::CuePoint{domain::CuePoint::Kind::Hot, 1, hotAt, "", ""}}, 48000.0);
+            }
+            LibraryCatalogCache::instance().invalidateEveryCatalogOn(pathToUtf8(stick.root));
+            writeBeatChordWav(onStick / "q 48k.wav", 45, 120.0, aMinor, 0.29, 48000);
+            analyseAgainOn(QStringLiteral("Fortyeight"));
+            assert(controller.lastReanalysis().value("cuesToMove").toInt() == 1);
+            controller.setMoveCuesForAll(true);
+            const QVariantMap summary = saveNow();
+            std::cerr << "  notes: " << summary.value("notes").toString().toStdString() << std::endl;
+            assert(summary.value("written").toInt() == 1);
+            for (const domain::Track &row : rowsOf("q 48k.wav")) {
+                std::cerr << "  q 48k " << row.format << ": hot " << cueAt(row, true) << " (was " << hotAt << ")"
+                          << std::endl;
+                assert(std::abs(cueAt(row, true) - (hotAt + 40.0)) < 4.0);
+            }
+            std::cout << "case 16o (a 48 kHz row the player has not analysed: its cue read at the file's rate, and "
+                         "moved with the others) OK\n";
+        }
+
+        // 16p. A cancel landing inside an Analyse again change stops the
+        //      save after it, as after any change: what landed stays, and
+        //      nothing is called a failure.
+        {
+            const auto onBeat = cuedTracks({{"w one.wav", 46}, {"w two.wav", 47}, {"w three.wav", 48}},
+                                           QStringLiteral("Cancel"));
+            for (const auto &[name, seconds] :
+                 std::vector<std::pair<std::string, int>>{{"w one.wav", 46}, {"w two.wav", 47}, {"w three.wav", 48}}) {
+                writeBeatChordWav(onStick / name, seconds, 120.0, aMinor, 0.29);
+            }
+            analyseAgainOn(QStringLiteral("Cancel"));
+            controller.setMoveCuesForAll(true);
+            bool asked = false;
+            ReanalyseTrackChange::setStepHookForTesting([&](const std::string &step) {
+                if (!asked && step.rfind("engine-grid:", 0) == 0) {
+                    asked = true;
+                    QMetaObject::invokeMethod(session, "cancelWrite", Qt::BlockingQueuedConnection);
+                }
+            });
+            const QVariantMap summary = saveNow();
+            ReanalyseTrackChange::setStepHookForTesting({});
+            std::cerr << "  cancelled: written " << summary.value("written").toInt() << ", error '"
+                      << summary.value("error").toString().toStdString() << "'" << std::endl;
+            assert(asked && summary.value("cancelled").toBool() && summary.value("error").toString().isEmpty());
+            assert(summary.value("written").toInt() == 1);
+            assert(std::abs(cueAt(rowsOf("w one.wav")[0], true) - (onBeat.at("w one.wav") + 40.0)) < 4.0);
+            controller.dropReanalysis(QStringLiteral("Cancel"));
+            std::cout << "case 16p (a cancel inside a change: that change lands, the rest wait, no failure) OK\n";
         }
     }
 

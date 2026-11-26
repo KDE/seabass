@@ -34,6 +34,9 @@
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_analysis_merge.hpp"
+#include "infrastructure/rekordbox/anlz_source_for_root.hpp"
+#include "infrastructure/rekordbox/pdb_lookup.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 
@@ -330,6 +333,19 @@ bool sameCueSet(const std::vector<domain::CuePoint> &a, const std::vector<domain
     return true;
 }
 
+// export.pdb's track rows by their file, read once for a save: which rows
+// a file has does not change while Analyse again writes tempos and keys.
+struct PdbRowsByFile
+{
+    explicit PdbRowsByFile(const std::string &pdb)
+    {
+        for (const auto &row : infrastructure::rekordbox::PdbRowWriter(pdb).trackPathRows()) {
+            rows[application::normalizedPathKey(row.filePath)].push_back(row.id);
+        }
+    }
+    std::map<std::string, std::vector<std::uint32_t>> rows;
+};
+
 bool engineTookGrid(const application::AnalysisImportResult &result)
 {
     using Outcome = application::BeatGridWriteResult::Outcome;
@@ -595,6 +611,13 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             engineSession = &sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, Label);
             infrastructure::engine::LibdjinteropEngineReader reader(engineSession->writeRoot());
             reader.setAudioRoot(engineSession->realRoot());
+            // A row with no stored rate (one the player has not analysed)
+            // is read at the file's own rate, which the analysis decoded,
+            // not at 44.1 kHz: a 48 kHz file's cues would read 8.8% late.
+            const double fileRate = static_cast<double>(m_analysis->waveform.sampleRateHz);
+            reader.setSampleRateSource([fileRate](const std::string &) {
+                return fileRate > 0.0 ? std::optional<double>(fileRate) : std::nullopt;
+            });
             const auto &ledger = saveBeatGridLedger(ctx, stickRoot);
             for (const std::int64_t id :
                  infrastructure::engine::engineTrackIdsForFile(engineSession->writeRoot(), engineSession->realRoot(),
@@ -641,30 +664,85 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         // the change was staged; a row named since (a library rewritten in
         // between) could have its files written with no backup behind
         // them, so the change leaves the track alone.
-        std::vector<domain::Track> deviceLibraryRows;
-        std::vector<domain::Track> oneLibraryRows;
-        const auto declared = [&](const std::string &analysisFile) {
-            return std::any_of(m_analysisFiles.begin(), m_analysisFiles.end(), [&](const AnalysisFileOf &of) {
-                return application::normalizedPathKey(of.datPath) == application::normalizedPathKey(analysisFile);
-            });
+        //
+        // Read for this file alone, never the whole catalog (a playlist of
+        // hundreds would read the stick's catalogs and every track's cues
+        // once per track): DeviceLibrary's rows by file from one pass over
+        // export.pdb for the whole save, each row's analysis file from the
+        // save's index of them, OneLibrary's rows from the save's writer,
+        // and the cues from the analysis files as they are on the stick
+        // now, which is what a cue change earlier in this save left.
+        struct RowCues
+        {
+            std::string sourceId;
+            std::vector<domain::CuePoint> cues;
+            bool unreadable = false;
         };
-        for (const auto &[format, rows] : {std::pair<const char *, std::vector<domain::Track> *>{"rekordbox", &deviceLibraryRows},
-                                           std::pair<const char *, std::vector<domain::Track> *>{"onelibrary", &oneLibraryRows}}) {
-            const bool present = std::string(format) == "rekordbox" ? libraryTakesIt.count(QStringLiteral("rekordbox")) > 0
-                                                                     : libraryTakesIt.count(QStringLiteral("onelibrary")) > 0;
-            if (!present) {
-                continue;
+        std::vector<RowCues> deviceLibraryRows;
+        std::vector<RowCues> oneLibraryRows;
+        std::set<std::string> declaredFiles;
+        for (const AnalysisFileOf &of : m_analysisFiles) {
+            for (const std::string &file : anlzFilesOf(of.datPath)) {
+                declaredFiles.insert(application::normalizedPathKey(file));
             }
-            for (const domain::Track &track : catalogs.tracksFor(format, pioneer, ctx.progress(), ctx.cancel())) {
-                if (application::normalizedPathKey(track.filePath) != fileKey) {
-                    continue;
+        }
+        const auto undeclared = [&](const std::string &file) {
+            leftAlone("left as it is, nothing written: a row now names the analysis file " + file
+                      + ", which was not one of the track's when it was analysed");
+            return ChangeOutcome::skip();
+        };
+        if (!pioneer.empty() && isFile(exportPdbUnder(pioneer))) {
+            const auto &byFile = ctx.sharedForWholeSave<PdbRowsByFile>(
+                "track-reanalysis:pdb-rows:" + application::normalizedPathKey(pioneer),
+                [&]() { return std::make_unique<PdbRowsByFile>(exportPdbUnder(pioneer)); });
+            const auto ids = byFile.rows.find(application::normalizedPathKey(m_stickPath));
+            if (ids != byFile.rows.end()) {
+                const auto *index = sharedAnlzPathIndex(ctx, m_pioneerRoot);
+                const auto source = infrastructure::rekordbox::anlzSourceForPioneerRoot(pioneer);
+                for (const std::uint32_t id : ids->second) {
+                    const std::optional<std::string> analyzePath =
+                        index ? index->pathFor(id) : infrastructure::rekordbox::findAnlzPathForTrackId(pioneer, id);
+                    RowCues row{std::to_string(id), {}, false};
+                    if (analyzePath && !analyzePath->empty()) {
+                        for (const std::string &file : anlzFilesOf(*analyzePath)) {
+                            if (isFile(file) && declaredFiles.count(application::normalizedPathKey(file)) == 0) {
+                                return undeclared(*analyzePath);
+                            }
+                        }
+                        try {
+                            row.cues = infrastructure::rekordbox::readAnalysisFileCues(*source, *analyzePath)
+                                           .value_or(std::vector<domain::CuePoint>{});
+                        } catch (const infrastructure::rekordbox::AnalysisFileUnreadable &) {
+                            row.unreadable = true;
+                        }
+                    }
+                    deviceLibraryRows.push_back(std::move(row));
                 }
-                if (!track.analysisFile.empty() && !declared(track.analysisFile)) {
-                    leftAlone("left as it is, nothing written: a row now names the analysis file " + track.analysisFile
-                              + ", which was not one of the track's when it was analysed");
-                    return ChangeOutcome::skip();
+            }
+        }
+        if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            std::vector<std::int64_t> ids;
+            try {
+                ids = writer.contentIdsForFile(m_audioFile);
+            } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+                // No row: nothing of OneLibrary's to compare.
+            }
+            if (!ids.empty()) {
+                for (const std::string &file : writer.cueFilesForPath(m_audioFile)) {
+                    if (declaredFiles.count(application::normalizedPathKey(file)) == 0) {
+                        return undeclared(file);
+                    }
                 }
-                rows->push_back(track);
+            }
+            for (const std::int64_t id : ids) {
+                RowCues row{std::to_string(id), {}, false};
+                try {
+                    row.cues = writer.analysisFileCuesOf(id).value_or(std::vector<domain::CuePoint>{});
+                } catch (const std::exception &) {
+                    row.unreadable = true;
+                }
+                oneLibraryRows.push_back(std::move(row));
             }
         }
 
@@ -690,8 +768,12 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                     whyNot = why;
                 }
             };
-            const auto rekordboxSide = [&](const std::string &library, const domain::Track &track)
+            const auto rekordboxSide = [&](const std::string &library, const RowCues &track)
                 -> std::optional<std::vector<domain::CuePoint>> {
+                if (track.unreadable) {
+                    refuse(library + "'s cue points could not be read");
+                    return std::nullopt;
+                }
                 if (track.cues.empty()) {
                     return std::nullopt;
                 }
@@ -708,31 +790,42 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             };
             // A library that holds cues and keeps its old grid: its cues
             // belong to that grid, and the others' cannot leave them.
-            const auto keepsOldGrid = [&](const char *library, const std::vector<domain::Track> &rows) {
-                for (const domain::Track &row : rows) {
+            const auto keepsOldGrid = [&](const char *library, const std::vector<RowCues> &rows) {
+                for (const RowCues &row : rows) {
                     if (!row.cues.empty()) {
                         refuse(std::string(library) + " keeps its old grid, and its cue points with it");
                     }
                 }
             };
-            if (toDeviceLibrary) {
-                for (const domain::Track &track : deviceLibraryRows) {
-                    if (auto moved = rekordboxSide("DeviceLibrary", track)) {
-                        deviceLibraryCues.push_back({track.sourceId, std::move(*moved)});
+            // One file's rows share its cues on a player: rows that hold
+            // different sets cannot be given one moved set, nor one
+            // library's set written over the other's, which would take away
+            // the cues only the other holds. The ordinary case, both
+            // libraries naming the same analysis file, agrees by itself.
+            const auto oneSet = [&](const std::vector<RowCues> &rows, const char *which) {
+                for (const RowCues &row : rows) {
+                    if (!sameCueSet(row.cues, rows.front().cues)) {
+                        refuse(std::string("its ") + which + " rows hold different cue points");
                     }
                 }
-                // One file's rows share its cues on a player: rows that
-                // hold different sets cannot be given one moved set.
-                for (const domain::Track &track : deviceLibraryRows) {
-                    if (!sameCueSet(track.cues, deviceLibraryRows.front().cues)) {
-                        refuse("its DeviceLibrary rows hold different cue points");
+            };
+            oneSet(deviceLibraryRows, "DeviceLibrary");
+            oneSet(oneLibraryRows, "OneLibrary");
+            if (!deviceLibraryRows.empty() && !oneLibraryRows.empty()
+                && !sameCueSet(deviceLibraryRows.front().cues, oneLibraryRows.front().cues)) {
+                refuse("DeviceLibrary and OneLibrary hold different cue points");
+            }
+            if (toDeviceLibrary) {
+                for (const RowCues &track : deviceLibraryRows) {
+                    if (auto moved = rekordboxSide("DeviceLibrary", track)) {
+                        deviceLibraryCues.push_back({track.sourceId, std::move(*moved)});
                     }
                 }
             } else {
                 keepsOldGrid("DeviceLibrary", deviceLibraryRows);
             }
             if (toOneLibrary) {
-                for (const domain::Track &track : oneLibraryRows) {
+                for (const RowCues &track : oneLibraryRows) {
                     if (auto moved = rekordboxSide("OneLibrary", track)) {
                         oneLibraryCues = std::move(*moved);
                     }
@@ -876,6 +969,7 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         // the change fails, and the save goes back whole.
         if (cuesMove) {
             for (const auto &[row, moved] : engineCues) {
+                (void)moved;
                 if (engineRowsOnNewGrid.count(row) == 0) {
                     return ChangeOutcome::failure(
                         QStringLiteral("Engine's row %1 for %2 did not take the new grid its moved cue points belong to.")
@@ -930,10 +1024,27 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 for (const auto &[row, moved] : engineCues) {
                     engineAnalysisWriterFor(ctx, *engineSession, stickRoot).writeHotCues(std::to_string(row), moved);
                     reached("engine-cues:" + std::to_string(row));
+                    // What Engine itself moved: its pads, and its main cue
+                    // only where it followed a memory cue.
+                    const auto before = std::find_if(engineRows.begin(), engineRows.end(),
+                                                      [&](const EngineRow &r) { return r.id == row; });
+                    for (std::size_t i = 0; before != engineRows.end() && i < moved.size()
+                                            && i < before->track.cues.size();
+                         ++i) {
+                        const domain::CuePoint &was = before->track.cues[i];
+                        if (std::abs(moved[i].positionMs - was.positionMs) >= application::CueMoveMinimumMs
+                            || (was.isLoop && std::abs(moved[i].loopEndMs - was.loopEndMs) >= application::CueMoveMinimumMs)) {
+                            done.push_back("Engine id " + std::to_string(row) + ": moved "
+                                           + (was.kind == domain::CuePoint::Kind::Memory
+                                                  ? std::string(was.isLoop ? "main loop" : "main cue")
+                                                  : cueLabel(was.kind, was.hotCueNumber, was.isLoop).toStdString())
+                                           + " from " + clockText(was.positionMs).toStdString() + " to "
+                                           + clockText(moved[i].positionMs).toStdString());
+                        }
+                    }
                 }
                 engineSession->noteItemApplied();
                 catalogs.invalidate("engine", m_enginePath.toStdString());
-                said("Engine");
             }
         }
     } catch (const std::exception &e) {
