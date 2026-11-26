@@ -16,14 +16,14 @@ namespace musicanalyze
 
 // Everything the library makes of a track's audio, from one set of
 // samples (grid, tempo, key, waveform): the one call for whoever has a
-// decoded track and wants it analysed. What is analysed how is decided
+// decoded track and wants it analyzed. What is analyzed how is decided
 // here, so a caller gets every improvement by building against a newer
 // version and changes nothing.
 struct Analysis
 {
     // The beat grid, on the samples' timeline: sample 0 at 0 ms. Its
     // `error` says why there is none; no beats and no error is a track
-    // with no beat the analyser could find (speech, ambience).
+    // with no beat the analyzer could find (speech, ambience).
     // `followsTempo` marks a grid whose spacing changes; `confidence`
     // how much of the track the grid explains.
     GridAnalysis grid;
@@ -48,26 +48,26 @@ struct Analysis
 // and not kept. The range says which tempo is the beat where half or
 // double would do as well: the default suits most music; drum and bass
 // at its faster tempo wants about 88 to 175.
-Analysis analyse(std::span<const float> samples, int sampleRateHz, TempoRange range = {});
+Analysis analyze(std::span<const float> samples, int sampleRateHz, TempoRange range = {});
 
 // The same of audio that comes in pieces, a decoder's buffers say: feed()
 // them in order, of any length, then finish(). The result is the one
-// analyse() gives for the pieces joined (which is this, fed once). What
+// analyze() gives for the pieces joined (which is this, fed once). What
 // is held meanwhile is a few seconds of audio and what was heard so far
 // (about 45 MB, and 3.5 MB a minute of music), and never the track: a mix
 // of two hours takes under 500 MB, where its samples alone are 1.3 GB.
-class Analyser
+class Analyzer
 {
 public:
-    explicit Analyser(int sampleRateHz, TempoRange range = {});
+    explicit Analyzer(int sampleRateHz, TempoRange range = {});
 
     void feed(std::span<const float> samples);
-    // Everything made of what was fed; the analyser is spent after it.
+    // Everything made of what was fed; the analyzer is spent after it.
     Analysis finish();
 
 private:
-    BeatGridAnalyser m_grid;
-    KeyAnalyser m_key;
+    BeatGridAnalyzer m_grid;
+    KeyAnalyzer m_key;
     WaveformMeter m_waveform;
 };
 

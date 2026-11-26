@@ -7,7 +7,7 @@
 // The library's version: what its interface is. The only place it is
 // written down; the build reads it from these three lines.
 #define MUSICANALYZE_VERSION_MAJOR 0
-#define MUSICANALYZE_VERSION_MINOR 2
+#define MUSICANALYZE_VERSION_MINOR 3
 #define MUSICANALYZE_VERSION_PATCH 0
 
 namespace musicanalyze
@@ -15,7 +15,7 @@ namespace musicanalyze
 
 // What made a result, one number a part: it goes up with every change
 // after which the same audio can give another result, and with no other
-// (a faster analyser that finds the same beats keeps its number). Kept
+// (a faster analyzer that finds the same beats keeps its number). Kept
 // beside a stored result, it says whether an analysis of today would
 // still give it, and which code a report of a wrong grid is about.
 //

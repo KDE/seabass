@@ -50,11 +50,11 @@ struct KeyAnalysis
 // What it listens to: the track at about 11 kHz, a second and a half at a
 // time, a third of a second apart. In each such frame the peaks of the
 // spectrum between C2 and C7 are found, each put at its true frequency
-// (a parabola through the peak and its neighbours) and gathered into
+// (a parabola through the peak and its neighbors) and gathered into
 // thirds of a semitone. Every frame counts the same, loud or quiet. Over
 // the track that gives how much of each third of a semitone there is in
 // each of five octaves; the third that the track's tuning sits on is
-// taken as the centre of the notes.
+// taken as the center of the notes.
 //
 // How it decides: for each of the 24 keys the picture is turned so that
 // the key's tonic comes first, and scored with one weight per octave and
@@ -76,16 +76,16 @@ KeyAnalysis keyFromSamples(std::span<const float> samples, int sampleRateHz);
 // keyFromSamples() reads from the pieces joined (which is this, fed
 // once), and what is held meanwhile is a second and a half of audio and
 // the sums.
-class KeyAnalyser
+class KeyAnalyzer
 {
 public:
-    explicit KeyAnalyser(int sampleRateHz);
-    ~KeyAnalyser();
-    KeyAnalyser(KeyAnalyser &&) noexcept;
-    KeyAnalyser &operator=(KeyAnalyser &&) noexcept;
+    explicit KeyAnalyzer(int sampleRateHz);
+    ~KeyAnalyzer();
+    KeyAnalyzer(KeyAnalyzer &&) noexcept;
+    KeyAnalyzer &operator=(KeyAnalyzer &&) noexcept;
 
     void feed(std::span<const float> samples);
-    // The key of everything fed; the analyser is spent after it.
+    // The key of everything fed; the analyzer is spent after it.
     KeyAnalysis finish();
 
 private:

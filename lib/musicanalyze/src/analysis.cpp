@@ -7,16 +7,16 @@
 namespace musicanalyze
 {
 
-Analyser::Analyser(int sampleRateHz, TempoRange range) : m_grid(sampleRateHz, range), m_key(sampleRateHz), m_waveform(sampleRateHz) {}
+Analyzer::Analyzer(int sampleRateHz, TempoRange range) : m_grid(sampleRateHz, range), m_key(sampleRateHz), m_waveform(sampleRateHz) {}
 
-void Analyser::feed(std::span<const float> samples)
+void Analyzer::feed(std::span<const float> samples)
 {
     m_waveform.feed(samples);
     m_grid.feed(samples);
     m_key.feed(samples);
 }
 
-Analysis Analyser::finish()
+Analysis Analyzer::finish()
 {
     Analysis analysis;
     analysis.waveform = m_waveform.finish();
@@ -27,11 +27,11 @@ Analysis Analyser::finish()
     return analysis;
 }
 
-Analysis analyse(std::span<const float> samples, int sampleRateHz, TempoRange range)
+Analysis analyze(std::span<const float> samples, int sampleRateHz, TempoRange range)
 {
-    Analyser analyser(sampleRateHz, range);
-    analyser.feed(samples);
-    return analyser.finish();
+    Analyzer analyzer(sampleRateHz, range);
+    analyzer.feed(samples);
+    return analyzer.finish();
 }
 
 }  // namespace musicanalyze

@@ -36,7 +36,7 @@ public:
 
     GridAnalysis analyse(PcmSource &source) override
     {
-        musicanalyze::BeatGridAnalyser analyser(source.sampleRate(), m_range);
+        musicanalyze::BeatGridAnalyzer analyser(source.sampleRate(), m_range);
         std::vector<float> piece(65536);
         for (;;) {
             const std::size_t got = source.read(piece);

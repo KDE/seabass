@@ -21,14 +21,14 @@ namespace musicanalyze
 // its half inside it (what is given out can still be a hair outside:
 // the ends have half a percent of room, and the later corrections move a
 // period by under a percent). A range of one octave (88 to 175) settles
-// every such choice; a wider one leaves those inside it to the analyser.
+// every such choice; a wider one leaves those inside it to the analyzer.
 // The default is rekordbox's own, with which its reference grids were
 // made.
 //
 // A range narrower than an octave has no place for some tempos, so it is
 // widened at the top to one; rekordbox's own "88-175" is a hair under.
 // Ranges are kept between 40 and 240 BPM, which is as slow and as fast
-// as the analyser reads a beat; where the top would pass 240 the bottom
+// as the analyzer reads a beat; where the top would pass 240 the bottom
 // comes down instead.
 struct TempoRange
 {
@@ -40,7 +40,7 @@ struct TempoRange
 // valid by the rules above. What is no range at all is the default one.
 TempoRange usableTempoRange(TempoRange range);
 
-// What the analyser makes of a track: every beat it found, sample 0 of
+// What the analyzer makes of a track: every beat it found, sample 0 of
 // the audio at 0 ms, and how sure it is.
 struct GridAnalysis
 {
@@ -52,7 +52,7 @@ struct GridAnalysis
     // A followed grid is the one to look at before trusting it: on music
     // with a steady tempo it is rarely needed.
     bool followsTempo = false;
-    // Empty when the analyser ran. Audio it could not work on is reported
+    // Empty when the analyzer ran. Audio it could not work on is reported
     // here rather than as an empty grid, which would read as "no beats in
     // this track" (speech, ambience).
     std::string error;
@@ -60,14 +60,14 @@ struct GridAnalysis
 
 // A followed grid is given out this much earlier than the place the
 // onsets peak at. Calibration against rekordbox, whose own two ways of
-// analysing differ by as much: measured against the start of the hit
+// analyzing differ by as much: measured against the start of the hit
 // in the audio on 100 tracks of varied music, its straight grids sit
 // 4.9 ms before it at the median and inside the hit on a quarter of
 // the tracks, its beat-by-beat grids 6.2 ms before it and inside the
 // hit on none. Our straight grids are 2 ms earlier than its straight
 // ones as they are; our followed grids were 3.4 ms later than its
 // beat-by-beat ones. Early is the safe side: a late grid cuts a
-// quantised loop into the kick.
+// quantized loop into the kick.
 //
 // rekordbox's beat-by-beat grids are on whole milliseconds as it
 // means them (the section that holds the rest of each millisecond,
@@ -95,7 +95,7 @@ inline constexpr double FollowedGridEarlierMs = 3.0;
 inline constexpr double StraightGridLaterMs = 1.2;
 
 // The lowest sample rate a grid is found at. The highest of the bands
-// the analyser listens to begins at 1.5 kHz, and under 3 kHz its filters
+// the analyzer listens to begins at 1.5 kHz, and under 3 kHz its filters
 // are no filters at all; from 8 kHz, as for the key and the waveform,
 // every band has room. No file a DJ plays is sampled that low.
 constexpr int GridLowestSampleRateHz = 8000;
@@ -166,16 +166,16 @@ GridAnalysis gridFromSamples(std::span<const float> samples, int sampleRateHz, T
 // heard so far (about 40 MB, and 3.5 MB a minute of music), and never the
 // track. No sample rate or one too low, or nothing fed: the error says
 // so.
-class BeatGridAnalyser
+class BeatGridAnalyzer
 {
 public:
-    explicit BeatGridAnalyser(int sampleRateHz, TempoRange range = {});
-    ~BeatGridAnalyser();
-    BeatGridAnalyser(BeatGridAnalyser &&) noexcept;
-    BeatGridAnalyser &operator=(BeatGridAnalyser &&) noexcept;
+    explicit BeatGridAnalyzer(int sampleRateHz, TempoRange range = {});
+    ~BeatGridAnalyzer();
+    BeatGridAnalyzer(BeatGridAnalyzer &&) noexcept;
+    BeatGridAnalyzer &operator=(BeatGridAnalyzer &&) noexcept;
 
     void feed(std::span<const float> samples);
-    // The grid of everything fed; the analyser is spent after it.
+    // The grid of everything fed; the analyzer is spent after it.
     GridAnalysis finish();
 
 private:

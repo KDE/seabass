@@ -51,7 +51,7 @@ struct WaveformEntry
     float mid = 0.0f;
     float high = 0.0f;
     // The loudest sample of the entry, whatever its frequency: how tall a
-    // single-colour waveform is drawn there.
+    // single-color waveform is drawn there.
     float overall = 0.0f;
 };
 

@@ -33,7 +33,7 @@ using AudioAnalysis = musicanalyze::Analysis;
 // wants about 88 to 175.
 inline AudioAnalysis analyseAudio(std::span<const float> samples, int sampleRateHz, TempoRange range = {})
 {
-    return musicanalyze::analyse(samples, sampleRateHz, range);
+    return musicanalyze::analyze(samples, sampleRateHz, range);
 }
 
 // The same of a source, read to its end piece by piece and never held
@@ -46,7 +46,7 @@ inline AudioAnalysis analyseAudio(std::span<const float> samples, int sampleRate
 // the whole track.
 inline AudioAnalysis analyseAudio(PcmSource &source, TempoRange range = {}, std::string *error = nullptr)
 {
-    musicanalyze::Analyser analyser(source.sampleRate(), range);
+    musicanalyze::Analyzer analyser(source.sampleRate(), range);
     std::vector<float> piece(65536);
     for (;;) {
         const std::size_t got = source.read(piece);

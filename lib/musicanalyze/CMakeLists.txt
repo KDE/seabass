@@ -45,8 +45,8 @@ set_target_properties(musicanalyze PROPERTIES
 )
 target_compile_features(musicanalyze PUBLIC cxx_std_20)
 
-# The grid analyser filters a whole track ten times over: built optimised
-# even in a Debug build (GCC and Clang), so a test suite that analyses
+# The grid analyzer filters a whole track ten times over: built optimized
+# even in a Debug build (GCC and Clang), so a test suite that analyzes
 # audio is not several times slower for it.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/grid.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")

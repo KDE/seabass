@@ -74,7 +74,7 @@ double step(const std::array<Biquad, Count> &filters, std::array<double, Count> 
 // -------------------------------------------------------- small arithmetic
 
 // The place of a peak near index i, to a fraction of a step: the top of
-// the parabola through the value there and its two neighbours. Where the
+// the parabola through the value there and its two neighbors. Where the
 // value at i is not the highest of the three (the highest of a search
 // that ended on a slope), there is no top between them and i itself is
 // the answer: the parabola's would be anywhere, steps away or before 0.
@@ -845,10 +845,10 @@ double heaviestPlace(const std::vector<double> &folded)
         return parabolaPeak(fine, indexOfMax(fine, 0, fine.size() - 1));
     }
     const std::vector<double> broad = smoothed(folded, WeighedOverMs);
-    const auto centre = static_cast<std::ptrdiff_t>(indexOfMax(broad, 0, broad.size() - 1));
-    std::ptrdiff_t top = centre;
+    const auto center = static_cast<std::ptrdiff_t>(indexOfMax(broad, 0, broad.size() - 1));
+    std::ptrdiff_t top = center;
     for (std::ptrdiff_t k = -WeighedOverMs; k <= WeighedOverMs; ++k) {
-        const std::ptrdiff_t i = ((centre + k) % steps + steps) % steps;
+        const std::ptrdiff_t i = ((center + k) % steps + steps) % steps;
         if (fine[static_cast<std::size_t>(i)] > fine[static_cast<std::size_t>(top)]) {
             top = i;
         }
@@ -868,11 +868,11 @@ double wholeTrackPhase(const std::vector<double> &onsets, double period)
 // ------------------------------------------------------------------ tempo
 
 // How much a tempo is preferred for being a likely one: a bell around
-// `centreBpm`, `octaves` wide. Between a tempo and its double the audio
+// `centerBpm`, `octaves` wide. Between a tempo and its double the audio
 // often cannot say; this can.
-double preference(double periodMs, double centreBpm, double octaves)
+double preference(double periodMs, double centerBpm, double octaves)
 {
-    const double away = std::log2(60000.0 / periodMs / centreBpm) / octaves;
+    const double away = std::log2(60000.0 / periodMs / centerBpm) / octaves;
     return std::exp(-0.5 * away * away);
 }
 
@@ -883,12 +883,12 @@ double preference(double periodMs, double centreBpm, double octaves)
 double sharpened(const std::vector<double> &ac, double period, double floor)
 {
     for (const std::size_t beats : {std::size_t{4}, std::size_t{16}, std::size_t{64}}) {
-        const double centre = period * static_cast<double>(beats);
+        const double center = period * static_cast<double>(beats);
         // A hundredth either way, and never as far as a quarter of a beat:
         // where sections of a track answer each other half a beat apart,
         // the function repeats 63.5 and 64.5 beats away as well as 64.
-        const auto reach = std::max<std::size_t>(3, static_cast<std::size_t>(std::min(0.01 * centre, 0.25 * period)));
-        const auto middle = static_cast<std::size_t>(centre);
+        const auto reach = std::max<std::size_t>(3, static_cast<std::size_t>(std::min(0.01 * center, 0.25 * period)));
+        const auto middle = static_cast<std::size_t>(center);
         if (middle < reach + 1 || middle + reach + 1 >= ac.size()) {
             break;
         }
@@ -1085,7 +1085,7 @@ constexpr std::size_t WindowHopBeats = 4;
 
 struct WindowReading
 {
-    double centreMs = 0.0;
+    double centerMs = 0.0;
     // How far the window's own peak is from the place the grid has the
     // beat, in ms; late is positive. Not a number where the window has no
     // peak within a quarter of a beat of that place.
@@ -1106,7 +1106,7 @@ std::vector<WindowReading> readWindows(const std::vector<double> &onsets, double
     const auto beats = static_cast<std::size_t>(room);
     for (std::size_t start = 0; start + WindowBeats < beats; start += WindowHopBeats) {
         WindowReading reading;
-        reading.centreMs = phase + (static_cast<double>(start) + static_cast<double>(WindowBeats) / 2.0) * period;
+        reading.centerMs = phase + (static_cast<double>(start) + static_cast<double>(WindowBeats) / 2.0) * period;
         // Folded from half a beat before the grid's place, so that place
         // is the middle of the fold and the search either side of it does
         // not run over the fold's end.
@@ -1169,7 +1169,7 @@ std::optional<Line> fitLine(const std::vector<WindowReading> &readings)
         for (std::size_t i = 0; i < readings.size(); ++i) {
             if (keep[i]) {
                 weight += weightOf(i);
-                meanTime += weightOf(i) * readings[i].centreMs;
+                meanTime += weightOf(i) * readings[i].centerMs;
                 meanOffset += weightOf(i) * readings[i].offsetMs;
                 ++count;
             }
@@ -1183,7 +1183,7 @@ std::optional<Line> fitLine(const std::vector<WindowReading> &readings)
         double variance = 0.0;
         for (std::size_t i = 0; i < readings.size(); ++i) {
             if (keep[i]) {
-                const double dt = readings[i].centreMs - meanTime;
+                const double dt = readings[i].centerMs - meanTime;
                 covariance += weightOf(i) * dt * (readings[i].offsetMs - meanOffset);
                 variance += weightOf(i) * dt * dt;
             }
@@ -1202,7 +1202,7 @@ std::optional<Line> fitLine(const std::vector<WindowReading> &readings)
         std::vector<double> keptLeft;
         for (std::size_t i = 0; i < readings.size(); ++i) {
             if (std::isfinite(readings[i].offsetMs)) {
-                left[i] = readings[i].offsetMs - (line.atZeroMs + line.slope * readings[i].centreMs);
+                left[i] = readings[i].offsetMs - (line.atZeroMs + line.slope * readings[i].centerMs);
                 if (keep[i]) {
                     keptLeft.push_back(left[i]);
                 }
@@ -1230,7 +1230,7 @@ std::optional<Line> fitLine(const std::vector<WindowReading> &readings)
 
 // The onset function over its own level of the 4 s around: a quiet part
 // of the track then says as much about the tempo as a loud one.
-std::vector<double> levelled(const std::vector<double> &onsets)
+std::vector<double> leveled(const std::vector<double> &onsets)
 {
     constexpr std::ptrdiff_t Half = 2000;
     const auto n = static_cast<std::ptrdiff_t>(onsets.size());
@@ -1253,35 +1253,35 @@ std::vector<double> levelled(const std::vector<double> &onsets)
 // The beat period along the track: a value every 2 s.
 struct TempoCurve
 {
-    std::vector<double> centresMs;
+    std::vector<double> centersMs;
     std::vector<double> periodsMs;
-    // Whether the 8 s around each centre repeat at their lag at all: a
+    // Whether the 8 s around each center repeat at their lag at all: a
     // rhythm, at whatever tempo near the track's. A breakdown of pads, an
     // intro without drums and a held chord do not.
     std::vector<bool> rhythm;
 
     bool rhythmAt(double timeMs) const
     {
-        if (centresMs.empty()) {
+        if (centersMs.empty()) {
             return false;
         }
-        const double spacing = centresMs.size() > 1 ? centresMs[1] - centresMs[0] : 1.0;
-        const double place = std::round((timeMs - centresMs.front()) / spacing);
-        const auto i = static_cast<std::size_t>(std::clamp(place, 0.0, static_cast<double>(centresMs.size() - 1)));
+        const double spacing = centersMs.size() > 1 ? centersMs[1] - centersMs[0] : 1.0;
+        const double place = std::round((timeMs - centersMs.front()) / spacing);
+        const auto i = static_cast<std::size_t>(std::clamp(place, 0.0, static_cast<double>(centersMs.size() - 1)));
         return rhythm[i];
     }
 
     double at(double timeMs) const
     {
-        if (timeMs <= centresMs.front()) {
+        if (timeMs <= centersMs.front()) {
             return periodsMs.front();
         }
-        if (timeMs >= centresMs.back()) {
+        if (timeMs >= centersMs.back()) {
             return periodsMs.back();
         }
-        const auto above = std::upper_bound(centresMs.begin(), centresMs.end(), timeMs);
-        const auto i = static_cast<std::size_t>(above - centresMs.begin());
-        const double part = (timeMs - centresMs[i - 1]) / (centresMs[i] - centresMs[i - 1]);
+        const auto above = std::upper_bound(centersMs.begin(), centersMs.end(), timeMs);
+        const auto i = static_cast<std::size_t>(above - centersMs.begin());
+        const double part = (timeMs - centersMs[i - 1]) / (centersMs[i] - centersMs[i - 1]);
         return periodsMs[i - 1] + part * (periodsMs[i] - periodsMs[i - 1]);
     }
 };
@@ -1315,15 +1315,15 @@ std::optional<TempoCurve> tempoCurve(const std::vector<double> &onsets, double g
     std::vector<std::vector<double>> scores;
     std::vector<double> sizes;
     std::vector<std::complex<double>> z(Transform);
-    for (std::size_t centre = HalfMs; centre + HalfMs < onsets.size(); centre += HopMs) {
+    for (std::size_t center = HalfMs; center + HalfMs < onsets.size(); center += HopMs) {
         double mean = 0.0;
-        for (std::size_t i = centre - HalfMs; i < centre + HalfMs; ++i) {
+        for (std::size_t i = center - HalfMs; i < center + HalfMs; ++i) {
             mean += onsets[i];
         }
         mean /= static_cast<double>(2 * HalfMs);
         std::fill(z.begin(), z.end(), std::complex<double>(0.0, 0.0));
         for (std::size_t i = 0; i < 2 * HalfMs; ++i) {
-            z[i] = onsets[centre - HalfMs + i] - mean;
+            z[i] = onsets[center - HalfMs + i] - mean;
         }
         fft(z, false);
         for (std::complex<double> &value : z) {
@@ -1339,7 +1339,7 @@ std::optional<TempoCurve> tempoCurve(const std::vector<double> &onsets, double g
         // What the window would score at a lag where it repeated itself
         // exactly.
         sizes.push_back(1.5 * z[0].real());
-        curve.centresMs.push_back(static_cast<double>(centre));
+        curve.centersMs.push_back(static_cast<double>(center));
         scores.push_back(std::move(row));
     }
     if (scores.size() < 2) {
@@ -1633,10 +1633,10 @@ std::vector<double> trackBeats(const std::vector<double> &onsets, const TempoCur
     std::vector<double> local(n);
     double mean = 0.0;
     for (std::size_t t = 0; t < n; ++t) {
-        const auto centre = static_cast<std::ptrdiff_t>(t * Hop);
-        const auto from = static_cast<std::size_t>(std::max<std::ptrdiff_t>(0, centre - Smooth));
+        const auto center = static_cast<std::ptrdiff_t>(t * Hop);
+        const auto from = static_cast<std::size_t>(std::max<std::ptrdiff_t>(0, center - Smooth));
         const auto to = static_cast<std::size_t>(
-            std::min<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(onsets.size()), centre + Smooth + 1));
+            std::min<std::ptrdiff_t>(static_cast<std::ptrdiff_t>(onsets.size()), center + Smooth + 1));
         local[t] = (sums[to] - sums[from]) / static_cast<double>(to - from);
         mean += local[t];
     }
@@ -1765,14 +1765,14 @@ std::optional<double> tightness(const std::vector<double> &beats, const std::vec
         if (!std::isfinite(beat) || beat < 0.0 || beat >= static_cast<double>(length)) {
             continue;
         }
-        const auto centre = static_cast<std::ptrdiff_t>(std::llround(beat));
-        if (centre - ReachMs < 0 || centre + ReachMs >= length) {
+        const auto center = static_cast<std::ptrdiff_t>(std::llround(beat));
+        if (center - ReachMs < 0 || center + ReachMs >= length) {
             continue;
         }
         double best = 0.0;
         std::ptrdiff_t at = 0;
         for (std::ptrdiff_t k = -ReachMs; k <= ReachMs; ++k) {
-            const double value = onsets[static_cast<std::size_t>(centre + k)];
+            const double value = onsets[static_cast<std::size_t>(center + k)];
             if (value > best) {
                 best = value;
                 at = k;
@@ -1830,7 +1830,7 @@ double wander(const TempoCurve &curve)
 // give the beat as eight beats have it on average, which on a drummer is
 // the pulse and not the hits; rekordbox's beat-by-beat grids are on the
 // hits (their beats lie 3 to 9 ms off the line through their
-// neighbours), and a loop is cut on a hit. A beat without a clear onset
+// neighbors), and a loop is cut on a hit. A beat without a clear onset
 // near it stays where the windows or the path put it.
 void setOnOnsets(std::vector<double> &beats, const std::vector<double> &onsets)
 {
@@ -1860,9 +1860,9 @@ void setOnOnsets(std::vector<double> &beats, const std::vector<double> &onsets)
     const double clear = 0.3 * quantile(smooth, 0.99);
     constexpr std::ptrdiff_t ReachMs = 25;
     for (double &beat : beats) {
-        const auto centre = static_cast<std::ptrdiff_t>(std::llround(beat));
-        const std::ptrdiff_t from = centre - ReachMs;
-        const std::ptrdiff_t to = centre + ReachMs;
+        const auto center = static_cast<std::ptrdiff_t>(std::llround(beat));
+        const std::ptrdiff_t from = center - ReachMs;
+        const std::ptrdiff_t to = center + ReachMs;
         if (from < 1 || to + 1 >= n) {
             continue;
         }
@@ -1997,12 +1997,12 @@ GridAnalysis gridFromOnsets(const Onsets &both, const TempoRange &range)
     // regular in the audio at all (noise, speech) leaves it at 0, with a
     // grid that means nothing.
     double sure = 0.0;
-    if (const std::optional<TempoCurve> curve = tempoCurve(levelled(both.forTempo), period, allowed)) {
+    if (const std::optional<TempoCurve> curve = tempoCurve(leveled(both.forTempo), period, allowed)) {
         const std::vector<WindowReading> readings = readWindows(onsets, period, phase);
         std::vector<double> offsets;
         std::size_t withRhythm = 0;
         for (const WindowReading &reading : readings) {
-            if (reading.highest > 0.0 && curve->rhythmAt(reading.centreMs)) {
+            if (reading.highest > 0.0 && curve->rhythmAt(reading.centerMs)) {
                 ++withRhythm;
                 if (std::isfinite(reading.offsetMs)) {
                     offsets.push_back(reading.offsetMs);
@@ -2125,7 +2125,7 @@ double usualBpm(const std::vector<Beat> &beats)
     return *middle > 0.0 ? 60000.0 / *middle : 0.0;
 }
 
-class BeatGridAnalyser::State
+class BeatGridAnalyzer::State
 {
 public:
     State(int sampleRateHz, TempoRange range) : range(usableTempoRange(range))
@@ -2140,18 +2140,18 @@ public:
     bool any = false;
 };
 
-BeatGridAnalyser::BeatGridAnalyser(int sampleRateHz, TempoRange range)
+BeatGridAnalyzer::BeatGridAnalyzer(int sampleRateHz, TempoRange range)
 {
     if (sampleRateHz > 0) {
         m_state = std::make_unique<State>(sampleRateHz, range);
     }
 }
 
-BeatGridAnalyser::~BeatGridAnalyser() = default;
-BeatGridAnalyser::BeatGridAnalyser(BeatGridAnalyser &&) noexcept = default;
-BeatGridAnalyser &BeatGridAnalyser::operator=(BeatGridAnalyser &&) noexcept = default;
+BeatGridAnalyzer::~BeatGridAnalyzer() = default;
+BeatGridAnalyzer::BeatGridAnalyzer(BeatGridAnalyzer &&) noexcept = default;
+BeatGridAnalyzer &BeatGridAnalyzer::operator=(BeatGridAnalyzer &&) noexcept = default;
 
-void BeatGridAnalyser::feed(std::span<const float> samples)
+void BeatGridAnalyzer::feed(std::span<const float> samples)
 {
     if (m_state && !samples.empty()) {
         m_state->any = true;
@@ -2161,7 +2161,7 @@ void BeatGridAnalyser::feed(std::span<const float> samples)
     }
 }
 
-GridAnalysis BeatGridAnalyser::finish()
+GridAnalysis BeatGridAnalyzer::finish()
 {
     if (!m_state || !m_state->any || !m_state->listener) {
         GridAnalysis failed;
@@ -2178,9 +2178,9 @@ GridAnalysis BeatGridAnalyser::finish()
 
 GridAnalysis gridFromSamples(std::span<const float> samples, int sampleRateHz, TempoRange range)
 {
-    BeatGridAnalyser analyser(sampleRateHz, range);
-    analyser.feed(samples);
-    return analyser.finish();
+    BeatGridAnalyzer analyzer(sampleRateHz, range);
+    analyzer.feed(samples);
+    return analyzer.finish();
 }
 
 }  // namespace musicanalyze

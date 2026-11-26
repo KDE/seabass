@@ -128,7 +128,7 @@ void transform(std::vector<std::complex<double>> &data, const std::vector<std::c
 // that what would fold down into the notes (at 11 kHz, everything from
 // 8.9 kHz up) is 45 dB down and more. Then frame by frame, each a third
 // of a second after the one before: the peaks of its spectrum, each at
-// its true frequency (a parabola through the peak and its neighbours on
+// its true frequency (a parabola through the peak and its neighbors on
 // a log scale), gathered into thirds of a semitone, and every frame
 // counted the same, loud or quiet.
 class ThirdsReader
@@ -274,16 +274,16 @@ std::optional<std::array<double, 60>> pictureOf(const std::optional<std::array<d
     int shift = -1;
     double best = -1.0;
     for (const int candidate : {-1, 0, 1}) {
-        double centres = 0.0;
+        double centers = 0.0;
         for (int note = 0; note < 12; ++note) {
-            centres += perThird[static_cast<std::size_t>((3 * note + 1 + candidate + ThirdsPerOctave) % ThirdsPerOctave)];
+            centers += perThird[static_cast<std::size_t>((3 * note + 1 + candidate + ThirdsPerOctave) % ThirdsPerOctave)];
         }
-        if (centres > best) {
-            best = centres;
+        if (centers > best) {
+            best = centers;
             shift = candidate;
         }
     }
-    // A note: its centre third and half of the one on either side.
+    // A note: its center third and half of the one on either side.
     std::array<double, 60> picture{};
     double all = 0.0;
     for (int octave = 0; octave < Octaves; ++octave) {
@@ -355,7 +355,7 @@ std::optional<std::array<double, 60>> pitchPicture(std::span<const float> sample
     return pictureOf(reader.finish());
 }
 
-class KeyAnalyser::State
+class KeyAnalyzer::State
 {
 public:
     explicit State(int sampleRateHz)
@@ -369,18 +369,18 @@ public:
     bool any = false;
 };
 
-KeyAnalyser::KeyAnalyser(int sampleRateHz)
+KeyAnalyzer::KeyAnalyzer(int sampleRateHz)
 {
     if (sampleRateHz > 0) {
         m_state = std::make_unique<State>(sampleRateHz);
     }
 }
 
-KeyAnalyser::~KeyAnalyser() = default;
-KeyAnalyser::KeyAnalyser(KeyAnalyser &&) noexcept = default;
-KeyAnalyser &KeyAnalyser::operator=(KeyAnalyser &&) noexcept = default;
+KeyAnalyzer::~KeyAnalyzer() = default;
+KeyAnalyzer::KeyAnalyzer(KeyAnalyzer &&) noexcept = default;
+KeyAnalyzer &KeyAnalyzer::operator=(KeyAnalyzer &&) noexcept = default;
 
-void KeyAnalyser::feed(std::span<const float> samples)
+void KeyAnalyzer::feed(std::span<const float> samples)
 {
     if (m_state && !samples.empty()) {
         m_state->any = true;
@@ -390,7 +390,7 @@ void KeyAnalyser::feed(std::span<const float> samples)
     }
 }
 
-KeyAnalysis KeyAnalyser::finish()
+KeyAnalysis KeyAnalyzer::finish()
 {
     KeyAnalysis analysis;
     if (!m_state || !m_state->any) {
@@ -406,9 +406,9 @@ KeyAnalysis KeyAnalyser::finish()
 
 KeyAnalysis keyFromSamples(std::span<const float> samples, int sampleRateHz)
 {
-    KeyAnalyser analyser(sampleRateHz);
-    analyser.feed(samples);
-    return analyser.finish();
+    KeyAnalyzer analyzer(sampleRateHz);
+    analyzer.feed(samples);
+    return analyzer.finish();
 }
 
 }  // namespace musicanalyze

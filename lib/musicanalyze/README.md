@@ -33,7 +33,7 @@ Known limits:
 #include <musicanalyze/analysis.hpp>
 
 // Mono samples, full scale 1.0, and their rate.
-const musicanalyze::Analysis found = musicanalyze::analyse(samples, 44100);
+const musicanalyze::Analysis found = musicanalyze::analyze(samples, 44100);
 
 for (const musicanalyze::Beat &beat : found.grid.beats) {
     // beat.timeMs, from the first sample
@@ -49,22 +49,22 @@ pieces of any length, and the result is the same to the last digit as
 for the track handed over whole:
 
 ```cpp
-musicanalyze::Analyser analyser(44100);
+musicanalyze::Analyzer analyzer(44100);
 while (/* the decoder has more */) {
-    analyser.feed(piece);   // std::span<const float>, mono
+    analyzer.feed(piece);   // std::span<const float>, mono
 }
-const musicanalyze::Analysis found = analyser.finish();
+const musicanalyze::Analysis found = analyzer.finish();
 ```
 
 Each part can be called on its own, whole or in pieces:
-`gridFromSamples()` and `BeatGridAnalyser` (grid.hpp), `keyFromSamples()`
-and `KeyAnalyser` (key.hpp), `waveformFromSamples()` and `WaveformMeter`
+`gridFromSamples()` and `BeatGridAnalyzer` (grid.hpp), `keyFromSamples()`
+and `KeyAnalyzer` (key.hpp), `waveformFromSamples()` and `WaveformMeter`
 (waveform.hpp). The headers say what each listens to and how it decides.
 Decoding is the caller's: the library takes samples, not files.
 
 ## What it costs
 
-Measured on one core of a desktop machine of 2024, optimised build: a
+Measured on one core of a desktop machine of 2024, optimized build: a
 track of four minutes takes about 0.8 s for the grid, 0.7 s for the key
 and 0.1 s for the waveform.
 
@@ -92,12 +92,12 @@ project around it uses.
 
 Two things are numbered, in `include/musicanalyze/version.hpp`:
 
-- The library's **version** (0.2.0) is about its interface. Before 1.0 a
+- The library's **version** (0.3.0) is about its interface. Before 1.0 a
   new minor version may change it.
 - A **revision** each for the grid, the key and the waveform is about
   results: it goes up with every change after which the same audio can
   give another result, and with no other. Store it beside a result and
-  you know later which tracks an improved analyser would do differently,
+  you know later which tracks an improved analyzer would do differently,
   and which code a wrong grid came from.
 
 ## Tests
@@ -113,13 +113,13 @@ arithmetic, and if the test fails on your platform with the library
 unchanged, that is worth a report.
 
 The larger tests (drummers who wander, tempo ranges, tunings, sample
-rates) are still in Seabass's own suite, `tests/seabass_grid_analyser_test.cpp`,
+rates) are still in Seabass's own suite, `tests/seabass_grid_analyzer_test.cpp`,
 `tests/key_from_audio_test.cpp` and `tests/waveform_from_audio_test.cpp`,
 because they use Seabass's generator of synthetic tracks.
 
-## Licence
+## License
 
 GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL, as Seabass.
-Every file names its licence in its first lines; the texts are in
+Every file names its license in its first lines; the texts are in
 `LICENSES/` at the top of the Seabass repository and belong with a copy
 of this directory.

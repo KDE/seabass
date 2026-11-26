@@ -1228,7 +1228,7 @@ against the library as they did against the code where it was.
 An analysis held the whole track: its samples, a copy of them as
 doubles, a copy of that for the band in hand. That is what limited the
 import to mixes of an hour and a half. Now the library takes the audio
-as a decoder gives it (`Analyser`, and `BeatGridAnalyser`, `KeyAnalyser`
+as a decoder gives it (`Analyzer`, and `BeatGridAnalyzer`, `KeyAnalyzer`
 and `WaveformMeter` for the parts: `feed()` pieces of any length, then
 `finish()`), and the calls that take a whole track are those, fed once.
 `domain::analyseAudio()` takes a source as well as samples.
@@ -1290,6 +1290,49 @@ every sample written had to be taken for a change to it.
 Left for later: the bands could now run beside each other on several
 cores (it was memory that spoke against it); and the import still
 decodes a file whole before it analyses, which is its side of this.
+
+### Where the tempo stands, and Engine DJ on the indie playlist
+
+Every track of the five sets, 2,832, our tempo against rekordbox's,
+before "in doubt the double" and now:
+
+| | Before | Now |
+|---|---|---|
+| The same tempo | 2,552 | 2,598 |
+| Half of rekordbox's | 112 | 41 |
+| Double rekordbox's | 19 | 41 |
+| Another (thirds, quarters, no relation) | 148 | 151 |
+
+Half of rekordbox's by set: collection 4 to 1, first variety list 11 to
+6, second playlist 29 to 13, CD rips 50 to 17, indie playlist 18 to 4.
+The doubles are the rule's price and nearly all on the CD rips (12 to
+31). Every answer on a half or a double tempo of those sets was given
+from the pictures on 24 November (the two listening rounds of that
+night were tempos that are neither), and pictures misjudge tempo: a
+listening page with all 67 of them is out.
+
+Engine DJ analysed the same 280 files of the indie playlist (its
+library on the Mac, a copy of it read). Against rekordbox's grid, by
+the dashboard's classes:
+
+| | Engine DJ | Ours, as imported | Ours, now |
+|---|---|---|---|
+| The same tempo | 251 | 256 | 271 |
+| Half of rekordbox's | 24 | 18 | 4 |
+| Within 10 ms, steady | 112 | 183 | 195 |
+| Within 10 ms, drifts over 10 ms | 87 | 60 | 61 |
+| On the beat, over 10 ms off | 38 | 2 | 3 |
+| Half a beat out | 14 | 11 | 12 |
+
+Engine's grids are straight on every track (ours follows the tempo on
+73), which is why they run apart from rekordbox's more often, and sit
+3.6 ms after rekordbox's at the middle track. Its 24 half tempos are
+all tracks rekordbox has at 158 to 182 BPM; of the 16 of them heard,
+15 went to rekordbox. By the ear, on the 59 tracks heard and taking the
+rest as right where a grid is with rekordbox's: rekordbox wrong on 11,
+ours on 17 (28 as imported), Engine on 25 at the least, with 48 more on
+which it is away from the grid rekordbox and ours share and which
+nobody has listened to.
 
 ## Denon again: the new music, and the players
 

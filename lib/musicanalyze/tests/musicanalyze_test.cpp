@@ -4,7 +4,7 @@
 
 // The library's own test, with nothing but the library and audio made
 // here: the interface (the one call gives what the parts give, pieces
-// give what the whole gives, what cannot be analysed says so), and the
+// give what the whole gives, what cannot be analyzed says so), and the
 // results on that audio against tests/results.txt, which is what ties a
 // result to its revision (version.hpp): a result that has changed under
 // a revision that has not fails here.
@@ -187,7 +187,7 @@ Audio chords(int rate, const std::vector<std::vector<int>> &progression, double 
 // -------------------------------------------------------------- results
 
 // A beat may be this far from where the file has it, in ms. Four builds
-// (GCC with and without optimisation, Clang, Clang with fused
+// (GCC with and without optimization, Clang, Clang with fused
 // multiply-add as on ARM) put every beat of the file on the same
 // thousandth of a millisecond, and wrote the same digits for every other
 // number in it; the room here and in room() is a few times the last
@@ -490,7 +490,7 @@ int writeResults(const std::string &path)
 void theOneCallIsItsParts()
 {
     const Audio audio = house(44100, 126.0, 30.0, 0.25);
-    const Analysis all = analyse(audio.samples, audio.rate);
+    const Analysis all = analyze(audio.samples, audio.rate);
     const GridAnalysis grid = gridFromSamples(audio.samples, audio.rate);
     check(all.grid.error.empty() && all.grid.beats.size() > 50, "the one call finds the beats of a kick on every beat");
     bool sameBeats = all.grid.beats.size() == grid.beats.size();
@@ -508,11 +508,11 @@ void theOneCallIsItsParts()
               && all.revisions.waveform == WaveformRevision,
           "the one call says which revisions made its result");
 
-    const Analysis ranged = analyse(audio.samples, audio.rate, TempoRange{60.0, 110.0});
+    const Analysis ranged = analyze(audio.samples, audio.rate, TempoRange{60.0, 110.0});
     check(std::abs(ranged.bpm - 63.0) < 0.05, "a range that has no place for 126 gives its half: " + number(ranged.bpm, 3));
 }
 
-void whatCannotBeAnalysedSaysSo()
+void whatCannotBeAnalyzedSaysSo()
 {
     const std::vector<float> some(44100, 0.1f);
     check(!gridFromSamples({}, 44100).error.empty(), "no samples: the grid says so");
@@ -522,10 +522,10 @@ void whatCannotBeAnalysedSaysSo()
     check(!keyFromSamples({}, 44100).error.empty(), "no samples: the key says so");
     check(keyFromSamples(some, 4000).error.find("sample rate") != std::string::npos, "4 kHz: the key says so");
     check(waveformFromSamples(some, 4000).entries.empty(), "4 kHz: no waveform");
-    const Analysis nothing = analyse({}, 44100);
+    const Analysis nothing = analyze({}, 44100);
     check(!nothing.grid.error.empty() && nothing.bpm == 0.0 && !nothing.key.key && nothing.waveform.entries.empty(),
           "the one call on no samples: an error, and nothing made up");
-    const Analysis quiet = analyse(std::vector<float>(44100 * 20, 0.0f), 44100);
+    const Analysis quiet = analyze(std::vector<float>(44100 * 20, 0.0f), 44100);
     check(quiet.grid.error.empty() && quiet.grid.beats.empty() && !quiet.key.key, "silence: no beats, no key, and no error");
 }
 
@@ -598,24 +598,24 @@ void audioInPiecesIsTheAudioWhole()
     for (const Audio &audio : {climbing(44100, 118.0, 128.0, 75.0, 0.3), house(32000, 126.0, 50.0, 0.25)}) {
         const std::string at = " at " + std::to_string(audio.rate) + " Hz";
         const GridAnalysis whole = gridFromSamples(audio.samples, audio.rate);
-        BeatGridAnalyser grid(audio.rate);
+        BeatGridAnalyzer grid(audio.rate);
         inPieces(audio, grid);
         const GridAnalysis pieces = grid.finish();
         check(whole.beats.size() > 80 && sameGrid(whole, pieces), "a grid fed in pieces is the grid of the whole, to the digit" + at);
-        check(!grid.finish().error.empty(), "a grid analyser that has given its grid is spent" + at);
+        check(!grid.finish().error.empty(), "a grid analyzer that has given its grid is spent" + at);
     }
     const Audio tune = chords(44100, {{57, 60, 64}, {50, 53, 57}, {52, 56, 59}, {57, 60, 64}}, 30.0);
     const KeyAnalysis wholeKey = keyFromSamples(tune.samples, tune.rate);
-    KeyAnalyser key(tune.rate);
+    KeyAnalyzer key(tune.rate);
     inPieces(tune, key);
     const KeyAnalysis piecesKey = key.finish();
     check(wholeKey.key && wholeKey.key == piecesKey.key && wholeKey.margin == piecesKey.margin, "a key fed in pieces is the key of the whole, to the digit");
 
     const Audio track = house(44100, 126.0, 40.0, 0.25);
-    const Analysis whole = analyse(track.samples, track.rate, TempoRange{88.0, 175.0});
-    Analyser analyser(track.rate, TempoRange{88.0, 175.0});
-    inPieces(track, analyser);
-    const Analysis pieces = analyser.finish();
+    const Analysis whole = analyze(track.samples, track.rate, TempoRange{88.0, 175.0});
+    Analyzer analyzer(track.rate, TempoRange{88.0, 175.0});
+    inPieces(track, analyzer);
+    const Analysis pieces = analyzer.finish();
     bool sameWaveform = whole.waveform.entries.size() == pieces.waveform.entries.size() && whole.waveform.sampleCount == pieces.waveform.sampleCount;
     for (std::size_t i = 0; sameWaveform && i < whole.waveform.entries.size(); ++i) {
         sameWaveform = whole.waveform.entries[i].low == pieces.waveform.entries[i].low && whole.waveform.entries[i].overall == pieces.waveform.entries[i].overall;
@@ -624,23 +624,23 @@ void audioInPiecesIsTheAudioWhole()
               && sameWaveform && pieces.revisions == revisions(),
           "an analysis fed in pieces is the analysis of the whole, to the digit");
 
-    BeatGridAnalyser none(44100);
-    check(!none.finish().error.empty(), "a grid analyser fed nothing says so");
-    BeatGridAnalyser noRate(0);
+    BeatGridAnalyzer none(44100);
+    check(!none.finish().error.empty(), "a grid analyzer fed nothing says so");
+    BeatGridAnalyzer noRate(0);
     noRate.feed(track.samples);
-    check(!noRate.finish().error.empty(), "a grid analyser without a sample rate says so");
-    KeyAnalyser slowKey(4000);
+    check(!noRate.finish().error.empty(), "a grid analyzer without a sample rate says so");
+    KeyAnalyzer slowKey(4000);
     slowKey.feed(track.samples);
-    check(slowKey.finish().error.find("sample rate") != std::string::npos, "a key analyser at 4 kHz says it is the sample rate");
-    KeyAnalyser spent(44100);
+    check(slowKey.finish().error.find("sample rate") != std::string::npos, "a key analyzer at 4 kHz says it is the sample rate");
+    KeyAnalyzer spent(44100);
     spent.feed(track.samples);
-    check(spent.finish().error.empty(), "a key analyser at 44.1 kHz reads a track");
+    check(spent.finish().error.empty(), "a key analyzer at 44.1 kHz reads a track");
     spent.feed(track.samples);
-    check(spent.finish().error == "no samples", "a key analyser that has given its key is spent, and does not blame the sample rate");
-    Analyser nothing(44100);
+    check(spent.finish().error == "no samples", "a key analyzer that has given its key is spent, and does not blame the sample rate");
+    Analyzer nothing(44100);
     const Analysis empty = nothing.finish();
     check(!empty.grid.error.empty() && !empty.key.error.empty() && empty.waveform.entries.empty() && empty.bpm == 0.0,
-          "an analyser fed nothing: errors, and nothing made up");
+          "an analyzer fed nothing: errors, and nothing made up");
 }
 
 void theVersionIsTheHeaders()
@@ -665,7 +665,7 @@ int main(int argc, char **argv)
     }
     theVersionIsTheHeaders();
     theRangeIsMadeValid();
-    whatCannotBeAnalysedSaysSo();
+    whatCannotBeAnalyzedSaysSo();
     theOneCallIsItsParts();
     piecesGiveTheWhole();
     audioInPiecesIsTheAudioWhole();
