@@ -269,11 +269,13 @@ public:
     // ledger once the save has committed (analysis_ledger_record.hpp),
     // with the grid each library holds afterwards.
     //
-    // A file that is another size, or was last changed at another time,
-    // at the save than the provenance says it was when analysed was
-    // replaced on the computer since: it is imported as a file nobody
-    // analysed (no grid, no waveform, no analysis files, its tempo and key
-    // as its tags give them, no ledger entry), and the save's log says so.
+    // A file that is another size, or was last changed at another time
+    // (more than 2 seconds apart, and not exactly one hour), at the save
+    // than the provenance says it was when analysed was replaced on the
+    // computer since: it is imported as a file nobody analysed (no grid,
+    // no waveform, no analysis files, its tempo and key as its tags give
+    // them, no ledger entry), and the save's log says so. So is a file
+    // whose analysis has no provenance.
     void setAnalysis(std::shared_ptr<const ImportAnalysis> analysis);
     bool analysed() const { return static_cast<bool>(m_analysis); }
     const std::shared_ptr<const ImportAnalysis> &analysis() const { return m_analysis; }

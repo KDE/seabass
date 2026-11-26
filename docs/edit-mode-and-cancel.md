@@ -139,6 +139,16 @@ label plus size only counts as weak and the dialog says so). A stick
 pulled mid-write fails the save at the next I/O error; the summary says
 "k of N, then: <error>", and the session stays dirty.
 
+A save's imports and Browse playlist edits do not write export.pdb one
+change at a time. They share one copy of the file in memory and write it
+once: before the first change that opens the file on its own, and at the
+end of the save (`sharedPdbRows()`, `SaveContext::landHeldWrites()`). A
+crash or a pulled stick before that write leaves export.pdb without every
+one of those changes since the last write, while OneLibrary and Engine may
+already have theirs. When each change wrote the file itself, the gap was
+one change at most. The undo copy taken before the save holds all three
+libraries as they were, and Undo Last Save puts them back alike.
+
 ## Two instances
 
 - A second window sees READ ONLY on every library-manipulating card of

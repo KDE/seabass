@@ -281,6 +281,45 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // that one starts from the copies taken before the save, so a stick it
     // put back has nothing left of the change whose put-back failed.
     std::optional<QString> changeUndoError;
+    // The changes that share the save's held writes (the export.pdb rows,
+    // PendingChange::sharesHeldWrites()) applied since those last landed:
+    // whose rows a landing writes, and whose a failed one names.
+    std::vector<size_t> holding;
+    // Lands the held writes before changes[before], or at the end when
+    // there is none. A landing that fails is the failure of the changes
+    // whose rows it held, not of the change after it, which never ran: it
+    // is reported as theirs (failedId the last of them), and the save goes
+    // back whole. Nothing of a change is open then, so no change is rolled
+    // back on its own.
+    const auto land = [&](std::optional<size_t> before) {
+        try {
+            ctx.landHeldWrites();
+            holding.clear();
+            return true;
+        } catch (const std::exception &e) {
+            QString whose;
+            if (!holding.empty()) {
+                const auto &last = changes[holding.back()];
+                result.failedId = last->id();
+                whose = holding.size() == 1
+                            ? QStringLiteral("the rows \"%1\" held for export.pdb").arg(last->description())
+                            : QStringLiteral("the rows %1 changes held for export.pdb (the last of them \"%2\")")
+                                  .arg(holding.size())
+                                  .arg(last->description());
+            } else {
+                whose = QStringLiteral("the rows held for export.pdb");
+            }
+            result.error = QStringLiteral("%1 were not written: %2").arg(whose, QString::fromStdString(e.what()));
+            if (!ctx.rekordboxPath().isEmpty() || !ctx.enginePath().isEmpty()) {
+                ctx.log().record("save: stopped "
+                                 + (before ? "before \"" + changes[*before]->description().toStdString() + "\""
+                                           : std::string("at the end"))
+                                 + ": " + result.error.toStdString());
+            }
+            ctx.markSaveFailed();
+            return false;
+        }
+    };
     for (size_t index = 0; index < changes.size(); ++index) {
         const auto &change = changes[index];
         // Between units only: the rest of a unit a cancel arrived inside
@@ -308,15 +347,15 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             continue;
         }
         ctx.status(change->subject());
+        // What the changes before it hold in memory (the save's one
+        // export.pdb buffer) reaches the file before a change that may open
+        // the file itself.
+        if (!change->sharesHeldWrites() && !land(index)) {
+            break;
+        }
         ChangeOutcome outcome;
         bool damagedRowSkipped = false;
         try {
-            // What the changes before it hold in memory (the save's one
-            // export.pdb buffer) reaches the file before a change that may
-            // open the file itself.
-            if (!change->sharesHeldWrites()) {
-                ctx.landHeldWrites();
-            }
             // Every 200th and any slow one: a save holds over a thousand
             // changes, and a CI log is capped (#144).
             QElapsedTimer applyTimer;
@@ -389,6 +428,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         if (!damagedRowSkipped) {
             ctx.endChange();
         }
+        if (change->sharesHeldWrites()) {
+            holding.push_back(index);
+        }
         landedKeys << change->unitKeys();
         result.appliedIds << change->id();
         if (outcome.skipped) {
@@ -415,15 +457,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // save, before anything below reads the stick (the import record, the
     // scratch copies' commit). Not after a failure: the save goes back.
     if (!ctx.saveFailed()) {
-        try {
-            ctx.landHeldWrites();
-        } catch (const std::exception &e) {
-            result.error = QString::fromStdString(e.what());
-            if (!ctx.rekordboxPath().isEmpty() || !ctx.enginePath().isEmpty()) {
-                ctx.log().record("save: " + std::string(e.what()));
-            }
-            ctx.markSaveFailed();
-        }
+        (void)land(std::nullopt);
     }
     QString importWarning = ctx.saveFailed() ? QString() : keepImportLevel(ctx, importLevelWanted);
 

@@ -384,7 +384,16 @@ public:
     // calls it before every change that does not share them (whatever it
     // opens on its own then reads the file with every row in it) and once
     // after the last change, before anything reads the stick to finish the
-    // save. Never after a failure: a save that goes back drops them.
+    // save. Never after a failure: a save that goes back drops them, and
+    // after rollBackSave() this is a no-op.
+    //
+    // A crash or a pulled stick mid-save therefore leaves export.pdb behind
+    // the other libraries by every change whose rows were held since the
+    // last landing, where a change that wrote the file itself left it
+    // behind by that one change at most: the other libraries' rows of an
+    // import or a playlist edit may be on the stick while export.pdb has
+    // none of that stretch. The backup taken before the save, which Undo
+    // Last Save restores, covers all of it alike.
     void landHeldWrites();
 
     void onFinish(std::function<void(bool ok)> hook);

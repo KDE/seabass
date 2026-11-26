@@ -220,7 +220,14 @@ FormatWriteSession *existingFormatWriteSession(SaveContext &ctx, const std::stri
 // committed by the change. The rows are held until
 // SaveContext::landHeldWrites() writes them: before the first change that
 // does not share them, and after the last change. A save that fails goes
-// back without them.
+// back without them. A crash or a pulled stick before a landing loses
+// every held change's rows from export.pdb, not one change's
+// (SaveContext::landHeldWrites() says what that leaves).
+//
+// A change calls PdbRowWriter::endEdit() where it used to commit a writer
+// of its own, after each edit that writer committed: so the file written
+// once is byte for byte the file those writers left, each page's last
+// transaction and sequence included.
 //
 // Only for a change that answers PendingChange::sharesHeldWrites() with
 // true, and so never opens the file any other way. One that has to,

@@ -419,10 +419,15 @@ namespace
 {
 
 // The writer sharedPdbRows() hands out, while it holds rows: none between
-// a landing and the next change to ask.
+// a landing and the next change to ask. Owned with the landing that
+// SaveContext keeps, not only by the save's shared resources: what keeps
+// a held writer from landing after the save went back is that
+// SaveContext::rollBackSave() drops the landing, never a writer that
+// happens to be gone.
 struct HeldPdbRows
 {
-    std::optional<infrastructure::rekordbox::PdbRowWriter> writer;
+    std::shared_ptr<std::optional<infrastructure::rekordbox::PdbRowWriter>> writer =
+        std::make_shared<std::optional<infrastructure::rekordbox::PdbRowWriter>>();
 };
 
 }  // namespace
@@ -439,18 +444,21 @@ infrastructure::rekordbox::PdbRowWriter &sharedPdbRows(SaveContext &ctx, const F
         return std::make_unique<HeldPdbRows>();
     });
     if (created) {
-        ctx.onLandHeldWrites([&held, pdb]() {
+        ctx.onLandHeldWrites([writer = held.writer, pdb]() {
             std::optional<infrastructure::rekordbox::PdbRowWriter> landing;
-            landing.swap(held.writer);
+            landing.swap(*writer);
             if (landing && landing->hasEdits() && !landing->commit()) {
-                throw std::runtime_error("could not write " + pdb);
+                // The writer says which: the file changed since it was
+                // read, the edited copy does not read back, or the write
+                // itself failed.
+                throw std::runtime_error(landing->commitRefusal() + " (" + pdb + ")");
             }
         });
     }
-    if (!held.writer) {
-        held.writer.emplace(pdb);
+    if (!*held.writer) {
+        held.writer->emplace(pdb);
     }
-    return *held.writer;
+    return **held.writer;
 }
 
 }  // namespace seabass::gui

@@ -17,7 +17,10 @@
 // 4. a file replaced on the computer after its analysis is imported as
 //    one nobody analysed: its row names no analysis file, no analysis
 //    file is written, its tempo and key are its tags', and the log says
-//    why. The same file not replaced gets all of it.
+//    why. So is one of the same size whose time is more than two seconds
+//    later (but not exactly an hour, as a FAT volume's local time moves
+//    across a switch to summer time), and one whose analysis has no
+//    provenance. The same file not replaced gets all of it.
 
 #include <algorithm>
 #include <cassert>
@@ -355,26 +358,53 @@ int main(int argc, char **argv)
             analysis->provenance = provenance;
             return std::shared_ptr<const ImportAnalysis>(analysis);
         };
+        // How the file at the save differs from the one analysed.
+        enum class Then { Same, OtherSize, Later, NoProvenance };
         struct Case
         {
             std::string name;
-            bool replaced;
+            Then then;
             std::string tagKey;
+            int seconds = 0;  // Later: how much later its time is
+            bool replaced() const
+            {
+                return then == Then::OtherSize || then == Then::NoProvenance
+                       || (then == Then::Later && seconds > 2 && seconds != 3600);
+            }
         };
-        const std::vector<Case> cases{{"kept.wav", false, "Am"},
-                                      {"kept keyless.wav", false, ""},
-                                      {"replaced.wav", true, "Am"},
-                                      {"replaced keyless.wav", true, ""}};
+        const std::vector<Case> cases{{"kept.wav", Then::Same, "Am"},
+                                      {"kept keyless.wav", Then::Same, ""},
+                                      {"replaced.wav", Then::OtherSize, "Am"},
+                                      {"replaced keyless.wav", Then::OtherSize, ""},
+                                      // The same size, the time ten seconds on.
+                                      {"touched.wav", Then::Later, "", 10},
+                                      // Within FAT's two seconds.
+                                      {"within two seconds.wav", Then::Later, "", 2},
+                                      // An hour on: a FAT volume's local time
+                                      // across a switch to summer time.
+                                      {"an hour on.wav", Then::Later, "", 3600},
+                                      {"an hour and ten seconds on.wav", Then::Later, "", 3610},
+                                      // An analysis that cannot say which file
+                                      // it is of.
+                                      {"no provenance.wav", Then::NoProvenance, ""}};
         std::vector<std::shared_ptr<PendingChange>> changes;
         for (const Case &c : cases) {
             const fs::path source = computer / "replaced" / c.name;
             testing::writeSilentWav(source, 44100, 10);
             auto change = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
                                                               QString(), describe("/Contents/Replaced/" + c.name, 7, c.tagKey),
-                                                              RekordboxOnly, 4);
-            change->setAnalysis(analysisOf(source, "F#m"));
-            if (c.replaced) {
+                                                              RekordboxOnly, static_cast<int>(cases.size()));
+            auto analysis = analysisOf(source, "F#m");
+            if (c.then == Then::NoProvenance) {
+                auto without = std::make_shared<ImportAnalysis>(*analysis);
+                without->provenance.reset();
+                analysis = without;
+            }
+            change->setAnalysis(analysis);
+            if (c.then == Then::OtherSize) {
                 testing::writeSilentWav(source, 44100, 11);  // another file in its place, of another size
+            } else if (c.then == Then::Later) {
+                fs::last_write_time(source, fs::last_write_time(source) + std::chrono::seconds(c.seconds));
             }
             changes.push_back(change);
         }
@@ -392,23 +422,30 @@ int main(int argc, char **argv)
             const auto row = pdbRowOf(pdb, "/Contents/Replaced/" + c.name);
             assert(row);
             const std::string said = "/Contents/Replaced/" + c.name + " is not recorded in the analysis ledger";
-            if (c.replaced) {
+            const std::string unsaid = "/Contents/Replaced/" + c.name + " is imported without its analysis";
+            std::cerr << "  " << c.name << ": " << (row->analyzePath.empty() ? "without" : "with") << " its analysis\n";
+            if (c.replaced()) {
                 assert(row->analyzePath.empty() && "no analysis file named");
                 assert(row->tempo == 12650 && "the tag's tempo, not the analysis's");
                 assert(keys.at(c.name) == c.tagKey && "the tag's key, or none");
-                assert(log.find(said) != std::string::npos
-                       && log.find("It was replaced on the computer after its analysis, so it is imported without that analysis")
-                              != std::string::npos);
+                if (c.then == Then::NoProvenance) {
+                    assert(log.find(unsaid + ": the analysis does not say which file it is of") != std::string::npos);
+                } else {
+                    assert(log.find(said) != std::string::npos
+                           && log.find("It was replaced on the computer after its analysis, so it is imported without that analysis")
+                                  != std::string::npos);
+                }
             } else {
                 assert(!row->analyzePath.empty() && "the analysis files named");
                 assert(fs::exists(stick.root / pathFromUtf8(row->analyzePath.substr(1))));
                 assert(row->tempo == 12000 && "the analysis's tempo");
                 assert(keys.at(c.name) == (c.tagKey.empty() ? std::string("F#m") : c.tagKey));
-                assert(log.find(said) == std::string::npos);
+                assert(log.find(said) == std::string::npos && log.find(unsaid) == std::string::npos);
             }
         }
-        std::cout << "case 4 (a file replaced after its analysis: no analysis file, the tags' tempo and key, the log says "
-                     "why; one not replaced gets all of it) OK\n";
+        std::cout << "case 4 (a file replaced after its analysis, by its size or by its time, or an analysis without "
+                     "provenance: no analysis file, the tags' tempo and key, the log says why; one not replaced, or only "
+                     "two seconds or an hour apart, gets all of it) OK\n";
     }
 
     std::cout << "import_held_rows_test: all cases passed\n";

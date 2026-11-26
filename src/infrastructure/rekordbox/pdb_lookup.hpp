@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,13 +34,21 @@ std::string extAnlzPath(const std::string &pioneerRoot, const std::string &analy
 std::string datAnlzPath(const std::string &pioneerRoot, const std::string &analyzePath);
 
 // Walks every page of a table, invoking visitDataPage(page) for each page
-// that actually holds row data.
+// that actually holds row data. A chain that comes back to a page it has
+// passed never reaches the table's last page: refused with
+// std::runtime_error rather than walked for ever.
 template<typename Visitor>
 void forEachDataPage(rekordbox_pdb_t::table_t &table, Visitor visitDataPage)
 {
     uint32_t lastIndex = table.last_page()->index();
     rekordbox_pdb_t::page_ref_t *pageRef = table.first_page();
+    std::set<uint32_t> passed;
     while (true) {
+        if (!passed.insert(pageRef->index()).second) {
+            throw std::runtime_error("export.pdb: the pages of table " + std::to_string(static_cast<int>(table.type()))
+                                     + " lead back to page " + std::to_string(pageRef->index())
+                                     + " and never reach the table's last page, " + std::to_string(lastIndex));
+        }
         rekordbox_pdb_t::page_t *page = pageRef->body();
         if (page->is_data_page()) {
             visitDataPage(page);

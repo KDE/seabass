@@ -319,6 +319,9 @@ QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const
                 parentId = *folder;
             }
             rows.createPlaylist(parentId, name, false);
+            // Where a writer of its own was committed: the edit closed as
+            // that commit closed it (PdbRowWriter::endEdit()).
+            rows.endEdit();
             session.noteItemApplied();
             created << QStringLiteral("rekordbox");
         }
@@ -494,6 +497,7 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
             infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             if (const auto id = pdbPlaylistId(rows, m_playlist)) {
                 if (rows.deletePlaylist(*id) > 0) {
+                    rows.endEdit();
                     session.noteItemApplied();
                     ++deleted;
                 }
@@ -611,6 +615,7 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
             if (!playlist || ids.empty()) {
                 leftAlone.push_back(playlist ? "rekordbox has no row for the file" : "rekordbox has no such playlist");
             } else if (rows.appendPlaylistEntries(*playlist, {ids.front()}) > 0) {
+                rows.endEdit();
                 session.noteItemApplied();
                 ++added;
                 // At its place: the entries rewritten in the new order, as
@@ -619,7 +624,9 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
                     std::string why;
                     if (const auto order = movedOrder(rows.playlistTrackIds(*playlist), std::set<uint32_t>{ids.front()},
                                                       *m_toIndex, "rekordbox", why)) {
-                        (void)rows.reorderPlaylist(*playlist, *order);
+                        if (rows.reorderPlaylist(*playlist, *order)) {
+                            rows.endEdit();
+                        }
                     } else {
                         notPlaced.push_back(why);
                     }
@@ -781,6 +788,7 @@ ChangeOutcome RemoveFromPlaylistChange::apply(SaveContext &ctx)
             if (playlist && !ids.empty()) {
                 const size_t n = rows.removePlaylistEntries(*playlist, std::set<uint32_t>(ids.begin(), ids.end()));
                 if (n > 0) {
+                    rows.endEdit();
                     session.noteItemApplied();
                     removed += n;
                 }
@@ -898,6 +906,7 @@ ChangeOutcome MoveInPlaylistChange::apply(SaveContext &ctx)
             } else if (const auto order = movedOrder(rows.playlistTrackIds(*playlist),
                                                      std::set<uint32_t>(ids.begin(), ids.end()), m_toIndex, "rekordbox", why)) {
                 if (rows.reorderPlaylist(*playlist, *order)) {
+                    rows.endEdit();
                     session.noteItemApplied();
                     ++moved;
                 } else {
@@ -1071,6 +1080,7 @@ ChangeOutcome PlaceInPlaylistChange::apply(SaveContext &ctx)
                                               ? orderWithRunAt(rows.playlistTrackIds(*playlist), run, m_toIndex)
                                               : std::nullopt) {
                 if (rows.reorderPlaylist(*playlist, *order)) {
+                    rows.endEdit();
                     session.noteItemApplied();
                     ++moved;
                 } else {
@@ -1275,6 +1285,7 @@ ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
                                          static_cast<int>(pdbPlaylistIds(rows, renamed).size()))) {
                 leftAlone.push_back(*why);
             } else if (rows.renamePlaylist(ids.front(), m_newName)) {
+                rows.endEdit();
                 session.noteItemApplied();
                 ++done;
             }

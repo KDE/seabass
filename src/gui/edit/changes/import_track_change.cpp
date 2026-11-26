@@ -523,13 +523,35 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     // The analysis is of the file as it was when it was staged. A file
     // replaced on the computer since then (another size or another time)
     // is imported as a file nobody analysed: no grid, no waveform, its
-    // tempo and key from its tags alone, and no entry in the ledger.
+    // tempo and key from its tags alone, and no entry in the ledger. So is
+    // one whose analysis has no provenance: analyseForImport() gives none
+    // when the file changed while it was read, and an analysis that cannot
+    // say which file it is of is not taken for this one.
+    //
+    // The times are compared to within 2 seconds, since FAT keeps a file's
+    // time to two seconds. A difference of exactly one hour with the same
+    // size is the same file: on Windows a FAT volume's times are local
+    // time, and they move by an hour across a switch to or from summer
+    // time.
     std::shared_ptr<const ImportAnalysis> analysis = m_analysis;
     domain::ImportedTrack track = m_track;
     bool keyFromAnalysis = m_keyFromAnalysis;
     const std::optional<std::int64_t> sourceMtime = fileMtimeUnixOf(source);
-    if (analysis && analysis->provenance
-        && (sourceSize != analysis->provenance->fileSize || sourceMtime != analysis->provenance->fileMtimeUnix)) {
+    const auto isTheFileAnalysed = [&](const ImportAnalysis::Provenance &analysed) {
+        if (sourceSize != analysed.fileSize || !sourceMtime) {
+            return false;
+        }
+        const std::int64_t apart =
+            *sourceMtime > analysed.fileMtimeUnix ? *sourceMtime - analysed.fileMtimeUnix : analysed.fileMtimeUnix - *sourceMtime;
+        return apart <= 2 || apart == 3600;
+    };
+    if (analysis && !analysis->provenance) {
+        ctx.log().record(std::string(Label) + ": " + m_track.stickPath
+                         + " is imported without its analysis: the analysis does not say which file it is of (the "
+                           "file changed while it was read), so no beat grid and no waveform, its tempo and key only as "
+                           "its tags give them");
+        analysis.reset();
+    } else if (analysis && !isTheFileAnalysed(*analysis->provenance)) {
         const ImportAnalysis::Provenance &analysed = *analysis->provenance;
         ctx.log().record(std::string(Label) + ": " + m_track.stickPath
                          + " is not recorded in the analysis ledger: the file copied (" + std::to_string(sourceSize)
@@ -539,6 +561,8 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                          + "). It was replaced on the computer after its analysis, so it is imported without that "
                            "analysis: no beat grid and no waveform, its tempo and key only as its tags give them");
         analysis.reset();
+    }
+    if (!analysis && m_analysis) {
         track.bpm = m_tagBpm;
         if (keyFromAnalysis) {
             track.key.clear();
@@ -766,6 +790,9 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             if (!pdbRow.artworkPath.empty()) {
                 writePictures(pdbRow.artworkPath);
             }
+            // Where the track's own writer was committed: its edit closed
+            // as that commit closed it (PdbRowWriter::endEdit()).
+            pdbRows->endEdit();
         }
         if (toOneLibrary) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);

@@ -1015,6 +1015,10 @@ std::optional<QString> SaveContext::rollBackSave()
     // is a change or a finish to call them for.
     m_changeEndHooks.clear();
     m_finishHooks.clear();
+    // The held writes go too: landed after the stick went back, they would
+    // write the failed save's rows onto it. A landing after this has
+    // nothing to land.
+    m_landHeldWrites.clear();
     m_wholeSaveShared.clear();
 
     std::set<std::string> notPutBack;

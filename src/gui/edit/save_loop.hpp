@@ -31,7 +31,12 @@ struct SaveLoopResult
     // repair let "1174 of 1174 tracks repaired" stand over a save whose
     // images had all become unreadable since the scan.
     QStringList skippedIds;
-    QString failedId;        // the change that failed, if any (it and everything after it stay pending)
+    // The change that failed, if any (it and everything after it stay
+    // pending). When writing the rows the changes before had held for
+    // export.pdb failed (SaveContext::landHeldWrites()), the last of those
+    // changes, and `error` names them and says why the rows were not
+    // written; empty when none had held any.
+    QString failedId;
     QString error;           // empty unless a change or a finish hook failed
     // Everything landed, but a tidy-up after it did not -- a write-ahead
     // log that would not fold. Not an error: the changes ARE applied, and

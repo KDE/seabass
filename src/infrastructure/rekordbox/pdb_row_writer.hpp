@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -602,8 +603,32 @@ public:
     // false, leaving the original file completely untouched, if nothing
     // was ever successfully edited, the file on disk changed since
     // construction, the edited buffer fails to re-parse, or the
-    // write/rename failed.
+    // write/rename failed; commitRefusal() then says which.
+    //
+    // The re-parse includes, for every table this writer added a row to
+    // since it opened the file or last committed, a walk of that table's
+    // pages with the app's parser: every present row's fixed fields and,
+    // in the tables of names (artists, albums, genres, labels, keys,
+    // artwork), its name are read, and every row added has to be reached
+    // through the table's page chain. A table the writer did not add to is
+    // left to the reader that meets it.
     bool commit();
+    // Why the last commit() returned false, in a plain sentence; empty
+    // after one that wrote the file.
+    const std::string &commitRefusal() const { return m_commitRefusal; }
+
+    // Closes one edit of a writer that several edits share, as a save's
+    // changes share one (sharedPdbRows()): does to the pages written since
+    // the last endEdit() or commit() what commit() does to them (each
+    // page's last transaction for the rows deleted from it, the playlist
+    // pages listed on their table's index page, each page's sequence and
+    // then the header's), without writing anything. So the file one
+    // commit() writes at the end is byte for byte the file a writer per
+    // edit, each committed in turn, would have left: a page that one edit
+    // appended to and a later one deleted from ends with the later edit's
+    // transaction, as it did when every edit was committed on its own. A
+    // no-op when nothing was written since the last close.
+    void endEdit();
 
     // How many fields this writer had to cut a placeholder short to fit.
     //
@@ -623,7 +648,7 @@ public:
 
     // Whether anything was written to the buffer since construction or the
     // last commit(): what commit() would refuse for want of.
-    bool hasEdits() const { return !m_editedPageIndices.empty(); }
+    bool hasEdits() const { return !m_editedPageIndices.empty() || m_editsClosed; }
     const std::string &path() const { return m_pdbPath; }
 
     // For tests: the work this thread's writers have done, counted from
@@ -637,12 +662,17 @@ public:
         std::size_t bytesCopied = 0;
     };
     static WorkCounts workCountsForTesting();
-    // For tests: false makes addTrack(), nextArtworkId(),
-    // trackIdsWithFilePath() and appendPlaylistEntries() answer as they
-    // did before the row index, by walking the tables on every call and
-    // copying the whole buffer to undo a refused track: the reference a
-    // test holds the indexed answers against. True by default.
+    // For tests: false makes addTrack(), setTrackTempoAndKey(),
+    // nextArtworkId(), trackIdsWithFilePath() and appendPlaylistEntries()
+    // answer as they did before the row index (commit f4362099), by
+    // walking the tables on every call and copying the whole buffer to
+    // undo a refused edit: the reference a test holds the indexed answers
+    // against. Such a writer never builds the index. True by default.
     void setIndexedForTesting(bool indexed) { m_indexed = indexed; }
+    // For tests: the buffer the writer edits, to make of it what a bug in
+    // this class could (a page linked wrongly, a page that no longer
+    // parses) and see commit() refuse it.
+    std::string &bufferForTesting() { return m_buffer; }
     // For tests: builds every part of the row index not built now.
     void buildIndexForTesting();
     // For tests: how each built part of the row index differs from one
@@ -654,12 +684,21 @@ private:
     Format m_format = Format::Export;
     std::string m_pdbPath;
     std::string m_buffer;
+    // The pages written since the last endEdit() or commit().
     std::set<uint32_t> m_editedPageIndices;
-    // Rows this session deleted, by page, as row indices: commit() records
-    // them as the page's last transaction, the way rekordbox does, unless
-    // the page was also appended to (appendPlaylistEntries writes its own).
+    // Whether an endEdit() since the last commit() closed pages that
+    // commit() has still to write.
+    bool m_editsClosed = false;
+    std::string m_commitRefusal;
+    // Rows deleted since the last endEdit() or commit(), by page, as row
+    // indices: closed, they are recorded as the page's last transaction,
+    // the way rekordbox does, unless the page was also appended to in the
+    // same edit (appendRowsToPage() writes its own).
     std::map<uint32_t, std::set<uint32_t>> m_deletedRowsByPage;
     std::set<uint32_t> m_appendedPages;
+    // What endEdit() and commit() do to the pages written since the last
+    // close.
+    void closeEdit();
     // Where placeRows() puts new rows of one table: how many on its last
     // page, or how many on each new page.
     struct RowPlacement
@@ -701,6 +740,15 @@ private:
     // inside themselves), and says where it went.
     RowAt addRow(uint32_t tableType, const std::function<std::string(uint32_t rowIndex)> &rowAt);
     uint32_t addTrackUnindexed(const NewTrack &track);
+    bool setTrackTempoAndKeyUnindexed(uint32_t trackId, double bpm, const std::string &key, bool *keyWritten);
+
+    // The rows appendRowsToPage() wrote since the last commit(), by table
+    // type, less those deleted again: what commit() makes sure its table's
+    // page chain reaches.
+    std::map<uint32_t, std::set<RowAt>> m_rowsAdded;
+    // Why the tables rows were added to do not read back, or empty when
+    // they do (commit()).
+    std::string addedRowsRefusal() const;
 
     // What addTrack() and the calls a save makes per track look up, built
     // from the buffer once per part, on first use, and kept up to date by
@@ -723,15 +771,31 @@ private:
     struct AlbumTableIndex
     {
         uint32_t highestId = 0;
-        // (album artist id, name) to the lowest id, as NameTableIndex.
+        // (album artist id, name) to the id the walk addTrack() made before
+        // the index would find: over the present rows spelled so, in table
+        // order, an id replaces the one found when none is found yet (0) or
+        // it is lower. So it is the lowest id, except that a row of id 0
+        // takes the place of a higher one and the next row's id follows it
+        // whatever it is (3, 0, 5 in table order give 5). 0: none, and a
+        // new album is made.
         std::map<std::pair<uint32_t, std::string>, uint32_t> idByArtistAndName;
+        // Rows of id 0 left out.
         std::map<uint32_t, RowAt> rowById;
         bool operator==(const AlbumTableIndex &) const = default;
+    };
+    // A string of a row that the app's parser cannot read: what it threw.
+    // Equal by the message, which is what a test can compare.
+    struct Unreadable
+    {
+        std::string what;
+        std::exception_ptr error;
+        bool operator==(const Unreadable &other) const { return what == other.what; }
     };
     struct TrackTableIndex
     {
         uint32_t highestId = 0;
-        // The present rows in table order: its id and file_path.
+        // The present rows in table order: its id and file_path (empty when
+        // it cannot be read).
         std::map<std::uint64_t, std::pair<uint32_t, std::string>> rowsInOrder;
         std::uint64_t nextOrder = 0;
         // Places in that order, by application::normalizedPathKey() of the
@@ -740,6 +804,12 @@ private:
         std::map<std::string, std::set<std::uint64_t>> byAnalysisKey;
         // Ids by file_path as stored, trailing blanks trimmed, in order.
         std::map<std::string, std::vector<uint32_t>> idsByPath;
+        // Places of the rows whose file_path, or (of a row whose file_path
+        // reads) whose analyze_path, the parser cannot read, with what it
+        // threw: the walks the index replaced read those strings only when
+        // they had to and threw there, and so do the indexed calls.
+        std::map<std::uint64_t, Unreadable> unreadablePath;
+        std::map<std::uint64_t, Unreadable> unreadableAnalysis;
         bool operator==(const TrackTableIndex &) const = default;
     };
     struct EntryTableIndex
@@ -766,8 +836,9 @@ private:
         std::optional<EntryTableIndex> entries;
         std::optional<uint32_t> historyHighestTrackId;
     };
-    static void noteTrackRow(TrackTableIndex &index, uint32_t id, const std::string &filePath,
-                             const std::string &analyzePath);
+    // `filePath` and `analyzePath` read the row's strings, and may throw.
+    static void noteTrackRow(TrackTableIndex &index, uint32_t id, const std::function<std::string()> &filePath,
+                             const std::function<std::string()> &analyzePath);
     static void noteNameRow(NameTableIndex &index, uint32_t id, const std::string &name, RowAt at);
     static void noteAlbumRow(AlbumTableIndex &index, uint32_t id, uint32_t artistId, const std::string &name, RowAt at);
     static void noteEntryRow(EntryTableIndex &index, uint32_t playlistId, uint32_t trackId, uint32_t entryIndex);
@@ -794,6 +865,7 @@ private:
         std::map<uint32_t, std::string> pages;
         std::vector<uint32_t> newlyEdited;
         std::vector<uint32_t> newlyAppended;
+        std::vector<std::pair<uint32_t, RowAt>> rowsAdded;  // by table type
         std::set<uint32_t> tablesIndexed;  // index parts the edit changed
     };
     std::optional<Undo> m_undo;
@@ -803,6 +875,10 @@ private:
     // Before a write to `pageIndex`: takes it aside, when an edit that
     // can be undone is under way and has not yet.
     void keepPageForUndo(uint32_t pageIndex);
+    // The same for every page the `length` bytes at `offset` touch: a
+    // table's 16-byte entry in the header can cross into a second page
+    // when pages are small and tables many.
+    void keepBytesForUndo(size_t offset, size_t length);
     void markEdited(uint32_t pageIndex);
     void markAppended(uint32_t pageIndex);
     void rewritePlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
