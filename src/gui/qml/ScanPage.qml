@@ -159,7 +159,10 @@ Page {
     // into the same session; Save copies them to the stick and lists them
     // in every library on it.
     readonly property bool trackImportEnabled: root.appSettingsController.experimentalFeaturesEnabled === true
-    property var trackImportController: TrackImportController {}
+    // Switched off, it stages nothing new; what waits stays staged.
+    property var trackImportController: TrackImportController {
+        experimentalEnabled: root.trackImportEnabled
+    }
     Connections {
         target: ("objectName" in root.trackImportController) ? root.trackImportController : null
         ignoreUnknownSignals: true
@@ -222,6 +225,7 @@ Page {
     SeabassDialog {
         id: importPlaylistDialog
         objectName: "importPlaylistDialog"
+        contentHeightFollowsContent: true
         property var files: []
         severity: SeabassDialog.Question
         title: qsTr("Import into a new playlist")
@@ -254,6 +258,7 @@ Page {
     SeabassDialog {
         id: importResultDialog
         objectName: "importResultDialog"
+        contentHeightFollowsContent: true
         property var outcome: ({})
         readonly property int staged: outcome.staged ?? 0
         readonly property var notImported: outcome.notImported ?? []
@@ -360,6 +365,7 @@ Page {
     SeabassDialog {
         id: reanalysisResultDialog
         objectName: "reanalysisResultDialog"
+        contentHeightFollowsContent: true
         property var outcome: ({})
         readonly property int analysed: outcome.analysed ?? 0
         readonly property int leftAlone: outcome.leftAlone ?? 0
@@ -438,6 +444,7 @@ Page {
     SeabassDialog {
         id: cueReviewDialog
         objectName: "cueReviewDialog"
+        contentHeightFollowsContent: true
         readonly property var tracks: root.trackImportController.cueReview ?? []
         readonly property var tooDifferent: root.trackImportController.cueReviewTooDifferent ?? []
         readonly property int thresholdMs: root.trackImportController.cueFollowThresholdMs ?? 0

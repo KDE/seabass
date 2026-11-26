@@ -56,6 +56,69 @@ TestCase {
         }
     }
 
+    // A style that gives the dialog a content item of its own, as the
+    // desktop style does: the content height is then the style's to
+    // decide, unless the dialog asks for it to follow the content.
+    Component {
+        id: ownContentItemComponent
+        SeabassDialog {
+            title: "A content item of the style's"
+            headline: "One line."
+            contentItem: Item {}
+            footer: DialogButtonBox {
+                Button { objectName: "close"; text: "Close" }
+            }
+        }
+    }
+
+    Component {
+        id: growingComponent
+        SeabassDialog {
+            title: "Content that grows"
+            headline: "One line."
+            contentHeightFollowsContent: true
+            footer: DialogButtonBox {
+                Button { objectName: "close"; text: "Close" }
+            }
+        }
+    }
+
+    // The content height is the style's for a dialog that does not ask
+    // (every dialog but the track import's), as it was before that option
+    // came; one that asks has it follow its content as it grows.
+    function test_theContentHeightFollowsTheContentOnlyWhenAsked() {
+        const plain = createTemporaryObject(ownContentItemComponent, testCase);
+        plain.open();
+        tryCompare(plain, "opened", true);
+        const plainRow = findChild(plain, "seabassDialogContent");
+        verify(plainRow.implicitHeight > 0);
+        compare(plain.contentHeightFollowsContent, false);
+        compare(plain.contentHeight, plain.implicitContentHeight, "the style's");
+        verify(plain.contentHeight !== plainRow.implicitHeight,
+               "not the content's: " + plain.contentHeight + " and " + plainRow.implicitHeight);
+        plain.close();
+        tryCompare(plain, "visible", false);
+
+        const asking = createTemporaryObject(ownContentItemComponent, testCase, {contentHeightFollowsContent: true});
+        asking.open();
+        tryCompare(asking, "opened", true);
+        const row = findChild(asking, "seabassDialogContent");
+        compare(asking.contentHeight, row.implicitHeight, "the content's, not the style's");
+        asking.close();
+        tryCompare(asking, "visible", false);
+
+        // And as the content grows while the dialog is open.
+        const growing = createTemporaryObject(growingComponent, testCase);
+        growing.open();
+        tryCompare(growing, "opened", true);
+        const grows = findChild(growing, "seabassDialogContent");
+        const before = growing.contentHeight;
+        compare(before, grows.implicitHeight);
+        growing.detailText = "A second line.\nA third.\nAnd a fourth.";
+        tryVerify(() => grows.implicitHeight > before, 5000, "the content grows: " + grows.implicitHeight);
+        compare(growing.contentHeight, grows.implicitHeight, "and the content height with it");
+    }
+
     // A relayout of the button box, as a button joining it, its alignment
     // changing or it being shown again would cause.
     function relayout(box) {

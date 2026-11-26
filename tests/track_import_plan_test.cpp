@@ -570,6 +570,85 @@ int main()
         std::cout << "case 19 (more names, and a path of a length Windows takes) OK\n";
     }
 
+    // 20. What the save writes beside each audio file takes room too: the
+    //     three analysis files and their two folders, the cover pictures
+    //     and their Artwork folders, Engine's picture and overview, and
+    //     the libraries' growth. On 128 KiB clusters every small file is
+    //     at least one.
+    {
+        const std::set<std::string> all = {"rekordbox", "onelibrary", "engine"};
+        const ImportSideWrites side = importSideWrites(all, true, true);
+        // 3 analysis files, Engine's overview, 2 + 2 Pioneer pictures,
+        // Engine's picture.
+        assert(side.files.size() == 9);
+        assert(side.foldersPerTrack == 2 && side.sharedFolders == 2 && side.tracksPerSharedFolder == 20);
+        assert(side.libraryGrowth.fixedBytes == 3 * 64 * 1024);
+        assert(importSideWrites(all, false, false).files.empty());
+        assert(importSideWrites({"engine"}, true, false).files.size() == 1 && "Engine has no rekordbox analysis files");
+        assert(importSideWrites({"rekordbox"}, false, true).files.size() == 2);
+
+        constexpr std::uint64_t Cluster = 131072;
+        ImportStick s = stick();
+        s.clusterBytes = Cluster;
+        s.sideWrites = side;
+        // A four-minute track: 240 s.
+        const auto fourMinutes = [](int i) {
+            return offer("/in/" + std::to_string(i) + ".mp3", 100'000, "T" + std::to_string(i), "A", "B", 240.0);
+        };
+        // The first track: its audio (1 cluster), Contents/A/B (3), its
+        // nine small files (the .EXT and .2EX are 16 KiB + 240 * 512 =
+        // 139,264 bytes, 2 clusters each: 12 clusters), its analysis
+        // folders (2) and the two Artwork folders (2), and the libraries'
+        // 192 KiB. Engine's picture of 192 KiB is 2 clusters too: 20
+        // clusters and 192 KiB.
+        const std::uint64_t first = 20 * Cluster + 192 * 1024;
+        // A later one: no audio folders, no Artwork folders.
+        const std::uint64_t later = 15 * Cluster + 192 * 1024;
+        s.freeBytes = first + later;
+        auto plan = planTrackImport({fourMinutes(0), fourMinutes(1), fourMinutes(2)}, s, tools(), {});
+        assert(plan.entries[0].verdict == ImportVerdict::Import);
+        assert(plan.entries[1].verdict == ImportVerdict::Import);
+        assert(plan.entries[2].verdict == ImportVerdict::DoesNotFit);
+        s.freeBytes = first + later - 1;
+        plan = planTrackImport({fourMinutes(0), fourMinutes(1)}, s, tools(), {});
+        assert(plan.entries[0].verdict == ImportVerdict::Import);
+        assert(plan.entries[1].verdict == ImportVerdict::DoesNotFit && "one byte short of the second track's side files");
+
+        // Without them, as before: the audio and its folders alone.
+        s.sideWrites = {};
+        s.freeBytes = 5 * Cluster;
+        plan = planTrackImport({fourMinutes(0), fourMinutes(1)}, s, tools(), {});
+        assert(plan.count(ImportVerdict::Import) == 2);
+
+        // The 21st track starts another Artwork folder in each Pioneer
+        // library.
+        s.sideWrites = side;
+        std::vector<ImportFile> many;
+        for (int i = 0; i < 21; ++i) {
+            many.push_back(fourMinutes(i));
+        }
+        s.freeBytes = first + 19 * later + later + 2 * Cluster;
+        plan = planTrackImport(many, s, tools(), {});
+        assert(plan.count(ImportVerdict::Import) == 21);
+        s.freeBytes -= 1;
+        plan = planTrackImport(many, s, tools(), {});
+        assert(plan.count(ImportVerdict::Import) == 20 && plan.entries[20].verdict == ImportVerdict::DoesNotFit);
+
+        // Where the cluster is not known, a small file or a folder counts
+        // 128 KiB: the audio itself as it is.
+        s.clusterBytes = 0;
+        s.sideWrites = importSideWrites({"rekordbox"}, false, true);
+        // Two pictures and one Artwork folder at 128 KiB each, 64 KiB of
+        // growth, 100,000 bytes of audio.
+        s.freeBytes = 3 * UnknownClusterBytes + 64 * 1024 + 100'000;
+        plan = planTrackImport({fourMinutes(0)}, s, tools(), {});
+        assert(plan.entries[0].verdict == ImportVerdict::Import);
+        s.freeBytes -= 1;
+        plan = planTrackImport({fourMinutes(0)}, s, tools(), {});
+        assert(plan.entries[0].verdict == ImportVerdict::DoesNotFit);
+        std::cout << "case 20 (analysis files, covers, their folders and the libraries' growth take room) OK\n";
+    }
+
     std::cout << "ALL TRACK IMPORT PLAN CASES PASSED\n";
     return 0;
 }

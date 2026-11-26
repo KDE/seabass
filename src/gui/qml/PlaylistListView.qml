@@ -401,11 +401,16 @@ ListView {
             leftPadding: 8
             onClicked: root.createRequested()
             // Files held over the empty part of the list go into a
-            // new playlist: this row says so.
-            background: Rectangle {
+            // new playlist: an outline over the row says so. Over it, not
+            // in place of its background, which shows the row hovered,
+            // pressed and in focus.
+            Rectangle {
+                objectName: "createPlaylistDropOutline"
+                anchors.fill: parent
+                visible: newPlaylistFileDropArea.containsDrag
                 color: "transparent"
                 border.color: Theme.accent
-                border.width: newPlaylistFileDropArea.containsDrag ? 2 : 0
+                border.width: 2
                 radius: Theme.cornerRadius
             }
             contentItem: Row {

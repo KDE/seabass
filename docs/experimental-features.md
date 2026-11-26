@@ -45,19 +45,55 @@ from day one.
   playlist list or its last row (a new playlist, named in a dialog), and
   on the track list (the playlist shown, at the row dropped before when
   the list is in the playlist's own order). `TrackImportController`
-  plans and rehearses the batch off the GUI thread and stages it into
-  the stick's session; Save copies each file, verified, and writes a row
-  into every library the stick has (`ImportTrackChange`: export.pdb,
+  reads, plans and rehearses the batch off the GUI thread and stages it
+  into the stick's session; Save copies each file, verified, and writes a
+  row into every library the stick has (`ImportTrackChange`: export.pdb,
   exportLibrary.db, Engine's m.db), then the playlist entries. One batch
-  at a time, into a session with nothing else staged. The tracks have
-  tags, tempo and key as the file's tags give them, and no beat grid,
-  waveform or cover yet. Verified with this app's own readers and, for
-  export.pdb's rows, byte for byte against rekordbox's
-  (`pdb_row_encoding_test`, `track_import_controller_test`); no player
-  has loaded an imported track. Promote once one has on each family
-  (XDJ-RX2, OMNIS-DUO, Prime 4), and rekordbox has opened the stick.
-  Still owed besides: a WAV's file type measured from a rekordbox export
-  (11 is the published number), covers, the analysis.
+  at a time, into a session with nothing else staged. Before anything is
+  staged, Seabass analyses each file with its own analyser
+  (`lib/musicanalyze`): the beat grid, the waveforms and, for a file
+  whose tags name none, the key. The save writes them as rekordbox's
+  three analysis files (.DAT, .EXT, .2EX) named in both Pioneer rows, and
+  into Engine's row, which is then marked analysed. The cover in the
+  file's tags goes into every library. The plan counts the room all of
+  that takes on the stick (`domain::importSideWrites`), not only the
+  audio. Switching Experimental off stages nothing new; what is staged
+  already stays, for Save or to be taken back.
+
+  **Analyse again** (added 2026-11-26), in a playlist's menu: every track
+  of the playlist analysed again from its audio file on the stick, one
+  change staged per track (`ReanalyseTrackChange`). The new grid and
+  waveforms replace the old ones; everything else in the analysis files
+  stays as it was, and a key a row has is never replaced. A track is left
+  alone, with its reason, when its file is missing or not the size its
+  rows say, when the analysis finds no grid, and on Engine when the
+  player's grid was locked or moved by hand. Cue points and loops sit on
+  beats of the old grid, so the save can move them onto the new one. A
+  review lists each track whose cues would move and by how much, and a
+  switch per track says whether they move. Tracks whose every move is
+  under a threshold (10 ms unless changed, 0 to 100, kept in the
+  settings) start switched on; the rest start off and wait for the
+  person. A switch set by hand stays as set when the threshold changes.
+  A track whose grid changed too much to carry its cues keeps them where
+  they are.
+
+  **The analysis ledger** (added 2026-11-26): after a save that wrote an
+  analysis of Seabass's, by the import or by Analyse again, the stick's
+  `Seabass/analysis.tsv.gz` records for each track which revisions of the
+  analyser made it, from which file and with which tempo range, and the
+  grid each library was left with. A later Seabass can tell from it a
+  track an older analyser made, which it may improve, from one whose grid
+  was changed since by hand or on a player, which it leaves alone. A save
+  that goes back, and Undo Last Save, leave the ledger as it was.
+
+  Verified with this app's own readers and, for export.pdb's rows, byte
+  for byte against rekordbox's (`pdb_row_encoding_test`,
+  `import_track_change_test`, `track_import_controller_test`); no player
+  has loaded an imported or analysed-again track. Promote once one has on
+  each family (XDJ-RX2, OMNIS-DUO, Prime 4), with the grid on the beat and
+  the waveform drawn, and rekordbox has opened the stick. Still owed
+  besides: a WAV's file type measured from a rekordbox export (11 is the
+  published number), and cues moved by Analyse again checked on a player.
 
 - **Moved files: Point Library at File** (added 2026-11-19, #103) — the
   second repair on Library Health's Moved files page (`MovedFilesPage.qml`,

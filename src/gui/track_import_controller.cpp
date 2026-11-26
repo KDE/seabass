@@ -7,9 +7,10 @@
 #include <QCoreApplication>
 #include <QDate>
 #include <QFileInfo>
-#include <QtConcurrent/QtConcurrentRun>
+#include <QThread>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <memory>
 
@@ -19,6 +20,7 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/analysis_settings.hpp"
+#include "gui/async_request.hpp"
 #include "gui/future_result.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/track_import_analysis.hpp"
@@ -29,6 +31,10 @@ namespace seabass::gui
 
 namespace
 {
+
+// How long going away waits for a worker told to stop before letting it
+// go, as a page's read waits (AsyncRequest).
+constexpr std::chrono::milliseconds LetGoAfter{1000};
 
 // A cue's move as the review shows it, in whole ms with its sign: the move
 // as application::cueMoveMs() counts it (the larger of the move and the
@@ -53,11 +59,61 @@ TrackImportController::TrackImportController(QObject *parent)
 
 TrackImportController::~TrackImportController()
 {
-    // The worker reads the stick; it is told to stop and waited for, so
-    // nothing of this object is used after it.
+    // The worker is told to stop and waited for a moment, as a page's
+    // read is (docs/async-requests.md, rule 7): it stops at its next look
+    // at the token, which an analysis takes every piece it reads. One
+    // that does not by then (a decoder waiting for a file that stopped
+    // answering, a file read from a stick being pulled) is let go rather
+    // than freezing the window. It can finish alone: it writes nothing
+    // (an offer is read, planned and analysed; only the save writes),
+    // and it holds its own copies of the request and the token and
+    // reaches this object only through the progress sink's QPointer. Its
+    // answer goes nowhere. endProcess() sees to it at the end of the
+    // process.
     m_cancel.cancel();
-    awaitQuietly(m_watcher);
-    awaitQuietly(m_reanalysisWatcher);
+    const auto deadline = std::chrono::steady_clock::now()
+                          + (AsyncWorkers::instance().shuttingDown() ? std::chrono::milliseconds(0) : LetGoAfter);
+    const auto running = [this]() {
+        return (m_watcher.future().isValid() && !m_watcher.future().isFinished())
+               || (m_reanalysisWatcher.future().isValid() && !m_reanalysisWatcher.future().isFinished());
+    };
+    while (running() && std::chrono::steady_clock::now() < deadline) {
+        QThread::msleep(5);
+    }
+    disconnect(&m_watcher, nullptr, this, nullptr);
+    disconnect(&m_reanalysisWatcher, nullptr, this, nullptr);
+}
+
+void TrackImportController::setExperimentalEnabled(bool enabled)
+{
+    if (m_experimentalEnabled != enabled) {
+        m_experimentalEnabled = enabled;
+        emit experimentalEnabledChanged();
+    }
+}
+
+bool TrackImportController::allowedToStage()
+{
+    if (!m_experimentalEnabled) {
+        setErrorMessage(QStringLiteral("Importing tracks and Analyse again are experimental features, switched off in "
+                                       "Preferences."));
+        return false;
+    }
+    return true;
+}
+
+ImportAnalyser TrackImportController::analyser() const
+{
+    if (m_analyserForTesting) {
+        return m_analyserForTesting;
+    }
+    // The tempo range as Preferences has it now: it may have changed
+    // since the last run.
+    const QSettings settings = openSeabassSettings();
+    const domain::TempoRange range = storedAnalysisTempoRange(settings);
+    return [range](const std::string &file, const application::CancellationToken &cancel) {
+        return analyseForImport(file, cancel, range);
+    };
 }
 
 void TrackImportController::setBusy(bool busy)
@@ -235,6 +291,9 @@ bool TrackImportController::importFiles(const QString &rekordboxPath, const QStr
                                         const QVariantList &files, const QString &playlist, bool create, int atIndex)
 {
     setErrorMessage({});
+    if (!allowedToStage()) {
+        return false;
+    }
     ImportRequest request;
     for (const QVariant &file : files) {
         const QUrl url = file.toUrl();
@@ -264,21 +323,18 @@ bool TrackImportController::importFiles(const QString &rekordboxPath, const QStr
 bool TrackImportController::importPossibleDuplicates()
 {
     setErrorMessage({});
-    if (m_possibleDuplicates.empty() || m_request.offered.empty()) {
-        return false;
-    }
-    if (m_busy) {
-        // Before the batch is taken back for it.
-        setErrorMessage(QStringLiteral("An import is being prepared already."));
+    if (m_possibleDuplicates.empty() || m_request.offered.empty() || !allowedToStage()) {
         return false;
     }
     ImportRequest again = m_request;
     again.importAnyway.insert(m_possibleDuplicates.begin(), m_possibleDuplicates.end());
-    dropStaged();
-    return start(std::move(again));
+    // The batch staged from the offer waits until the new one is ready,
+    // as a batch that is joined does (onPrepared()): a start refused or
+    // cancelled leaves it as it was.
+    return start(std::move(again), true);
 }
 
-bool TrackImportController::start(ImportRequest request)
+bool TrackImportController::start(ImportRequest request, bool replacesStaged)
 {
     if (m_busy) {
         setErrorMessage(!m_reanalysingPlaylist.isEmpty()
@@ -301,19 +357,22 @@ bool TrackImportController::start(ImportRequest request)
         const bool oursOnly = !m_staged.empty() && m_session->pendingCount() == static_cast<int>(m_staged.size());
         if (oursOnly && request.rekordboxPath == m_request.rekordboxPath && request.enginePath == m_request.enginePath
             && into(request) == into(m_request)) {
-            ImportRequest joined = m_request;
-            for (const std::string &offered : request.offered) {
-                if (std::find(joined.offered.begin(), joined.offered.end(), offered) == joined.offered.end()) {
-                    joined.offered.push_back(offered);
+            // The staged batch's own offer again needs nothing joined.
+            if (!replacesStaged) {
+                ImportRequest joined = m_request;
+                for (const std::string &offered : request.offered) {
+                    if (std::find(joined.offered.begin(), joined.offered.end(), offered) == joined.offered.end()) {
+                        joined.offered.push_back(offered);
+                    }
                 }
+                request = std::move(joined);
             }
-            request = std::move(joined);
             joins = true;
         } else {
             setErrorMessage(!m_reanalysed.empty()
                                 ? QStringLiteral("Tracks analysed again are waiting to be saved: an import is checked "
                                                  "against the stick as it is. Save or take them back first.")
-                            : !m_staged.empty()
+                            : oursOnly
                                 ? QStringLiteral("An import into another playlist is waiting to be saved. Save it, or take "
                                                  "it back, before the next.")
                                 : QStringLiteral("Save or discard the edits that are waiting first: an import is checked "
@@ -323,13 +382,7 @@ bool TrackImportController::start(ImportRequest request)
     }
     request.coverReader = readCoverPictures;
     request.analysisJobs = importAnalysisJobs();
-    // The tempo range as Preferences has it now: it may have changed
-    // since the last import.
-    const QSettings settings = openSeabassSettings();
-    const domain::TempoRange range = storedAnalysisTempoRange(settings);
-    request.analyser = [range](const std::string &file, const application::CancellationToken &cancel) {
-        return analyseForImport(file, cancel, range);
-    };
+    request.analyser = analyser();
     request.date = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd")).toStdString();
     m_joining = joins;
     m_joined = joins ? m_staged : std::set<QString>();
@@ -338,8 +391,11 @@ bool TrackImportController::start(ImportRequest request)
     setBusy(true);
     setProgress(QStringLiteral("stick"), 0, 0, {});
     const ImportProgressSink progress = progressSink();
-    m_watcher.setFuture(QtConcurrent::run(
-        [request, cancel = m_cancel, progress]() { return prepareTrackImport(request, cancel, progress); }));
+    // A read, on a thread of its own (runRead(), not the pool the writes
+    // use): one let go at the end (see the destructor) must not hold up
+    // the end of the process.
+    m_watcher.setFuture(
+        runRead([request, cancel = m_cancel, progress]() { return prepareTrackImport(request, cancel, progress); }));
     return true;
 }
 
@@ -377,6 +433,11 @@ void TrackImportController::onPrepared()
     setBusy(false);
     setProgress({}, 0, 0, {});
     if (m_cancel.cancelled()) {
+        return;
+    }
+    // Experimental features switched off while it was prepared: nothing
+    // new is staged.
+    if (!allowedToStage()) {
         return;
     }
     if (!thrown.isEmpty()) {
@@ -506,6 +567,9 @@ bool TrackImportController::analyseAgain(const QString &rekordboxPath, const QSt
                                         const QString &playlist)
 {
     setErrorMessage({});
+    if (!allowedToStage()) {
+        return false;
+    }
     if (m_busy) {
         setErrorMessage(!m_reanalysingPlaylist.isEmpty()
                             ? QStringLiteral("Tracks are being analysed again already.")
@@ -524,21 +588,16 @@ bool TrackImportController::analyseAgain(const QString &rekordboxPath, const QSt
     request.enginePath = enginePath;
     request.playlist = playlist.toStdString();
     request.analysisJobs = importAnalysisJobs();
-    // The tempo range as Preferences has it now, as for an import.
-    const QSettings settings = openSeabassSettings();
-    const domain::TempoRange range = storedAnalysisTempoRange(settings);
-    request.analyser = [range](const std::string &file, const application::CancellationToken &cancel) {
-        return analyseForImport(file, cancel, range);
-    };
-    request.cueFollowThresholdMs = storedCueFollowThresholdMs(settings);
+    request.analyser = analyser();
+    request.cueFollowThresholdMs = storedCueFollowThresholdMs(openSeabassSettings());
     m_reanalysing = request;
     m_reanalysingPlaylist = playlist;
     m_cancel = application::CancellationToken();
     setBusy(true);
     setProgress(QStringLiteral("stick"), 0, 0, {});
     const ImportProgressSink progress = progressSink();
-    m_reanalysisWatcher.setFuture(QtConcurrent::run(
-        [request, cancel = m_cancel, progress]() { return prepareReanalysis(request, cancel, progress); }));
+    m_reanalysisWatcher.setFuture(
+        runRead([request, cancel = m_cancel, progress]() { return prepareReanalysis(request, cancel, progress); }));
     return true;
 }
 
@@ -550,7 +609,7 @@ void TrackImportController::onReanalysed()
     m_reanalysingPlaylist.clear();
     setBusy(false);
     setProgress({}, 0, 0, {});
-    if (m_cancel.cancelled()) {
+    if (m_cancel.cancelled() || !allowedToStage()) {
         return;
     }
     if (!thrown.isEmpty()) {

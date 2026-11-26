@@ -887,6 +887,48 @@ TestCase {
         cleanupExperimental();
     }
 
+    Component {
+        id: plainDelegateComponent
+        ItemDelegate {
+            width: 200
+            height: 32
+            z: 1000
+            text: "A plain row"
+        }
+    }
+
+    // The row to create a playlist looks idle, pressed and in focus as a
+    // plain row of the style does: the outline the track import puts over
+    // it while files are held over the list is an item of its own, not
+    // its background.
+    function test_theCreateRowKeepsTheStylesLook() {
+        const page = makeEditingPage();
+        const row = findChild(page, "createPlaylistRow");
+        tryCompare(row, "visible", true);
+        verify(waitForPolish(page.Window.window), "the list is laid out");
+        // A plain row beside it, with the same palette.
+        const plain = createTemporaryObject(plainDelegateComponent, page);
+        const look = item => JSON.stringify({visible: item.background.visible, color: String(item.background.color),
+                                             border: item.background.border ? item.background.border.width : 0});
+        compare(look(row), look(plain), "idle, it looks as a plain row does");
+        const pressedLook = item => {
+            mousePress(item, item.width - 12, item.height / 2);
+            tryCompare(item, "down", true);
+            const pressed = look(item);
+            // Let go away from it: no click, so no dialog.
+            mouseRelease(item, item.width - 12, -40);
+            compare(item.down, false);
+            return pressed;
+        };
+        // What a press shows is the style's (Basic shows the background,
+        // the desktop style draws it): the same as the plain row's.
+        const plainPressed = pressedLook(plain);
+        compare(pressedLook(row), plainPressed, "pressed, it looks as a plain row does");
+        compare(findChild(page, "createPlaylistDropOutline").visible, false, "no files held, no outline");
+        compare(page.playlistEditController.calls.length, 0);
+        cleanupExperimental();
+    }
+
     // The row menu ends in "Add to..." with every playlist but the one
     // shown, a tick on the ones the track is staged into; once a track was
     // added somewhere, "Add to <that one>" stands above it.

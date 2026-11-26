@@ -4488,6 +4488,16 @@ if(TARGET seabass_edit)
     set_tests_properties(held_playlist_saves_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
+    # Engine's write session plans for every change of a save that writes
+    # m.db: a save of Add Cue changes, with and without a scratch copy.
+    add_executable(engine_write_session_hint_test tests/engine_write_session_hint_test.cpp)
+    target_include_directories(engine_write_session_hint_test PRIVATE src tests)
+    target_link_libraries(engine_write_session_hint_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME engine_write_session_hint_test COMMAND engine_write_session_hint_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(engine_write_session_hint_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
     add_executable(track_import_staging_test tests/track_import_staging_test.cpp)
     target_include_directories(track_import_staging_test PRIVATE src tests)
     target_link_libraries(track_import_staging_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)

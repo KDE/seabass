@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "application/ports/cancellation_token.hpp"
 #include "infrastructure/hashing/sha256.hpp"
@@ -48,7 +49,8 @@ struct FileCopyResult
 // `destination`. So a file under the destination's name is always a whole
 // one: a cancel, a full stick, a pulled stick or a source that changed
 // while it was read leave at most the temporary file, which the next copy
-// to that place removes.
+// to that place removes, and sweepImportLeftovers() the next import into
+// that folder.
 //
 // A source that was written to while it was read (its size or its
 // modification time is another afterwards) is not imported: a tagger
@@ -77,7 +79,21 @@ struct FileCopyResult
                                               const std::filesystem::path &destination,
                                               const FileCopyOptions &options);
 
-// The suffix of the temporary file, for a scan that tidies leftovers.
+// The suffix of the temporary file.
 inline constexpr const char *ImportTempSuffix = ".seabass-import-tmp";
+
+// Removes what interrupted copies left in `folder`: the regular files
+// directly in it whose name ends with ImportTempSuffix, and nothing else.
+// A link is never followed nor removed, whatever its name; nothing below
+// the folder is looked at. `folder` has to be inside `stickRoot`, and
+// every folder from the root down to it a folder and not a link;
+// otherwise, and for a folder that is not there, nothing is removed.
+// Returns the files removed. Never throws.
+//
+// For the import, which calls it for the folders it copies into before
+// the first copy into each: a leftover is a whole file's worth of room
+// that no library names and that nothing else would ever take away.
+std::vector<std::filesystem::path> sweepImportLeftovers(const std::filesystem::path &stickRoot,
+                                                        const std::filesystem::path &folder);
 
 }  // namespace seabass::infrastructure::track_import

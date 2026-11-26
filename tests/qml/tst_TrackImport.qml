@@ -337,6 +337,7 @@ TestCase {
         compare(strip.steps.map(s => s.count).join("|"), "|11 of 40 done||");
         compare(findChild(strip, "passiveProgressNote").text, "Nothing is written until you save.");
         tryVerify(() => strip.height > closedHeight * 4, 1000, "the open panel takes room to read");
+        verify(waitForPolish(page.Window.window), "the open panel is laid out");
         const sidebar = findChild(page, "playlistSidebar");
         verify(strip.width > sidebar.width + 100, "open, it is wider than the sidebar: " + strip.width);
         compare(strip.steps.map(s => s.state).join(" "), "done now later later");
@@ -368,6 +369,7 @@ TestCase {
         fake.busy = false;
         tryCompare(strip, "visible", false);
         compare(strip.expanded, false);
+        verify(waitForPolish(page.Window.window), "the closed strip is laid out");
         compare(strip.width, findChild(page, "playlistSidebar").width);
         tryCompare(list, "height", fullHeight);
     }
@@ -658,6 +660,7 @@ TestCase {
         compare(findChild(section, "cueReviewOffBeat").text, "2 cue point(s) not on a beat stay where they are.");
         compare(findChild(page, "cueReviewTooDifferentList").text, "Closer, Somebody Else");
         const cueStrip = findChild(section, "cueReviewStrip");
+        verify(waitForPolish(review.contentItem.Window.window), "the review is laid out");
         verify(cueStrip.width > 100, "the strip has room: " + cueStrip.width);
         // Both grids and both places, in order and inside the strip.
         for (const beats of [cueStrip.oldBeats, cueStrip.newBeats]) {
@@ -845,8 +848,8 @@ TestCase {
         // By the keyboard: below the first track it may sit outside the
         // scrolled view.
         heading.forceActiveFocus();
-        wait(50);
-        verify(heading.activeFocus, "the heading keeps the focus");
+        // The count below says the key reached it, not another item.
+        tryVerify(() => heading.activeFocus, 1000, "the heading has the focus");
         keyClick(Qt.Key_Space);
         tryCompare(own, "count", 2);
         compare(findChild(own.itemAt(0), "cueReviewTrackTitle").text, "Near, Somebody");

@@ -365,9 +365,20 @@ QString CreatePlaylistChange::idFor(const std::string &playlist)
     return QStringLiteral("addcue:create-playlist:") + QString::fromStdString(playlist);
 }
 
+namespace
+{
+// "addcue:import:..." for "addcue:...": the id of the track import's
+// change, which the playlist editor's for the same playlist never has.
+QString importIdOf(const QString &id)
+{
+    const QString owner = QStringLiteral("addcue:");
+    return id.startsWith(owner) ? owner + QStringLiteral("import:") + id.mid(owner.size()) : id;
+}
+}  // namespace
+
 QString CreatePlaylistChange::id() const
 {
-    return idFor(m_playlist);
+    return m_forImport ? importIdOf(idFor(m_playlist)) : idFor(m_playlist);
 }
 
 QString CreatePlaylistChange::owner() const
@@ -550,7 +561,7 @@ QString AddToPlaylistChange::idFor(const std::string &playlist, const std::strin
 
 QString AddToPlaylistChange::id() const
 {
-    return idFor(m_playlist, m_filePath);
+    return m_forImport ? importIdOf(idFor(m_playlist, m_filePath)) : idFor(m_playlist, m_filePath);
 }
 
 QString AddToPlaylistChange::owner() const

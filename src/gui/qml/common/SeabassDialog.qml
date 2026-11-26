@@ -54,6 +54,16 @@ Dialog {
     // never on an error, where "do not tell me again" is not a safe answer.
     property bool dontAskVisible: false
     property alias dontAskChecked: dontAskBox.checked
+    // The content's height follows the content as it grows or shrinks
+    // while the dialog is open. Off, the style decides, as every dialog
+    // had it. The desktop style gives a dialog a content item of its own
+    // and keeps the content height it had when the dialog was made, so a
+    // dialog whose text or list changes after that (the track import's
+    // result, which opens on the next import's numbers and shows its
+    // left-out files on request) had its buttons over its text there.
+    // Set where the dialog is declared: switched off later, the content
+    // height keeps the last one it had.
+    property bool contentHeightFollowsContent: false
 
     // Re-based dialogs keep whatever names their tests already look for.
     property string messageObjectName: "messageLabel"
@@ -304,14 +314,20 @@ Dialog {
     }
     onOpened: Qt.callLater(root.focusDefaultFooterButton)
 
-    // Said outright: left to the style, the height of the content was
-    // the one it had when the dialog was made, and a dialog whose content
-    // grew afterwards (the import's result, set just before it opens) had
-    // its buttons on top of its text under the desktop style.
-    contentHeight: contentRow.implicitHeight
+    // See contentHeightFollowsContent: only a dialog that asks for it.
+    // A dialog that does not ask is never touched by it, so the style's
+    // own content height stays.
+    Binding {
+        target: root
+        property: "contentHeight"
+        value: contentRow.implicitHeight
+        when: root.contentHeightFollowsContent
+        restoreMode: Binding.RestoreBindingOrValue
+    }
 
     RowLayout {
         id: contentRow
+        objectName: "seabassDialogContent"
         width: parent.width
         spacing: 14
 

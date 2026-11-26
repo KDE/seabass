@@ -122,6 +122,13 @@ class TrackImportController : public QObject
     Q_PROPERTY(QVariantList cueReview READ cueReview NOTIFY cueReviewChanged)
     // The titles of the tracks whose grid changed too much to carry cues.
     Q_PROPERTY(QStringList cueReviewTooDifferent READ cueReviewTooDifferent NOTIFY cueReviewChanged)
+    // Experimental features are switched on (Preferences): Browse binds
+    // it. Off, nothing new is staged: importFiles(),
+    // importPossibleDuplicates() and analyseAgain() refuse, and what was
+    // being prepared when it went off is not staged. What waits already
+    // stays staged, for the person to save or take back.
+    Q_PROPERTY(bool experimentalEnabled READ experimentalEnabled WRITE setExperimentalEnabled NOTIFY
+                   experimentalEnabledChanged)
 
 public:
     explicit TrackImportController(QObject *parent = nullptr);
@@ -145,6 +152,13 @@ public:
     bool saveWriting() const;
     QVariantList cueReview() const;
     QStringList cueReviewTooDifferent() const;
+    bool experimentalEnabled() const { return m_experimentalEnabled; }
+    void setExperimentalEnabled(bool enabled);
+
+    // The analysis an import and Analyse again run on each file, in place
+    // of the app's own (analyseForImport): for a test that needs one that
+    // takes its time. Null puts the app's back.
+    void setAnalyserForTesting(ImportAnalyser analyser) { m_analyserForTesting = std::move(analyser); }
 
     // Offers `files` (local files and folders, as urls or paths) for
     // import onto the stick whose PIONEER folder is rekordboxPath and
@@ -155,8 +169,9 @@ public:
     // refused at once.
     Q_INVOKABLE bool importFiles(const QString &rekordboxPath, const QString &enginePath, const QVariantList &files,
                                  const QString &playlist = QString(), bool create = false, int atIndex = -1);
-    // The last offer again, its possible duplicates imported too. Takes
-    // the batch staged from it back first.
+    // The last offer again, its possible duplicates imported too. The
+    // batch staged from it waits until the new one is ready and takes its
+    // place then; an offer refused or cancelled leaves it as it was.
     Q_INVOKABLE bool importPossibleDuplicates();
     // Stops the preparing of an offer; nothing of it is staged.
     Q_INVOKABLE void cancel();
@@ -216,10 +231,17 @@ signals:
     void saveWritingChanged();
     // A save wrote at least one imported track: the page should rescan.
     void tracksImported();
+    void experimentalEnabledChanged();
 
 private:
     bool attachSession(const QString &rekordboxPath, const QString &enginePath);
-    bool start(ImportRequest request);
+    // `replacesStaged`: the request is the staged batch's own offer, to
+    // be prepared again as it is (importPossibleDuplicates()).
+    bool start(ImportRequest request, bool replacesStaged = false);
+    // The analysis to run on each file.
+    ImportAnalyser analyser() const;
+    // False, with errorMessage, while experimental features are off.
+    bool allowedToStage();
     void onPrepared();
     void onReanalysed();
     // Passes progress from the worker to the properties, for this run only.
@@ -273,6 +295,8 @@ private:
     // The last run's changes, for the cue review, in playlist order.
     std::vector<std::shared_ptr<ReanalyseTrackChange>> m_reviewed;
     QVariantMap m_lastReanalysis;
+    bool m_experimentalEnabled = true;
+    ImportAnalyser m_analyserForTesting;
 };
 
 }  // namespace seabass::gui

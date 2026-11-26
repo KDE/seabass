@@ -41,6 +41,7 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <thread>
 #include <tuple>
 #include <unordered_set>
 
@@ -48,6 +49,8 @@
 #include "gui/edit/changes/add_cue_change.hpp"
 #include "gui/edit/changes/analysis_ledger_record.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "gui/async_request.hpp"
 #include "gui/edit/changes/reanalyse_track_change.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -2749,6 +2752,195 @@ int main(int argc, char **argv)
                    != std::string::npos);
             std::cout << "case 18h (an import whose source was replaced after its analysis: no ledger entry) OK\n";
         }
+    }
+
+    // 19 to 22, on a stick of their own: the import's playlist changes
+    // beside the playlist editor's, the possible duplicates asked for
+    // when the start is refused, experimental features switched off, and
+    // a controller that goes while a file is analysed.
+    {
+        const testing::EngineChangeStick fresh = testing::makeEngineChangeStick(fixture, "track_import_controller_fixes");
+        testing::levelImportCounter(fresh);
+        const QString freshPioneer = fresh.pioneerPath();
+        const QString freshEngine = fresh.enginePath();
+        LibraryEditSession *freshSession = registry->sessionFor(registry->libraryIdForPath(freshPioneer));
+        assert(freshSession && freshSession != session);
+        const fs::path in = computer / "fixes";
+        const QStringList allThree{QStringLiteral("rekordbox"), QStringLiteral("onelibrary"), QStringLiteral("engine")};
+        TrackImportController fixes;
+        QSignalSpy fixesResults(&fixes, &TrackImportController::resultReady);
+        const auto offerFresh = [&](const QVariantList &files, const QString &playlist, bool create) {
+            const int before = fixesResults.count();
+            if (!fixes.importFiles(freshPioneer, freshEngine, files, playlist, create)) {
+                return false;
+            }
+            assert(waitFor(&fixes, &TrackImportController::busyChanged, [&] { return !fixes.busy(); }));
+            return fixesResults.count() > before;
+        };
+        const auto saveFresh = [&]() {
+            QSignalSpy done(freshSession, &LibraryEditSession::saveFinished);
+            freshSession->save();
+            assert(waitFor(freshSession, &LibraryEditSession::saveFinished, [&] { return !done.isEmpty(); }));
+            return freshSession->lastSummary();
+        };
+        // Until `done`, with the events going: the worker's progress and
+        // its end reach the controller through them.
+        const auto waitUntil = [](const std::function<bool()> &done) {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            while (!done() && std::chrono::steady_clock::now() < until) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return done();
+        };
+
+        // 19. The import's CreatePlaylist and AddToPlaylist changes have
+        //     ids of their own: the playlist editor's for the same playlist
+        //     and file, staged after them, stand beside them rather than
+        //     over them, and the save holds both: the playlist made once,
+        //     each file in it once.
+        writeWav(in / "f base.wav", 44100, 41);
+        assert(offerFresh(QVariantList{pathToQString(in / "f base.wav")}, QString(), false));
+        assert(fixes.stagedCount() == 1);
+        assert(saveFresh().value("error").toString().isEmpty());
+        const fs::path baseOnStick = fresh.root / "Contents" / "UnknownArtist" / "UnknownAlbum" / "f base.wav";
+        assert(fs::exists(baseOnStick));
+        writeWav(in / "f one.wav", 44100, 42);
+        assert(offerFresh(QVariantList{pathToQString(in / "f one.wav"), pathToQString(baseOnStick)},
+                          QStringLiteral("Fresh"), true));
+        assert(fixes.stagedCount() == 1 && fixes.lastResult().value("addedToPlaylist").toInt() == 1);
+        // The playlist, the track, its entry, the entry of the stick's own.
+        assert(freshSession->pendingCount() == 4);
+        assert(freshSession->stage(std::make_unique<CreatePlaylistChange>(freshPioneer, freshEngine, "Fresh", allThree)));
+        assert(freshSession->stage(std::make_unique<AddToPlaylistChange>(freshPioneer, freshEngine, "Fresh",
+                                                                         pathToUtf8(baseOnStick),
+                                                                         QStringLiteral("f base"), allThree)));
+        assert(freshSession->pendingCount() == 6 && "the editor's changes are staged beside the import's");
+        assert(fixes.stagedCount() == 1 && fixes.trackCountChange(QStringLiteral("Fresh")) == 2);
+        const QVariantMap both = saveFresh();
+        if (!both.value("error").toString().isEmpty()) {
+            std::cerr << "save: " << both.value("error").toString().toStdString() << "\n";
+        }
+        assert(both.value("error").toString().isEmpty() && freshSession->pendingCount() == 0);
+        const std::vector<std::string> freshOrder{"f one.wav", "f base.wav"};
+        assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(fresh.pioneer)), "Fresh") == freshOrder);
+        assert(playlistOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(fresh.pioneer)), "Fresh") == freshOrder);
+        assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(fresh.engineUtf8()), "Fresh") == freshOrder);
+        // Taken back, the import takes its own changes and not the
+        // editor's.
+        writeWav(in / "f two.wav", 44100, 43);
+        assert(offerFresh(QVariantList{pathToQString(in / "f two.wav")}, QStringLiteral("Fresh Two"), true));
+        assert(freshSession->stage(std::make_unique<CreatePlaylistChange>(freshPioneer, freshEngine, "Fresh Two", allThree)));
+        assert(freshSession->pendingCount() == 4);
+        fixes.dropStaged();
+        assert(freshSession->pendingCount() == 1 && freshSession->hasChange(CreatePlaylistChange::idFor("Fresh Two")));
+        freshSession->discard();
+        std::cout << "case 19 (the import's playlist changes and the editor's for the same playlist stand side by side) OK\n";
+
+        // 20. The possible duplicates asked for while other edits wait:
+        //     refused, and the batch staged from the offer stays.
+        writeWav(in / "other" / "f one.wav", 44100, 44);  // the name and length of one on the stick
+        writeWav(in / "f three.wav", 44100, 45);
+        assert(offerFresh(QVariantList{pathToQString(in / "f three.wav"), pathToQString(in / "other" / "f one.wav")},
+                          QStringLiteral("Fresh"), false));
+        if (fixes.lastResult().value("possibleDuplicates").toInt() != 1) {
+            for (const QVariant &line : fixes.lastResult().value("notImported").toList()) {
+                std::cerr << line.toMap().value("name").toString().toStdString() << ": "
+                          << line.toMap().value("why").toString().toStdString() << "\n";
+            }
+        }
+        assert(fixes.stagedCount() == 1 && fixes.lastResult().value("possibleDuplicates").toInt() == 1);
+        assert(freshSession->pendingCount() == 2);
+        assert(freshSession->stage(std::make_unique<SkippingChange>()));
+        assert(!fixes.importPossibleDuplicates());
+        assert(fixes.errorMessage().contains(QLatin1String("Save or discard")));
+        assert(fixes.stagedCount() == 1 && freshSession->pendingCount() == 3 && "the batch is as it was");
+        freshSession->unstage(SkippingChange().id());
+        assert(fixes.importPossibleDuplicates());
+        assert(waitFor(&fixes, &TrackImportController::busyChanged, [&] { return !fixes.busy(); }));
+        assert(fixes.errorMessage().isEmpty());
+        assert(fixes.stagedCount() == 2 && freshSession->pendingCount() == 4 && "the batch again, with the duplicate");
+        fixes.dropStaged();
+        assert(freshSession->pendingCount() == 0);
+        std::cout << "case 20 (possible duplicates refused while other edits wait: the batch stays) OK\n";
+
+        // 21. Experimental features switched off: nothing new is staged,
+        //     neither an offer nor Analyse again, nor an offer that was
+        //     being prepared when they went off. What waits stays staged.
+        writeWav(in / "f four.wav", 44100, 46);
+        const QVariantList four{pathToQString(in / "f four.wav")};
+        fixes.setExperimentalEnabled(false);
+        assert(!fixes.importFiles(freshPioneer, freshEngine, four, QStringLiteral("Fresh"), false));
+        assert(fixes.errorMessage().contains(QLatin1String("switched off")));
+        assert(!fixes.analyseAgain(freshPioneer, freshEngine, QStringLiteral("Fresh")));
+        assert(!fixes.busy() && freshSession->pendingCount() == 0);
+        fixes.setExperimentalEnabled(true);
+        auto held = std::make_shared<std::atomic<bool>>(true);
+        auto entered = std::make_shared<std::atomic<bool>>(false);
+        fixes.setAnalyserForTesting([held, entered](const std::string &, const application::CancellationToken &) {
+            entered->store(true);
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+            while (held->load() && std::chrono::steady_clock::now() < until) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return std::shared_ptr<const ImportAnalysis>();
+        });
+        assert(fixes.importFiles(freshPioneer, freshEngine, four, QStringLiteral("Fresh"), false));
+        assert(waitUntil([&] { return entered->load(); }));
+        fixes.setExperimentalEnabled(false);
+        held->store(false);
+        assert(waitUntil([&] { return !fixes.busy(); }));
+        assert(fixes.stagedCount() == 0 && freshSession->pendingCount() == 0 && "switched off meanwhile: not staged");
+        assert(fixes.errorMessage().contains(QLatin1String("switched off")));
+        fixes.setExperimentalEnabled(true);
+        assert(offerFresh(four, QStringLiteral("Fresh"), false));
+        assert(fixes.stagedCount() == 1 && freshSession->pendingCount() == 2);
+        fixes.setExperimentalEnabled(false);
+        assert(fixes.stagedCount() == 1 && freshSession->pendingCount() == 2 && "what waits stays staged");
+        fixes.dropStaged();
+        assert(freshSession->pendingCount() == 0 && "and can be taken back");
+        fixes.setExperimentalEnabled(true);
+        fixes.setAnalyserForTesting(nullptr);
+        std::cout << "case 21 (experimental features off: nothing new is staged, what waits stays) OK\n";
+
+        // 22. A controller that goes (Browse closed, the stick pulled)
+        //     while a file is analysed does not wait for an analysis that
+        //     does not look at its token: it is let go, and finishes
+        //     alone, staging nothing.
+        {
+            auto release = std::make_shared<std::atomic<bool>>(false);
+            auto started = std::make_shared<std::atomic<bool>>(false);
+            auto finished = std::make_shared<std::atomic<bool>>(false);
+            auto *closing = new TrackImportController;
+            closing->setAnalyserForTesting([release, started, finished](const std::string &,
+                                                                       const application::CancellationToken &) {
+                started->store(true);
+                // Never asks the token: a decoder waiting for a file that
+                // stopped answering.
+                const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+                while (!release->load() && std::chrono::steady_clock::now() < until) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                finished->store(true);
+                return std::shared_ptr<const ImportAnalysis>();
+            });
+            writeWav(in / "f five.wav", 44100, 47);
+            assert(closing->importFiles(freshPioneer, freshEngine, QVariantList{pathToQString(in / "f five.wav")},
+                                        QStringLiteral("Fresh"), false));
+            assert(waitUntil([&] { return started->load(); }));
+            const auto before = std::chrono::steady_clock::now();
+            delete closing;
+            const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - before);
+            std::cout << "  the controller went in " << took.count() << " ms" << std::endl;
+            assert(took < std::chrono::milliseconds(1500) && "going away waits a moment, not for the analysis");
+            assert(!finished->load() && "the worker was let go, not waited for");
+            release->store(true);
+            assert(waitUntil([&] { return finished->load(); }));
+            assert(AsyncWorkers::instance().waitForAll(std::chrono::seconds(10)) && "and it ended alone");
+            QCoreApplication::processEvents();
+            assert(freshSession->pendingCount() == 0 && "nothing of it was staged");
+        }
+        std::cout << "case 22 (a controller going while a file is analysed is not held up by it) OK\n";
     }
 
     std::cout << "track_import_controller_test: all cases passed\n";

@@ -246,7 +246,73 @@ FileCopyResult copy(const fs::path &source, const fs::path &destination, const F
     }
 }
 
+bool endsWithTempSuffix(const std::string &name)
+{
+    const std::string suffix = ImportTempSuffix;
+    return name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::vector<fs::path> sweep(const fs::path &stickRoot, const fs::path &folder)
+{
+    std::vector<fs::path> removed;
+    const fs::path root = stickRoot.lexically_normal();
+    const fs::path relative = folder.lexically_normal().lexically_relative(root);
+    if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") {
+        return removed;
+    }
+    // The root and every folder below it on the way: a folder, never a
+    // link, so nothing outside the stick is reached.
+    fs::path at = root;
+    std::error_code ec;
+    if (!fs::is_directory(fs::symlink_status(longPathSafe(at), ec)) || ec) {
+        return removed;
+    }
+    for (const fs::path &segment : relative) {
+        if (segment.empty() || segment == ".") {
+            continue;
+        }
+        if (segment == "..") {
+            return removed;
+        }
+        at /= segment;
+        if (!fs::is_directory(fs::symlink_status(longPathSafe(at), ec)) || ec) {
+            return removed;
+        }
+    }
+    std::vector<fs::path> leftovers;
+    {
+        DirectoryReader reader(at, ec);
+        if (ec) {
+            return removed;
+        }
+        fs::path child;
+        while (reader.next(child, ec)) {
+            std::error_code statEc;
+            const fs::file_status status = fs::symlink_status(longPathSafe(child), statEc);
+            if (!statEc && fs::is_regular_file(status) && endsWithTempSuffix(pathToUtf8(child.filename()))) {
+                leftovers.push_back(child);
+            }
+        }
+    }
+    for (const fs::path &leftover : leftovers) {
+        std::error_code removeEc;
+        if (fs::remove(longPathSafe(leftover), removeEc) && !removeEc) {
+            removed.push_back(leftover);
+        }
+    }
+    return removed;
+}
+
 }  // namespace
+
+std::vector<fs::path> sweepImportLeftovers(const fs::path &stickRoot, const fs::path &folder)
+{
+    try {
+        return sweep(stickRoot, folder);
+    } catch (...) {
+        return {};
+    }
+}
 
 FileCopyResult copyFileVerified(const fs::path &source, const fs::path &destination, const FileCopyOptions &options)
 {

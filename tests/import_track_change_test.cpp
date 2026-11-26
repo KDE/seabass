@@ -13,23 +13,34 @@
 //    export.pdb written fails the change, and the save loop puts all of
 //    it back: no file, no row anywhere;
 // 4. a refusal known before anything is written writes nothing; a file
-//    already at the destination is not replaced.
+//    already at the destination is not replaced;
+// 5 and 6. twenty imports in one save; a second import that fails takes
+//    the first back;
+// 7. what an interrupted import left in the folder an import copies into
+//    is swept;
+// 8 and 9. a save that fails in the middle (a full stick) leaves the
+//    stick as it was, byte for byte.
 
 #include <cassert>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "domain/imported_track.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
+#include "infrastructure/cleanup/audio_file_walk.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/track_import/verified_file_copy.hpp"
 #include "engine_change_fixture.hpp"
 
 using namespace seabass;
@@ -425,6 +436,132 @@ int main(int argc, char **argv)
         assert(fs::is_directory(second) && countsOf(stick) == before);
     }
     std::cout << "case 6 (the second import fails: the first is taken back with it) OK\n";
+
+    // 7. The leftover of an import that did not finish (a pulled stick)
+    //    in a folder an import copies into goes with the next import's
+    //    save; one in another folder stays. Neither is an audio file to
+    //    the stick's scans (Free Up Space, the stray file scan), which
+    //    walk past it.
+    {
+        const testing::EngineChangeStick stick = testing::makeEngineChangeStick(fixture, "import_track_leftover");
+        testing::levelImportCounter(stick);
+        const fs::path folder = stick.root / "Contents" / "Hand Built" / "From Disk";
+        const fs::path other = stick.root / "Contents" / "Elsewhere";
+        fs::create_directories(folder);
+        fs::create_directories(other);
+        const std::string suffix = infrastructure::track_import::ImportTempSuffix;
+        const fs::path leftover = folder / ("pulled.flac" + suffix);
+        const fs::path kept = other / ("pulled.flac" + suffix);
+        std::ofstream(leftover, std::ios::binary) << std::string(64 * 1024, 'x');
+        std::ofstream(kept, std::ios::binary) << std::string(64 * 1024, 'y');
+        const auto walked = infrastructure::cleanup::walkAudioFiles(pathToUtf8(stick.root), {});
+        assert(!walked.incomplete);
+        for (const auto &file : walked.files) {
+            assert(file.filePath.find(suffix) == std::string::npos && "a leftover is no audio file to a scan");
+        }
+
+        auto change = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
+                                                          stick.enginePath(), description(stickPath), AllThree, 1);
+        const SaveLoopResult saved = testing::saveChanges({change}, stick.pioneerPath(), stick.enginePath());
+        assert(saved.error.isEmpty());
+        assert(!fs::exists(leftover) && "swept from the folder the import copied into");
+        assert(fs::exists(kept) && "a folder the import did not write into is not looked at");
+        assert(testing::fileBytes(folder / pathFromUtf8("04 Imported S\xc3\xb6ng.flac")) == sourceBytes);
+    }
+    std::cout << "case 7 (a leftover in the folder an import copies into is swept; others are left alone) OK\n";
+
+    // 8 and 9. The stick fills in the middle of a save, after the first
+    //    track is on it whole (file, cover pictures, rows in every
+    //    library): the save goes back and the stick holds the files it
+    //    held, byte for byte. A full stick is played by a file where a
+    //    folder has to be made, which fails the write the same way and
+    //    needs no stick of a size: in 8 the second track's copy, in 9 its
+    //    Engine row, written after its file, its pictures and its rows in
+    //    the two Pioneer libraries.
+    {
+        // Every file under the stick and its bytes. The folders the save
+        // made stay, empty (ImportTrackChange says so); a file is either
+        // as it was or not there. Not counted: Seabass's own folder, which
+        // keeps the log of the save and its backups, and SQLite's -shm
+        // file, an index of the -wal file that SQLite makes again and
+        // removes as it opens and closes the database.
+        const auto snapshot = [](const fs::path &root) {
+            std::map<std::string, std::string> files;
+            for (auto at = fs::recursive_directory_iterator(root); at != fs::recursive_directory_iterator(); ++at) {
+                const std::string relative = pathToGenericUtf8(fs::relative(at->path(), root));
+                const bool sqliteIndex = relative.size() > 4 && relative.compare(relative.size() - 4, 4, "-shm") == 0;
+                if (at->is_regular_file() && !at->is_symlink() && relative.rfind("Seabass/", 0) != 0 && !sqliteIndex) {
+                    files.emplace(relative, testing::fileBytes(at->path()));
+                }
+            }
+            return files;
+        };
+        const auto compareSnapshots = [](const std::map<std::string, std::string> &before,
+                                         const std::map<std::string, std::string> &after) {
+            for (const auto &[file, bytes] : after) {
+                const auto was = before.find(file);
+                if (was == before.end()) {
+                    std::cerr << "new on the stick: " << file << "\n";
+                } else if (was->second != bytes) {
+                    std::cerr << "changed on the stick: " << file << "\n";
+                }
+            }
+            for (const auto &[file, bytes] : before) {
+                if (after.count(file) == 0) {
+                    std::cerr << "gone from the stick: " << file << "\n";
+                }
+            }
+            return before == after;
+        };
+        // Three small pictures, as the cover reader gives them.
+        const CoverReader cover = [](const std::string &) {
+            return std::optional<CoverPictures>(CoverPictures{std::string(2000, 's'), std::string(6000, 'm'),
+                                                              std::string(12000, 'l')});
+        };
+        const auto run = [&](const std::string &name, const std::function<void(const testing::EngineChangeStick &)> &fill,
+                             const QString &expected) {
+            const testing::EngineChangeStick stick = testing::makeEngineChangeStick(fixture, name);
+            testing::levelImportCounter(stick);
+            fill(stick);
+            const auto before = snapshot(stick.root);
+            const Counts counts = countsOf(stick);
+            auto one = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
+                                                           stick.enginePath(), description("/Contents/One/first.flac"),
+                                                           AllThree, 2);
+            auto two = std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root), stick.pioneerPath(),
+                                                           stick.enginePath(), description("/Contents/Full/second.flac"),
+                                                           AllThree, 2);
+            one->setCover(cover);
+            two->setCover(cover);
+            const SaveLoopResult saved = testing::saveChanges({one, two}, stick.pioneerPath(), stick.enginePath());
+            std::cout << "  " << name << ": " << saved.error.toStdString() << std::endl;
+            assert(!saved.error.isEmpty() && saved.error.contains(expected));
+            assert(saved.rolledBack && saved.appliedIds.isEmpty());
+            assert(one->deviceLibraryId() > 0 && "the first track was written whole before the second failed");
+            assert(compareSnapshots(before, snapshot(stick.root)) && "the stick holds what it held, byte for byte");
+            assert(countsOf(stick) == counts);
+        };
+        // 8. The second file's copy: a file where its folder has to be.
+        run("import_track_full_copy",
+            [](const testing::EngineChangeStick &stick) {
+                fs::create_directories(stick.root / "Contents");
+                std::ofstream(stick.root / "Contents" / "Full", std::ios::binary) << "in the way";
+            },
+            QStringLiteral("could not create the folder"));
+        std::cout << "case 8 (the stick fills at the second track's copy: the save goes back, the stick as it was) OK\n";
+        // 9. The second's Engine row, after everything else of it: a row
+        //    of Engine's names a file at its place already, so Engine
+        //    refuses another.
+        run("import_track_full_engine",
+            [](const testing::EngineChangeStick &stick) {
+                const std::string id = std::to_string(
+                    testing::sqlScalar(stick.db, "SELECT min(id) FROM Track WHERE path IS NOT NULL;"));
+                assert(testing::sqlExec(stick.db, "UPDATE Track SET path = '../Contents/Full/second.flac', "
+                                                  "filename = 'second.flac' WHERE id = " + id + ";"));
+            },
+            QStringLiteral("not adding a second row"));
+        std::cout << "case 9 (Engine fails late for the second track: the save goes back, the stick as it was) OK\n";
+    }
 
     std::cout << "import_track_change_test: all cases passed\n";
     return 0;

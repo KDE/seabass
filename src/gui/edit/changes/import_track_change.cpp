@@ -742,6 +742,17 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             pdbSession->noteItemApplied();
         }
 
+        // What an interrupted import left in the folder this file goes
+        // to, once a save: files no library names, never taken back.
+        const fs::path folder = pathFromUtf8(destination).parent_path();
+        ctx.sharedForWholeSave<bool>("track-import:swept:" + application::normalizedPathKey(pathToUtf8(folder)), [&]() {
+            for (const fs::path &leftover : infrastructure::track_import::sweepImportLeftovers(stickRoot, folder)) {
+                ctx.log().record(std::string(Label) + ": removed " + pathToUtf8(leftover)
+                                 + ", left by an import that did not finish");
+            }
+            return std::make_unique<bool>(true);
+        });
+
         // Not cancellable: the save's cancel is asked between changes
         // (runSaveLoop), and a copy stopped halfway would be a failed
         // change, which takes back every track imported before it. A

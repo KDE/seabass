@@ -266,6 +266,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         // does not leave the playlist behind empty.
         auto made = std::make_shared<CreatePlaylistChange>(target.pioneerRoot, target.enginePath, playlist->path,
                                                            target.libraries, toImport);
+        made->stageForImport();
         for (const Entered &first : entered) {
             if (first.import) {
                 made->tieTo(first.import->unitKeys().last());
@@ -283,6 +284,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             // At the end, each: the run is put at its place once, below.
             auto entry = std::make_shared<AddToPlaylistChange>(target.pioneerRoot, target.enginePath, playlist->path,
                                                                one.file, one.title, target.libraries);
+            entry->stageForImport();
             if (one.import) {
                 // "/Contents/..." is what the import's own unit key is made of.
                 entry->tieTo(one.import->unitKeys().last());

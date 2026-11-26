@@ -69,6 +69,47 @@ struct StickAudioFile
     std::uint64_t sizeBytes = 0;
 };
 
+// What the save writes for each imported track besides its audio file,
+// as the plan counts it: the small files of the track's own (rekordbox's
+// three analysis files, the cover pictures, Engine's overview), the
+// folders made for them, and what the library files grow by. Sizes are
+// estimates from above, a part for every track and a part for every
+// second of it. See importSideWrites().
+struct ImportSideWrites
+{
+    struct Size
+    {
+        std::uint64_t fixedBytes = 0;
+        std::uint64_t bytesPerSecond = 0;
+    };
+    // Each a file of its own: it takes whole clusters, at least one.
+    std::vector<Size> files;
+    // Folders made for one track alone (its analysis folder and the
+    // folder above it).
+    std::uint64_t foldersPerTrack = 0;
+    // Folders a run of tracks shares (rekordbox's artwork folders hold
+    // twenty pictures each): this many more for the first imported track
+    // and for every `tracksPerSharedFolder`-th after it.
+    std::uint64_t sharedFolders = 0;
+    std::uint64_t tracksPerSharedFolder = 0;
+    // What the library files grow by. Their copies (a backup, the new
+    // file beside the old while it is put in place) are the stick's
+    // reserve (ImportStick::reserveBytes), which counts them as they are.
+    Size libraryGrowth;
+};
+
+// Where the stick's allocation unit is not known, each small file and
+// each folder of ImportSideWrites counts this much: the largest cluster
+// exFAT gives a stick of up to 256 GB.
+inline constexpr std::uint64_t UnknownClusterBytes = 128 * 1024;
+
+// What the save writes beside each imported track on a stick with these
+// libraries ("rekordbox", "onelibrary", "engine"): with `analysed`, the
+// analysis Seabass made of each file; with `covers`, the cover pictures,
+// counted for every track because the plan does not know which files
+// have one.
+ImportSideWrites importSideWrites(const std::set<std::string> &formats, bool analysed, bool covers);
+
 struct ImportStick
 {
     std::string root;  // the stick's mount point, absolute
@@ -86,6 +127,8 @@ struct ImportStick
     // The largest file the filesystem holds; 0 for no limit worth
     // checking. See maxFileBytesFor().
     std::uint64_t maxFileBytes = 0;
+    // Written beside each imported file, counted in its room.
+    ImportSideWrites sideWrites;
     // Lowercase, with the dot. See importableExtensions().
     std::set<std::string> acceptedExtensions;
 };

@@ -45,8 +45,10 @@ namespace fs = std::filesystem;
 using infrastructure::longPathSafe;
 
 // Whether two files hold the same bytes; false when either cannot be
-// read to its end.
-bool sameBytes(const std::string &a, const std::string &b)
+// read to its end, and on a cancel (the caller asks the token after the
+// plan). Two files of a few GB are read piece by piece, so a cancel is
+// answered within one piece.
+bool sameBytes(const std::string &a, const std::string &b, const application::CancellationToken &cancel)
 {
     std::ifstream left(longPathSafe(pathFromUtf8(a)), std::ios::binary);
     std::ifstream right(longPathSafe(pathFromUtf8(b)), std::ios::binary);
@@ -56,6 +58,9 @@ bool sameBytes(const std::string &a, const std::string &b)
     std::vector<char> one(1 << 16);
     std::vector<char> other(1 << 16);
     while (true) {
+        if (cancel.cancelled()) {
+            return false;
+        }
         left.read(one.data(), static_cast<std::streamsize>(one.size()));
         right.read(other.data(), static_cast<std::streamsize>(other.size()));
         if (left.bad() || right.bad() || left.gcount() != right.gcount()) {
@@ -268,6 +273,9 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
         libraries += sizeOf(pathFromUtf8(target.enginePath.toStdString()) / "Database2" / "m.db");
     }
     stick.reserveBytes = 2 * libraries + 32ull * 1024 * 1024;
+    // And for each track, what the save writes beside its audio file.
+    stick.sideWrites = domain::importSideWrites(formats, static_cast<bool>(request.analyser),
+                                                static_cast<bool>(request.coverReader));
     stick.acceptedExtensions = domain::importableExtensions(formats);
 
     // What was offered, a folder as its audio files.
@@ -335,7 +343,7 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
     report(ImportProgress::Step::Check, 0, 0, {});
     domain::ImportPlanTools tools;
     tools.pathKey = [](const std::string &path) { return application::normalizedPathKey(path); };
-    tools.sameBytes = sameBytes;
+    tools.sameBytes = [&cancel](const std::string &a, const std::string &b) { return sameBytes(a, b, cancel); };
     domain::ImportChoices choices;
     choices.importAnyway = request.importAnyway;
     const domain::ImportPlan plan = planTrackImport(files, stick, tools, choices);

@@ -95,6 +95,13 @@ public:
     // empty by a cancel before the first of them.
     void tieTo(const QString &key) { m_unitKey = key; }
     QStringList unitKeys() const override;
+    // Staged by the track import: an id of its own ("addcue:import:"), so
+    // that the playlist editor's change for the same playlist, staged
+    // after it, is staged beside it and not over it (which would undo the
+    // tie above, and take the editor's change away with the import's).
+    // Both may stand in one save: a playlist that is there by its turn is
+    // not made again.
+    void stageForImport() { m_forImport = true; }
 
     static QString idFor(const std::string &playlist);
 
@@ -119,6 +126,7 @@ private:
     QStringList m_libraries;
     int m_itemCountHint = 1;
     QString m_unitKey;
+    bool m_forImport = false;
 };
 
 // Deletes a playlist (or a folder, with everything in it) from every
@@ -207,6 +215,10 @@ public:
     // cancel between the two.
     void tieTo(const QString &key) { m_unitKey = key; }
     QStringList unitKeys() const override;
+    // Staged by the track import: an id of its own, as
+    // CreatePlaylistChange::stageForImport() says. Both may stand in one
+    // save: a file the playlist holds by its turn is not added again.
+    void stageForImport() { m_forImport = true; }
 
 private:
     QString m_pioneerRoot;
@@ -217,6 +229,7 @@ private:
     QStringList m_libraries;
     std::optional<int> m_toIndex;
     QString m_unitKey;
+    bool m_forImport = false;
 };
 
 // Takes one file out of a playlist in every library on the stick that has

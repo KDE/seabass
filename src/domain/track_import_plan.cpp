@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <iterator>
 #include <map>
 #include <optional>
@@ -305,6 +306,52 @@ std::set<std::string> importableExtensions(const std::set<std::string> &formats)
     return accepted.value_or(std::set<std::string>{});
 }
 
+ImportSideWrites importSideWrites(const std::set<std::string> &formats, bool analysed, bool covers)
+{
+    // Measured against what the writers make, rounded up: a .DAT holds
+    // the beat grid (8 bytes a beat) and two small previews; an .EXT the
+    // scrolling waveform twice (1 and 2 bytes, 150 entries a second); a
+    // .2EX the three-band one (3 bytes, 150 a second); a cover picture
+    // of 80 pixels about 5 KB, of 240 about 30 KB, of 500 (Engine's)
+    // about 100 KB; Engine's overview file about 2 KB.
+    constexpr std::uint64_t KiB = 1024;
+    const bool deviceLibrary = formats.count("rekordbox") > 0;
+    const bool oneLibrary = formats.count("onelibrary") > 0;
+    const bool engine = formats.count("engine") > 0;
+    ImportSideWrites side;
+    if (analysed && (deviceLibrary || oneLibrary)) {
+        // One set of files, named in both rows.
+        side.files.push_back({8 * KiB, 64});
+        side.files.push_back({16 * KiB, 512});
+        side.files.push_back({16 * KiB, 512});
+        side.foldersPerTrack += 2;  // USBANLZ/Pnnn/nnnnnnnn
+    }
+    if (analysed && engine) {
+        side.files.push_back({16 * KiB, 0});
+    }
+    if (covers) {
+        // Two pictures for each Pioneer library (aN.jpg and aN_m.jpg,
+        // bN.jpg and bN_m.jpg), in Artwork folders of twenty.
+        for (const bool library : {deviceLibrary, oneLibrary}) {
+            if (library) {
+                side.files.push_back({16 * KiB, 0});
+                side.files.push_back({64 * KiB, 0});
+                side.sharedFolders += 1;
+            }
+        }
+        side.tracksPerSharedFolder = 20;
+        if (engine) {
+            // A file under Engine Library/Artwork, or as much again in
+            // m.db for a library that keeps its pictures there.
+            side.files.push_back({192 * KiB, 0});
+        }
+    }
+    // A row in each library, and in Engine the analysis.
+    const std::uint64_t libraries = (deviceLibrary ? 1 : 0) + (oneLibrary ? 1 : 0) + (engine ? 1 : 0);
+    side.libraryGrowth.fixedBytes = libraries * 64 * KiB;
+    return side;
+}
+
 std::uint64_t maxFileBytesFor(const std::string &filesystem)
 {
     const std::string fs = asciiLower(filesystem);
@@ -438,6 +485,32 @@ ImportPlan planTrackImport(const std::vector<ImportFile> &offered, const ImportS
         return clusters > UINT64_MAX / cluster ? UINT64_MAX : clusters * cluster;
     };
     std::uint64_t room = stick.freeBytes > stick.reserveBytes ? stick.freeBytes - stick.reserveBytes : 0;
+    const auto add = [](std::uint64_t a, std::uint64_t b) { return a > UINT64_MAX - b ? UINT64_MAX : a + b; };
+    const auto times = [](std::uint64_t a, std::uint64_t b) { return b != 0 && a > UINT64_MAX / b ? UINT64_MAX : a * b; };
+    // What is written beside the audio file of the `nth` track imported
+    // (from 0), `seconds` long. A small file takes at least one cluster,
+    // and where the cluster is not known, UnknownClusterBytes.
+    const ImportSideWrites &side = stick.sideWrites;
+    const std::uint64_t smallUnit = stick.clusterBytes > 0 ? stick.clusterBytes : UnknownClusterBytes;
+    const auto sideCost = [&](double durationSeconds, std::uint64_t nth) {
+        const auto seconds = static_cast<std::uint64_t>(std::ceil(std::max(0.0, durationSeconds)));
+        const auto sized = [&](const ImportSideWrites::Size &size) {
+            return add(size.fixedBytes, times(size.bytesPerSecond, seconds));
+        };
+        std::uint64_t cost = 0;
+        for (const ImportSideWrites::Size &file : side.files) {
+            const std::uint64_t bytes = sized(file);
+            cost = add(cost, stick.clusterBytes > 0 ? allocated(std::max<std::uint64_t>(bytes, 1))
+                                                    : std::max(bytes, UnknownClusterBytes));
+        }
+        std::uint64_t folders = side.foldersPerTrack;
+        if (side.tracksPerSharedFolder > 0 && nth % side.tracksPerSharedFolder == 0) {
+            folders = add(folders, side.sharedFolders);
+        }
+        cost = add(cost, times(folders, smallUnit));
+        return add(cost, sized(side.libraryGrowth));
+    };
+    std::uint64_t imported = 0;
 
     // Files of this plan that are imported or found on the stick, by
     // source and by size: the ones a later copy of the same file is
@@ -552,7 +625,7 @@ ImportPlan planTrackImport(const std::vector<ImportFile> &offered, const ImportS
             // No folder cost where the unit is not known: a byte each would
             // be a number made up.
             const std::uint64_t forFolders = newFolders * stick.clusterBytes;
-            cost = forFile > UINT64_MAX - forFolders ? UINT64_MAX : forFile + forFolders;
+            cost = add(add(forFile, forFolders), sideCost(file.durationSeconds, imported));
             if (cost > room) {
                 entry.importedAnyway = false;
                 return ImportVerdict::DoesNotFit;
@@ -575,6 +648,7 @@ ImportPlan planTrackImport(const std::vector<ImportFile> &offered, const ImportS
             entry.destination = destination;
             plan.bytesToCopy += file.fileSizeBytes;
             room -= cost;
+            ++imported;
         }
         if (entry.verdict == ImportVerdict::Import || entry.verdict == ImportVerdict::AlreadyOnStick) {
             carriedBySourceKey.emplace(sourceKey, source);

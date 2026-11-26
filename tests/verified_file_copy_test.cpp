@@ -240,6 +240,61 @@ int main()
         std::cout << "case 8 (a leftover is not copied onto itself) OK\n";
     }
 
+    // 9. sweepImportLeftovers takes the leftovers of interrupted copies
+    //    out of the folder named: files with exactly that suffix, directly
+    //    in it. Not a file whose name only has the suffix inside it, not a
+    //    folder of that name, not one below, not a folder outside the
+    //    stick; never through a link.
+    {
+        const fs::path album = stick / "Contents" / "Swept" / "Album";
+        const auto leftoverOf = [](const fs::path &file) {
+            fs::path leftover = file;
+            leftover += ImportTempSuffix;
+            return leftover;
+        };
+        write(leftoverOf(album / "one.mp3"), pattern(900));
+        write(leftoverOf(album / "two.flac"), pattern(300));
+        write(album / "kept.mp3", pattern(100));
+        write(album / "kept.seabass-import-tmp.mp3", pattern(100));
+        write(album / "kept.seabass-import-tmpx", pattern(100));
+        fs::create_directories(leftoverOf(album / "a folder"));
+        write(leftoverOf(album / "Deeper" / "below.mp3"), pattern(100));
+        const fs::path outside = root / "outside";
+        write(leftoverOf(outside / "elsewhere.mp3"), pattern(100));
+        // The suffix alone is no name of a copy: kept.
+        write(album / ImportTempSuffix, pattern(10));
+
+        // Outside the stick, and a path that leaves it: nothing.
+        assert(sweepImportLeftovers(stick, outside).empty());
+        assert(sweepImportLeftovers(stick, stick / ".." / "outside").empty());
+        assert(fs::exists(leftoverOf(outside / "elsewhere.mp3")));
+        // Not there: nothing, and no error.
+        assert(sweepImportLeftovers(stick, stick / "Contents" / "Nobody").empty());
+
+#if !defined(_WIN32)
+        // A link to a leftover outside is not removed, nor its target; a
+        // folder reached through a link is not looked into.
+        fs::create_symlink(leftoverOf(outside / "elsewhere.mp3"), leftoverOf(album / "link.mp3"));
+        fs::create_directory_symlink(outside, stick / "Contents" / "Linked");
+        assert(sweepImportLeftovers(stick, stick / "Contents" / "Linked").empty());
+        assert(fs::exists(leftoverOf(outside / "elsewhere.mp3")));
+#endif
+
+        const std::vector<fs::path> removed = sweepImportLeftovers(stick, album);
+        assert(removed.size() == 2);
+        assert(!fs::exists(leftoverOf(album / "one.mp3")) && !fs::exists(leftoverOf(album / "two.flac")));
+        assert(read(album / "kept.mp3") == pattern(100));
+        assert(fs::exists(album / "kept.seabass-import-tmp.mp3") && fs::exists(album / "kept.seabass-import-tmpx"));
+        assert(fs::is_directory(leftoverOf(album / "a folder")));
+        assert(fs::exists(leftoverOf(album / "Deeper" / "below.mp3")));
+        assert(fs::exists(album / ImportTempSuffix));
+        assert(fs::exists(leftoverOf(outside / "elsewhere.mp3")));
+#if !defined(_WIN32)
+        assert(fs::is_symlink(fs::symlink_status(leftoverOf(album / "link.mp3"))));
+#endif
+        std::cout << "case 9 (leftovers swept from the folder named, and nothing else) OK\n";
+    }
+
     fs::remove_all(root);
     std::cout << "ALL VERIFIED FILE COPY CASES PASSED\n";
     return 0;
