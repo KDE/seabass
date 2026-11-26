@@ -6,8 +6,13 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cerrno>
 #include <iterator>
 #include <system_error>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #include "infrastructure/fs_remove.hpp"
 #include "infrastructure/long_paths.hpp"
@@ -28,7 +33,78 @@ fs::path local(const std::string &utf8)
     return longPathSafe(ec ? pathFromUtf8(utf8) : absolute);
 }
 
+// `path` made absolute and resolved as far as it is there (links
+// followed, "." and ".." taken away), and the nearest folder of it that
+// is there: `path` itself when it is.
+std::optional<fs::path> nearestThere(const std::string &utf8)
+{
+    std::error_code ec;
+    fs::path resolved = fs::weakly_canonical(local(utf8), ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    while (true) {
+        const fs::file_status status = fs::status(resolved, ec);
+        if (status.type() != fs::file_type::not_found && !ec) {
+            return resolved;
+        }
+        if (status.type() != fs::file_type::not_found) {
+            return std::nullopt;  // there, but it would not say what
+        }
+        const fs::path parent = resolved.parent_path();
+        if (parent.empty() || parent == resolved) {
+            return std::nullopt;
+        }
+        resolved = parent;
+    }
+}
+
 }  // namespace
+
+std::optional<bool> LocalKeepRecordingFiles::isWithin(const std::string &path, const std::string &folder)
+{
+    std::error_code ec;
+    const fs::path root = fs::canonical(local(folder), ec);
+    if (ec || !fs::is_directory(root, ec)) {
+        return std::nullopt;
+    }
+    const std::optional<fs::path> there = nearestThere(path);
+    if (!there) {
+        return std::nullopt;
+    }
+    // Compared as files, each folder up the way with the root: the same
+    // file, whatever the spelling, the letters' case or the mount it is
+    // reached through.
+    for (fs::path step = *there;; step = step.parent_path()) {
+        std::error_code same;
+        if (fs::equivalent(step, root, same) && !same) {
+            return true;
+        }
+        if (!step.has_parent_path() || step.parent_path() == step) {
+            return false;
+        }
+    }
+}
+
+std::optional<std::uint64_t> LocalKeepRecordingFiles::maxNameBytes(const std::string &folder)
+{
+    const std::optional<fs::path> there = nearestThere(folder);
+    if (!there) {
+        return std::nullopt;
+    }
+#if defined(_WIN32)
+    // NTFS, FAT and exFAT: 255 UTF-16 units, never more than a name's
+    // bytes of UTF-8.
+    return 255;
+#else
+    errno = 0;
+    const long longest = ::pathconf(there->c_str(), _PC_NAME_MAX);
+    if (longest <= 0) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint64_t>(longest);
+#endif
+}
 
 std::optional<std::uint64_t> LocalKeepRecordingFiles::fileSize(const std::string &path)
 {

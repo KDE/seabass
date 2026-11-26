@@ -115,7 +115,8 @@ TestCase {
             property string progressStep: ""
             property double progress: 0
             property var queued: []
-            property var lastFinished: ({})
+            property var finishedJobs: []
+            readonly property bool hasWork: fakeKeep.busy || fakeKeep.queued.length > 0
             property int revision: 0
             property string errorMessage: ""
             property string coverPath: ""
@@ -139,11 +140,36 @@ TestCase {
                         year: recorded && !isNaN(recorded.getTime()) ? recorded.getFullYear() : 0,
                         folder: "/home/dj/Music/Own Recordings"};
             }
-            function fileNameFor(artist, title) {
+            // The folder the form names, as the last name was asked for.
+            property string nameFolder: ""
+            function fileNameFor(artist, title, folder) {
+                fakeKeep.nameFolder = folder;
+                return fakeKeep.nameOf(artist, title);
+            }
+            function nameOf(artist, title) {
                 const a = artist.trim();
                 const t = title.trim();
                 return (a.length > 0 && t.length > 0 ? a + " - " + t : (t.length > 0 ? t : (a.length > 0 ? a : "Recording")))
                     + ".flac";
+            }
+            function textProblem(field, text) {
+                const names = {artist: "The artist", title: "The track name", album: "The album", genre: "The genre"};
+                return /[\u0000-\u001f\u007f\u0085\u2028\u2029]/.test(text.trim())
+                    ? names[field] + " cannot hold a line break, a tab or another control character." : "";
+            }
+            function keepNotesFor(paths) {
+                const notKept = [];
+                const kept = [];
+                for (const path of paths) {
+                    const outcome = fakeKeep.outcomes[path];
+                    if (!outcome) continue;
+                    if (outcome.state === "kept") {
+                        kept.push({recording: outcome.recording, fileName: outcome.fileName, folder: outcome.folder});
+                    } else if (outcome.state !== "queued" && outcome.state !== "running") {
+                        notKept.push(outcome.recording);
+                    }
+                }
+                return {notKept: notKept, kept: kept};
             }
             function folderProblem(folder) {
                 if (folder.trim().length === 0) return "Choose a folder for the file.";
@@ -151,7 +177,7 @@ TestCase {
                 return "";
             }
             function targetProblem(folder, artist, title) {
-                const name = fakeKeep.fileNameFor(artist, title);
+                const name = fakeKeep.nameOf(artist, title);
                 return fakeKeep.taken.indexOf(name) >= 0
                     ? name + " is in this folder already. Change the artist or the track name: nothing is ever replaced."
                     : "";
@@ -180,7 +206,7 @@ TestCase {
             }
             function cancel() { fakeKeep.calls.push("cancel"); }
             function outcomeFor(path) { return fakeKeep.outcomes[path] ?? ({}); }
-            function dismissFinished() { fakeKeep.calls.push("dismiss"); fakeKeep.lastFinished = ({}); }
+            function dismissFinished() { fakeKeep.calls.push("dismiss"); fakeKeep.finishedJobs = []; }
             function showInFolder(path) { fakeKeep.calls.push("show:" + path); }
             function localPath(path) { return path.startsWith("file://") ? path.substring(7) : path; }
             function folderUrl(folder) { return "file://" + folder; }
@@ -585,6 +611,8 @@ TestCase {
         compare(field(page, "keepYearField").text, "2026", "the year the recording was made");
         compare(field(page, "keepFolderField").text, "/home/dj/Music/Own Recordings");
         compare(field(page, "keepFileNameLabel").text, "Saved as DJ Kelp - Session-0002.flac");
+        compare(page.keepController.nameFolder, "/home/dj/Music/Own Recordings",
+                "the name is asked for in the folder it goes to, which decides how long it may be");
         compare(field(page, "keepCoverLabel").text, "No cover");
         compare(field(page, "keepNoCoverButton").enabled, false, "no cover to take away");
         compare(field(page, "keepProblemsLabel").visible, false, "the suggestions are a form that can start");
@@ -783,11 +811,12 @@ TestCase {
     }
 
     function keptKeep(keep) {
-        keep.lastFinished = {state: "kept", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
-                             recording: "Milkshaken.wav", fileName: "DJ Kelp - Late Set.flac",
-                             folder: "/home/dj/Music/Own Recordings",
-                             flacPath: "/home/dj/Music/Own Recordings/DJ Kelp - Late Set.flac", message: ""};
-        keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": keep.lastFinished};
+        const done = {state: "kept", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+                      recording: "Milkshaken.wav", fileName: "DJ Kelp - Late Set.flac",
+                      folder: "/home/dj/Music/Own Recordings",
+                      flacPath: "/home/dj/Music/Own Recordings/DJ Kelp - Late Set.flac", leftBehind: "", message: ""};
+        keep.finishedJobs = [done];
+        keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": done};
         keep.progress = 1;
         keep.revision++;
     }
@@ -824,13 +853,157 @@ TestCase {
         verify(kept.visible, "the row still says where it was kept");
     }
 
+    // Text a tag cannot hold is said in the form, which does not start.
+    function test_theFormRefusesControlCharacters_data() {
+        return [
+            {tag: "a tab in the artist", name: "keepArtistField", text: "DJ\tKelp",
+             problem: "The artist cannot hold a line break, a tab or another control character."},
+            {tag: "a line separator in the album", name: "keepAlbumField", text: "Own Recordings",
+             problem: "The album cannot hold a line break, a tab or another control character."},
+            {tag: "an escape in the genre", name: "keepGenreField", text: "Tech\u001bno",
+             problem: "The genre cannot hold a line break, a tab or another control character."},
+        ];
+    }
+    function test_theFormRefusesControlCharacters(data) {
+        const page = makePage(addRecordings);
+        const dialog = openForm(page, 0);
+        field(page, data.name).text = data.text;
+        const problems = field(page, "keepProblemsLabel");
+        verify(problems.visible, "the form says what is wrong");
+        compare(problems.text, data.problem);
+        compare(field(page, "keepStartButton").enabled, false, "and does not start");
+        field(page, data.name).text = "Plain";
+        compare(problems.visible, false);
+        dialog.close();
+    }
+
+    // The confirmation names, by file name, every ticked recording a keep
+    // was asked for and did not end kept, apart from what is deleted; one
+    // that was kept says where.
+    function test_deleteNamesWhatWasNotKept() {
+        const page = makePage(addRecordings, keep => {
+            keep.outcomes = {
+                "/media/u/WHALESHARK/Sessions/Milkshaken.wav": {state: "failed", recording: "Milkshaken.wav",
+                                                                fileName: "A.flac", folder: "/f", message: "no room"},
+                "/media/u/WHALESHARK/Sessions/Session-0002.wav": {state: "dropped", recording: "Session-0002.wav",
+                                                                  fileName: "B.flac", folder: "/f", message: ""},
+                "/media/u/WHALESHARK/PIONEER REC/REC001.WAV": {state: "kept", recording: "REC001.WAV",
+                                                               fileName: "C.flac", folder: "/home/dj/Music/Own Recordings"},
+            };
+            keep.revision++;
+        });
+        mouseClick(findChild(page, "selectAllButton"));
+        mouseClick(findChild(page, "deleteButton"));
+        const dialog = findChild(page, "confirmDeleteDialog");
+        tryVerify(() => dialog.opened);
+        const notKept = findChild(dialog, "notKeptLabel");
+        verify(notKept.visible, "the recordings not kept are named");
+        compare(notKept.text, "Not kept on this computer, though you asked for it: Milkshaken.wav, Session-0002.wav.");
+        compare(dialog.detailText, "They will be gone for good.", "apart from the sentence about deleting");
+        compare(findChild(dialog, "keptNotesLabel").text,
+                "Kept on this computer: REC001.WAV as C.flac in /home/dj/Music/Own Recordings.");
+        saveScreenshot(page, "recordings-confirm-delete-not-kept");
+        dialog.reject();
+        tryVerify(() => !dialog.visible && !dialog.opened, 2000);
+
+        // Only the kept one ticked: nothing is named as not kept.
+        mouseClick(findChild(page, "selectNoneButton"));
+        mouseClick(findChild(row(page, 2), "includeBox"));
+        mouseClick(findChild(page, "deleteButton"));
+        tryVerify(() => dialog.opened);
+        compare(notKept.visible, false, "nothing ticked was left unkept");
+        verify(findChild(dialog, "keptNotesLabel").visible);
+        dialog.reject();
+    }
+
+    // A cancel drops the jobs that waited: each row says so, and the
+    // strip names them with the one that was stopped.
+    function test_aCancelNamesWhatItDropped() {
+        const page = makePage(addRecordings, keep => {
+            const dropped = (path, name) => ({state: "dropped", wavPath: path, recording: name, fileName: name + ".flac",
+                                              folder: "/f", flacPath: "", leftBehind: "", message: ""});
+            const one = dropped("/media/u/WHALESHARK/Sessions/Session-0002.wav", "Session-0002.wav");
+            const two = dropped("/media/u/WHALESHARK/PIONEER REC/REC001.WAV", "REC001.WAV");
+            const stopped = {state: "cancelled", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+                             recording: "Milkshaken.wav", fileName: "M.flac", folder: "/f", flacPath: "",
+                             leftBehind: "", message: ""};
+            keep.finishedJobs = [one, two, stopped];
+            keep.outcomes = {};
+            keep.outcomes[one.wavPath] = one;
+            keep.outcomes[two.wavPath] = two;
+            keep.outcomes[stopped.wavPath] = stopped;
+            keep.revision++;
+        });
+        compare(findChild(row(page, 1), "keptLabel").text, "Not kept: stopped before it started");
+        compare(findChild(row(page, 2), "keptLabel").text, "Not kept: stopped before it started");
+        compare(findChild(row(page, 0), "keptLabel").text, "Not kept: stopped while it was being kept");
+        const strip = findChild(page, "keepProgress");
+        verify(strip.visible);
+        compare(findChild(strip, "passiveProgressSummary").text, "3 of 3 recordings not kept");
+        mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
+        verify(waitForPolish(page.Window.window));
+        compare(findAll(strip, "passiveProgressActivityLine").map(l => l.text),
+                ["Stopped: Milkshaken.wav, nothing of it was kept",
+                 "Not kept, stopped before it started: 2 recording(s): Session-0002.wav, REC001.WAV"]);
+        saveScreenshot(page, "recordings-keep-dropped");
+    }
+
+    // A failure stays in the strip while the next job runs.
+    function test_aFailureStaysWhileTheNextRuns() {
+        const page = makePage(addRecordings, keep => {
+            busyKeep(keep);
+            keep.finishedJobs = [{state: "failed", wavPath: "/media/u/WHALESHARK/PIONEER REC/REC001.WAV",
+                                  recording: "REC001.WAV", fileName: "R.flac", folder: "/f", flacPath: "",
+                                  leftBehind: "", message: "There is not enough room in /f."}];
+        });
+        const strip = findChild(page, "keepProgress");
+        compare(findChild(strip, "passiveProgressSummary").text,
+                "Keeping Milkshaken.wav: checking, 70% (1 more waiting, 1 not kept)");
+        mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
+        verify(waitForPolish(page.Window.window));
+        const lines = findAll(strip, "passiveProgressActivityLine").map(l => l.text);
+        compare(lines[lines.length - 1], "Not kept: REC001.WAV: There is not enough room in /f.");
+    }
+
+    // A cancel that could not take its file away says what was left.
+    function test_aFileLeftBehindIsSaid() {
+        const page = makePage(addRecordings, keep => {
+            const stopped = {state: "cancelled", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+                             recording: "Milkshaken.wav", fileName: "M.flac", folder: "/home/dj/Kept", flacPath: "",
+                             leftBehind: "/home/dj/Kept/M.flac",
+                             message: "The unfinished M.flac could not be removed from /home/dj/Kept (busy)."};
+            keep.finishedJobs = [stopped];
+            keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": stopped};
+            keep.revision++;
+        });
+        const strip = findChild(page, "keepProgress");
+        compare(findChild(strip, "passiveProgressSummary").text,
+                "Stopped: Milkshaken.wav was not kept, and a file was left in /home/dj/Kept");
+        compare(findChild(row(page, 0), "keptLabel").text,
+                "Not kept, stopped: The unfinished M.flac could not be removed from /home/dj/Kept (busy).");
+    }
+
+    // Experimental switched off while a job runs: the strip and its
+    // Cancel stay until the work has ended.
+    function test_theStripOutlastsExperimentalOff() {
+        const page = makePage(addRecordings, busyKeep, false);
+        const strip = findChild(page, "keepProgress");
+        verify(strip.visible, "the strip shows while the job runs");
+        verify(strip.cancellable, "and can be cancelled");
+        compare(findChild(row(page, 0), "keepButton").visible, false, "nothing new is offered");
+        page.keepController.busy = false;
+        page.keepController.queued = [];
+        tryVerify(() => !strip.visible, 2000, "once the work has ended and nothing is listed, it goes");
+    }
+
     function test_whenItFails() {
         const page = makePage(addRecordings, keep => {
-            keep.lastFinished = {state: "failed", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
-                                 recording: "Milkshaken.wav", fileName: "DJ Kelp - Late Set.flac",
-                                 folder: "/home/dj/Music/Own Recordings", flacPath: "",
-                                 message: "There is not enough room in /home/dj/Music/Own Recordings."};
-            keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": keep.lastFinished};
+            const failed = {state: "failed", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+                            recording: "Milkshaken.wav", fileName: "DJ Kelp - Late Set.flac",
+                            folder: "/home/dj/Music/Own Recordings", flacPath: "", leftBehind: "",
+                            message: "There is not enough room in /home/dj/Music/Own Recordings."};
+            keep.finishedJobs = [failed];
+            keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": failed};
             keep.revision++;
         });
         const strip = findChild(page, "keepProgress");

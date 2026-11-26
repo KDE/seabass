@@ -718,9 +718,11 @@ ApplicationWindow {
     Component {
         id: recordingsPageComponent
         RecordingsPage {
-            controller: RecordingsController {}
+            // The two are wired in C++: nothing is deleted while a
+            // recording is kept, and none is kept onto the stick.
+            controller: RecordingsController { keepController: recordingsKeepCtrl }
             playbackController: playbackCtrl
-            keepController: KeepRecordingController {}
+            keepController: KeepRecordingController { id: recordingsKeepCtrl }
             keepEnabled: appSettingsCtrl.experimentalFeaturesEnabled === true
         }
     }

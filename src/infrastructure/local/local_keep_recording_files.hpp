@@ -18,6 +18,8 @@ public:
     std::optional<bool> exists(const std::string &path) override;
     std::optional<std::uint64_t> freeBytes(const std::string &folder) override;
     std::optional<std::string> readFile(const std::string &path, std::uint64_t maxBytes) override;
+    std::optional<bool> isWithin(const std::string &path, const std::string &folder) override;
+    std::optional<std::uint64_t> maxNameBytes(const std::string &folder) override;
     std::string makeFolder(const std::string &folder) override;
     std::string removeFile(const std::string &path) override;
 };

@@ -18,7 +18,10 @@ import SeabassGui
 // Keep this recording (experimental): a recording becomes a FLAC with
 // tags and a cover in a folder on this computer, through the form below
 // and a KeepRecordingController, beside the page in the passive progress
-// strip. The recording on the stick stays as it is.
+// strip. The recording on the stick stays as it is. The strip stays while
+// a job runs or waits, even when Experimental is switched off meanwhile,
+// and lists what ended until it is closed. The delete confirmation names
+// every ticked recording a keep was asked for and did not end kept.
 Page {
     id: root
     required property string stickLabel
@@ -113,14 +116,38 @@ Page {
         keepDialog.openFor(row.path, row.fileName, row.modified);
     }
 
-    // What the strip says, for the job in hand or the one that ended.
+    // What the strip says, for the job in hand or the ones that ended.
     readonly property var keepSteps: [
         {key: "encoding", label: qsTr("Encoding")},
         {key: "checking", label: qsTr("Checking")},
         {key: "tags", label: qsTr("Tags and cover")},
     ]
-    readonly property var keepFinished: root.keepController !== null ? (root.keepController.lastFinished ?? ({})) : ({})
-    readonly property bool keepShowsFinished: !root.keepWorking && (root.keepFinished.state ?? "").length > 0
+    readonly property var keepFinishedJobs: root.keepController !== null ? (root.keepController.finishedJobs ?? []) : []
+    readonly property var keepFinished: root.keepFinishedJobs.length > 0
+        ? root.keepFinishedJobs[root.keepFinishedJobs.length - 1] : ({})
+    readonly property int keepNotKeptCount: root.keepFinishedJobs.filter(job => job.state !== "kept").length
+    readonly property bool keepShowsFinished: !root.keepWorking && root.keepFinishedJobs.length > 0
+    // A line of the strip's panel for a job that ended, other than one
+    // dropped (those are named together).
+    function keepEndedLine(job) {
+        if (job.state === "kept") {
+            return qsTr("Kept: %1 as %2 in %3").arg(job.recording).arg(job.fileName).arg(job.folder);
+        }
+        if (job.state === "cancelled") {
+            return (job.message ?? "").length > 0 ? qsTr("Stopped: %1: %2").arg(job.recording).arg(job.message)
+                : qsTr("Stopped: %1, nothing of it was kept").arg(job.recording);
+        }
+        return qsTr("Not kept: %1: %2").arg(job.recording).arg(job.message ?? "");
+    }
+    function keepEndedLines() {
+        const lines = root.keepFinishedJobs.filter(job => job.state !== "dropped").map(job => root.keepEndedLine(job));
+        const dropped = root.keepFinishedJobs.filter(job => job.state === "dropped").map(job => job.recording);
+        if (dropped.length > 0) {
+            lines.push(qsTr("Not kept, stopped before it started: %n recording(s): %1", "", dropped.length)
+                .arg(dropped.join(", ")));
+        }
+        return lines;
+    }
     function keepStepIndex(step) {
         // The free space check is over before the encoder starts: it is
         // part of the first step.
@@ -166,9 +193,40 @@ Page {
             + root.stickLabel + " and frees " + Theme.humanBytes(root.controller.selectedBytes) + "."
         detailText: "They will be gone for good."
         acceptText: "Delete"
+        // What Keep made of the ticked recordings in this session, read
+        // as the dialog opens: {notKept: [names], kept: [{recording,
+        // fileName, folder}]}.
+        property var keepNotes: ({notKept: [], kept: []})
+        function openWithNotes() {
+            confirmDeleteDialog.keepNotes = root.keepController !== null
+                ? root.keepController.keepNotesFor(root.controller.selectedPaths()) : ({notKept: [], kept: []});
+            confirmDeleteDialog.open();
+        }
         onAccepted: {
             root.releasePlayerFromDeletedRecordings();
             root.controller.deleteSelected();
+        }
+
+        Label {
+            objectName: "notKeptLabel"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            wrapMode: Text.WordWrap
+            color: Theme.danger
+            font.bold: true
+            text: confirmDeleteDialog.keepNotes.notKept.length === 0 ? ""
+                : qsTr("Not kept on this computer, though you asked for it: %1.")
+                    .arg(confirmDeleteDialog.keepNotes.notKept.join(", "))
+        }
+        Label {
+            objectName: "keptNotesLabel"
+            Layout.fillWidth: true
+            visible: text.length > 0
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            text: confirmDeleteDialog.keepNotes.kept.length === 0 ? ""
+                : qsTr("Kept on this computer: %1.").arg(confirmDeleteDialog.keepNotes.kept
+                    .map(k => qsTr("%1 as %2 in %3").arg(k.recording).arg(k.fileName).arg(k.folder)).join("; "))
         }
     }
 
@@ -188,14 +246,18 @@ Page {
         // Shown once the person has tried to start, or has typed.
         property bool tried: false
         readonly property var keep: root.keepController
-        readonly property string fileName: keep ? keep.fileNameFor(artistField.text, titleField.text) : ""
+        readonly property string fileName: keep ? keep.fileNameFor(artistField.text, titleField.text, folderField.text) : ""
         readonly property string titleProblem: titleField.text.trim().length === 0 ? qsTr("The track name is needed.") : ""
+        readonly property var textProblems: keep
+            ? [keep.textProblem("artist", artistField.text), keep.textProblem("title", titleField.text),
+               keep.textProblem("album", albumField.text), keep.textProblem("genre", genreField.text)] : []
         readonly property string yearProblem: keep ? keep.yearProblem(yearField.text) : ""
         readonly property string folderProblem: keep ? keep.folderProblem(folderField.text) : ""
         readonly property string targetProblem: keep && titleProblem.length === 0 && folderProblem.length === 0
             ? (root.keepRevision, keep.targetProblem(folderField.text, artistField.text, titleField.text)) : ""
         readonly property string coverProblem: keep && keep.coverError.length > 0 ? keep.coverError : ""
-        readonly property var problems: [titleProblem, yearProblem, folderProblem, targetProblem, coverProblem]
+        readonly property var problems: [titleProblem].concat(textProblems)
+            .concat([yearProblem, folderProblem, targetProblem, coverProblem])
             .filter(p => p.length > 0)
         readonly property bool ready: problems.length === 0 && keep !== null && keep.coverPreparing !== true
 
@@ -502,7 +564,7 @@ Page {
                 objectName: "deleteButton"
                 text: "Delete Selected Recordings"
                 enabled: !root.controller.busy && root.selectedCount > 0 && !root.keepWorking
-                onClicked: confirmDeleteDialog.open()
+                onClicked: confirmDeleteDialog.openWithNotes()
             }
         }
 
@@ -570,7 +632,10 @@ Page {
                     case "running": return qsTr("Being kept as %1").arg(row.kept.fileName);
                     case "kept": return qsTr("Kept as %1 in %2").arg(row.kept.fileName).arg(row.kept.folder);
                     case "failed": return qsTr("Not kept: %1").arg(row.kept.message);
-                    case "cancelled": return row.kept.message;
+                    case "cancelled": return (row.kept.message ?? "").length > 0
+                        ? qsTr("Not kept, stopped: %1").arg(row.kept.message)
+                        : qsTr("Not kept: stopped while it was being kept");
+                    case "dropped": return qsTr("Not kept: stopped before it started");
                     default: return "";
                     }
                 }
@@ -619,7 +684,8 @@ Page {
                             visible: text.length > 0
                             text: row.keptLine
                             elide: Text.ElideMiddle
-                            color: row.keptState === "failed" || row.keptState === "cancelled" ? Theme.danger
+                            color: row.keptState === "failed" || row.keptState === "cancelled"
+                                || row.keptState === "dropped" ? Theme.danger
                                 : row.keptState === "kept" ? Theme.good : Theme.textMuted
                             font.pointSize: Theme.fontSmall
                         }
@@ -689,23 +755,38 @@ Page {
             Layout.fillWidth: true
             readonly property var keep: root.keepController
             readonly property bool finishedShown: root.keepShowsFinished
-            readonly property string state: root.keepFinished.state ?? ""
+            readonly property var last: root.keepFinished
+            readonly property string state: last.state ?? ""
             readonly property int stepIndex: keep && keep.busy ? root.keepStepIndex(keep.progressStep) : -1
             readonly property int waiting: keep ? (keep.queued ?? []).length : 0
-            running: root.keepEnabled && keep !== null && (keep.busy === true || finishedShown)
-            done: finishedShown ? (state === "kept" ? 1000 : 0) : Math.round((keep?.progress ?? 0) * 1000)
+            // Not tied to Experimental: work under way is shown, and can be
+            // cancelled, until it has ended, and what ended until closed.
+            running: keep !== null && (root.keepWorking || finishedShown)
+            done: finishedShown ? (root.keepNotKeptCount === 0 ? 1000 : 0) : Math.round((keep?.progress ?? 0) * 1000)
             total: 1000
             cancellable: keep !== null && keep.busy === true && keep.cancelRequested !== true
             summary: {
                 if (!keep) return "";
                 if (finishedShown) {
+                    const jobs = root.keepFinishedJobs;
+                    if (jobs.length > 1) {
+                        return root.keepNotKeptCount === 0 ? qsTr("Kept %n recording(s)", "", jobs.length)
+                            : qsTr("%1 of %2 recordings not kept").arg(root.keepNotKeptCount).arg(jobs.length);
+                    }
+                    const left = (last.leftBehind ?? "").length > 0;
                     if (state === "kept") {
-                        return qsTr("Kept %1 as %2").arg(root.keepFinished.recording).arg(root.keepFinished.fileName);
+                        return qsTr("Kept %1 as %2").arg(last.recording).arg(last.fileName);
                     }
                     if (state === "cancelled") {
-                        return qsTr("Stopped: nothing of %1 was kept").arg(root.keepFinished.recording);
+                        return left ? qsTr("Stopped: %1 was not kept, and a file was left in %2").arg(last.recording)
+                                          .arg(last.folder)
+                            : qsTr("Stopped: nothing of %1 was kept").arg(last.recording);
                     }
-                    return qsTr("%1 was not kept").arg(root.keepFinished.recording);
+                    if (state === "dropped") {
+                        return qsTr("%1 was not kept: stopped before it started").arg(last.recording);
+                    }
+                    return left ? qsTr("%1 was not kept, and a file was left in %2").arg(last.recording).arg(last.folder)
+                        : qsTr("%1 was not kept").arg(last.recording);
                 }
                 if (keep.cancelRequested) {
                     return qsTr("Stopping: keeping %1").arg(keep.currentRecording);
@@ -713,8 +794,15 @@ Page {
                 const step = root.keepSteps[Math.max(0, stepIndex)].label;
                 let line = qsTr("Keeping %1: %2, %3%").arg(keep.currentRecording).arg(step.toLowerCase())
                     .arg(root.percent(keep.progress));
+                const extras = [];
                 if (waiting > 0) {
-                    line += qsTr(" (%n more waiting)", "", waiting);
+                    extras.push(qsTr("%n more waiting", "", waiting));
+                }
+                if (root.keepNotKeptCount > 0) {
+                    extras.push(qsTr("%n not kept", "", root.keepNotKeptCount));
+                }
+                if (extras.length > 0) {
+                    line += " (" + extras.join(", ") + ")";
                 }
                 return line;
             }
@@ -726,15 +814,15 @@ Page {
             activity: {
                 if (!keep) return [];
                 if (finishedShown) {
-                    return state === "kept" ? [qsTr("In %1").arg(root.keepFinished.folder)] : [];
+                    return root.keepEndedLines();
                 }
-                const lines = [qsTr("Writing %1 in %2").arg(keep.currentFileName).arg(keep.currentFolder)];
+                const lines = keep.busy ? [qsTr("Writing %1 in %2").arg(keep.currentFileName).arg(keep.currentFolder)] : [];
                 for (const job of (keep.queued ?? [])) {
                     lines.push(qsTr("Waiting: %1, as %2").arg(job.recording).arg(job.fileName));
                 }
-                return lines;
+                return lines.concat(root.keepEndedLines());
             }
-            note: finishedShown ? (state === "kept" ? "" : (root.keepFinished.message ?? ""))
+            note: finishedShown ? (state === "kept" ? "" : (last.message ?? ""))
                 : qsTr("The recording on the stick is only read. Leaving this page stops the work.")
             actions: !finishedShown ? []
                 : state === "kept" ? [{key: "show", text: qsTr("Show in Folder")}, {key: "close", text: qsTr("Close")}]
@@ -742,7 +830,7 @@ Page {
             onCancelRequested: keep.cancel()
             onActionTriggered: (key) => {
                 if (key === "show") {
-                    keep.showInFolder(root.keepFinished.flacPath);
+                    keep.showInFolder(last.flacPath);
                 } else {
                     keep.dismissFinished();
                 }

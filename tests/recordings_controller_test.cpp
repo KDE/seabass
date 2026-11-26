@@ -24,13 +24,17 @@
 #include <optional>
 #include <string>
 
+#include "gui/keep_recording_controller.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/recordings_controller.hpp"
+#include "infrastructure/local/local_keep_recording_files.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "nothing_else_running.hpp"
 #include "scratch_path.hpp"
 
+using seabass::gui::KeepRecordingController;
+using seabass::gui::KeepRecordingParts;
 using seabass::gui::RecordingsController;
 using seabass::gui::pathToQString;
 namespace fs = std::filesystem;
@@ -84,6 +88,48 @@ bool waitFor(QSignalSpy &spy, int count)
     }
     return spy.count() >= count;
 }
+
+// An encoder held until the test lets it go (or the job is cancelled),
+// which then writes a stand-in FLAC: a keep that runs as long as the test
+// needs it to.
+class HeldEncoder : public seabass::application::RecordingEncoder
+{
+public:
+    explicit HeldEncoder(std::atomic<bool> *release) : m_release(release) {}
+    seabass::application::RecordingEncodeResult encode(const std::string &, const std::string &flacPath,
+                                                       const seabass::application::RecordingEncodeOptions &options) override
+    {
+        seabass::application::RecordingEncodeResult result;
+        for (int i = 0; i < 30000 && !m_release->load(); ++i) {
+            if (options.cancel.cancelled()) {
+                result.cancelled = true;
+                return result;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        write(seabass::pathFromUtf8(flacPath), "fLaC stand-in");
+        result.encoded = true;
+        return result;
+    }
+
+private:
+    std::atomic<bool> *m_release;
+};
+
+class NoCovers : public seabass::application::CoverArtPreparer
+{
+public:
+    seabass::application::CoverArtResult prepare(const std::string &) override { return {std::nullopt, "no covers here"}; }
+};
+
+class PassingTags : public seabass::application::RecordingTagWriter
+{
+public:
+    seabass::application::RecordingTagWriteResult write(const std::string &, const seabass::application::RecordingTags &) override
+    {
+        return {true, {}};
+    }
+};
 
 }  // namespace
 
@@ -260,6 +306,96 @@ int main(int argc, char **argv)
         assert(warning.contains(QStringLiteral("not deleted")));
         assert(warning.contains(QStringLiteral("C3.wav")));
         std::cout << "ok: what could not be deleted is named in the summary\n";
+    }
+
+    // Keep this recording beside the list, wired in C++: the keep
+    // controller learns the stick, nothing is deleted while it has work,
+    // and nothing is kept while a delete runs.
+    {
+        for (int i = 0; i < 300 && controller.busy(); ++i) {
+            listed.wait(100);
+        }
+        write(stick / "Sessions" / "K1.wav", wav(1000, 'k'));
+        write(stick / "Sessions" / "K2.wav", wav(1000, 'l'));
+        std::atomic<bool> release{false};
+        KeepRecordingController::setPartsForTesting([&release]() {
+            KeepRecordingParts parts;
+            parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
+            parts.encoder = std::make_unique<HeldEncoder>(&release);
+            parts.covers = std::make_unique<NoCovers>();
+            parts.tags = std::make_unique<PassingTags>();
+            return parts;
+        });
+        // Wired before its first listing, as Main.qml wires them: the
+        // stick is told when the list is read.
+        KeepRecordingController keep;
+        RecordingsController wired;
+        QSignalSpy wiredListed(&wired, &RecordingsController::listingChanged);
+        wired.setKeepController(&keep);
+        assert(keep.stickRoot().isEmpty());
+        const int listedBefore = wiredListed.count();
+        wired.load(QStringLiteral("STICK"), QString(), pathToQString(engine));
+        assert(waitFor(wiredListed, listedBefore + 1));
+        assert(fs::equivalent(seabass::gui::pathFromQString(keep.stickRoot()), stick));
+        assert(keep.folderProblem(pathToQString(stick / "Sessions")).contains(QStringLiteral("on the stick")));
+        std::cout << "ok: the keep controller is told the stick, and refuses a folder on it\n";
+
+        const fs::path keptFolder = scratch / "kept";
+        const QVariantMap form{
+            {"wavPath", pathToQString(stick / "Sessions" / "K1.wav")},
+            {"recording", QStringLiteral("K1.wav")},
+            {"artist", QString()},
+            {"title", QStringLiteral("K1")},
+            {"album", QString()},
+            {"genre", QString()},
+            {"year", QString()},
+            {"folder", pathToQString(keptFolder)},
+        };
+        assert(keep.keep(form));
+        assert(keep.hasWork());
+        wired.setAllIncluded(true);
+        QSignalSpy finished(&wired, &RecordingsController::finished);
+        wired.deleteSelected();
+        assert(!wired.working());
+        assert(wired.errorMessage().contains(QStringLiteral("being kept")));
+        assert(fs::exists(stick / "Sessions" / "K1.wav") && fs::exists(stick / "Sessions" / "K2.wav"));
+        std::cout << "ok: nothing is deleted while a recording is being kept, and the page is told why\n";
+
+        release = true;
+        QSignalSpy keptSpy(&keep, &KeepRecordingController::finished);
+        assert(waitFor(keptSpy, 1));
+        assert(!keep.hasWork());
+        assert(keptSpy.first().first().toMap().value("state").toString() == QStringLiteral("kept"));
+
+        // While the delete runs, nothing is kept.
+        std::atomic<bool> letDelete{false};
+        seabass::application::RecordingDeleteHooks hooks;
+        hooks.beforeDelete = [&letDelete](const fs::path &) {
+            for (int i = 0; i < 5000 && !letDelete.load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        };
+        RecordingsController::setDeleteHooksForTesting(hooks);
+        wired.deleteSelected();
+        assert(wired.working());
+        QVariantMap second = form;
+        second.insert("wavPath", pathToQString(stick / "Sessions" / "K2.wav"));
+        second.insert("recording", QStringLiteral("K2.wav"));
+        second.insert("title", QStringLiteral("K2"));
+        assert(!keep.keep(second));
+        assert(keep.errorMessage().contains(QStringLiteral("deleted")));
+        assert(!keep.hasWork());
+        letDelete = true;
+        assert(waitFor(finished, 1));
+        RecordingsController::setDeleteHooksForTesting({});
+        assert(!fs::exists(stick / "Sessions" / "K1.wav"));
+        assert(fs::exists(keptFolder / "K1.flac"));
+        std::cout << "ok: nothing is kept while recordings are being deleted; once the keep has ended, Delete runs\n";
+        for (int i = 0; i < 300 && wired.busy(); ++i) {
+            wiredListed.wait(100);
+        }
+        wired.setKeepController(nullptr);
+        KeepRecordingController::setPartsForTesting({});
     }
 
     std::cout << "recordings_controller_test: all passed\n";

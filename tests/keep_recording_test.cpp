@@ -43,6 +43,9 @@ const std::string Folder = "/home/dj/Music/Own Recordings";
 const std::string FileName = "DJ Kelp - Late Set.flac";
 const std::string Flac = Folder + "/" + FileName;
 const std::string Picture = "/home/dj/Pictures/cover.png";
+const std::string Stick = "/stick";
+// What the temporary names add to the FLAC's name, as the GUI hands it in.
+constexpr std::size_t TempExtra = 41;
 constexpr std::uint64_t WavBytes = 500ULL * 1024 * 1024;
 
 // Everything the fakes did, in order: "read ...", "write ...", and the
@@ -60,6 +63,9 @@ public:
     bool pictureUnreadable = false;
     std::string folderRefusal;
     std::string removeRefusal;
+    // isWithin()'s answer for the folder and the stick.
+    std::optional<bool> onStick = false;
+    std::optional<std::uint64_t> nameMax = 255;
 
     std::optional<std::uint64_t> fileSize(const std::string &path) override
     {
@@ -90,6 +96,16 @@ public:
         }
         return std::string("PNG bytes");
     }
+    std::optional<bool> isWithin(const std::string &path, const std::string &folder) override
+    {
+        journal.push_back("read within " + path + " in " + folder);
+        return onStick;
+    }
+    std::optional<std::uint64_t> maxNameBytes(const std::string &folder) override
+    {
+        journal.push_back("read namemax " + folder);
+        return nameMax;
+    }
     std::string makeFolder(const std::string &folder) override
     {
         journal.push_back("write folder " + folder);
@@ -106,9 +122,12 @@ public:
             return removeRefusal;
         }
         present.erase(path);
+        sizes.erase(path);
         return {};
     }
 };
+
+constexpr std::uint64_t EncodedBytes = 300ULL * 1024 * 1024;
 
 class FakeEncoder : public RecordingEncoder
 {
@@ -122,6 +141,9 @@ public:
     CancellationToken *token = nullptr;
     // Called while the encoder runs: another job asked for meanwhile.
     std::function<void()> during;
+    // With `error`: a file is left under the target's name, as the real
+    // encoder leaves one whose size is wrong after the rename.
+    bool leavesTarget = false;
 
     RecordingEncodeResult encode(const std::string &wavPath, const std::string &flacPath,
                                  const RecordingEncodeOptions &options) override
@@ -144,10 +166,15 @@ public:
             }
         }
         if (!error.empty()) {
+            if (leavesTarget) {
+                m_files.present.insert(flacPath);
+                m_files.sizes[flacPath] = 999;
+            }
             result.error = error;
             return result;
         }
         m_files.present.insert(flacPath);
+        m_files.sizes[flacPath] = EncodedBytes;
         result.encoded = true;
         return result;
     }
@@ -173,7 +200,12 @@ public:
 class FakeTags : public RecordingTagWriter
 {
 public:
+    explicit FakeTags(FakeFiles &files) : m_files(files) {}
+
     std::string error;
+    // With `error`: another file stands under the FLAC's name afterwards,
+    // as when the real writer finds the size wrong after its rename.
+    bool replacesFile = false;
     bool throws = false;
     CancellationToken *cancelDuring = nullptr;
     RecordingTags written;
@@ -188,10 +220,17 @@ public:
             throw std::runtime_error("the tag writer broke its word");
         }
         if (!error.empty()) {
+            if (replacesFile) {
+                m_files.sizes[flacPath] = EncodedBytes + 77;
+            }
             return {false, error};
         }
+        m_files.sizes[flacPath] = EncodedBytes + 4096;  // the tags and the cover
         return {true, {}};
     }
+
+private:
+    FakeFiles &m_files;
 };
 
 KeepRecordingRequest request()
@@ -206,6 +245,8 @@ KeepRecordingRequest request()
     r.tags.genre = "Techno";
     r.tags.year = 2026;
     r.coverPicturePath = Picture;
+    r.stickRoot = Stick;
+    r.tempNameExtraBytes = TempExtra;
     return r;
 }
 
@@ -214,7 +255,7 @@ struct Run
     FakeFiles files;
     FakeEncoder encoder{files};
     FakeCovers covers;
-    FakeTags tags;
+    FakeTags tags{files};
     CancellationToken cancel;
     std::vector<KeepRecordingProgress> progress;
     KeepRecordingResult result;
@@ -284,11 +325,14 @@ void testTheWholeJobInOrder()
     check(run.result.flacPath == Flac, "the FLAC is in the folder under its name");
     check(run.result.message.empty(), "nothing to say when kept");
     const std::vector<std::string> expected = {
+        "read within " + Folder + " in " + Stick,
+        "read namemax " + Folder,
         "read size " + Wav,
         "write folder " + Folder,
         "read exists " + Flac,
         "read free " + Folder,
         "encode " + Wav + " -> " + Flac,
+        "read size " + Flac,
         "read file " + Picture,
         "cover PNG bytes",
         "tags " + Flac,
@@ -417,8 +461,8 @@ void testEncoderFailsOrIsCancelled()
         run.encoder.error = "Session-0001.wav was not encoded: the encoded file differs from the recording";
         run.go();
         check(run.result.status == KeepRecordingResult::Status::Failed
-                  && run.result.message == run.encoder.error,
-              "the encoder's failure: reported in its own words");
+                  && run.result.message == run.encoder.error && run.result.leftBehind.empty(),
+              "the encoder's failure: reported in its own words, nothing left");
         check(!run.called("tags") && !run.called("cover"), "the encoder's failure: nothing after it");
         check(run.nothingLeft() && run.wavOnlyRead(), "the encoder's failure: nothing left, the recording untouched");
     }
@@ -484,12 +528,14 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
         check(run.nothingLeft() && run.wavOnlyRead(), "tags that cannot be written: the FLAC is removed, the recording untouched");
     }
     {
+        // The tags were written and read back before the cancel was seen:
+        // the job is done, and the FLAC is kept.
         Run run;
         run.tags.cancelDuring = &run.cancel;
         run.go();
-        check(run.result.status == KeepRecordingResult::Status::Cancelled,
-              "cancelled while the tags are written: cancelled");
-        check(run.nothingLeft(), "cancelled while the tags are written: the FLAC is removed");
+        check(run.result.status == KeepRecordingResult::Status::Kept && run.result.flacPath == Flac,
+              "cancelled while the tags are written, and they were: kept");
+        check(!run.nothingLeft() && !run.called("write remove"), "cancelled after the tags: the FLAC stays");
     }
     {
         Run run;
@@ -522,7 +568,122 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
                   && run.result.message.find("could not be removed") != std::string::npos
                   && run.result.message.find("it is held open") != std::string::npos,
               "a FLAC that cannot be removed: said, beside why the job failed");
+        check(run.result.leftBehind == Flac && run.result.message.find(Flac) != std::string::npos,
+              "a FLAC that cannot be removed: left behind, with its path");
     }
+    {
+        // A cancel between the encoding and the tags, and the unfinished
+        // FLAC cannot be removed: what was left, and where.
+        Run run;
+        run.files.removeRefusal = "it is held open";
+        run.onProgress = [&run](const KeepRecordingProgress &p) {
+            if (p.step == KeepRecordingStep::Tagging) {
+                run.cancel.cancel();
+            }
+        };
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Cancelled && run.result.leftBehind == Flac
+                  && run.result.message.find(Flac) != std::string::npos,
+              "cancelled, and the FLAC cannot be removed: left behind, said with its path: " + run.result.message);
+    }
+}
+
+// The encoder and the tag writer may answer "not kept" while a file stands
+// under the FLAC's name (a check after the rename that failed): it is left
+// as it is, said with its path, and never removed as if it were the job's.
+void testAFileLeftInPlaceIsSaid()
+{
+    {
+        Run run;
+        run.encoder.error = "DJ Kelp - Late Set.flac does not have the size of the checked file after it was given its "
+                            "name; it was left as it is and does not count as kept";
+        run.encoder.leavesTarget = true;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed, "the encoder left a file: failed");
+        check(run.result.leftBehind == Flac, "the encoder left a file: it is named as left behind");
+        check(run.result.message.find(Flac) != std::string::npos
+                  && run.result.message.find("does not count as kept") != std::string::npos,
+              "the encoder left a file: the message gives its path: " + run.result.message);
+        check(!run.called("write remove") && run.files.present.count(Flac) == 1, "the encoder left a file: never removed");
+    }
+    {
+        Run run;
+        run.tags.error = "the tags of DJ Kelp - Late Set.flac were written, but the file under its name does not have "
+                         "the size of the checked copy afterwards";
+        run.tags.replacesFile = true;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed && run.result.leftBehind == Flac,
+              "the tag writer left another file: named as left behind");
+        check(run.result.message.find(Flac) != std::string::npos
+                  && run.result.message.find("was left") != std::string::npos,
+              "the tag writer left another file: the message gives its path: " + run.result.message);
+        check(!run.called("write remove") && run.files.present.count(Flac) == 1,
+              "the tag writer left another file: never removed");
+    }
+    {
+        Run run;
+        run.encoder.error = "the encoder stopped";
+        run.files.existsUnknown = false;
+        run.go();
+        check(run.result.leftBehind.empty() && run.result.message == "the encoder stopped",
+              "nothing under the name after a failed encoding: nothing said about it");
+    }
+}
+
+// The folder is on this computer, never on the stick; a name the drive
+// cannot take and text a tag cannot hold are refused before anything.
+void testThePlaceAndTheText()
+{
+    {
+        Run run;
+        run.files.onStick = true;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed
+                  && run.result.message.find("is on the stick") != std::string::npos
+                  && run.result.message.find("onto this computer") != std::string::npos,
+              "a folder on the stick: refused, saying where the FLAC goes: " + run.result.message);
+        check(!run.called("write") && !run.called("encode"), "a folder on the stick: nothing written");
+    }
+    {
+        Run run;
+        run.files.onStick = std::nullopt;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed && !run.called("write") && !run.called("encode"),
+              "a folder that cannot be told from the stick: refused, nothing written");
+    }
+    {
+        Run run;
+        KeepRecordingRequest r = request();
+        r.stickRoot.clear();
+        run.go(r);
+        check(run.result.status == KeepRecordingResult::Status::Failed && journal.empty(),
+              "no stick named: refused before anything");
+    }
+    {
+        Run run;
+        run.files.nameMax = FileName.size() + TempExtra - 1;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed
+                  && run.result.message.find("too long") != std::string::npos,
+              "a name whose temporary name the drive cannot take: refused, saying so: " + run.result.message);
+        check(!run.called("write") && !run.called("encode"), "a name too long: nothing written");
+        Run fits;
+        fits.files.nameMax = FileName.size() + TempExtra;
+        fits.go();
+        check(fits.result.status == KeepRecordingResult::Status::Kept, "a name that just fits with its temporary name: kept");
+    }
+    for (const std::string &bad : {std::string("DJ\tKelp"), std::string("DJ\nKelp"), std::string("DJ\x7f" "Kelp"),
+                                   std::string("DJ\xe2\x80\xa8" "Kelp"), std::string("DJ\xe2\x80\xa9" "Kelp"),
+                                   std::string("DJ\xc2\x85" "Kelp")}) {
+        Run run;
+        KeepRecordingRequest r = request();
+        r.tags.genre = bad;
+        run.go(r);
+        check(run.result.status == KeepRecordingResult::Status::Failed
+                  && run.result.message.find("control character") != std::string::npos && journal.empty(),
+              "a control character in a tag: refused before anything");
+    }
+    check(!hasControlCharacter("Nacht \xc3\xbc" "ber K\xc3\xb6ln \xe5\xa4\x9c \xe2\x80\x94 ok"), "letters, an em dash and CJK are fine");
 }
 
 // Two jobs never work on one recording or one FLAC: a second, asked for
@@ -563,10 +724,21 @@ void testOneJobPerRecordingAndFlac()
     check(after.result.status == KeepRecordingResult::Status::Kept, "once the first has ended, the recording can be kept again");
 }
 
+// A cut for the use case's own test: on a code point boundary. The GUI's
+// cut by grapheme clusters is keep_recording_controller_test's.
+std::size_t codePointCut(std::string_view text, std::size_t maxBytes)
+{
+    std::size_t at = std::min(maxBytes, text.size());
+    while (at > 0 && at < text.size() && (static_cast<unsigned char>(text[at]) & 0xC0) == 0x80) {
+        --at;
+    }
+    return at;
+}
+
 void testFileNames()
 {
     const auto name = [](const std::string &artist, const std::string &title) {
-        return keptRecordingFileName(artist, title);
+        return keptRecordingFileName(artist, title, keptRecordingStemBytes(MaxFileNameBytes, TempExtra), codePointCut);
     };
     const auto expect = [&](const std::string &artist, const std::string &title, const std::string &want,
                             const std::string &what) {
@@ -591,14 +763,22 @@ void testFileNames()
     expect("...", "Set", "Set.flac", "an artist of nothing but dots is no artist");
     expect("DJ Kelp", "", "DJ Kelp.flac", "no track name: the artist alone");
     expect("", "", "Recording.flac", "nothing at all: Recording");
-    const std::string longName = name("", std::string(300, 'x'));
-    check(longName.size() == 120 && longName.substr(115) == ".flac", "a long name is cut to 120 with its extension");
+    const std::size_t stem = keptRecordingStemBytes(MaxFileNameBytes, TempExtra);
+    check(stem == 255 - TempExtra - 5, "room for the stem: the name, less the temporary names' extra and .flac");
+    check(keptRecordingStemBytes(40, TempExtra) == 0, "no room at all: none");
+    const std::string longName = keptRecordingFileName("", std::string(300, 'x'), stem, codePointCut);
+    check(longName.size() == stem + 5 && longName.substr(stem) == ".flac",
+          "a long name is cut in bytes, leaving room for its temporary names: " + std::to_string(longName.size()));
+    check(longName.size() + TempExtra <= MaxFileNameBytes, "and its longest temporary name fits 255 bytes");
     std::string umlauts;
     for (int i = 0; i < 200; ++i) {
-        umlauts += "\xc3\xbc";  // ü, one UTF-16 unit, two bytes
+        umlauts += "\xc3\xbc";  // ü, two bytes
     }
-    const std::string cut = name("", umlauts);
-    check(cut.size() == 115 * 2 + 5, "cut on a character boundary, counted in UTF-16 units");
+    const std::string cut = keptRecordingFileName("", umlauts, 101, codePointCut);
+    check(cut.size() == 100 + 5, "cut where the cut says, never inside a UTF-8 sequence");
+    const std::string spaced = keptRecordingFileName("", std::string(50, 'a') + "  . " + std::string(50, 'b'), 52,
+                                                     codePointCut);
+    check(spaced == std::string(50, 'a') + ".flac", "a space or a dot the cut leaves at the end goes too");
 
     check(suggestedRecordingTitle("Session-0001.wav") == "Session-0001", "suggested track name: the file name");
     check(suggestedRecordingTitle("my_set_2026.WAV") == "my set 2026", "underscores as spaces");
@@ -616,6 +796,8 @@ int main()
     testEncoderFailsOrIsCancelled();
     testFailuresAfterTheEncodingRemoveTheFlac();
     testOneJobPerRecordingAndFlac();
+    testAFileLeftInPlaceIsSaid();
+    testThePlaceAndTheText();
     testFileNames();
     if (failures > 0) {
         std::cout << "keep_recording_test: " << failures << " FAILED\n";

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -25,11 +26,22 @@ namespace seabass::application
 // The order is fixed: the free space on the target's volume, the
 // encoding (with the encoder's own check, sample for sample), the cover,
 // the tags. The recording on the stick is only ever read: by the encoder,
-// and here for its size. A failure or a cancel at any point leaves no
-// file of this job in the target folder; the folder itself stays when it
-// was made for the job. A file under the target's name is never
-// replaced. A job for a recording or a FLAC that another job in this
-// process has in hand is refused before it touches anything.
+// and here for its size. A failure or a cancel before the tags were
+// written and read back leaves no file of this job in the target folder,
+// with one exception that is always said (KeepRecordingResult::leftBehind):
+// a file under the target's name that the job cannot prove is its own
+// unfinished FLAC is left where it is. A cancel that comes after the tags
+// were written and read back changes nothing: the job is done, and the
+// FLAC is kept. The folder itself stays when it was made for the job. A
+// file under the target's name is never replaced. A job for a recording
+// or a FLAC that another job in this process has in hand is refused
+// before it touches anything.
+//
+// The target folder is never on the stick the recording is on (compared
+// as files: links followed, letters as the filesystem compares them, the
+// nearest folder that is there for one still to be made). The recordings
+// page lists every audio file in the stick's recording folders, so a FLAC
+// kept beside its WAV would be offered for deletion with it.
 
 // What the job needs of the file system, apart from what the encoder and
 // the tag writer do themselves. Read calls and write calls are apart, so
@@ -47,6 +59,16 @@ public:
     virtual std::optional<std::uint64_t> freeBytes(const std::string &folder) = 0;
     // A picture file's bytes, refused (nullopt) above `maxBytes`.
     virtual std::optional<std::string> readFile(const std::string &path, std::uint64_t maxBytes) = 0;
+    // Whether `path` is `folder` or inside it, compared as files: both
+    // resolved, links followed, letters compared as the filesystem
+    // compares them. A `path` that is not there (a folder still to be
+    // made) counts by the nearest folder above it that is. nullopt when
+    // that cannot be told, `folder` not being there included.
+    virtual std::optional<bool> isWithin(const std::string &path, const std::string &folder) = 0;
+    // The longest file name, in bytes of UTF-8, the filesystem that holds
+    // `folder` takes (the nearest folder above it that is there, for one
+    // still to be made); nullopt when it cannot be told.
+    virtual std::optional<std::uint64_t> maxNameBytes(const std::string &folder) = 0;
 
     // Writes. Each answers "" when it did it, or why not in words.
     // makeFolder: the folder and those above it, whatever of them is
@@ -67,6 +89,13 @@ struct KeepRecordingRequest
     // path is no cover.
     RecordingTags tags;
     std::string coverPicturePath;
+    // The root of the stick the recording is on: the folder must not be
+    // on it. Required.
+    std::string stickRoot;
+    // How many bytes the longest temporary name the encoder and the tag
+    // writer give beside the FLAC adds to its name: the name and that
+    // must fit the filesystem's longest name.
+    std::size_t tempNameExtraBytes = 0;
 };
 
 enum class KeepRecordingStep
@@ -99,10 +128,25 @@ struct KeepRecordingResult
     // The FLAC, when kept.
     std::string flacPath;
     // Why not, in words for the person who asked; empty when kept or
-    // cancelled, unless what the job made could not be taken away again,
-    // which is then said here too.
+    // cancelled, unless a file was left in the folder, which is then said
+    // here too, with its path.
     std::string message;
+    // When not kept: a file under the FLAC's name that was left in the
+    // folder (one that could not be removed, or one that is not provably
+    // the job's own unfinished FLAC). Empty when nothing is there; the
+    // message says so when that could not be told.
+    std::string leftBehind;
 };
+
+// The longest name a filesystem gives a file, in bytes: ext4, btrfs,
+// XFS, APFS and ZFS count UTF-8 bytes, NTFS, FAT and exFAT count UTF-16
+// units, of which a name never has more than its UTF-8 bytes.
+inline constexpr std::size_t MaxFileNameBytes = 255;
+
+// Whether a tag's text holds a character a tag field cannot: one below
+// U+0020, U+007F, U+0085, or a Unicode line or paragraph separator
+// (U+2028, U+2029). Text is UTF-8.
+bool hasControlCharacter(std::string_view text);
 
 // Room asked for on the target's volume: the FLAC can be as large as the
 // recording (noise does not compress), and the tag writer writes a copy
@@ -120,7 +164,21 @@ inline constexpr std::uint64_t MaxCoverPictureBytes = 64ULL * 1024 * 1024;
 // forbidden characters become '_', control characters go, dots and
 // spaces at either end go, a name Windows reserves gets a '_' in front,
 // non-ASCII stays). "Recording.flac" when nothing is left.
-std::string keptRecordingFileName(std::string_view artist, std::string_view title);
+//
+// The part before ".flac" is at most `maxStemBytes` bytes of UTF-8, cut
+// where `cut` says: it answers, for a UTF-8 text and a number of bytes,
+// the longest start of the text of at most that many bytes that ends on
+// a boundary between two user-perceived characters (never inside a UTF-8
+// sequence, a combining sequence or an emoji sequence). The GUI answers
+// it with QTextBoundaryFinder.
+using GraphemeCut = std::function<std::size_t(std::string_view text, std::size_t maxBytes)>;
+std::string keptRecordingFileName(std::string_view artist, std::string_view title, std::size_t maxStemBytes,
+                                  const GraphemeCut &cut);
+
+// The room for the part before ".flac" in a folder whose filesystem takes
+// names of up to `maxNameBytes`, when temporary names add
+// `tempNameExtraBytes` to the FLAC's name. 0 when there is none.
+std::size_t keptRecordingStemBytes(std::size_t maxNameBytes, std::size_t tempNameExtraBytes);
 
 // The track name suggested for a recording: its file name without the
 // extension, underscores as spaces.

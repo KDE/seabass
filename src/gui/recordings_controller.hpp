@@ -7,6 +7,7 @@
 #include <QAbstractListModel>
 #include <QFutureWatcher>
 #include <QObject>
+#include <QPointer>
 #include <QQmlEngine>
 #include <QVariantList>
 #include <QVariantMap>
@@ -17,6 +18,7 @@
 #include "application/ports/cancellation_token.hpp"
 #include "application/use_cases/clean_up_recordings.hpp"
 #include "gui/edit/direct_write_hold.hpp"
+#include "gui/keep_recording_controller.hpp"
 
 namespace seabass::gui
 {
@@ -105,6 +107,12 @@ struct RecordingsRunResult
 // elsewhere, and the confirmation says plainly that they will be gone for
 // good.
 //
+// Keep this recording works beside the list (keepController): nothing is
+// deleted while a recording is being kept or waits to be (deleteSelected()
+// refuses, saying so), nothing is kept while recordings are being
+// deleted, and the keep controller is told which stick the recordings are
+// on, so that it never keeps one onto it.
+//
 // Known limitation: summarize(), the hub card's count, lists the folders on the GUI thread.
 class RecordingsController : public QObject
 {
@@ -133,6 +141,9 @@ class RecordingsController : public QObject
     Q_PROPERTY(QString currentItem READ currentItem NOTIFY progressChanged)
     Q_PROPERTY(bool cancelRequested READ cancelRequested NOTIFY busyChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY messagesChanged)
+    // The page's KeepRecordingController; null for none.
+    Q_PROPERTY(seabass::gui::KeepRecordingController *keepController READ keepController WRITE setKeepController
+                   NOTIFY keepControllerChanged)
 
 public:
     explicit RecordingsController(QObject *parent = nullptr);
@@ -156,6 +167,8 @@ public:
     QString currentItem() const { return m_currentItem; }
     bool cancelRequested() const { return m_working && m_cancel.cancelled(); }
     QString errorMessage() const { return m_errorMessage; }
+    KeepRecordingController *keepController() const { return m_keep; }
+    void setKeepController(KeepRecordingController *keep);
 
     // For the Housekeeping hub's card: directory entries and stats only,
     // on the calling thread (a few folders, a handful of files). Returns
@@ -173,7 +186,8 @@ public:
     // The ticked recordings' paths, as deleteSelected() would take them.
     Q_INVOKABLE QStringList selectedPaths() const;
 
-    // Deletes the ticked recordings on a worker.
+    // Deletes the ticked recordings on a worker. Refused, with
+    // errorMessage, while the keep controller has work.
     Q_INVOKABLE void deleteSelected();
     // Stops after the file in flight.
     Q_INVOKABLE void cancel();
@@ -193,6 +207,7 @@ signals:
     // cancelled, error, warning}.
     void finished(const QVariantMap &summary);
     void lockRefused(const QVariantMap &holder);
+    void keepControllerChanged();
 
 private:
     void onListed();
@@ -221,6 +236,7 @@ private:
     int m_filesTotal = 0;
     QString m_currentItem;
     QString m_errorMessage;
+    QPointer<KeepRecordingController> m_keep;
 };
 
 }  // namespace seabass::gui

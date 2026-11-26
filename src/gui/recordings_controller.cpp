@@ -228,6 +228,22 @@ QString RecordingsController::stickRoot() const
     return stickRootFor(m_rekordboxPath, m_enginePath);
 }
 
+void RecordingsController::setKeepController(KeepRecordingController *keep)
+{
+    if (m_keep == keep) {
+        return;
+    }
+    if (m_keep) {
+        m_keep->setDeleteRunning(false);
+    }
+    m_keep = keep;
+    if (m_keep) {
+        m_keep->setStickRoot(stickRoot());
+        m_keep->setDeleteRunning(m_working);
+    }
+    emit keepControllerChanged();
+}
+
 QVariantMap RecordingsController::summarize(const QString &rekordboxPath, const QString &enginePath) const
 {
     const QString root = stickRootFor(rekordboxPath, enginePath);
@@ -266,6 +282,9 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
     m_strongIdAtRead = EditSessionRegistry::instance()->strongStickIdentityAt(
         EditSessionRegistry::instance()->mountPointForPath(!enginePath.isEmpty() ? enginePath : rekordboxPath));
     const QString root = stickRoot();
+    if (m_keep) {
+        m_keep->setStickRoot(root);
+    }
     if (root.isEmpty()) {
         setError(QStringLiteral("This stick has no library folder to find its root from."));
         return;
@@ -356,6 +375,14 @@ void RecordingsController::deleteSelected()
     if (paths.empty()) {
         return;
     }
+    // A recording being kept, or waiting to be, is read for minutes: it is
+    // not deleted from under its job, and neither is any other, so that
+    // what the page says was kept or not stays true until it has ended.
+    if (m_keep && m_keep->hasWork()) {
+        setError(tr("Nothing is deleted while a recording is being kept or waits to be kept. Delete once that has "
+                    "ended."));
+        return;
+    }
     // A write on the stick, so the same lock the library's other writers
     // take: another instance editing this stick's library holds it off.
     const QString libraryId =
@@ -377,6 +404,9 @@ void RecordingsController::deleteSelected()
     m_filesTotal = static_cast<int>(paths.size());
     m_currentItem.clear();
     m_working = true;
+    if (m_keep) {
+        m_keep->setDeleteRunning(true);
+    }
     emit progressChanged();
     emit busyChanged();
 
@@ -415,6 +445,9 @@ void RecordingsController::onRunFinished()
     }
     m_writeHold.release();
     m_working = false;
+    if (m_keep) {
+        m_keep->setDeleteRunning(false);
+    }
     emit busyChanged();
 
     const auto &report = result.report;

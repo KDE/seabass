@@ -7,9 +7,15 @@
 // (recording_test_support.hpp: tones and noise, no real audio) into a
 // scratch folder: the form's suggestions and checks, a tagged FLAC with
 // its cover, progress that never goes back and ends full, a second job
-// that waits for the first, a cancel in the middle, and the controller
-// destroyed in the middle of a job, in the encoder and in the tag writer.
-// What is in the target folder afterwards is read from the disk here.
+// that waits for the first, a cancel in the middle (and the jobs it
+// drops), a failure that stays in the strip while the next job runs, a
+// cancel too late to undo the job, a file left in place said with its
+// path, a folder on the stick refused, a name cut to what the drive and
+// the temporary names leave room for, on a character boundary, text a tag
+// cannot hold refused, and the controller destroyed in the middle of a
+// job, in the encoder and in the tag writer. What is in the target folder
+// afterwards is read from the disk here. The settings store is a scratch
+// file on every platform, proven before anything is written.
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -24,6 +30,7 @@
 #include <QThreadPool>
 
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -35,6 +42,8 @@
 #include <taglib/xiphcomment.h>
 
 #include "gui/keep_recording_controller.hpp"
+#include "gui/qt_path.hpp"
+#include "gui/seabass_settings.hpp"
 #include "infrastructure/audio/qt_cover_art_preparer.hpp"
 #include "infrastructure/audio/qt_flac_recording_encoder.hpp"
 #include "infrastructure/local/local_keep_recording_files.hpp"
@@ -43,6 +52,7 @@
 
 using seabass::gui::KeepRecordingController;
 using seabass::gui::KeepRecordingParts;
+constexpr int KeepRecordingStopWaitMsForTest = seabass::gui::KeepRecordingStopWaitMs;
 namespace fs = std::filesystem;
 
 namespace
@@ -88,6 +98,14 @@ bool waitUntil(const std::function<bool()> &done, int ms = 60000)
         QThread::msleep(2);
     }
     return done();
+}
+
+// The stick the recordings are on, in scratch: its root, with Sessions/.
+QString makeStick(const QString &scratch)
+{
+    const QString root = scratch + QStringLiteral("/STICK");
+    QDir().mkpath(root + QStringLiteral("/Sessions"));
+    return root;
 }
 
 std::string writeWav(const QString &dir, const QString &name, double seconds)
@@ -146,6 +164,7 @@ bool neverBack(const std::vector<double> &values)
 void suggestionsAndChecks(const QString &scratch)
 {
     KeepRecordingController controller;
+    controller.setStickRoot(makeStick(scratch));
     const QVariantMap first = controller.suggestionsFor(QStringLiteral("my_set_0001.wav"),
                                                         QDateTime(QDate(2025, 7, 12), QTime(2, 30)));
     check(first.value("title").toString() == QStringLiteral("my set 0001"), "suggested track name from the file name");
@@ -159,7 +178,8 @@ void suggestionsAndChecks(const QString &scratch)
     check(controller.suggestionsFor(QStringLiteral("x.wav"), QDateTime()).value("year").toInt() == 0,
           "no date, no year");
 
-    check(controller.fileNameFor(QStringLiteral(" AC/DC "), QStringLiteral("Live?")) == QStringLiteral("AC_DC - Live_.flac"),
+    check(controller.fileNameFor(QStringLiteral(" AC/DC "), QStringLiteral("Live?"), scratch)
+              == QStringLiteral("AC_DC - Live_.flac"),
           "the file name is made safe");
     check(controller.yearProblem(QString()).isEmpty() && controller.yearProblem(QStringLiteral("1900")).isEmpty()
               && controller.yearProblem(QStringLiteral("2100")).isEmpty(),
@@ -207,6 +227,7 @@ void suggestionsAndChecks(const QString &scratch)
 
 void twoJobsQueued(const QString &scratch)
 {
+    const QString stick = makeStick(scratch);
     const QString folder = scratch + QStringLiteral("/kept/Own Recordings é");
     const std::string wav1 = writeWav(scratch, QStringLiteral("Session-0001.wav"), 3);
     const std::string wav2 = writeWav(scratch, QStringLiteral("Session-0002.wav"), 2);
@@ -221,6 +242,7 @@ void twoJobsQueued(const QString &scratch)
     }
 
     KeepRecordingController controller;
+    controller.setStickRoot(stick);
     check(controller.available(), "this build can keep a recording");
     ProgressLog log(controller);
     std::vector<std::string> events;
@@ -240,7 +262,9 @@ void twoJobsQueued(const QString &scratch)
     check(controller.coverPreview().startsWith(QStringLiteral("data:image/jpeg;base64,")), "the preview is the prepared JPEG");
     check(controller.coverWidth() == 1200 && controller.coverHeight() == 600, "the preview has the size it is embedded at");
 
-    check(controller.keep(form(wav1, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Late Set"))), "first job taken");
+    // White space around the text is not kept.
+    check(controller.keep(form(wav1, folder, QStringLiteral("  DJ Kelp "), QStringLiteral(" Late Set  "))),
+          "first job taken");
     check(controller.busy(), "and running");
     controller.pickCover(QString());
     check(controller.keep(form(wav2, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Early Set"))), "second job taken");
@@ -285,8 +309,9 @@ void twoJobsQueued(const QString &scratch)
           "and where: " + kept.value("flacPath").toString().toStdString());
     check(entries(folder) == (std::vector<std::string>{"DJ Kelp - Early Set.flac", "DJ Kelp - Late Set.flac"}),
           "the folder holds the two FLACs and nothing else");
-    check(controller.lastFinished().value("recording").toString() == QStringLiteral("Session-0002.wav"),
-          "the strip shows the job that ended last");
+    const QVariantList ended = controller.finishedJobs();
+    check(ended.size() == 2 && ended.last().toMap().value("recording").toString() == QStringLiteral("Session-0002.wav"),
+          "the strip lists both jobs, the one that ended last at the end");
 
     {
         const fs::path path = seabass::pathFromUtf8(flac1.toStdString());
@@ -323,7 +348,9 @@ void cancelInTheMiddle(const QString &scratch)
     const QString folder = scratch + QStringLiteral("/cancelled");
     const std::string wav = writeWav(scratch, QStringLiteral("long.wav"), 240);
     const std::string waiting = writeWav(scratch, QStringLiteral("waiting.wav"), 1);
+    const std::string waiting2 = writeWav(scratch, QStringLiteral("waiting too.wav"), 1);
     KeepRecordingController controller;
+    controller.setStickRoot(makeStick(scratch));
     bool asked = false;
     QObject::connect(&controller, &KeepRecordingController::progressChanged, &controller, [&]() {
         if (!asked && controller.progress() >= 0.2) {
@@ -334,6 +361,7 @@ void cancelInTheMiddle(const QString &scratch)
     QSignalSpy finished(&controller, &KeepRecordingController::finished);
     check(controller.keep(form(wav, folder, QString(), QStringLiteral("Long"))), "a long job taken");
     check(controller.keep(form(waiting, folder, QString(), QStringLiteral("Waiting"))), "and one behind it");
+    check(controller.keep(form(waiting2, folder, QString(), QStringLiteral("Waiting Too"))), "and another");
     check(waitUntil([&]() { return finished.count() >= 1 && !controller.busy(); }), "the cancelled job ends");
     check(asked, "cancelled in the middle, at a fifth");
     check(finished.count() == 1, "only the job in hand ends: the one that waited was dropped");
@@ -341,8 +369,32 @@ void cancelInTheMiddle(const QString &scratch)
     check(outcome.value("state").toString() == QStringLiteral("cancelled"), "it says cancelled");
     check(controller.queued().isEmpty(), "nothing waits after a cancel");
     check(entries(folder).empty(), "no file of it in the folder, no temporary file either");
-    check(controller.outcomeFor(QString::fromStdString(wav)).value("state").toString().isEmpty(),
-          "the row says nothing: the person asked for it");
+    const QVariantMap stopped = controller.outcomeFor(QString::fromStdString(wav));
+    check(stopped.value("state").toString() == QStringLiteral("cancelled") && stopped.value("leftBehind").toString().isEmpty(),
+          "the row of the job in hand says it was stopped, nothing left");
+    for (const std::string &path : {waiting, waiting2}) {
+        check(controller.outcomeFor(QString::fromStdString(path)).value("state").toString() == QStringLiteral("dropped"),
+              "a job that waited has an outcome of its own: dropped");
+    }
+    const QVariantList ended = controller.finishedJobs();
+    QStringList states;
+    for (const QVariant &job : ended) {
+        states << job.toMap().value("state").toString() + QLatin1Char(' ') + job.toMap().value("recording").toString();
+    }
+    check(states == (QStringList{QStringLiteral("dropped waiting.wav"), QStringLiteral("dropped waiting too.wav"),
+                                 QStringLiteral("cancelled long.wav")}),
+          "the strip lists the dropped jobs and the stopped one: " + states.join(QStringLiteral(", ")).toStdString());
+    const QVariantMap notes = controller.keepNotesFor(
+        {QString::fromStdString(wav), QString::fromStdString(waiting), QString::fromStdString(waiting2),
+         QStringLiteral("/never/asked.wav")});
+    check(notes.value("notKept").toStringList()
+              == (QStringList{QStringLiteral("long.wav"), QStringLiteral("waiting.wav"), QStringLiteral("waiting too.wav")}),
+          "the delete confirmation can name every one not kept, and none never asked for");
+    check(notes.value("kept").toList().isEmpty(), "and none as kept");
+    controller.dismissFinished();
+    check(controller.finishedJobs().isEmpty(), "closed, the strip's list is empty");
+    check(controller.outcomeFor(QString::fromStdString(waiting)).value("state").toString() == QStringLiteral("dropped"),
+          "the rows still say it");
     check(fs::file_size(seabass::pathFromUtf8(wav)) == 44 + 44100ULL * 240 * 4, "the recording is as it was");
 }
 
@@ -351,6 +403,7 @@ void destroyedMidEncoding(const QString &scratch)
     const QString folder = scratch + QStringLiteral("/destroyed");
     const std::string wav = writeWav(scratch, QStringLiteral("destroyed.wav"), 240);
     auto controller = std::make_unique<KeepRecordingController>();
+    controller->setStickRoot(makeStick(scratch));
     check(controller->keep(form(wav, folder, QString(), QStringLiteral("Gone"))), "a job taken, to be left");
     check(waitUntil([&]() { return controller->progress() >= 0.1; }), "it is under way");
     QElapsedTimer timer;
@@ -358,6 +411,9 @@ void destroyedMidEncoding(const QString &scratch)
     controller.reset();
     const qint64 ms = timer.elapsed();
     check(ms < 1500, "the controller goes within a second and a half: " + std::to_string(ms) + " ms");
+    // Woken as the worker ends, not at the end of the wait.
+    check(ms < KeepRecordingStopWaitMsForTest - 200,
+          "and as soon as the worker has stopped, well before the wait's end: " + std::to_string(ms) + " ms");
     QThreadPool::globalInstance()->waitForDone();
     check(entries(folder).empty(), "no file left in the folder");
 }
@@ -387,6 +443,7 @@ void destroyedMidTagging(const QString &scratch)
         return parts;
     });
     auto controller = std::make_unique<KeepRecordingController>();
+    controller->setStickRoot(makeStick(scratch));
     check(controller->keep(form(wav, folder, QString(), QStringLiteral("Slow"))), "a job taken, to be left while tagged");
     check(waitUntil([&]() { return controller->progressStep() == QStringLiteral("tags"); }), "it reaches the tags");
     QElapsedTimer timer;
@@ -395,7 +452,10 @@ void destroyedMidTagging(const QString &scratch)
     const qint64 ms = timer.elapsed();
     check(ms < 1500, "the controller goes within a second and a half while the tags are written: " + std::to_string(ms) + " ms");
     QThreadPool::globalInstance()->waitForDone();
-    check(entries(folder).empty(), "the worker took its FLAC away when the tag writer returned");
+    // The tag writer said written: the job was done, a cancel that came
+    // while it wrote was too late, and the FLAC stays.
+    check(entries(folder) == std::vector<std::string>{"Slow.flac"},
+          "the tags were written after all: the finished FLAC stays");
     KeepRecordingController::setPartsForTesting({});
 }
 
@@ -438,15 +498,257 @@ void destroyedMidCoverPreview(const QString &scratch)
     KeepRecordingController::setPartsForTesting({});
 }
 
+
+// A folder on the stick is refused, in the form and in keep(): the page
+// lists every audio file in Sessions/, so a FLAC there would be deleted
+// with its WAV.
+void folderOnTheStick(const QString &scratch)
+{
+    const QString stick = makeStick(scratch);
+    const std::string wav = writeWav(stick + QStringLiteral("/Sessions"), QStringLiteral("Session-0001.wav"), 0.5);
+    KeepRecordingController controller;
+    controller.setStickRoot(stick);
+    const auto refused = [&](const QString &folder) {
+        return controller.folderProblem(folder).contains(QStringLiteral("on the stick"));
+    };
+    check(refused(stick), "the stick's root is refused");
+    check(refused(stick + QStringLiteral("/Sessions")), "the recording's own folder is refused");
+    check(refused(stick + QStringLiteral("/Kept/Deeper")), "a folder still to be made on the stick is refused");
+    check(refused(stick + QStringLiteral("/Sessions/../Kept")), "another spelling of a folder on the stick is refused");
+    check(refused(QDir::toNativeSeparators(stick + QStringLiteral("/Sessions"))), "the native spelling too");
+    check(refused(QUrl::fromLocalFile(stick + QStringLiteral("/Sessions")).toString()), "and a file: URL");
+    const QString link = scratch + QStringLiteral("/link to the stick");
+    check(QFile::link(stick, link), "a link to the stick is made");
+    check(refused(link + QStringLiteral("/Own Recordings")), "a folder reached through a link to the stick is refused");
+    check(controller.folderProblem(stick + QStringLiteral("/Sessions")).contains(QStringLiteral("onto this computer")),
+          "and the form says where the FLAC goes: " + controller.folderProblem(stick).toStdString());
+    const QString beside = scratch + QStringLiteral("/STICK2/Own Recordings");
+    check(controller.folderProblem(beside).isEmpty(),
+          "a folder beside the stick, whose name starts like it, is fine: " + controller.folderProblem(beside).toStdString());
+
+    const std::vector<std::string> before = entries(stick + QStringLiteral("/Sessions"));
+    check(!controller.keep(form(wav, stick + QStringLiteral("/Sessions"), QStringLiteral("DJ Kelp"), QStringLiteral("Set"))),
+          "keep() refuses a folder on the stick");
+    check(controller.errorMessage().contains(QStringLiteral("on the stick")) && !controller.busy(), "and says why");
+    check(entries(stick + QStringLiteral("/Sessions")) == before, "nothing was written on the stick");
+
+    KeepRecordingController unknown;
+    check(!unknown.folderProblem(scratch + QStringLiteral("/Own Recordings")).isEmpty(),
+          "without a stick named, no folder is taken");
+}
+
+// The FLAC's name, cut to what the folder's drive leaves room for beside
+// the temporary names, on a character boundary; the form shows it as it
+// is written.
+void longNames(const QString &scratch)
+{
+    const QString stick = makeStick(scratch);
+    const QString folder = scratch + QStringLiteral("/long");
+    KeepRecordingController controller;
+    controller.setStickRoot(stick);
+
+    // Pieces that are one character each but several code points: an e
+    // with a combining accent, a family of four (one emoji sequence of
+    // seven code points), a flag (two regional indicators).
+    const QString accent = QStringLiteral("e") + QChar(0x0301);
+    const QString family = QString::fromUtf8("\xf0\x9f\x91\xa8\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7"
+                                             "\xe2\x80\x8d\xf0\x9f\x91\xa6");
+    const QString flag = QString::fromUtf8("\xf0\x9f\x87\xa9\xf0\x9f\x87\xaa");
+    for (const QString &piece : {accent, family, flag, QStringLiteral("x")}) {
+        for (const QString &lead : {QString(), QStringLiteral("a"), QStringLiteral("ab"), QStringLiteral("abc")}) {
+            QString title = lead;
+            while (title.toUtf8().size() < 600) {
+                title += piece;
+            }
+            const QString name = controller.fileNameFor(QString(), title, folder);
+            const QString stem = name.chopped(5);
+            check(name.endsWith(QStringLiteral(".flac")), "the name ends in .flac");
+            check(name.toUtf8().size() <= 255, "the name is at most 255 bytes");
+            QString whole = lead;
+            while (whole.size() < stem.size()) {
+                whole += piece;
+            }
+            check(whole == stem, "cut between two characters, never inside one: "
+                                     + std::to_string(stem.toUtf8().size()) + " bytes");
+        }
+    }
+
+    // Kept for real: the encoder's and the tag writer's temporary names,
+    // longer than the FLAC's, fit the drive too.
+    const std::string wav = writeWav(scratch, QStringLiteral("long.wav"), 0.5);
+    QString title;
+    while (title.toUtf8().size() < 600) {
+        title += QString::fromUtf8("\xc3\xbc") + family;
+    }
+    const QString expected = controller.fileNameFor(QStringLiteral("DJ Kelp"), title, folder);
+    QSignalSpy finished(&controller, &KeepRecordingController::finished);
+    check(controller.keep(form(wav, folder, QStringLiteral("DJ Kelp"), title)), "a recording with a very long name is taken");
+    check(waitUntil([&]() { return finished.count() >= 1; }), "and ends");
+    const QVariantMap outcome = finished.isEmpty() ? QVariantMap() : finished.first().first().toMap();
+    check(outcome.value("state").toString() == QStringLiteral("kept"),
+          "it is kept: " + outcome.value("message").toString().toStdString());
+    check(entries(folder) == std::vector<std::string>{expected.toStdString()},
+          "under the name the form showed, and nothing else in the folder");
+}
+
+// Text a tag cannot hold is refused; white space around it is not kept.
+void textChecks(const QString &scratch)
+{
+    KeepRecordingController controller;
+    controller.setStickRoot(makeStick(scratch));
+    const std::string wav = writeWav(scratch, QStringLiteral("text.wav"), 0.5);
+    for (const QString &bad : {QStringLiteral("DJ\tKelp"), QStringLiteral("DJ\nKelp"), QStringLiteral("DJ") + QChar(0x7f),
+                               QStringLiteral("DJ") + QChar(0x2028) + QStringLiteral("Kelp"),
+                               QStringLiteral("DJ") + QChar(0x2029) + QStringLiteral("Kelp"),
+                               QStringLiteral("DJ") + QChar(0x1b) + QStringLiteral("Kelp")}) {
+        for (const char *field : {"artist", "title", "album", "genre"}) {
+            check(!controller.textProblem(QLatin1String(field), bad).isEmpty(),
+                  std::string("a control character in the ") + field + " is refused in the form");
+            QVariantMap f = form(wav, scratch + QStringLiteral("/text"), QStringLiteral("DJ Kelp"), QStringLiteral("Set"));
+            f.insert(QLatin1String(field), bad);
+            const bool taken = controller.keep(f);
+            check(!taken && controller.errorMessage().contains(QStringLiteral("control character")),
+                  std::string("and by keep(), for the ") + field + ": " + controller.errorMessage().toStdString());
+        }
+    }
+    check(controller.textProblem(QStringLiteral("artist"), QStringLiteral("\t DJ Kelp \n")).isEmpty(),
+          "white space at either end is taken away, not refused");
+    check(controller.textProblem(QStringLiteral("genre"), QString::fromUtf8("Dub \xe2\x80\x94 Techno \xe5\xa4\x9c")).isEmpty(),
+          "a dash and CJK are fine");
+    check(!controller.busy() && entries(scratch + QStringLiteral("/text")).empty(), "nothing was started or written");
+}
+
+// A failure stays in the strip's list while the next job runs and after
+// it, until the strip is closed.
+void failureStaysWhileTheNextRuns(const QString &scratch)
+{
+    KeepRecordingController controller;
+    controller.setStickRoot(makeStick(scratch));
+    const QString folder = scratch + QStringLiteral("/after-failure");
+    const std::string missing = (scratch + QStringLiteral("/not there.wav")).toStdString();
+    const std::string wav = writeWav(scratch, QStringLiteral("next.wav"), 1);
+    QSignalSpy finished(&controller, &KeepRecordingController::finished);
+    check(controller.keep(form(missing, folder, QString(), QStringLiteral("Missing"))), "a job for a recording that is gone");
+    check(controller.keep(form(wav, folder, QString(), QStringLiteral("Next"))), "and one behind it");
+    bool failureShownWhileNextRan = false;
+    QObject::connect(&controller, &KeepRecordingController::progressChanged, &controller, [&]() {
+        if (controller.busy() && controller.currentRecording() == QStringLiteral("next.wav")) {
+            const QVariantList ended = controller.finishedJobs();
+            failureShownWhileNextRan = failureShownWhileNextRan
+                || (!ended.isEmpty() && ended.first().toMap().value("state").toString() == QStringLiteral("failed"));
+        }
+    });
+    check(waitUntil([&]() { return finished.count() >= 2 && !controller.busy(); }), "both end");
+    check(failureShownWhileNextRan, "the failure is listed while the next job runs");
+    const QVariantList ended = controller.finishedJobs();
+    check(ended.size() == 2 && ended.at(0).toMap().value("state").toString() == QStringLiteral("failed")
+              && ended.at(1).toMap().value("state").toString() == QStringLiteral("kept"),
+          "and after it: failed, then kept");
+}
+
+// A tag writer that is told to stop while it writes, and writes all the
+// same: the cancel comes too late, and the FLAC is kept.
+class TagsThatFinishAnyway : public seabass::application::RecordingTagWriter
+{
+public:
+    explicit TagsThatFinishAnyway(KeepRecordingController *controller) : m_controller(controller) {}
+    seabass::application::RecordingTagWriteResult write(const std::string &, const seabass::application::RecordingTags &) override
+    {
+        QMetaObject::invokeMethod(m_controller, [c = m_controller]() { c->cancel(); }, Qt::BlockingQueuedConnection);
+        return {true, {}};
+    }
+
+private:
+    KeepRecordingController *m_controller;
+};
+
+// A tag writer that fails and leaves another file in the FLAC's place, as
+// the real one does when the size is wrong after its rename.
+class TagsThatLeaveAFile : public seabass::application::RecordingTagWriter
+{
+public:
+    seabass::application::RecordingTagWriteResult write(const std::string &flacPath, const seabass::application::RecordingTags &) override
+    {
+        std::ofstream(seabass::pathFromUtf8(flacPath), std::ios::binary | std::ios::app) << "more than was checked";
+        return {false, "the file under its name does not have the size of the checked copy afterwards"};
+    }
+};
+
+void lateCancelAndLeftFiles(const QString &scratch)
+{
+    const QString stick = makeStick(scratch);
+    {
+        auto controller = std::make_unique<KeepRecordingController>();
+        controller->setStickRoot(stick);
+        KeepRecordingController *raw = controller.get();
+        KeepRecordingController::setPartsForTesting([raw]() {
+            KeepRecordingParts parts;
+            parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
+            parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
+            parts.covers = std::make_unique<seabass::infrastructure::audio::QtCoverArtPreparer>();
+            parts.tags = std::make_unique<TagsThatFinishAnyway>(raw);
+            return parts;
+        });
+        const QString folder = scratch + QStringLiteral("/late");
+        const std::string wav = writeWav(scratch, QStringLiteral("late.wav"), 0.5);
+        QSignalSpy finished(controller.get(), &KeepRecordingController::finished);
+        check(controller->keep(form(wav, folder, QString(), QStringLiteral("Late"))), "a job whose cancel comes too late");
+        check(waitUntil([&]() { return finished.count() >= 1; }), "it ends");
+        const QVariantMap outcome = finished.isEmpty() ? QVariantMap() : finished.first().first().toMap();
+        check(outcome.value("state").toString() == QStringLiteral("kept"),
+              "a cancel after the tags were written: kept, said so: " + outcome.value("state").toString().toStdString());
+        check(entries(folder) == std::vector<std::string>{"Late.flac"}, "and the FLAC stays");
+    }
+    {
+        KeepRecordingController::setPartsForTesting([]() {
+            KeepRecordingParts parts;
+            parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
+            parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
+            parts.covers = std::make_unique<seabass::infrastructure::audio::QtCoverArtPreparer>();
+            parts.tags = std::make_unique<TagsThatLeaveAFile>();
+            return parts;
+        });
+        KeepRecordingController controller;
+        controller.setStickRoot(stick);
+        const QString folder = scratch + QStringLiteral("/left");
+        const std::string wav = writeWav(scratch, QStringLiteral("left.wav"), 0.5);
+        QSignalSpy finished(&controller, &KeepRecordingController::finished);
+        check(controller.keep(form(wav, folder, QString(), QStringLiteral("Left"))), "a job whose tag writer leaves a file");
+        check(waitUntil([&]() { return finished.count() >= 1; }), "it ends");
+        const QVariantMap outcome = finished.isEmpty() ? QVariantMap() : finished.first().first().toMap();
+        const QString left = QDir::cleanPath(QDir::fromNativeSeparators(outcome.value("leftBehind").toString()));
+        check(outcome.value("state").toString() == QStringLiteral("failed"), "not kept");
+        check(left == QDir::cleanPath(folder + QStringLiteral("/Left.flac")),
+              "the file left is named with its path: " + left.toStdString());
+        check(outcome.value("message").toString().contains(QDir::toNativeSeparators(folder)),
+              "the message says where: " + outcome.value("message").toString().toStdString());
+        check(entries(folder) == std::vector<std::string>{"Left.flac"}, "and it is left where it is");
+    }
+    KeepRecordingController::setPartsForTesting({});
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
 {
+    // The settings store, a scratch file on every platform: the
+    // environment for Linux, an INI file at a path of the test's own for
+    // macOS and Windows, where the environment is not asked (see
+    // open_folder_test.cpp for why both). Proven before anything is
+    // written, through the call the controller makes.
     const fs::path settingsHome = seabass::testing::scratchRoot() / "keep_recording_controller_test" / "config";
     seabass::testing::sandboxSettings(settingsHome);
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, seabass::gui::pathToQString(settingsHome));
     QGuiApplication app(argc, argv);
-    QCoreApplication::setOrganizationName(QStringLiteral("SeabassTest"));
-    QCoreApplication::setApplicationName(QStringLiteral("keep_recording_controller_test"));
+    {
+        const QSettings probe = seabass::gui::openSeabassSettings();
+        const QString where = QDir::cleanPath(QDir::fromNativeSeparators(probe.fileName()));
+        if (!where.startsWith(QDir::cleanPath(seabass::gui::pathToQString(settingsHome)) + QLatin1Char('/'))) {
+            std::cerr << "FAILED: the settings store is not the scratch one: " << where.toStdString() << "\n";
+            return 1;
+        }
+    }
     if (QCoreApplication::arguments().size() < 2) {
         std::cerr << "FAILED: give a scratch folder\n";
         return 1;
@@ -470,6 +772,11 @@ int main(int argc, char **argv)
     destroyedMidEncoding(dir + QStringLiteral("/destroy"));
     destroyedMidTagging(dir + QStringLiteral("/destroy-tags"));
     destroyedMidCoverPreview(dir + QStringLiteral("/destroy-cover"));
+    folderOnTheStick(dir + QStringLiteral("/on-stick"));
+    longNames(dir + QStringLiteral("/long-names"));
+    textChecks(dir + QStringLiteral("/text"));
+    failureStaysWhileTheNextRuns(dir + QStringLiteral("/failure-stays"));
+    lateCancelAndLeftFiles(dir + QStringLiteral("/late-cancel"));
 
     if (failures > 0) {
         std::cout << "keep_recording_controller_test: " << failures << " FAILED\n";

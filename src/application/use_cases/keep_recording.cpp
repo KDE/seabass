@@ -24,9 +24,9 @@ namespace
 constexpr double EncoderShareOfJob = 0.9;
 
 constexpr std::string_view FlacExtension = ".flac";
-// Room for the name on every filesystem the computer may write to, as the
-// import leaves for a name on the stick.
-constexpr size_t MaxFileNameUtf16Units = 120;
+// No cut by stickSafePathSegment(): the name is cut in bytes, on a
+// character boundary, by keptRecordingFileName().
+constexpr size_t Uncut = static_cast<size_t>(-1);
 
 std::string joinPath(const std::string &folder, const std::string &name)
 {
@@ -144,6 +144,9 @@ public:
                  + m_request.folder + " right now.");
             return m_result;
         }
+        if (!checkPlace()) {
+            return m_result;
+        }
         if (!makeRoom()) {
             return m_result;
         }
@@ -151,24 +154,29 @@ public:
             return m_result;
         }
         if (!encode()) {
+            sayWhatIsLeft();
             return m_result;
         }
         // From here on the FLAC is this job's: anything that stops the job
-        // takes it away again.
+        // before the tags are written takes it away again. Its size is
+        // what tells it from a file that took its place.
         m_flacMade = true;
+        m_encodedBytes = m_files.fileSize(m_flacPath);
         if (!tag()) {
             discardFlac();
             return m_result;
         }
-        if (cancelled()) {
-            discardFlac();
-            return m_result;
-        }
-        m_flacMade = false;
-        report(KeepRecordingStep::Tagging, 1.0);
+        // The tags are written and read back: the job is done, and a
+        // cancel that comes now is too late to take it back.
         m_result.status = KeepRecordingResult::Status::Kept;
         m_result.flacPath = m_flacPath;
         m_result.message.clear();
+        m_result.leftBehind.clear();
+        // A progress callback that throws now does not make it a failure.
+        try {
+            report(KeepRecordingStep::Tagging, 1.0);
+        } catch (...) {
+        }
         return m_result;
     }
 
@@ -208,6 +216,44 @@ private:
         }
         if (m_request.fileName.empty() || m_request.fileName.find_first_of("/\\") != std::string::npos) {
             return fail("The recording was not kept: \"" + m_request.fileName + "\" is not a file name.");
+        }
+        if (m_request.stickRoot.empty()) {
+            return fail("The recording was not kept: it is not known which stick it is on.");
+        }
+        const std::pair<const char *, const std::string *> fields[] = {
+            {"artist", &m_request.tags.artist},
+            {"track name", &m_request.tags.title},
+            {"album", &m_request.tags.album},
+            {"genre", &m_request.tags.genre},
+        };
+        for (const auto &[name, text] : fields) {
+            if (hasControlCharacter(*text)) {
+                return fail(std::string("The recording was not kept: the ") + name
+                            + " holds a line break, a tab or another control character.");
+            }
+        }
+        return true;
+    }
+
+    // The folder is not on the stick, and the FLAC's name and its longest
+    // temporary name fit its filesystem.
+    bool checkPlace()
+    {
+        const std::optional<bool> onStick = m_files.isWithin(m_request.folder, m_request.stickRoot);
+        if (!onStick) {
+            return fail("The recording was not kept: it could not be told whether " + m_request.folder
+                        + " is on the stick, and the FLAC file goes onto this computer only.");
+        }
+        if (*onStick) {
+            return fail("The recording was not kept: " + m_request.folder
+                        + " is on the stick. The FLAC file goes onto this computer; the stick keeps the recording.");
+        }
+        const std::uint64_t longest =
+            std::min<std::uint64_t>(MaxFileNameBytes, m_files.maxNameBytes(m_request.folder).value_or(MaxFileNameBytes));
+        const std::uint64_t needed = m_request.fileName.size() + m_request.tempNameExtraBytes;
+        if (needed > longest) {
+            return fail("The recording was not kept: the name " + m_request.fileName + " is too long for the drive of "
+                        + m_request.folder + ". Make the artist or the track name shorter.");
         }
         return true;
     }
@@ -276,11 +322,11 @@ private:
             const std::optional<std::string> picture =
                 m_files.readFile(m_request.coverPicturePath, MaxCoverPictureBytes);
             if (!picture) {
-                return fail("The cover " + m_request.coverPicturePath + " could not be read, so nothing was kept.");
+                return fail("The cover " + m_request.coverPicturePath + " could not be read, so the recording was not kept.");
             }
             const CoverArtResult cover = m_covers.prepare(*picture);
             if (!cover.cover) {
-                return fail("The cover could not be used, so nothing was kept: " + cover.error);
+                return fail("The cover could not be used, so the recording was not kept: " + cover.error);
             }
             tags.cover = *cover.cover;
         }
@@ -289,27 +335,68 @@ private:
         }
         const RecordingTagWriteResult written = m_tags.write(m_flacPath, tags);
         if (!written.written) {
-            return fail("The tags could not be written, so nothing was kept: " + written.error);
+            return fail("The tags could not be written, so the recording was not kept: " + written.error);
         }
         return true;
     }
 
+    void addToMessage(const std::string &sentence)
+    {
+        m_result.message = m_result.message.empty() ? sentence : m_result.message + " " + sentence;
+    }
+
+    // After an encoding that did not end in a FLAC: the encoder takes its
+    // own temporary file away, but a failed check after the rename leaves
+    // the file under the target's name where it is (it may be another
+    // program's). Nothing was there before the encoding, so whatever is
+    // there now is said, never left unsaid.
+    void sayWhatIsLeft()
+    {
+        const std::optional<bool> there = m_files.exists(m_flacPath);
+        if (there == std::optional<bool>(false)) {
+            return;
+        }
+        if (!there) {
+            addToMessage("Whether a file named " + m_request.fileName + " was left in " + m_request.folder
+                         + " could not be told.");
+            return;
+        }
+        m_result.leftBehind = m_flacPath;
+        addToMessage("A file named " + m_request.fileName + " is in " + m_request.folder
+                     + " now. It does not count as kept, and it was left as it is: " + m_flacPath);
+    }
+
 public:
     // Takes the FLAC this job made away again; the person asked for a
-    // tagged file, and a bare one is not that.
+    // tagged file, and a bare one is not that. Only while it is the file
+    // the encoder made (its size unchanged): a file the tag writer put in
+    // its place, or one that took its place otherwise, is left where it
+    // is and said.
     void discardFlac()
     {
         if (!m_flacMade) {
             return;
         }
         m_flacMade = false;
+        const std::optional<bool> there = m_files.exists(m_flacPath);
+        if (there == std::optional<bool>(false)) {
+            return;
+        }
+        const std::optional<std::uint64_t> size = there ? m_files.fileSize(m_flacPath) : std::nullopt;
+        if (!there || !size || !m_encodedBytes || *size != *m_encodedBytes) {
+            m_result.leftBehind = m_flacPath;
+            addToMessage("A file named " + m_request.fileName + " was left in " + m_request.folder
+                         + ": it is not the file that was checked, so it does not count as kept, and it was left as it is: "
+                         + m_flacPath);
+            return;
+        }
         const std::string why = m_files.removeFile(m_flacPath);
         if (why.empty()) {
             return;
         }
-        const std::string left = "The unfinished " + m_request.fileName + " could not be removed from "
-            + m_request.folder + ": " + why;
-        m_result.message = m_result.message.empty() ? left : m_result.message + " " + left;
+        m_result.leftBehind = m_flacPath;
+        addToMessage("The unfinished " + m_request.fileName + " could not be removed from " + m_request.folder + " ("
+                     + why + "). It does not count as kept: " + m_flacPath);
     }
 
     KeepRecordingResult &result() { return m_result; }
@@ -327,6 +414,7 @@ private:
     KeepRecordingResult m_result;
     double m_fraction = 0.0;
     bool m_flacMade = false;
+    std::optional<std::uint64_t> m_encodedBytes;
 };
 
 }  // namespace
@@ -351,18 +439,56 @@ std::uint64_t keepRecordingSpaceNeeded(std::uint64_t wavBytes)
     return 2 * wavBytes + KeepRecordingSpaceMargin;
 }
 
-std::string keptRecordingFileName(std::string_view artist, std::string_view title)
+bool hasControlCharacter(std::string_view text)
+{
+    for (size_t i = 0; i < text.size(); ++i) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        if (c < 0x20 || c == 0x7F) {
+            return true;
+        }
+        // U+0085 (NEXT LINE) is C2 85; U+2028 and U+2029 are E2 80 A8 and
+        // E2 80 A9.
+        if (c == 0xC2 && i + 1 < text.size() && static_cast<unsigned char>(text[i + 1]) == 0x85) {
+            return true;
+        }
+        if (c == 0xE2 && i + 2 < text.size() && static_cast<unsigned char>(text[i + 1]) == 0x80) {
+            const auto third = static_cast<unsigned char>(text[i + 2]);
+            if (third == 0xA8 || third == 0xA9) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::size_t keptRecordingStemBytes(std::size_t maxNameBytes, std::size_t tempNameExtraBytes)
+{
+    const std::size_t taken = tempNameExtraBytes + FlacExtension.size();
+    return maxNameBytes > taken ? maxNameBytes - taken : 0;
+}
+
+std::string keptRecordingFileName(std::string_view artist, std::string_view title, std::size_t maxStemBytes,
+                                  const GraphemeCut &cut)
 {
     std::string stem;
-    const std::string safeArtist = domain::stickSafePathSegment(artist, "");
-    const std::string safeTitle = domain::stickSafePathSegment(title, "");
+    const std::string safeArtist = domain::stickSafePathSegment(artist, "", Uncut);
+    const std::string safeTitle = domain::stickSafePathSegment(title, "", Uncut);
     if (!safeArtist.empty() && !safeTitle.empty()) {
         stem = std::string(artist) + " - " + std::string(title);
     } else {
         stem = !safeTitle.empty() ? std::string(title) : std::string(artist);
     }
-    return domain::stickSafePathSegment(stem, "Recording", MaxFileNameUtf16Units - FlacExtension.size())
-        + std::string(FlacExtension);
+    std::string safe = domain::stickSafePathSegment(stem, "Recording", Uncut);
+    if (safe.size() > maxStemBytes) {
+        const std::size_t keep = cut ? std::min(cut(safe, maxStemBytes), maxStemBytes) : 0;
+        // Cut, then made safe again: a space or a dot the cut left at the
+        // end goes too.
+        safe = domain::stickSafePathSegment(std::string_view(safe).substr(0, keep), "Recording", Uncut);
+        if (safe.size() > maxStemBytes) {
+            safe = "Recording";
+        }
+    }
+    return safe + std::string(FlacExtension);
 }
 
 std::string suggestedRecordingTitle(std::string_view recordingFileName)
@@ -394,7 +520,8 @@ KeepRecordingResult keepRecording(const KeepRecordingRequest &request, KeepRecor
             why = "The recording was not kept.";
         }
         job.result().status = KeepRecordingResult::Status::Failed;
-        job.result().message = why;
+        const std::string before = job.result().message;
+        job.result().message = before.empty() ? why : why + " " + before;
         job.discardFlac();
         return job.result();
     } catch (...) {

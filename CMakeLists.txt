@@ -3893,11 +3893,17 @@ if(TARGET seabass_edit)
     # real delete run on the worker, against a planted stick.
     add_executable(recordings_controller_test
         src/gui/recordings_controller.cpp
+        src/gui/keep_recording_controller.cpp
         src/gui/sleep_inhibitor.cpp
         tests/recordings_controller_test.cpp
     )
     target_include_directories(recordings_controller_test PRIVATE src tests)
-    target_link_libraries(recordings_controller_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Concurrent Qt6::Qml Qt6::Test)
+    target_link_libraries(recordings_controller_test PRIVATE seabass_gui_edit_session_testing seabass_edit Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+    # The keep controller it is wired to builds with the encoder when the
+    # app does; the test hands it parts of its own either way.
+    if(TARGET seabass_recording_qt)
+        target_link_libraries(recordings_controller_test PRIVATE seabass_recording_qt)
+    endif()
     add_test(NAME recordings_controller_test COMMAND recordings_controller_test)
     set_tests_properties(recordings_controller_test PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
