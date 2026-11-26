@@ -83,6 +83,18 @@ struct CueGridPlan
 CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const std::vector<double> &oldBeats,
                              const std::vector<double> &newBeats);
 
+// The largest move of the plan, in ms and as an amount (earlier and later
+// alike): of every move's start and of a loop's end. 0 for a plan that
+// moves nothing.
+double largestCueMoveMs(const CueGridPlan &plan);
+
+// Whether the track's cues follow the new grid without the person being
+// asked: the plan moves, and its largest move is under `thresholdMs`. One
+// answer for the whole track, as its cues move all or none: a track with
+// one move at or over the threshold is asked about every move. A
+// threshold of 0 asks about every track.
+bool cuesFollowOnTheirOwn(const CueGridPlan &plan, double thresholdMs);
+
 // `cues` with the plan's moves made; nothing else of any cue changes. The
 // plan must have been made from these cues: an index out of range throws
 // std::out_of_range.

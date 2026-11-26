@@ -15,6 +15,10 @@
 // 5. No old grid: nothing moves.
 // 6. cuesMovedOntoNewGrid() moves exactly the planned cues, colour, name
 //    and pad kept.
+// 7. The track whose cues follow on their own: its largest move, a loop's
+//    end counted, earlier moves by their amount, under the threshold (at
+//    it is not under); a threshold of 0 asks always; a plan that moves
+//    nothing, or whose grid changed too much, never follows.
 
 #include <cassert>
 #include <cmath>
@@ -160,6 +164,41 @@ int main()
         assert(near(moved[1].positionMs, 1350.0));
         assert(near(moved[2].positionMs, 2140.0) && near(moved[2].loopEndMs, 3140.0) && moved[2].hotCueNumber == 4);
         std::cout << "case 6 (the planned cues moved, the rest of each cue kept) OK\n";
+    }
+
+    // 7.
+    {
+        // Each beat 1 ms further than the one before, beat 0 by 4 ms: a
+        // loop from beat 2 (6 ms) to beat 8 (12 ms).
+        const std::vector<double> stretched = [] {
+            std::vector<double> beats = grid(104.0, 500.0, 40);
+            for (std::size_t i = 0; i < beats.size(); ++i) {
+                beats[i] += static_cast<double>(i);
+            }
+            return beats;
+        }();
+        const CueGridPlan withLoop =
+            application::planCueGridMoves({hot(1, 1100.0), loop(1100.0, 4100.0)}, oldGrid, stretched);
+        assert(withLoop.verdict == CueGridPlan::Verdict::Moves && withLoop.moves.size() == 2);
+        assert(near(application::largestCueMoveMs(withLoop), 12.0));
+        // The start alone (6 ms) is under 10; the loop's end is not.
+        assert(!application::cuesFollowOnTheirOwn(withLoop, 10.0));
+        assert(!application::cuesFollowOnTheirOwn(withLoop, 12.0));
+        assert(application::cuesFollowOnTheirOwn(withLoop, 12.5));
+        // Earlier by 8 ms is a move of 8.
+        const CueGridPlan earlier = application::planCueGridMoves({hot(1, 1100.0)}, oldGrid, grid(92.0, 500.0, 40));
+        assert(near(application::largestCueMoveMs(earlier), 8.0));
+        assert(application::cuesFollowOnTheirOwn(earlier, 10.0));
+        assert(!application::cuesFollowOnTheirOwn(earlier, 8.0));
+        assert(!application::cuesFollowOnTheirOwn(earlier, 0.0));
+        // Nothing to move, or a grid not to be trusted: never.
+        const CueGridPlan nothing = application::planCueGridMoves({memory(1350.0)}, oldGrid, later);
+        assert(nothing.verdict == CueGridPlan::Verdict::NothingMoves && application::largestCueMoveMs(nothing) == 0.0);
+        assert(!application::cuesFollowOnTheirOwn(nothing, 100.0));
+        const CueGridPlan tooMuch = application::planCueGridMoves({hot(1, 1100.0)}, oldGrid, grid(350.0, 500.0, 40));
+        assert(!application::cuesFollowOnTheirOwn(tooMuch, 100.0));
+        std::cout << "case 7 (the largest move, a loop's end too, under the threshold follows on its own; at it, or "
+                     "at 0, asks) OK\n";
     }
 
     std::cout << "carry_cues_to_new_grid_test: all cases passed\n";

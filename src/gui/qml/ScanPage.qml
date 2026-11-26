@@ -353,6 +353,10 @@ Page {
 
     // What Analyse again came to: how many tracks wait for Save with a new
     // analysis, and how many were left as they are (counted, not named).
+    // Cue points that will move are said in counts, apart: those that
+    // follow the new grid on their own (every move of their track under
+    // the threshold) and those that wait for the person's choice, so a
+    // change to the DJ's cue points is never made unsaid.
     SeabassDialog {
         id: reanalysisResultDialog
         objectName: "reanalysisResultDialog"
@@ -361,6 +365,11 @@ Page {
         readonly property int leftAlone: outcome.leftAlone ?? 0
         readonly property string playlist: outcome.playlist ?? ""
         readonly property int cuesToMove: outcome.cuesToMove ?? 0
+        readonly property int autoCueTracks: outcome.autoCueTracks ?? 0
+        readonly property int autoCues: outcome.autoCues ?? 0
+        readonly property int askedCueTracks: outcome.askedCueTracks ?? 0
+        readonly property int askedCues: outcome.askedCues ?? 0
+        readonly property int thresholdMs: outcome.cueFollowThresholdMs ?? 0
         readonly property int gridChangedTooMuch: outcome.gridChangedTooMuch ?? 0
         severity: analysed > 0 ? SeabassDialog.Info : SeabassDialog.Warning
         title: qsTr("Analyse again")
@@ -368,9 +377,19 @@ Page {
             : qsTr("No track of \"%1\" could be analysed again.").arg(playlist)
         detailText: (leftAlone > 0 ? qsTr("%n track(s) left as they are.", "", leftAlone) : "")
             + (analysed > 0 ? (leftAlone > 0 ? " " : "") + qsTr("Nothing is written until you save.") : "")
-            + (cuesToMove > 0
-                ? "\n\n" + qsTr("%n cue point(s) or loop(s) sat on a beat of the old grid, which the new one has "
-                                 + "elsewhere. They stay where they are unless you choose to move them.", "", cuesToMove)
+            + (autoCues > 0
+                ? "\n\n" + qsTr("%n cue point(s) or loop(s) will follow the new grid on their own when you save, "
+                                 + "as they move by less than %1 ms (tracks: %2).", "", autoCues)
+                    .arg(thresholdMs).arg(autoCueTracks)
+                : "")
+            + (askedCues > 0
+                ? "\n\n" + (thresholdMs > 0
+                    ? qsTr("On %n track(s) cue points or loops would move by %1 ms or more. They stay where they "
+                           + "are unless you choose to move them (cue points: %2).", "", askedCueTracks)
+                        .arg(thresholdMs).arg(askedCues)
+                    : qsTr("On %n track(s) cue points or loops sat on a beat of the old grid, which the new one has "
+                           + "elsewhere. They stay where they are unless you choose to move them (cue points: %1).",
+                           "", askedCueTracks).arg(askedCues))
                 : "")
             + (gridChangedTooMuch > 0
                 ? "\n\n" + qsTr("On %n track(s) the grid changed too much to carry cue points; they stay where they are.",
@@ -407,13 +426,31 @@ Page {
 
     // Analyse again's cue review: each track whose cues sat on the old
     // grid, each such cue where it is and where the new grid would take
-    // it, and a switch per track, off until the person turns it on.
-    // Nothing moves for a track whose switch is off.
+    // it, and a switch per track. Nothing moves for a track whose switch
+    // is off. The tracks whose every move is under the threshold come
+    // last, switched on already: they follow on their own unless the
+    // person switches them off. A threshold set here applies only when
+    // "Apply to all" is pressed, so turning the spin box moves nothing.
     SeabassDialog {
         id: cueReviewDialog
         objectName: "cueReviewDialog"
         readonly property var tracks: root.trackImportController.cueReview ?? []
         readonly property var tooDifferent: root.trackImportController.cueReviewTooDifferent ?? []
+        readonly property int thresholdMs: root.trackImportController.cueFollowThresholdMs ?? 0
+        // Under the threshold is what the controller compares: the
+        // largest move, not rounded.
+        function onTheirOwn(track) {
+            return (track.largestMoveMs ?? 0) < cueReviewDialog.thresholdMs;
+        }
+        readonly property var askedTracks: tracks.filter(track => !onTheirOwn(track))
+        readonly property var ownTracks: tracks.filter(track => onTheirOwn(track))
+        // Closed until asked for: each of its cues has a picture, and a
+        // long playlist can have many tracks in it.
+        property bool ownTracksOpen: false
+        onAboutToShow: {
+            ownTracksOpen = false;
+            thresholdSpin.value = thresholdMs;
+        }
         severity: SeabassDialog.Question
         title: qsTr("Cue points on the old grid")
         headline: qsTr("Move cue points onto the new grid?")
@@ -430,7 +467,33 @@ Page {
                        + "labelled old is where the cue is now, the filled marker labelled new where it would go.")
         }
         RowLayout {
+            Layout.fillWidth: true
             spacing: Theme.rowSpacing
+            Label {
+                objectName: "cueReviewThresholdLabel"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: qsTr("Move cue points on their own when they move by less than")
+            }
+            SpinBox {
+                id: thresholdSpin
+                objectName: "cueReviewThresholdSpin"
+                editable: true
+                from: 0
+                to: 100
+                stepSize: 1
+                value: cueReviewDialog.thresholdMs
+                textFromValue: (value, locale) => qsTr("%1 ms").arg(value)
+                valueFromText: (text, locale) => {
+                    const ms = parseInt(text, 10);
+                    return isNaN(ms) ? thresholdSpin.value : ms;
+                }
+            }
+            Button {
+                objectName: "cueReviewApplyThreshold"
+                text: qsTr("Apply to all")
+                onClicked: root.trackImportController.applyCueThreshold(thresholdSpin.value)
+            }
             Button {
                 objectName: "cueReviewAllOn"
                 text: qsTr("Move all")
@@ -440,6 +503,111 @@ Page {
                 objectName: "cueReviewAllOff"
                 text: qsTr("Move none")
                 onClicked: root.trackImportController.setMoveCuesForAll(false)
+            }
+        }
+        // One track of the review: its title, by how much its cues move,
+        // its switch, and each cue with both times and a picture.
+        Component {
+            id: cueReviewTrackDelegate
+            ColumnLayout {
+                id: reviewTrack
+                required property var modelData
+                Layout.fillWidth: true
+                spacing: Theme.tightSpacing
+                Label {
+                    objectName: "cueReviewTrackTitle"
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    font.bold: true
+                    text: reviewTrack.modelData.title
+                }
+                Label {
+                    objectName: "cueReviewTrackShift"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    readonly property real oldBpm: reviewTrack.modelData.oldBpm ?? 0
+                    readonly property real newBpm: reviewTrack.modelData.newBpm ?? 0
+                    // Whole ms, rounded down: a move under the threshold
+                    // never reads as the threshold itself.
+                    text: qsTr("The cue points move by up to %1 ms.")
+                            .arg(Math.floor(reviewTrack.modelData.largestMoveMs ?? 0))
+                        + (oldBpm > 0 && Math.abs(oldBpm - newBpm) >= 0.01
+                            ? " " + qsTr("Tempo %1 BPM before, %2 BPM now.").arg(oldBpm.toFixed(2))
+                                .arg(newBpm.toFixed(2)) : "")
+                }
+                Switch {
+                    id: moveCuesSwitch
+                    objectName: "moveCuesSwitch"
+                    text: qsTr("Move these cue points onto the new grid")
+                    // As the controller has it now, not as the list was
+                    // made: a section made later (the closed one opened,
+                    // the threshold applied) shows the choices since.
+                    checked: root.trackImportController.movesCues(reviewTrack.modelData.id)
+                    onToggled: root.trackImportController.setMoveCues(reviewTrack.modelData.id, checked)
+                    // Only this switch follows a choice: the list and its
+                    // pictures stay as they are, and so does where it is
+                    // scrolled to.
+                    Connections {
+                        target: root.trackImportController
+                        ignoreUnknownSignals: true
+                        function onMoveCuesChanged(changeId, move) {
+                            if (changeId === reviewTrack.modelData.id) {
+                                moveCuesSwitch.checked = move;
+                            }
+                        }
+                    }
+                }
+                Repeater {
+                    model: reviewTrack.modelData.rows
+                    delegate: ColumnLayout {
+                        id: reviewRow
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: Theme.tightSpacing / 2
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Theme.tightSpacing
+                            Rectangle {
+                                visible: (reviewRow.modelData.color ?? "").length > 0
+                                implicitWidth: Theme.scaled(10)
+                                implicitHeight: Theme.scaled(10)
+                                radius: Theme.scaled(2)
+                                color: visible ? reviewRow.modelData.color : "transparent"
+                            }
+                            Label {
+                                objectName: "cueReviewRowLabel"
+                                text: reviewRow.modelData.label
+                                    + ((reviewRow.modelData.name ?? "").length > 0 ? ", " + reviewRow.modelData.name : "")
+                            }
+                            Label {
+                                objectName: "cueReviewRowTimes"
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                color: Theme.textMuted
+                                readonly property int diff: reviewRow.modelData.diffMs
+                                text: qsTr("%1 now, %2 on the new grid (%3 ms)").arg(reviewRow.modelData.oldText)
+                                        .arg(reviewRow.modelData.newText).arg((diff > 0 ? "+" : "") + diff)
+                                    + (reviewRow.modelData.isLoop
+                                        ? ", " + qsTr("ends %1 now, %2 on the new grid").arg(reviewRow.modelData.oldEndText)
+                                            .arg(reviewRow.modelData.newEndText) : "")
+                            }
+                        }
+                        ReanalysisCueStrip {
+                            objectName: "cueReviewStrip"
+                            Layout.fillWidth: true
+                            strip: reviewRow.modelData.strip
+                        }
+                    }
+                }
+                Label {
+                    objectName: "cueReviewOffBeat"
+                    visible: (reviewTrack.modelData.offBeat ?? 0) > 0
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.textMuted
+                    text: qsTr("%n cue point(s) not on a beat stay where they are.", "", reviewTrack.modelData.offBeat ?? 0)
+                }
             }
         }
         ScrollView {
@@ -454,100 +622,43 @@ Page {
                 spacing: Theme.rowSpacing * 2
                 Repeater {
                     objectName: "cueReviewTracks"
-                    model: cueReviewDialog.tracks
-                    delegate: ColumnLayout {
-                        id: reviewTrack
-                        required property var modelData
+                    model: cueReviewDialog.askedTracks
+                    delegate: cueReviewTrackDelegate
+                }
+                ColumnLayout {
+                    visible: cueReviewDialog.ownTracks.length > 0
+                    Layout.fillWidth: true
+                    spacing: Theme.rowSpacing * 2
+                    AbstractButton {
+                        id: ownTracksHeading
+                        objectName: "cueReviewOwnHeading"
                         Layout.fillWidth: true
-                        spacing: Theme.tightSpacing
-                        Label {
-                            objectName: "cueReviewTrackTitle"
-                            Layout.fillWidth: true
-                            elide: Text.ElideRight
-                            font.bold: true
-                            text: reviewTrack.modelData.title
-                        }
-                        Label {
-                            objectName: "cueReviewTrackShift"
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            color: Theme.textMuted
-                            readonly property real oldBpm: reviewTrack.modelData.oldBpm ?? 0
-                            readonly property real newBpm: reviewTrack.modelData.newBpm ?? 0
-                            text: qsTr("The grid moved by %1 ms.").arg(reviewTrack.modelData.gridShiftMs)
-                                + (oldBpm > 0 && Math.abs(oldBpm - newBpm) >= 0.01
-                                    ? " " + qsTr("Tempo %1 BPM before, %2 BPM now.").arg(oldBpm.toFixed(2))
-                                        .arg(newBpm.toFixed(2)) : "")
-                        }
-                        Switch {
-                            id: moveCuesSwitch
-                            objectName: "moveCuesSwitch"
-                            text: qsTr("Move these cue points onto the new grid")
-                            checked: reviewTrack.modelData.moveCues
-                            onToggled: root.trackImportController.setMoveCues(reviewTrack.modelData.id, checked)
-                            // Only this switch follows a choice: the list
-                            // and its pictures stay as they are, and so
-                            // does where it is scrolled to.
-                            Connections {
-                                target: root.trackImportController
-                                ignoreUnknownSignals: true
-                                function onMoveCuesChanged(changeId, move) {
-                                    if (changeId === reviewTrack.modelData.id) {
-                                        moveCuesSwitch.checked = move;
-                                    }
-                                }
+                        // Opened from the keyboard as any button is.
+                        focusPolicy: Qt.StrongFocus
+                        onClicked: cueReviewDialog.ownTracksOpen = !cueReviewDialog.ownTracksOpen
+                        text: qsTr("Moved on their own (less than %1 ms): %n track(s)", "", cueReviewDialog.ownTracks.length)
+                            .arg(cueReviewDialog.thresholdMs)
+                        Accessible.name: text
+                        contentItem: RowLayout {
+                            spacing: Theme.tightSpacing
+                            SeabassIcon {
+                                iconName: cueReviewDialog.ownTracksOpen ? "arrow-down" : "arrow-right"
+                                size: Theme.iconSizeSmall * 0.5
+                                color: Theme.textMuted
                             }
-                        }
-                        Repeater {
-                            model: reviewTrack.modelData.rows
-                            delegate: ColumnLayout {
-                                id: reviewRow
-                                required property var modelData
+                            Label {
                                 Layout.fillWidth: true
-                                spacing: Theme.tightSpacing / 2
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: Theme.tightSpacing
-                                    Rectangle {
-                                        visible: (reviewRow.modelData.color ?? "").length > 0
-                                        implicitWidth: Theme.scaled(10)
-                                        implicitHeight: Theme.scaled(10)
-                                        radius: Theme.scaled(2)
-                                        color: visible ? reviewRow.modelData.color : "transparent"
-                                    }
-                                    Label {
-                                        objectName: "cueReviewRowLabel"
-                                        text: reviewRow.modelData.label
-                                            + ((reviewRow.modelData.name ?? "").length > 0 ? ", " + reviewRow.modelData.name : "")
-                                    }
-                                    Label {
-                                        objectName: "cueReviewRowTimes"
-                                        Layout.fillWidth: true
-                                        elide: Text.ElideRight
-                                        color: Theme.textMuted
-                                        readonly property int diff: reviewRow.modelData.diffMs
-                                        text: qsTr("%1 now, %2 on the new grid (%3 ms)").arg(reviewRow.modelData.oldText)
-                                                .arg(reviewRow.modelData.newText).arg((diff > 0 ? "+" : "") + diff)
-                                            + (reviewRow.modelData.isLoop
-                                                ? ", " + qsTr("ends %1 now, %2 on the new grid").arg(reviewRow.modelData.oldEndText)
-                                                    .arg(reviewRow.modelData.newEndText) : "")
-                                    }
-                                }
-                                ReanalysisCueStrip {
-                                    objectName: "cueReviewStrip"
-                                    Layout.fillWidth: true
-                                    strip: reviewRow.modelData.strip
-                                }
+                                wrapMode: Text.WordWrap
+                                font.bold: true
+                                text: ownTracksHeading.text
                             }
                         }
-                        Label {
-                            objectName: "cueReviewOffBeat"
-                            visible: (reviewTrack.modelData.offBeat ?? 0) > 0
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-                            color: Theme.textMuted
-                            text: qsTr("%n cue point(s) not on a beat stay where they are.", "", reviewTrack.modelData.offBeat ?? 0)
-                        }
+                    }
+                    Repeater {
+                        objectName: "cueReviewOwnTracks"
+                        // Made only when opened.
+                        model: cueReviewDialog.ownTracksOpen ? cueReviewDialog.ownTracks : []
+                        delegate: cueReviewTrackDelegate
                     }
                 }
                 ColumnLayout {

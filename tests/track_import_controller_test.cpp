@@ -2126,6 +2126,132 @@ int main(int argc, char **argv)
             controller.dropReanalysis(QStringLiteral("Cancel"));
             std::cout << "case 16p (a cancel inside a change: that change lands, the rest wait, no failure) OK\n";
         }
+
+        // 16q. The threshold: two tracks, their audio replaced by the same
+        //      music about 5 ms and 40 ms later. Under the default 10 ms
+        //      the 5 ms track's cue follows on its own (its switch on,
+        //      counted apart), the 40 ms one is asked (off). Apply to all
+        //      at 50 turns both on, at 0 both off, each switch told and
+        //      the list not made again; the threshold is kept and the next
+        //      run takes it. Saved at 10: the 5 ms track's cue moved in all
+        //      three libraries and the log says it moved on its own, the
+        //      40 ms track's cue where it was.
+        {
+            assert(controller.cueFollowThresholdMs() == DefaultCueFollowThresholdMs);
+            const std::vector<std::pair<std::string, double>> tracks{{"q near.wav", 0.255}, {"q far.wav", 0.29}};
+            QVariantList files;
+            int seconds = 51;
+            for (const auto &[name, firstBeat] : tracks) {
+                (void)firstBeat;
+                writeBeatChordWav(computer / name, seconds++, 120.0, aMinor);
+                files.push_back(pathToQString(computer / name));
+            }
+            assert(offer(files, QStringLiteral("Threshold"), true));
+            assert(controller.lastResult().value("staged").toInt() == 2);
+            assert(saveNow().value("error").toString().isEmpty());
+            std::map<std::string, double> onBeat;
+            for (const auto &[name, firstBeat] : tracks) {
+                (void)firstBeat;
+                const std::vector<domain::Track> rows = rowsOf(name);
+                const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), rows[0].sourceId);
+                onBeat[name] = std::round(grid[8].timeMs);
+                stageCue(QStringLiteral("rekordbox"), rows[0], onBeat[name], true, 1);
+                stageCue(QStringLiteral("engine"), rows[2], onBeat[name], true, 1);
+            }
+            assert(saveNow().value("written").toInt() == 4);
+            seconds = 51;
+            for (const auto &[name, firstBeat] : tracks) {
+                writeBeatChordWav(onStick / name, seconds++, 120.0, aMinor, firstBeat);
+            }
+            analyseAgainOn(QStringLiteral("Threshold"));
+            QVariantMap again = controller.lastReanalysis();
+            std::cerr << "  threshold " << again.value("cueFollowThresholdMs").toInt() << ": "
+                      << again.value("autoCueTracks").toInt() << " on their own (" << again.value("autoCues").toInt()
+                      << " cues), " << again.value("askedCueTracks").toInt() << " asked ("
+                      << again.value("askedCues").toInt() << " cues)" << std::endl;
+            assert(again.value("cueFollowThresholdMs").toInt() == 10);
+            assert(again.value("cueTracks").toInt() == 2 && again.value("cuesToMove").toInt() == 2);
+            assert(again.value("autoCueTracks").toInt() == 1 && again.value("autoCues").toInt() == 1);
+            assert(again.value("askedCueTracks").toInt() == 1 && again.value("askedCues").toInt() == 1);
+            QString nearId;
+            QString farId;
+            double nearMove = 0.0;
+            for (const QVariant &entry : controller.cueReview()) {
+                const QVariantMap track = entry.toMap();
+                const double largest = track.value("largestMoveMs").toDouble();
+                std::cerr << "  " << track.value("title").toString().toStdString() << ": largest move " << largest
+                          << " ms, switch " << track.value("moveCues").toBool() << std::endl;
+                if (track.value("title").toString().startsWith(QLatin1String("q near"))) {
+                    nearId = track.value("id").toString();
+                    nearMove = largest;
+                    assert(largest >= 1.0 && largest < 10.0 && track.value("moveCues").toBool());
+                } else if (track.value("title").toString().startsWith(QLatin1String("q far"))) {
+                    farId = track.value("id").toString();
+                    assert(std::abs(largest - 40.0) <= 3.0 && !track.value("moveCues").toBool());
+                }
+            }
+            assert(!nearId.isEmpty() && !farId.isEmpty());
+            assert(controller.movesCues(nearId) && !controller.movesCues(farId));
+            const auto storedThreshold = [] { return storedCueFollowThresholdMs(openSeabassSettings()); };
+            {
+                QSignalSpy rebuilt(&controller, &TrackImportController::cueReviewChanged);
+                QSignalSpy choice(&controller, &TrackImportController::moveCuesChanged);
+                QSignalSpy threshold(&controller, &TrackImportController::cueFollowThresholdChanged);
+                controller.applyCueThreshold(50);
+                assert(controller.movesCues(nearId) && controller.movesCues(farId));
+                assert(choice.count() == 1 && choice.at(0).at(0).toString() == farId && choice.at(0).at(1).toBool());
+                assert(threshold.count() == 1 && controller.cueFollowThresholdMs() == 50 && storedThreshold() == 50);
+                controller.applyCueThreshold(0);
+                assert(!controller.movesCues(nearId) && !controller.movesCues(farId));
+                assert(choice.count() == 3 && storedThreshold() == 0);
+                assert(rebuilt.count() == 0);
+            }
+            // Out of range is taken to its end.
+            controller.applyCueThreshold(500);
+            assert(storedThreshold() == MaxCueFollowThresholdMs);
+            // The next run takes the threshold kept: at 50, both follow on
+            // their own.
+            controller.applyCueThreshold(50);
+            analyseAgainOn(QStringLiteral("Threshold"));
+            again = controller.lastReanalysis();
+            assert(again.value("cueFollowThresholdMs").toInt() == 50);
+            assert(again.value("autoCueTracks").toInt() == 2 && again.value("askedCueTracks").toInt() == 0);
+            assert(controller.movesCues(nearId) && controller.movesCues(farId));
+            controller.applyCueThreshold(DefaultCueFollowThresholdMs);
+            assert(controller.movesCues(nearId) && !controller.movesCues(farId));
+
+            const std::size_t logFrom = logSize();
+            assert(saveNow().value("written").toInt() == 2);
+            const char *libraries[] = {"DeviceLibrary", "OneLibrary", "Engine"};
+            for (const auto &[name, firstBeat] : tracks) {
+                (void)firstBeat;
+                const bool near = name == "q near.wav";
+                const std::vector<domain::Track> rows = rowsOf(name);
+                for (std::size_t i = 0; i < rows.size(); ++i) {
+                    const double hot = cueAt(rows[i], true);
+                    std::cerr << "  " << name << " " << libraries[i] << ": hot cue " << onBeat[name] << " to " << hot
+                              << std::endl;
+                    // The rekordbox side keeps whole ms.
+                    assert(std::abs(hot - (onBeat[name] + (near ? nearMove : 0.0))) < 1.5);
+                    assert(!near || hot - onBeat[name] >= 1.0);
+                }
+            }
+            const std::string log = logSince(logFrom);
+            const auto lineOf = [&](const std::string &title) {
+                const auto at = log.find("track-reanalysis: analysed \"" + title + "\"");
+                assert(at != std::string::npos);
+                return log.substr(at, log.find('\n', at) - at);
+            };
+            const std::string nearLine = lineOf("q near");
+            std::cerr << "  q near: ..." << nearLine.substr(nearLine.find("; its cue points"), 220) << std::endl;
+            assert(nearLine.find("its cue points moved on their own, every move under 10 ms") != std::string::npos);
+            assert(nearLine.find("moved Hot cue 1 from " + ReanalyseTrackChange::clockText(onBeat["q near.wav"]).toStdString())
+                   != std::string::npos);
+            assert(lineOf("q far").find("on their own") == std::string::npos);
+            assert(lineOf("q far").find("moved Hot cue 1") == std::string::npos);
+            std::cout << "case 16q (the threshold: a 5 ms track follows on its own and says so in the log, a 40 ms one "
+                         "is asked; Apply to all at 50 and 0, kept for the next run) OK\n";
+        }
     }
 
 

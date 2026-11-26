@@ -62,8 +62,11 @@ namespace seabass::gui
 // Cues and loops on a beat of the old grid can follow the new one
 // (application::planCueGridMoves()), only where the person asked for it
 // for this track (setMoveCues(), off until then, settable until the
-// save). At the save, before anything is written, every library's cues
-// for the file are read as they are then, for this file alone (the
+// save), or where every move is under the threshold the person set for
+// moves that need no asking (setMoveCuesOnTheirOwn(), which the review
+// shows and the person can switch off). At the save, before anything is
+// written, every library's cues for the file are read as they are then,
+// for this file alone (the
 // analysis files of its rows, Engine's rows from the save's own copy of
 // m.db at the file's own sample rate), never the whole catalog and planned against the two grids the review showed, each
 // library for the kinds it holds: rekordbox's two exactly as the review
@@ -190,9 +193,25 @@ public:
     const CueReview &cueReview() const { return m_cueReview; }
     // Whether the save moves the cues that sit on the old grid; off by
     // default. Set on the GUI thread while the change waits, read by the
-    // save's.
-    void setMoveCues(bool move) { m_moveCues.store(move); }
+    // save's. setMoveCues() is the person's choice for this track;
+    // setMoveCuesOnTheirOwn() turns the move on by the threshold rule
+    // (application::cuesFollowOnTheirOwn() under `thresholdMs`), which the
+    // save's log says, so a move nobody asked for one by one is named as
+    // such. A choice made afterwards takes the rule's place.
+    void setMoveCues(bool move)
+    {
+        m_onTheirOwnUnderMs.store(0);
+        m_moveCues.store(move);
+    }
+    void setMoveCuesOnTheirOwn(int thresholdMs)
+    {
+        m_onTheirOwnUnderMs.store(thresholdMs);
+        m_moveCues.store(true);
+    }
     bool moveCues() const { return m_moveCues.load(); }
+    // The threshold the cues follow on their own under; 0 when they move
+    // (or stay) by the person's choice.
+    int movesOnTheirOwnUnderMs() const { return m_moveCues.load() ? m_onTheirOwnUnderMs.load() : 0; }
 
     // The review's picture of one planned move (TrackImportController::
     // cueReview): {spanMs, columns: [{low, mid, high}], oldBeats, newBeats,
@@ -231,6 +250,7 @@ private:
     int m_itemCountHint = 1;
     CueReview m_cueReview;
     std::atomic<bool> m_moveCues{false};
+    std::atomic<int> m_onTheirOwnUnderMs{0};
     std::optional<RekordboxWrite> m_written;
 };
 

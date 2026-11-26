@@ -512,6 +512,7 @@ bool TrackImportController::analyseAgain(const QString &rekordboxPath, const QSt
     request.analyser = [range](const std::string &file, const application::CancellationToken &cancel) {
         return analyseForImport(file, cancel, range);
     };
+    request.cueFollowThresholdMs = storedCueFollowThresholdMs(settings);
     m_reanalysing = request;
     m_reanalysingPlaylist = playlist;
     m_cancel = application::CancellationToken();
@@ -571,11 +572,19 @@ void TrackImportController::onReanalysed()
     pruneCueReview();
     int cueTracks = 0;
     int cuesToMove = 0;
+    int autoTracks = 0;
+    int autoCues = 0;
     int tooMuch = 0;
     for (const auto &change : prepared.changes) {
         const auto &plan = change->cueReview().plan;
-        cueTracks += plan.moves.empty() ? 0 : 1;
-        cuesToMove += static_cast<int>(plan.moves.size());
+        const int moves = static_cast<int>(plan.moves.size());
+        cueTracks += moves > 0 ? 1 : 0;
+        cuesToMove += moves;
+        // As the worker decided, by the request's threshold.
+        if (change->movesOnTheirOwnUnderMs() > 0) {
+            ++autoTracks;
+            autoCues += moves;
+        }
         tooMuch += plan.verdict == application::CueGridPlan::Verdict::GridChangedTooMuch ? 1 : 0;
     }
     m_lastReanalysis = QVariantMap{
@@ -584,6 +593,11 @@ void TrackImportController::onReanalysed()
         {QStringLiteral("leftAlone"), static_cast<int>(prepared.leftAlone.size())},
         {QStringLiteral("cueTracks"), cueTracks},
         {QStringLiteral("cuesToMove"), cuesToMove},
+        {QStringLiteral("autoCueTracks"), autoTracks},
+        {QStringLiteral("autoCues"), autoCues},
+        {QStringLiteral("askedCueTracks"), cueTracks - autoTracks},
+        {QStringLiteral("askedCues"), cuesToMove - autoCues},
+        {QStringLiteral("cueFollowThresholdMs"), m_reanalysing.cueFollowThresholdMs},
         {QStringLiteral("gridChangedTooMuch"), tooMuch},
     };
     emit cueReviewChanged();
@@ -626,6 +640,43 @@ void TrackImportController::setMoveCuesForAll(bool move)
     }
 }
 
+bool TrackImportController::movesCues(const QString &changeId) const
+{
+    return std::any_of(m_reviewed.begin(), m_reviewed.end(),
+                       [&](const auto &change) { return change->id() == changeId && change->moveCues(); });
+}
+
+int TrackImportController::cueFollowThresholdMs() const
+{
+    return storedCueFollowThresholdMs(openSeabassSettings());
+}
+
+void TrackImportController::applyCueThreshold(int ms)
+{
+    ms = clampedCueFollowThresholdMs(ms);
+    if (ms != cueFollowThresholdMs()) {
+        QSettings settings = openSeabassSettings();
+        storeCueFollowThresholdMs(settings, ms);
+        settings.sync();
+        emit cueFollowThresholdChanged();
+    }
+    for (const auto &change : m_reviewed) {
+        const auto &plan = change->cueReview().plan;
+        if (plan.moves.empty()) {
+            continue;
+        }
+        const bool was = change->moveCues();
+        if (application::cuesFollowOnTheirOwn(plan, ms)) {
+            change->setMoveCuesOnTheirOwn(ms);
+        } else {
+            change->setMoveCues(false);
+        }
+        if (change->moveCues() != was) {
+            emit moveCuesChanged(change->id(), change->moveCues());
+        }
+    }
+}
+
 QVariantList TrackImportController::cueReview() const
 {
     QVariantList tracks;
@@ -659,6 +710,7 @@ QVariantList TrackImportController::cueReview() const
             {QStringLiteral("oldBpm"), review.oldBpm},
             {QStringLiteral("newBpm"), change->analysis()->bpm},
             {QStringLiteral("moveCues"), change->moveCues()},
+            {QStringLiteral("largestMoveMs"), application::largestCueMoveMs(review.plan)},
             {QStringLiteral("offBeat"), review.plan.offBeat},
             {QStringLiteral("rows"), rows},
         };

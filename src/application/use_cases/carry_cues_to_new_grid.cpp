@@ -102,6 +102,23 @@ CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const st
     return plan;
 }
 
+double largestCueMoveMs(const CueGridPlan &plan)
+{
+    double largest = 0.0;
+    for (const CueGridMove &move : plan.moves) {
+        largest = std::max(largest, std::abs(move.newMs - move.oldMs));
+        if (move.isLoop) {
+            largest = std::max(largest, std::abs(move.newEndMs - move.oldEndMs));
+        }
+    }
+    return largest;
+}
+
+bool cuesFollowOnTheirOwn(const CueGridPlan &plan, double thresholdMs)
+{
+    return plan.verdict == CueGridPlan::Verdict::Moves && !plan.moves.empty() && largestCueMoveMs(plan) < thresholdMs;
+}
+
 std::vector<domain::CuePoint> cuesMovedOntoNewGrid(std::vector<domain::CuePoint> cues, const CueGridPlan &plan)
 {
     for (const CueGridMove &move : plan.moves) {

@@ -28,6 +28,10 @@ struct ReanalysisRequest
     std::string playlist;
     ImportAnalyser analyser;
     int analysisJobs = 2;
+    // A track whose cue moves are all under this many ms has them follow
+    // the new grid without being asked (its change's switch starts on);
+    // 0 asks about every track.
+    int cueFollowThresholdMs = 0;
 };
 
 struct PreparedReanalysis
@@ -51,7 +55,9 @@ struct PreparedReanalysis
 // longer than the analysis takes, has no grid in the analysis, is an MP3
 // whose lead-in cannot be read (its grid has no known place on rekordbox's
 // timeline), or has no analysis in any library to replace. The analyser's
-// key goes with the change, for the rows that name no key.
+// key goes with the change, for the rows that name no key, and so does
+// the plan for its cues on the old grid, switched on when it follows on
+// its own under the request's threshold.
 //
 // A stick with a library that is there and cannot be read is refused: a
 // track's analysis belongs in every library of a stick.

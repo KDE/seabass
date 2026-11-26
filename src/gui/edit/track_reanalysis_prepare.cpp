@@ -249,7 +249,11 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
         review.plan = application::planCueGridMoves(review.cues, review.oldBeats, review.newBeats);
         review.waveformOffsetMs = *offset;
         review.oldBpm = file.bpm;
+        const bool onTheirOwn = application::cuesFollowOnTheirOwn(review.plan, request.cueFollowThresholdMs);
         change->setCueReview(std::move(review));
+        if (onTheirOwn) {
+            change->setMoveCuesOnTheirOwn(request.cueFollowThresholdMs);
+        }
         prepared.changes.push_back(std::move(change));
     }
     return prepared;

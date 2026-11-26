@@ -91,13 +91,24 @@ class TrackImportController : public QObject
     // What the last Analyse again came to: {playlist, analysed (tracks
     // staged with a new analysis), leftAlone (tracks left as they are),
     // cueTracks (tracks with cues on the old grid that would move),
-    // cuesToMove (how many), gridChangedTooMuch (tracks whose grid
-    // changed too much to carry cues), all of that run only}.
+    // cuesToMove (how many), of those autoCueTracks and autoCues (the
+    // tracks whose cues follow the new grid on their own, all moves under
+    // cueFollowThresholdMs, and their cues) and askedCueTracks and
+    // askedCues (the rest, waiting for the person's choice),
+    // cueFollowThresholdMs (the threshold the run used), gridChangedTooMuch
+    // (tracks whose grid changed too much to carry cues), all of that run
+    // only}.
     Q_PROPERTY(QVariantMap lastReanalysis READ lastReanalysis NOTIFY reanalysisReady)
+    // Cue moves all under this many ms need no asking: the track's switch
+    // starts on. From the settings (CueFollowThresholdKey); 0 to 100, 0
+    // asks about every track. Set by applyCueThreshold().
+    Q_PROPERTY(int cueFollowThresholdMs READ cueFollowThresholdMs NOTIFY cueFollowThresholdChanged)
     // The review of the cues on the old grid: one entry per track whose
     // Analyse again change still waits and whose cues would move, of this
     // run and earlier ones: {id, title (with the artist), gridShiftMs,
-    // oldBpm, newBpm, moveCues, offBeat,
+    // oldBpm, newBpm, moveCues (as the list was made: movesCues() says it
+    // now), largestMoveMs (the largest move of its cues, a loop's end
+    // too, as an amount: what the threshold is compared with), offBeat,
     // rows: [{label, name, color, isLoop, oldText, newText, diffMs,
     // oldEndText, newEndText, strip: {spanMs, columns: [{low, mid, high}],
     // oldBeats, newBeats, oldCueMs, newCueMs, oldEndMs, newEndMs}}]}, the
@@ -124,6 +135,7 @@ public:
     QVariantMap lastResult() const { return m_lastResult; }
     QString reanalysingPlaylist() const { return m_reanalysingPlaylist; }
     QVariantMap lastReanalysis() const { return m_lastReanalysis; }
+    int cueFollowThresholdMs() const;
     QVariantList cueReview() const;
     QStringList cueReviewTooDifferent() const;
 
@@ -161,6 +173,15 @@ public:
     // `changeId` onto its new grid; all of the review's at once.
     Q_INVOKABLE void setMoveCues(const QString &changeId, bool move);
     Q_INVOKABLE void setMoveCuesForAll(bool move);
+    // Whether the save moves the cues of the track whose change is
+    // `changeId`, as it is now.
+    Q_INVOKABLE bool movesCues(const QString &changeId) const;
+    // `ms` (0 to 100) as the threshold from now on, kept in the settings,
+    // and applied to every track of the review: those whose largest move
+    // is under it switched on, the rest off. Like setMoveCuesForAll(),
+    // each switch that turns is told by moveCuesChanged(), and the list
+    // is not made again.
+    Q_INVOKABLE void applyCueThreshold(int ms);
     // The audio file extensions a file dialog should offer, as
     // "*.mp3 *.flac ...".
     Q_INVOKABLE QString fileDialogFilter() const;
@@ -177,6 +198,7 @@ signals:
     // One track's choice changed (setMoveCues(), setMoveCuesForAll()): the
     // review updates that switch alone, not the whole list.
     void moveCuesChanged(const QString &changeId, bool move);
+    void cueFollowThresholdChanged();
     // A save wrote at least one imported track: the page should rescan.
     void tracksImported();
 

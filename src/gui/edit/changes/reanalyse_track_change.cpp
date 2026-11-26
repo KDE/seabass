@@ -980,6 +980,10 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         }
 
         if (cuesMove) {
+            // A move nobody chose for this track alone is said to be one.
+            if (const int under = movesOnTheirOwnUnderMs(); under > 0) {
+                done.push_back("its cue points moved on their own, every move under " + std::to_string(under) + " ms");
+            }
             const auto said = [&](const std::string &library) {
                 for (const application::CueGridMove &move : movedForLog) {
                     std::string line = library + ": moved "

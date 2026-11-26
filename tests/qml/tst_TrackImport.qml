@@ -77,14 +77,34 @@ TestCase {
             property var cueReview: []
             property var cueReviewTooDifferent: []
             signal moveCuesChanged(string changeId, bool move)
+            // The choices made since the list was, by id.
+            property var choices: ({})
+            function movesCues(id) {
+                if (id in choices) {
+                    return choices[id];
+                }
+                const track = cueReview.find(t => t.id === id);
+                return track ? track.moveCues : false;
+            }
             function setMoveCues(id, move) {
                 calls.push(["moveCues", id, move]);
+                choices[id] = move;
                 moveCuesChanged(id, move);
             }
             function setMoveCuesForAll(move) {
                 calls.push(["moveCuesForAll", move]);
                 for (const track of cueReview) {
+                    choices[track.id] = move;
                     moveCuesChanged(track.id, move);
+                }
+            }
+            property int cueFollowThresholdMs: 10
+            function applyCueThreshold(ms) {
+                calls.push(["applyCueThreshold", ms]);
+                cueFollowThresholdMs = ms;
+                for (const track of cueReview) {
+                    choices[track.id] = track.largestMoveMs < ms;
+                    moveCuesChanged(track.id, choices[track.id]);
                 }
             }
         }
@@ -585,17 +605,19 @@ TestCase {
                        oldBeats: [200, 700, 1200, 1700], newBeats: [240, 740, 1240, 1740],
                        oldCueMs: 700, newCueMs: 740};
         fake.cueReview = [{id: "addcue:reanalyse-track:/contents/a.wav", title: "Opener, Somebody", gridShiftMs: 40,
-                           oldBpm: 120, newBpm: 120.5, moveCues: false, offBeat: 2,
+                           oldBpm: 120, newBpm: 120.5, moveCues: false, largestMoveMs: 40.4, offBeat: 2,
                            rows: [{label: "Hot cue 1", name: "drop", color: "#00FF00", isLoop: false,
                                    oldText: "0:04.247", newText: "0:04.287", diffMs: 40, strip: strip}]}];
         fake.cueReviewTooDifferent = ["Closer, Somebody Else"];
         fake.lastReanalysis = {playlist: "Peak", analysed: 2, leftAlone: 0, cueTracks: 1, cuesToMove: 1,
-                               gridChangedTooMuch: 1};
+                               autoCueTracks: 0, autoCues: 0, askedCueTracks: 1, askedCues: 1,
+                               cueFollowThresholdMs: 10, gridChangedTooMuch: 1};
         fake.reanalysisReady();
         const result = findChild(page, "reanalysisResultDialog");
         tryCompare(result, "opened", true);
-        verify(result.detailText.indexOf("1 cue point(s) or loop(s) sat on a beat of the old grid, which the new one "
-                                         + "has elsewhere.") >= 0, result.detailText);
+        verify(result.detailText.indexOf("On 1 track(s) cue points or loops would move by 10 ms or more. They stay "
+                                         + "where they are unless you choose to move them (cue points: 1).") >= 0,
+               result.detailText);
         verify(result.detailText.indexOf("On 1 track(s) the grid changed too much to carry cue points") >= 0,
                result.detailText);
         const reviewButton = findChild(page, "reanalysisReviewCuesButton");
@@ -610,7 +632,9 @@ TestCase {
         const section = tracks.itemAt(0);
         compare(findChild(section, "cueReviewTrackTitle").text, "Opener, Somebody");
         compare(findChild(section, "cueReviewTrackShift").text,
-                "The grid moved by 40 ms. Tempo 120.00 BPM before, 120.50 BPM now.");
+                "The cue points move by up to 40 ms. Tempo 120.00 BPM before, 120.50 BPM now.");
+        // No track under the threshold: no such section.
+        compare(findChild(page, "cueReviewOwnHeading").visible, false);
         compare(findChild(section, "cueReviewRowLabel").text, "Hot cue 1, drop");
         compare(findChild(section, "cueReviewRowTimes").text, "0:04.247 now, 0:04.287 on the new grid (+40 ms)");
         compare(findChild(section, "cueReviewOffBeat").text, "2 cue point(s) not on a beat stay where they are.");
@@ -672,7 +696,7 @@ TestCase {
         const tracks = [];
         for (let t = 0; t < 6; ++t) {
             tracks.push({id: "track" + t, title: "Track " + t, gridShiftMs: 40, oldBpm: 120, newBpm: 120,
-                         moveCues: false, offBeat: 0,
+                         moveCues: false, largestMoveMs: 40, offBeat: 0,
                          rows: [{label: "Hot cue 1", name: "", color: "", isLoop: false, oldText: "0:01.000",
                                  newText: "0:01.040", diffMs: 40, strip: strip}]});
         }
@@ -711,5 +735,140 @@ TestCase {
         }
         verify(findChild(sections[0], "cueReviewStrip") === firstStrip, "the picture not made again");
         review.close();
+    }
+
+    // The threshold: the result says apart what follows on its own and
+    // what waits for a choice; the review asks first, then holds the
+    // tracks under the threshold in a section closed until opened, their
+    // switches on; "Apply to all" sends the spin box's value, and the
+    // spin box alone sends nothing.
+    function test_theCueThreshold() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const result = findChild(page, "reanalysisResultDialog");
+        const reviewButton = findChild(page, "reanalysisReviewCuesButton");
+        const ownSentence = "3 cue point(s) or loop(s) will follow the new grid on their own when you save, as they "
+            + "move by less than 10 ms (tracks: 2).";
+        const askedSentence = "On 1 track(s) cue points or loops would move by 10 ms or more. They stay where they "
+            + "are unless you choose to move them (cue points: 2).";
+        const showResult = outcome => {
+            fake.lastReanalysis = outcome;
+            fake.reanalysisReady();
+            tryCompare(result, "opened", true);
+        };
+        const closeResult = () => {
+            result.close();
+            tryCompare(result, "visible", false);
+        };
+        // Only tracks under the threshold: said, and the review offered all
+        // the same, to look and switch off.
+        showResult({playlist: "Peak", analysed: 2, leftAlone: 0, cueTracks: 2, cuesToMove: 3, autoCueTracks: 2,
+                    autoCues: 3, askedCueTracks: 0, askedCues: 0, cueFollowThresholdMs: 10, gridChangedTooMuch: 0});
+        compare(result.detailText, "Nothing is written until you save.\n\n" + ownSentence);
+        compare(reviewButton.visible, true);
+        closeResult();
+        // Only tracks over it.
+        showResult({playlist: "Peak", analysed: 1, leftAlone: 0, cueTracks: 1, cuesToMove: 2, autoCueTracks: 0,
+                    autoCues: 0, askedCueTracks: 1, askedCues: 2, cueFollowThresholdMs: 10, gridChangedTooMuch: 0});
+        compare(result.detailText, "Nothing is written until you save.\n\n" + askedSentence);
+        compare(reviewButton.visible, true);
+        closeResult();
+        // Both, each its own sentence, and the grid that changed too much.
+        showResult({playlist: "Peak", analysed: 4, leftAlone: 0, cueTracks: 3, cuesToMove: 5, autoCueTracks: 2,
+                    autoCues: 3, askedCueTracks: 1, askedCues: 2, cueFollowThresholdMs: 10, gridChangedTooMuch: 1});
+        compare(result.detailText, "Nothing is written until you save.\n\n" + ownSentence + "\n\n" + askedSentence
+                + "\n\nOn 1 track(s) the grid changed too much to carry cue points; they stay where they are.");
+        closeResult();
+        // A threshold of 0 asks about every track, and says no threshold.
+        showResult({playlist: "Peak", analysed: 1, leftAlone: 0, cueTracks: 1, cuesToMove: 2, autoCueTracks: 0,
+                    autoCues: 0, askedCueTracks: 1, askedCues: 2, cueFollowThresholdMs: 0, gridChangedTooMuch: 0});
+        compare(result.detailText, "Nothing is written until you save.\n\nOn 1 track(s) cue points or loops sat on a "
+                + "beat of the old grid, which the new one has elsewhere. They stay where they are unless you choose "
+                + "to move them (cue points: 2).");
+        closeResult();
+
+        const strip = {spanMs: 2000, columns: [{low: 0.5, mid: 0.2, high: 0.1}, {low: 0.9, mid: 0.3, high: 0.1}],
+                       oldBeats: [200, 700, 1200, 1700], newBeats: [205, 705, 1205, 1705], oldCueMs: 700, newCueMs: 705};
+        const track = (id, title, largest, on) => ({
+            id: id, title: title, gridShiftMs: Math.round(largest), oldBpm: 120, newBpm: 120, moveCues: on,
+            largestMoveMs: largest, offBeat: 0,
+            rows: [{label: "Hot cue 1", name: "", color: "#00FF00", isLoop: false, oldText: "0:01.000",
+                    newText: "0:01.005", diffMs: Math.round(largest), strip: strip}]});
+        fake.cueReview = [track("far", "Far, Somebody", 40.2, false), track("near", "Near, Somebody", 4.6, true),
+                          track("edge", "Edge, Somebody", 9.9, true)];
+        fake.calls = [];
+        const review = findChild(page, "cueReviewDialog");
+        review.open();
+        tryCompare(review, "opened", true);
+        tryVerify(() => review.opacity === 1 && review.scale === 1);
+        // The dialog gives Done the focus once open; a key before that
+        // would land there.
+        tryVerify(() => findChild(page, "cueReviewDoneButton").activeFocus);
+        // and once more when the footer is first laid out.
+        waitForRendering(page);
+        // Asked first: the track over the threshold.
+        const asked = findChild(page, "cueReviewTracks");
+        compare(asked.count, 1);
+        compare(findChild(asked.itemAt(0), "cueReviewTrackTitle").text, "Far, Somebody");
+        compare(findChild(asked.itemAt(0), "moveCuesSwitch").checked, false);
+        // Then the tracks under it, closed, counted in the heading.
+        const heading = findChild(page, "cueReviewOwnHeading");
+        const own = findChild(page, "cueReviewOwnTracks");
+        compare(heading.visible, true);
+        compare(heading.text, "Moved on their own (less than 10 ms): 2 track(s)");
+        compare(own.count, 0);
+        // A choice made while it is closed (Move none, say) is what its
+        // switch shows once opened, not the list as it was made.
+        fake.setMoveCues("edge", false);
+        fake.calls = [];
+        // By the keyboard: below the first track it may sit outside the
+        // scrolled view.
+        heading.forceActiveFocus();
+        wait(50);
+        verify(heading.activeFocus, "the heading keeps the focus");
+        keyClick(Qt.Key_Space);
+        tryCompare(own, "count", 2);
+        compare(findChild(own.itemAt(0), "cueReviewTrackTitle").text, "Near, Somebody");
+        compare(findChild(own.itemAt(0), "moveCuesSwitch").checked, true);
+        compare(findChild(own.itemAt(1), "moveCuesSwitch").checked, false);
+        verify(findChild(own.itemAt(1), "cueReviewStrip") !== null, "its cue has its picture");
+        // The largest move, rounded down: 9.9 is under 10 and says so.
+        compare(findChild(own.itemAt(1), "cueReviewTrackShift").text, "The cue points move by up to 9 ms.");
+        waitForRendering(page);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(page).save(screenshotDir + "/browse_cue_review_threshold.png");
+        }
+        // The spin box alone changes nothing; Apply to all sends its value.
+        const spin = findChild(page, "cueReviewThresholdSpin");
+        compare(spin.value, 10);
+        compare(spin.displayText, "10 ms");
+        compare(spin.from, 0);
+        compare(spin.to, 100);
+        spin.forceActiveFocus();
+        for (let i = 0; i < 5; ++i) {
+            keyClick(Qt.Key_Up);
+        }
+        compare(spin.value, 15);
+        compare(JSON.stringify(fake.calls), JSON.stringify([]));
+        spin.value = 50;
+        findChild(page, "cueReviewApplyThreshold").clicked();
+        compare(JSON.stringify(fake.calls), JSON.stringify([["applyCueThreshold", 50]]));
+        // Every track is under 50 now: all in the section, all on.
+        tryCompare(asked, "count", 0);
+        compare(heading.text, "Moved on their own (less than 50 ms): 3 track(s)");
+        tryCompare(own, "count", 3);
+        for (let t = 0; t < 3; ++t) {
+            compare(findChild(own.itemAt(t), "moveCuesSwitch").checked, true);
+        }
+        // A choice made in the section stays the section's: the switch
+        // turns, the list is not made again.
+        const first = own.itemAt(0);
+        findChild(first, "moveCuesSwitch").forceActiveFocus();
+        keyClick(Qt.Key_Space);
+        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["moveCues", "far", false]]));
+        verify(own.itemAt(0) === first, "the section not made again");
+        compare(findChild(first, "moveCuesSwitch").checked, false);
+        review.close();
+        tryCompare(review, "visible", false);
     }
 }

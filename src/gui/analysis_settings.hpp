@@ -8,6 +8,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
+
 #include "domain/seabass_grid_analyser.hpp"
 
 namespace seabass::gui
@@ -48,6 +50,34 @@ inline domain::TempoRange tempoRangeOf(const QString &choice)
 inline domain::TempoRange storedAnalysisTempoRange(const QSettings &settings)
 {
     return tempoRangeOf(settings.value(QLatin1String(AnalysisTempoRangeKey), defaultAnalysisTempoRange()).toString());
+}
+
+// Analyse again: a track whose cues on the old grid all move by less than
+// this many ms has them follow the new grid without being asked
+// (application::cuesFollowOnTheirOwn()); every other track is asked. Set
+// in Analyse again's cue review ("Apply to all"), read by the next run.
+// 0 asks about every track.
+inline constexpr char CueFollowThresholdKey[] = "music/cueFollowThresholdMs";
+inline constexpr int DefaultCueFollowThresholdMs = 10;
+inline constexpr int MaxCueFollowThresholdMs = 100;
+
+inline int clampedCueFollowThresholdMs(int ms)
+{
+    return std::clamp(ms, 0, MaxCueFollowThresholdMs);
+}
+
+// A value that is not a number (a settings file edited by hand) is the
+// default; one out of range is taken to its nearest end.
+inline int storedCueFollowThresholdMs(const QSettings &settings)
+{
+    bool ok = false;
+    const int ms = settings.value(QLatin1String(CueFollowThresholdKey), DefaultCueFollowThresholdMs).toInt(&ok);
+    return ok ? clampedCueFollowThresholdMs(ms) : DefaultCueFollowThresholdMs;
+}
+
+inline void storeCueFollowThresholdMs(QSettings &settings, int ms)
+{
+    settings.setValue(QLatin1String(CueFollowThresholdKey), clampedCueFollowThresholdMs(ms));
 }
 
 }  // namespace seabass::gui
