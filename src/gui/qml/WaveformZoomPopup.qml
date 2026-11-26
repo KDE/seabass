@@ -569,7 +569,8 @@ SeabassDialog {
         // as its single view draws it; the other from what the page read.
         const own = (i) => i === root.loadedSide && root.hasDetail;
         return root.sides.map((side, i) => ({
-            look: side.look || "",
+            // The player's own columns in the look they came with.
+            look: own(i) ? root.detail.look || side.look || "" : side.look || "",
             columns: own(i) ? root.detail.columns : side.columns && side.columns.byteLength >= 3 ? side.columns : null,
             columnMs: own(i) ? root.detail.msPerColumn || 0 : side.msPerColumn || 0,
             startMs: own(i) ? root.detail.startMs || 0 : side.startMs || 0,
