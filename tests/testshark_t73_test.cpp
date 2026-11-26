@@ -1161,6 +1161,54 @@ void testRemembered()
         assert(rowOf(page, ratingKey, Section::Conflicts) >= 0 && "another rating in rekordbox asks again");
         std::cout << "remembered: another rating in rekordbox asks again OK\n";
     }
+
+    // 5. Both sides moved together outside Sync, rating and comment (Engine
+    //    to rekordbox's 2 stars, both to one new comment): nothing offered
+    //    for B01, and a save about another track lets the record take
+    //    what both have, dropping the answer and the mark. rekordbox's
+    //    next change then goes to Engine, ticked, not "both changed".
+    assert(testing::sqlExec(stick.db, "UPDATE Track SET rating = 40, comment = 'both moved' WHERE filename LIKE "
+                                      "'T73-B01-%';"));
+    const auto exportComment = [&](const std::string &text) {
+        seabass::infrastructure::rekordbox::PdbRowWriter writer(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+        std::string refusal;
+        assert(writer.setTrackComment(static_cast<std::uint32_t>(std::stoul(rekordboxRowOf(stick, "B01").sourceId)),
+                                      text, &refusal));
+        assert(writer.commit());
+    };
+    exportComment("both moved");
+    exportRating(stick, "B02", 3);
+    {
+        RekordboxExportSyncController page;
+        analyze(page, stick);
+        for (const auto &key : {ratingKey, commentKey}) {
+            for (const Row &r : page.rows()->rows()) {
+                assert(r.header.key != key && "level: nothing offered for B01");
+            }
+        }
+        page.stageSelected();
+        assert(page.errorMessage().isEmpty());
+        waitForSave(sessionOf(stick), page, false);
+        const auto after = recorded();
+        assert(!after.declined.count(ratingKey) && !after.declined.count(commentKey)
+               && "both moved on: the answer and the mark go");
+        const auto *b = after.findTrack(b01);
+        assert(b && b->rating == 2 && b->comment == "both moved" && "the record takes what both have");
+    }
+    exportRating(stick, "B01", 1);
+    exportComment("rekordbox's newer");
+    {
+        RekordboxExportSyncController page;
+        analyze(page, stick);
+        assert(rowOf(page, ratingKey, Section::Conflicts) < 0 && rowOf(page, commentKey, Section::Conflicts) < 0);
+        const int rating = rowOf(page, ratingKey, Section::MetadataToEngine);
+        const int comment = rowOf(page, commentKey, Section::MetadataToEngine);
+        assert(rating >= 0 && comment >= 0 && "rekordbox's changes go to Engine");
+        assert(page.rows()->rows()[static_cast<std::size_t>(rating)].included
+               && page.rows()->rows()[static_cast<std::size_t>(comment)].included);
+        std::cout << "remembered: both sides moved together, the record follows, rekordbox's next change goes to "
+                     "Engine OK\n";
+    }
 }
 
 // --- replay ------------------------------------------------------------

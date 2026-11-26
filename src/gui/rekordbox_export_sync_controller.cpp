@@ -1715,23 +1715,40 @@ void RekordboxExportSyncController::stageSelected()
     // not this save offered their track: nextBaseline keeps only the
     // declines of items offered. A key this save answered anew, either
     // way, takes the new answer (rekordbox's side: no entry, the two agree
-    // once it is written). So do the ratings kept as Engine's
-    // (keptRatingAnswer): the save after the one that wrote Engine's back
-    // finds the two sides level and offers nothing, and the next export
-    // that brings rekordbox's old rating back is what they are kept for.
+    // once it is written).
+    //
+    // So do a rating kept as Engine's (keptRatingAnswer) and the mark of a
+    // comment Seabass wrote (seabassCommentMarker), #108, but only while
+    // rekordbox still holds the value they stand for: the stars written
+    // back, the comment written. A track this save did not offer has
+    // rekordbox and Engine level, so a rekordbox value that moved on means
+    // both did; the entry would only hold the record at the old value
+    // (nextBaseline keeps a declined item's recorded value), and a later
+    // change of either side would then read as both. Dropped, the record
+    // takes the value both now have. A question left open is offered and
+    // not applied, and nextBaseline carries its entry by itself.
+    std::map<std::string, const domain::Track *> rekordboxNow;  // by pathKey, built when first needed
+    const auto rekordboxTrack = [&](const std::string &itemKey) -> const domain::Track * {
+        if (rekordboxNow.empty()) {
+            for (const auto &track : analysis.rekordbox) {
+                rekordboxNow.emplace(pathKeyOf(stickRelativeOf(track.filePath)), &track);
+            }
+        }
+        const auto parsed = domain::parseItemKey(itemKey);
+        const auto it = parsed ? rekordboxNow.find(parsed->pathKey) : rekordboxNow.end();
+        return it == rekordboxNow.end() ? nullptr : it->second;
+    };
     if (analysis.baseline) {
         for (const auto &[key, state] : analysis.baseline->declined) {
-            // And the comments Seabass wrote (seabassCommentMarker), for
-            // the same reason, while the record's comment is the one
-            // written, which is what the planner reads the mark against:
-            // a question left open keeps the record's comment and needs
-            // the mark next time; an item that advanced leaves it stale.
-            bool remembered = key.rfind("analysis:", 0) == 0 || state.rfind("kept ", 0) == 0;
-            if (state.rfind("written ", 0) == 0) {
-                const auto parsed = domain::parseItemKey(key);
-                const domain::BaselineTrack *recorded =
-                    parsed ? analysis.baseline->findTrack(parsed->pathKey) : nullptr;
-                remembered = recorded && domain::seabassCommentMarker(recorded->comment) == state;
+            bool remembered = key.rfind("analysis:", 0) == 0;
+            if (state.rfind("kept ", 0) == 0) {
+                const domain::Track *now = rekordboxTrack(key);
+                const auto stars = now ? domain::effectiveRating(now->rating) : std::nullopt;
+                const std::string held = stars ? std::to_string(*stars) : std::string("none");
+                remembered = now && state.rfind("kept " + held + " over ", 0) == 0;
+            } else if (state.rfind("written ", 0) == 0) {
+                const domain::Track *now = rekordboxTrack(key);
+                remembered = now && domain::seabassCommentMarker(now->comment) == state;
             }
             if (remembered && !declined.count(key) && !applied.count(key)) {
                 declined.emplace(key, state);
