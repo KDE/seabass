@@ -167,8 +167,10 @@ TestCase {
     // tested where typing to the real one (about 1,800) would take minutes.
     function holdTo(env, units, asciiOnly) {
         const editor = findChild(env.panel, "trackCommentEditor");
-        editor.limit = Object.assign({}, env.panel.commentLimit,
-                                     {limited: true, units: units, asciiOnly: asciiOnly, reason: "held for the test"});
+        // A binding, as the panel's own is: the editor still follows each
+        // new limit the controller reads, with only the size held.
+        editor.limit = Qt.binding(() => Object.assign({}, env.panel.commentLimit,
+                                                      {limited: true, units: units, asciiOnly: asciiOnly, reason: "held for the test"}));
         return units;
     }
 

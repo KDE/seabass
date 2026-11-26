@@ -489,6 +489,35 @@ int main(int argc, char **argv)
         std::cout << "case 6 (two rows under one id: refused with the reason) OK\n";
     }
 
+    // 7. A damaged page whose used size runs past its heap, the edited row
+    //    the last on it: written over itself, a long comment would run into
+    //    the row index and the next page. Refused, the file left alone.
+    {
+        const fs::path pdbPath = copyIn(dir, seabass::pathFromUtf8(argv[1]), "oversized.pdb");
+        std::string bytes = readFile(pdbPath);
+        const Snapshot snap = snapshotOf(bytes);
+        const size_t lenPage = u32(bytes, 4);
+        const size_t base = lenPage * snap.pages.front();
+        const uint32_t numRows = u32(bytes, base + 24) & 0x1FFFu;
+        size_t last = 0;
+        for (uint32_t i = 0; i < numRows; ++i) {
+            const size_t groupBase = base + lenPage - (i / 16) * 0x24;
+            if ((u16(bytes, groupBase - 4) >> (i % 16)) & 1) {
+                last = std::max<size_t>(last, u16(bytes, groupBase - 6 - 2 * (i % 16)));
+            }
+        }
+        const uint32_t id = u32(bytes, base + 40 + last + 72);
+        put16(bytes, base + 30, static_cast<uint16_t>(lenPage - 40));
+        writeFile(pdbPath, bytes);
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
+        std::string refusal;
+        assert(!writer.setTrackComment(id, asciiOf(400, 'o'), &refusal));
+        assert(refusal.find("does not add up") != std::string::npos);
+        assert(!writer.commit());
+        assert(readFile(pdbPath) == bytes);
+        std::cout << "case 7 (a page whose used size runs past its heap: refused, nothing written) OK\n";
+    }
+
     fs::remove_all(dir);
     std::cout << "pdb_track_comment_test: all OK\n";
     return 0;

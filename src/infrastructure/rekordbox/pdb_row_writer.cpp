@@ -1609,6 +1609,13 @@ bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment,
     const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
     const size_t base = lenPage * found->pageIndex;
     const size_t heapOffset = found->rowBodyOffset - base - PageHeaderSize;
+    if (!pageAddsUp(m_buffer, base, lenPage)) {
+        // Its used size is what bounds the row's span below: on a page
+        // whose sizes do not add up, a row written over itself could run
+        // into the row index or the next page.
+        return refuse("export.pdb's page with this track does not add up (its free and used sizes against "
+                      "its rows), so Seabass does not change its row");
+    }
     const size_t extent = rowExtent(m_buffer, base, lenPage, heapOffset);
     try {
         if (rebuilt->size() <= extent) {
@@ -1654,6 +1661,9 @@ bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment,
     } catch (const PdbPageFull &e) {
         undo();
         return refuse(std::string("export.pdb has no room to move this track's row: ") + e.what());
+    } catch (...) {
+        undo();
+        throw;
     }
     size_t rowsAfter = 0;
     const auto readBack = trackStringsOf(m_buffer, trackId, &rowsAfter);
