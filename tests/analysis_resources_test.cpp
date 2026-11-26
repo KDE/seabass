@@ -11,9 +11,19 @@
 // 3. The next track may start when none is in hand, whatever is free;
 //    otherwise only with room for what is in hand, a typical track and
 //    the margin. Unknown memory is taken for 4 GB.
-// 4. The gate: a second track waits while memory is short and starts when
-//    the first leaves; it starts at once when memory is there; a long
-//    track in hand counts for its length; a cancel ends the wait.
+// 4. The gate at the start of a track: a second track waits while memory
+//    is short and starts when the first leaves; it starts at once when
+//    memory is there; a track in hand counts for what a typical track
+//    still has to take, and nothing once it is past that length; a cancel
+//    ends the wait.
+// 5. The gate while tracks read: with free memory under the margin, a
+//    younger track waits at its next piece and the oldest goes on (and is
+//    not even asked about memory); the oldest leaving releases the
+//    younger, and so does memory coming back; a cancel ends the wait;
+//    memory that cannot be read never makes a track wait.
+//
+// A wait is proved by the gate asking for free memory again (the Reader
+// counts the questions), never by a sleep.
 
 #include <atomic>
 #include <cassert>
@@ -25,6 +35,25 @@
 
 using namespace seabass;
 using namespace seabass::gui;
+
+namespace
+{
+
+// Until `ready` holds, for ten seconds at most.
+template<typename Ready>
+bool within(Ready ready)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!ready()) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+}  // namespace
 
 int main()
 {
@@ -65,14 +94,21 @@ int main()
     }
     {
         std::atomic<std::uint64_t> free{AnalysisTypicalBytes + AnalysisMemoryMargin};
-        AnalysisMemoryGate gate([&]() { return std::optional<std::uint64_t>(free.load()); });
+        std::atomic<int> asked{0};
+        AnalysisMemoryGate gate([&]() {
+            ++asked;
+            return std::optional<std::uint64_t>(free.load());
+        });
         const application::CancellationToken cancel;
         const int first = gate.enter(cancel);
         assert(gate.inHand() == 1 && gate.stillToTake() == AnalysisTypicalBytes);
-        // Short of the first track's own share: the second waits.
+        // Short of the first track's own share: the second waits. Asked
+        // twice, it looked, waited and looked again, and memory was short
+        // both times.
         std::atomic<int> second{0};
+        int askedBefore = asked;
         std::thread waiting([&]() { second = gate.enter(cancel); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        assert(within([&] { return asked >= askedBefore + 2; }));
         assert(second == 0);
         gate.leave(first);
         waiting.join();
@@ -88,13 +124,14 @@ int main()
         // track's share counts against the next.
         const std::uint64_t held = analysisBytesFor(60.0, 44100);
         assert(held == AnalysisBaseBytes + AnalysisBytesPerMinute);
-        gate.noteRead(second, 60.0, 44100);
+        gate.noteRead(second, 60.0, 44100, cancel);
         const std::uint64_t rest = AnalysisTypicalBytes - held;
         assert(gate.stillToTake() == rest);
         free = rest + AnalysisTypicalBytes + AnalysisMemoryMargin - 1;
         std::atomic<int> fourth{0};
+        askedBefore = asked;
         std::thread longWait([&]() { fourth = gate.enter(cancel); });
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        assert(within([&] { return asked >= askedBefore + 2; }));
         assert(fourth == 0);
         // Memory that something else gave back is seen without a leave.
         free = rest + AnalysisTypicalBytes + AnalysisMemoryMargin;
@@ -105,7 +142,7 @@ int main()
         // An hour in, nothing is held back for it any more: what it takes
         // from there on shows in the free memory. An hour is 265 MB, and
         // a high sample rate 40 MB more.
-        gate.noteRead(second, 3600.0, 44100);
+        gate.noteRead(second, 3600.0, 44100, cancel);
         assert(gate.stillToTake() == 0);
         assert(analysisBytesFor(3600.0, 48000) == AnalysisBaseBytes + 60 * AnalysisBytesPerMinute);
         assert(analysisBytesFor(3600.0, 48000) < 270ull * 1024 * 1024);
@@ -116,6 +153,7 @@ int main()
         free = 0;
         application::CancellationToken stop;
         std::atomic<bool> thrown{false};
+        askedBefore = asked;
         std::thread cancelled([&]() {
             try {
                 gate.enter(stop);
@@ -123,14 +161,112 @@ int main()
                 thrown = true;
             }
         });
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        assert(within([&] { return asked >= askedBefore + 2; }));
         assert(!thrown);
         stop.cancel();
         cancelled.join();
         assert(thrown && gate.inHand() == 1);
         gate.leave(second);
         assert(gate.inHand() == 0 && gate.stillToTake() == 0);
-        std::cout << "case 4 (the gate) OK\n";
+        std::cout << "case 4 (the gate at the start of a track) OK\n";
+    }
+    {
+        std::atomic<std::uint64_t> free{100 * GB};
+        std::atomic<bool> unknown{false};
+        std::atomic<int> asked{0};
+        AnalysisMemoryGate gate([&]() {
+            ++asked;
+            return unknown ? std::nullopt : std::optional<std::uint64_t>(free.load());
+        });
+        const application::CancellationToken cancel;
+        const int older = gate.enter(cancel);
+        const int younger = gate.enter(cancel);
+        const int youngest = gate.enter(cancel);
+        assert(older < younger && younger < youngest);
+        free = AnalysisMemoryMargin - 1;
+
+        // The oldest goes on, and is not asked about memory at all.
+        int askedBefore = asked;
+        std::atomic<bool> done{false};
+        std::thread oldest([&]() {
+            gate.noteRead(older, 600.0, 44100, cancel);
+            done = true;
+        });
+        assert(within([&] { return done.load(); }) && "the oldest in hand never waits");
+        oldest.join();
+        assert(asked == askedBefore);
+
+        // A younger one waits at its piece; its read is noted all the same.
+        done = false;
+        askedBefore = asked;
+        std::thread reading([&]() {
+            gate.noteRead(younger, 600.0, 44100, cancel);
+            done = true;
+        });
+        assert(within([&] { return asked >= askedBefore + 2; }));
+        assert(!done);
+        assert(gate.stillToTake() == AnalysisTypicalBytes);  // the youngest's share alone
+
+        // Memory comes back: it goes on.
+        free = AnalysisMemoryMargin;
+        assert(within([&] { return done.load(); }));
+        reading.join();
+
+        // Short again: the youngest waits, the older leaving does not
+        // release it (younger is in hand still), younger leaving does.
+        free = AnalysisMemoryMargin - 1;
+        done = false;
+        askedBefore = asked;
+        std::thread last([&]() {
+            gate.noteRead(youngest, 60.0, 44100, cancel);
+            done = true;
+        });
+        assert(within([&] { return asked >= askedBefore + 2; }));
+        gate.leave(older);
+        askedBefore = asked;
+        assert(within([&] { return asked >= askedBefore + 2; }));
+        assert(!done && "a track younger than another in hand still waits");
+        gate.leave(younger);
+        assert(within([&] { return done.load(); }) && "the oldest in hand never waits");
+        last.join();
+
+        // A cancel ends the wait.
+        free = 100 * GB;
+        const int another = gate.enter(cancel);
+        assert(another > youngest);
+        free = AnalysisMemoryMargin - 1;
+        application::CancellationToken stop;
+        std::atomic<bool> thrown{false};
+        askedBefore = asked;
+        std::thread cancelled([&]() {
+            try {
+                gate.noteRead(another, 60.0, 44100, stop);
+            } catch (const application::OperationCancelled &) {
+                thrown = true;
+            }
+        });
+        assert(within([&] { return asked >= askedBefore + 2; }));
+        assert(!thrown);
+        stop.cancel();
+        assert(within([&] { return thrown.load(); }) && "a cancel ends the wait");
+        cancelled.join();
+
+        // Memory that cannot be read: nobody waits.
+        unknown = true;
+        askedBefore = asked;
+        done = false;
+        std::thread blind([&]() {
+            gate.noteRead(another, 120.0, 44100, cancel);
+            done = true;
+        });
+        assert(within([&] { return done.load(); }) && "unknown memory never makes a track wait");
+        blind.join();
+        assert(asked == askedBefore + 1);
+        gate.leave(another);
+        gate.leave(youngest);
+        assert(gate.inHand() == 0);
+        std::cout << "case 5 (the gate while tracks read: the younger waits while memory is short, the oldest "
+                     "never) OK\n";
     }
     std::cout << "analysis_resources_test: all cases passed\n";
     return 0;

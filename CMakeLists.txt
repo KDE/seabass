@@ -3978,6 +3978,19 @@ if(TARGET seabass_edit)
     set_tests_properties(add_cue_pending_test PROPERTIES
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
 
+    # The import's analysis of one file with the decoder and the memory
+    # gate given: the gate's ticket comes back however the call ends, and
+    # a file cut short or endless gives no analysis. Synthetic sources, no
+    # decoder.
+    add_executable(track_import_analysis_test
+        src/gui/track_import_analysis.cpp
+        src/gui/analysis_resources.cpp
+        tests/track_import_analysis_test.cpp
+    )
+    target_include_directories(track_import_analysis_test PRIVATE src tests)
+    target_link_libraries(track_import_analysis_test PRIVATE seabass_edit Qt6::Core)
+    add_test(NAME track_import_analysis_test COMMAND track_import_analysis_test)
+
     # The track import's controller with the real session: a folder
     # offered as a drop offers it, staged, saved, and found in all three
     # libraries. Needs TagLib to read the files it makes.

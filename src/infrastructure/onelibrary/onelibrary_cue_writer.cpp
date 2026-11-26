@@ -5,6 +5,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <thread>
 
 #include <zlib.h>
@@ -344,6 +345,22 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
     // against", refusing if something rewrote it out from under us in
     // between construction and this call.
     checkNotStale();
+
+    // The table holds a time as a whole count of microseconds. A cue
+    // before the start of the track, or at a time that is not a number,
+    // has no such count: it is refused, before anything is written, and
+    // never cast in to become a negative or wrapped time.
+    for (const CuePoint &cue : cues) {
+        const auto fits = [](double ms) {
+            return std::isfinite(ms) && ms >= 0.0 && ms * 1000.0 < static_cast<double>(std::numeric_limits<int64_t>::max());
+        };
+        if (!fits(cue.positionMs) || (cue.isLoop && !fits(cue.loopEndMs))) {
+            throw std::runtime_error("onelibrary: " + filePath + ": a cue at " + std::to_string(cue.positionMs) + " ms"
+                                     + (cue.isLoop ? " with its loop ending at " + std::to_string(cue.loopEndMs) + " ms"
+                                                   : std::string())
+                                     + " is not a time in the track; nothing was written for this track");
+        }
+    }
 
     std::string contentPath = toContentPath(m_stickRoot, filePath);
     SqlCipherDb &db = writeConnection();

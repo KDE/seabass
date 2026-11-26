@@ -45,9 +45,10 @@ struct ImportRequest
     // once everything else is settled. Unset: the
     // tracks go in unanalysed.
     ImportAnalyser analyser;
-    // How many files are analysed at once. Each holds its whole audio in
-    // memory while it is (about 10 MB a minute of music, and as much
-    // again in the analyser).
+    // How many files are analysed at once. Each is read piece by piece
+    // and never held whole: about 50 MB and 3.5 MB a minute of music while
+    // it is analysed (analysis_resources.hpp), and the memory gate holds a
+    // file back while the computer is short.
     int analysisJobs = 2;
 };
 

@@ -10,12 +10,15 @@
 #include <stdexcept>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "application/path_key.hpp"
 #include "application/use_cases/plan_engine_update.hpp"
 #include "gui/edit/save_context.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/anlz_analysis_merge.hpp"
+#include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/stick_backup/stick_tree_walker.hpp"
 
 namespace seabass::gui
@@ -85,6 +88,36 @@ AnalysisLedgerEntry analysisLedgerEntry(const std::string &pathKey, const Import
     return entry;
 }
 
+namespace
+{
+
+std::function<void(const std::string &)> &beforeLedgerGridRead()
+{
+    static std::function<void(const std::string &)> hook;
+    return hook;
+}
+
+}  // namespace
+
+std::string ledgerGridOfAnalysisFile(const std::string &datPath, std::string *problem)
+{
+    problem->clear();
+    try {
+        if (beforeLedgerGridRead()) {
+            beforeLedgerGridRead()(datPath);
+        }
+        return infrastructure::rekordbox::pqtzGridFingerprint(infrastructure::rekordbox::AnlzFile::readRaw(datPath));
+    } catch (const std::exception &e) {
+        *problem = e.what();
+        return {};
+    }
+}
+
+void setBeforeLedgerGridReadForTesting(std::function<void(const std::string &datPath)> hook)
+{
+    beforeLedgerGridRead() = std::move(hook);
+}
+
 std::optional<std::int64_t> fileMtimeUnixOf(const std::string &file)
 {
     std::error_code ec;
@@ -131,7 +164,16 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
         }
         const fs::path root = pathFromUtf8(stickRoot);
         std::string readError;
-        const AnalysisLedger previous = infrastructure::local::readAnalysisLedger(root, &readError);
+        infrastructure::local::AnalysisLedgerFault fault = infrastructure::local::AnalysisLedgerFault::None;
+        const AnalysisLedger previous = infrastructure::local::readAnalysisLedger(root, &readError, &fault);
+        if (fault == infrastructure::local::AnalysisLedgerFault::Unreadable) {
+            // What it holds is not known, so it is not replaced: this
+            // save's entries go unrecorded, and the save says so.
+            ctx.log().record("analysis ledger: " + std::to_string(landed.size())
+                             + " track(s) not recorded, the ledger left as it is: " + readError);
+            throw std::runtime_error("Your changes are saved, but Seabass could not record which tracks it analysed ("
+                                     + readError + "), so it will not know them for its own analyses later.");
+        }
         const std::int64_t now =
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         AnalysisLedger next = previous;
@@ -149,8 +191,15 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
             }
             next[pathKey] = entry;
         }
-        // Written only when its text changes, or to replace a file that
-        // cannot be read (nothing in it was believed anyway).
+        // An entry that cannot be written as it is stays off the stick,
+        // and keeps no other entry off it.
+        std::vector<std::string> dropped;
+        next = infrastructure::local::writableAnalysisLedger(next, &dropped);
+        for (const std::string &why : dropped) {
+            ctx.log().record("analysis ledger: an entry left out: " + why);
+        }
+        // Written only when its text changes, or to replace a damaged file
+        // (nothing in it was believed anyway).
         std::string problem;
         const auto previousText = infrastructure::local::serializeAnalysisLedger(previous, &problem);
         const auto nextText = infrastructure::local::serializeAnalysisLedger(next, &problem);
@@ -180,7 +229,7 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
         ctx.log().record("analysis ledger: recorded " + std::to_string(landed.size()) + " track(s), "
                          + std::to_string(next.size()) + " in all"
                          + (readError.empty() ? std::string()
-                                              : ", replacing a ledger that could not be read (" + readError + ")"));
+                                              : ", replacing a damaged ledger (" + readError + ")"));
     });
 }
 

@@ -5,6 +5,8 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
+#include <optional>
 #include <string>
 
 namespace seabass::infrastructure
@@ -18,5 +20,11 @@ namespace seabass::infrastructure
 // enough to make every Seabass binary refuse to start on macOS 12, which
 // the Intel Macs that stop at Monterey cannot get past.
 std::string utcTimestamp(std::chrono::system_clock::time_point tp, const char *format);
+
+// `unixSeconds` (seconds since 1970, UTC) as utcTimestamp() lays it out;
+// nullopt for a time from before 1970 or after the year 9999, or one the
+// system clock cannot hold, so a number read from a file that is not a
+// time cannot overflow the conversion.
+std::optional<std::string> utcTimestampOfUnixSeconds(std::int64_t unixSeconds, const char *format);
 
 }  // namespace seabass::infrastructure

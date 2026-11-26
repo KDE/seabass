@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <system_error>
@@ -255,6 +257,26 @@ std::string formatTempoBpm(double bpm)
     return text;
 }
 
+std::string analysisLedgerEntryProblem(const std::string &key, const AnalysisLedgerEntry &entry)
+{
+    return unwritable(key, entry);
+}
+
+AnalysisLedger writableAnalysisLedger(const AnalysisLedger &ledger, std::vector<std::string> *dropped)
+{
+    AnalysisLedger out;
+    for (const auto &[key, entry] : ledger) {
+        if (std::string why = unwritable(key, entry); !why.empty()) {
+            if (dropped != nullptr) {
+                dropped->push_back(std::move(why));
+            }
+            continue;
+        }
+        out.emplace(key, entry);
+    }
+    return out;
+}
+
 std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger, std::string *problem)
 {
     std::string out;
@@ -289,16 +311,22 @@ std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger,
     return out;
 }
 
-AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error)
+AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error, AnalysisLedgerFault *fault)
 {
     if (error == nullptr) {
         throw std::invalid_argument("readAnalysisLedger: the error out-parameter is required");
     }
     error->clear();
+    if (fault != nullptr) {
+        *fault = AnalysisLedgerFault::None;
+    }
     const fs::path file = paths::stickAnalysisLedger(stickRoot);
     const std::string name = pathToUtf8(file);
-    const auto refuse = [&](const std::string &why) {
+    const auto refuse = [&](AnalysisLedgerFault kind, const std::string &why) {
         *error = name + ": " + why;
+        if (fault != nullptr) {
+            *fault = kind;
+        }
         return AnalysisLedger{};
     };
 
@@ -308,23 +336,39 @@ AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error)
         return {};
     }
     if (ec) {
-        return refuse("cannot look at it (" + ec.message() + ")");
+        return refuse(AnalysisLedgerFault::Unreadable, "cannot look at it (" + ec.message() + ")");
     }
     if (status.type() != fs::file_type::regular) {
-        return refuse("it is not a regular file");
+        return refuse(AnalysisLedgerFault::Unreadable, "it is not a regular file");
+    }
+    // Read whole before it is looked into, so a file that could not be
+    // read is told from one that was read and is damaged. Gzip never makes
+    // text larger by more than a little, so a file larger than the cap on
+    // its text is damaged without reading it.
+    const std::uintmax_t size = fs::file_size(file, ec);
+    if (ec) {
+        return refuse(AnalysisLedgerFault::Unreadable, "cannot look at it (" + ec.message() + ")");
+    }
+    if (size > MaxInflatedBytes + MaxInflatedBytes / 64) {
+        return refuse(AnalysisLedgerFault::Damaged, "it is " + std::to_string(size) + " bytes, more than a ledger can be");
     }
     std::ifstream in(file, std::ios::binary);
     if (!in) {
-        return refuse("cannot open it");
+        return refuse(AnalysisLedgerFault::Unreadable, "cannot open it");
     }
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (in.bad()) {
+        return refuse(AnalysisLedgerFault::Unreadable, "reading it failed");
+    }
+    std::istringstream compressed(bytes);
     std::string text;
     std::string problem;
-    if (!gunzip(in, false, MaxInflatedBytes, &text, &problem)) {
-        return refuse(problem);
+    if (!gunzip(compressed, false, MaxInflatedBytes, &text, &problem)) {
+        return refuse(AnalysisLedgerFault::Damaged, problem);
     }
     std::optional<AnalysisLedger> ledger = parseText(text, &problem);
     if (!ledger) {
-        return refuse(problem);
+        return refuse(AnalysisLedgerFault::Damaged, problem);
     }
     return std::move(*ledger);
 }

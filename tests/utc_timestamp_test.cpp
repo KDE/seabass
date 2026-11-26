@@ -4,7 +4,9 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 
 #include "infrastructure/utc_timestamp.hpp"
 
@@ -24,5 +26,17 @@ int main()
     // UTC whatever the zone: the epoch is midnight.
     assert(utcTimestamp(system_clock::time_point{}, "%H:%M:%S") == "00:00:00");
     std::cout << "utcTimestamp writes what std::format wrote, in UTC\n";
+
+    // From seconds since 1970, and refused for a number that is no time,
+    // never an overflow (9e18 seconds is past what a nanosecond clock
+    // holds).
+    using seabass::infrastructure::utcTimestampOfUnixSeconds;
+    assert(utcTimestampOfUnixSeconds(0, "%Y-%m-%d %H:%M:%S") == "1970-01-01 00:00:00");
+    assert(utcTimestampOfUnixSeconds(1791200000, "%Y-%m-%d") == "2026-10-05");
+    assert(!utcTimestampOfUnixSeconds(9000000000000000000LL, "%Y"));
+    assert(!utcTimestampOfUnixSeconds(-1, "%Y"));
+    assert(!utcTimestampOfUnixSeconds(std::numeric_limits<std::int64_t>::max(), "%Y"));
+    assert(!utcTimestampOfUnixSeconds(std::numeric_limits<std::int64_t>::min(), "%Y"));
+    std::cout << "utcTimestampOfUnixSeconds refuses a number that is no time\n";
     return 0;
 }

@@ -12,11 +12,14 @@
 //   sorted by key, with a #sha256 line over everything above it;
 // - a missing file is an empty ledger and no error;
 // - every way the file can be wrong (not gzip, gzip cut short, bytes
-//   after the gzip, no #sha256 line, a hash that does not match, another
-//   magic word or version, an unknown line kind, a track line with a
-//   field too few or too many, a field that does not parse, keys out of
-//   order or repeated, no final newline) is an empty ledger with an error
-//   naming the file;
+//   after the gzip, inflating past 64 MiB, no #sha256 line, a hash that
+//   does not match, another magic word or version, an unknown line kind,
+//   a track line with a field too few or too many, a field that does not
+//   parse, keys out of order or repeated, no final newline) is an empty
+//   ledger, damaged, with an error naming the file and that reason; a
+//   folder in its place cannot be read, which is not damage;
+// - an entry that cannot be written is left out of what is written, the
+//   others kept;
 // - the writer refuses what it cannot write as it is, leaves the old file
 //   as it was and calls no hook, and calls the hook with the file's path
 //   before it writes;
@@ -32,6 +35,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "infrastructure/hashing/sha256.hpp"
@@ -217,13 +221,13 @@ int main()
         const auto line = [](const std::string &key) {
             return "t\t" + key + "\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\n";
         };
-        const std::vector<std::pair<std::string, std::string>> bad = {
-            {"empty", ""},
-            {"not-gzip", good},
-            {"gzip-cut-short", goodGzip.substr(0, goodGzip.size() - 9)},
-            {"bytes-after-gzip", goodGzip + "x"},
-            {"no-sha256", gzip(Header + GoodLine)},
-            {"hash-mismatch", gzip(Header + GoodLine + "#sha256\t" + std::string(64, '0') + "\n")},
+        const std::vector<std::tuple<std::string, std::string, std::string>> bad = {
+            {"empty", "", "it is empty"},
+            {"not-gzip", good, "not intact gzip data"},
+            {"gzip-cut-short", goodGzip.substr(0, goodGzip.size() - 9), "it is truncated"},
+            {"bytes-after-gzip", goodGzip + "x", "bytes after the end of the compressed data"},
+            {"no-sha256", gzip(Header + GoodLine), "has no #sha256 line"},
+            {"hash-mismatch", gzip(Header + GoodLine + "#sha256\t" + std::string(64, '0') + "\n"), "do not match its #sha256 line"},
             {"hash-uppercase",
              gzip(Header + GoodLine + "#sha256\t" + [&] {
                  std::string hex = hashing::toHex(hashing::Sha256::of(Header + GoodLine));
@@ -231,53 +235,84 @@ int main()
                      c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
                  }
                  return hex;
-             }() + "\n")},
-            {"no-final-newline", gzip(good.substr(0, good.size() - 1))},
-            {"other-magic", gzip(sealed("seabass-analyses\t1\n" + GoodLine))},
-            {"other-version", gzip(sealed("seabass-analysis\t2\n" + GoodLine))},
-            {"header-extra-field", gzip(sealed("seabass-analysis\t1\tx\n" + GoodLine))},
-            {"unknown-kind", gzip(sealed(Header + GoodLine + "x\tcontents/b.wav\n"))},
-            {"field-too-few", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\n"))},
-            {"field-too-many", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\t9\n"))},
-            {"empty-key", gzip(sealed(Header + line("")))},
-            {"bad-escape", gzip(sealed(Header + line("contents/b\\x.wav")))},
-            {"negative-size", gzip(sealed(Header + "t\tcontents/a.wav\t-10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\n"))},
-            {"revision-not-a-number", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\tx\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\n"))},
-            {"negative-revision", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t-1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\n"))},
-            {"tempo-one-decimal", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.0\t180.00\t-\t-\t-\t0\t30\n"))},
-            {"tempo-exponent", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t7e1.00\t180.00\t-\t-\t-\t0\t30\n"))},
-            {"short-fingerprint", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t" + std::string(63, 'a') + "\t-\t-\t0\t30\n"))},
-            {"uppercase-fingerprint", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t" + std::string(64, 'A') + "\t-\t0\t30\n"))},
-            {"empty-key-name", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t\t0\t30\n"))},
-            {"key-written-without-key", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t1\t30\n"))},
-            {"key-written-not-a-bool", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\tAm\t2\t30\n"))},
-            {"time-not-a-number", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\tsoon\n"))},
-            {"repeated-key", gzip(sealed(Header + line("contents/a.wav") + line("contents/a.wav")))},
-            {"out-of-order", gzip(sealed(Header + line("contents/z.wav") + line("contents/a.wav")))},
-            {"blank-line", gzip(sealed(Header + GoodLine + "\n"))},
-            {"no-header", gzip(sealed(GoodLine))},
+             }() + "\n"), "#sha256 line is malformed"},
+            {"no-final-newline", gzip(good.substr(0, good.size() - 1)), "does not end with a newline"},
+            {"other-magic", gzip(sealed("seabass-analyses\t1\n" + GoodLine)), "not a Seabass analysis ledger"},
+            {"other-version", gzip(sealed("seabass-analysis\t2\n" + GoodLine)), "format version 2"},
+            {"header-extra-field", gzip(sealed("seabass-analysis\t1\tx\n" + GoodLine)), "its header has 3 fields"},
+            {"unknown-kind", gzip(sealed(Header + GoodLine + "x\tcontents/b.wav\n")), "unknown line kind \"x\""},
+            {"field-too-few", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\n")), "a track line of 15 fields"},
+            {"field-too-many", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\t9\n")), "a track line of 17 fields"},
+            {"empty-key", gzip(sealed(Header + line(""))), "no key, or a key with a bad escape"},
+            {"bad-escape", gzip(sealed(Header + line("contents/b\\x.wav"))), "no key, or a key with a bad escape"},
+            {"negative-size", gzip(sealed(Header + "t\tcontents/a.wav\t-10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\n")), "size or time is not a decimal number"},
+            {"revision-not-a-number", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\tx\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\n")), "a revision is not a decimal number"},
+            {"negative-revision", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t-1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\t30\n")), "a revision is not a decimal number"},
+            {"tempo-one-decimal", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.0\t180.00\t-\t-\t-\t0\t30\n")), "tempo range is not two numbers"},
+            {"tempo-exponent", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t7e1.00\t180.00\t-\t-\t-\t0\t30\n")), "tempo range is not two numbers"},
+            {"short-fingerprint", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t" + std::string(63, 'a') + "\t-\t-\t0\t30\n")), "grid fingerprint is neither"},
+            {"uppercase-fingerprint", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t" + std::string(64, 'A') + "\t-\t0\t30\n")), "grid fingerprint is neither"},
+            {"empty-key-name", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t\t0\t30\n")), "the key is empty or has a bad escape"},
+            {"key-written-without-key", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t1\t30\n")), "keyWritten is not 0 or 1"},
+            {"key-written-not-a-bool", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\tAm\t2\t30\n")), "keyWritten is not 0 or 1"},
+            {"time-not-a-number", gzip(sealed(Header + "t\tcontents/a.wav\t10\t20\t1\t2\t1\t1\t0.3.0\t70.00\t180.00\t-\t-\t-\t0\tsoon\n")), "time of the analysis is not a decimal number"},
+            {"repeated-key", gzip(sealed(Header + line("contents/a.wav") + line("contents/a.wav"))), "a key listed twice"},
+            {"out-of-order", gzip(sealed(Header + line("contents/z.wav") + line("contents/a.wav"))), "keys out of order"},
+            {"blank-line", gzip(sealed(Header + GoodLine + "\n")), "unknown line kind \"\""},
+            {"no-header", gzip(sealed(GoodLine)), "not a Seabass analysis ledger"},
         };
-        for (const auto &[name, bytes] : bad) {
+        for (const auto &[name, bytes, reason] : bad) {
             const fs::path stick = freshStick("bad-" + name);
             putBytes(stick, bytes);
             std::string error;
-            const AnalysisLedger read = readAnalysisLedger(stick, &error);
+            AnalysisLedgerFault fault = AnalysisLedgerFault::None;
+            const AnalysisLedger read = readAnalysisLedger(stick, &error, &fault);
             check(read.empty(), name + ": an empty ledger");
             check(!error.empty() && error.find("analysis.tsv.gz") != std::string::npos,
                   name + ": an error naming the file, got \"" + error + "\"");
-            if (name == "no-final-newline") {
-                check(error.find("does not end with a newline") != std::string::npos, name + ": and saying why, got \"" + error + "\"");
-            }
+            check(error.find(reason) != std::string::npos,
+                  name + ": refused for \"" + reason + "\", got \"" + error + "\"");
+            check(fault == AnalysisLedgerFault::Damaged, name + ": damaged, so a save replaces it");
         }
-        // A folder where the file belongs is no ledger either.
+        // More than the cap once inflated: a small file, refused before it
+        // takes the memory.
+        {
+            const fs::path stick = freshStick("bad-inflates-too-far");
+            const std::string bomb = gzip(Header + std::string(64u * 1024u * 1024u, '\n'));
+            check(bomb.size() < 1024u * 1024u, "the file inflating past the cap is small");
+            putBytes(stick, bomb);
+            std::string error;
+            AnalysisLedgerFault fault = AnalysisLedgerFault::None;
+            check(readAnalysisLedger(stick, &error, &fault).empty()
+                      && error.find("inflates to more than 67108864 bytes") != std::string::npos
+                      && fault == AnalysisLedgerFault::Damaged,
+                  "a file inflating past 64 MiB is refused for that, got \"" + error + "\"");
+        }
+        // A folder where the file belongs cannot be read: no ledger, and
+        // not one a save may replace.
         {
             const fs::path stick = freshStick("bad-folder");
             fs::create_directories(infrastructure::paths::stickAnalysisLedger(stick));
             std::string error;
-            check(readAnalysisLedger(stick, &error).empty() && error.find("analysis.tsv.gz") != std::string::npos,
+            AnalysisLedgerFault fault = AnalysisLedgerFault::None;
+            check(readAnalysisLedger(stick, &error, &fault).empty() && error.find("analysis.tsv.gz") != std::string::npos
+                      && error.find("not a regular file") != std::string::npos,
                   "a folder in the file's place: an empty ledger and an error, got \"" + error + "\"");
+            check(fault == AnalysisLedgerFault::Unreadable, "a folder in the file's place cannot be read, not damaged");
         }
-        std::cout << "case 3 (damaged files refused, " << bad.size() + 1 << " ways) done\n";
+        // A good file, a missing one: no fault.
+        {
+            const fs::path stick = freshStick("good-fault");
+            std::string error;
+            AnalysisLedgerFault fault = AnalysisLedgerFault::Damaged;
+            readAnalysisLedger(stick, &error, &fault);
+            check(fault == AnalysisLedgerFault::None, "a missing file is no fault");
+            putBytes(stick, goodGzip);
+            fault = AnalysisLedgerFault::Damaged;
+            check(readAnalysisLedger(stick, &error, &fault).size() == 1 && fault == AnalysisLedgerFault::None,
+                  "a good file is no fault");
+        }
+        std::cout << "case 3 (damaged files refused, each for its reason, " << bad.size() + 2 << " ways) done\n";
     }
 
     // 4. The writer refuses what it cannot write as it is, the old file
@@ -354,6 +389,26 @@ int main()
         check(!writeAnalysisLedger(stick / "gone", ledger, NoHook, &error) && !fs::exists(stick / "gone"),
               "a stick root that is not there is refused and not made");
         std::cout << "case 4 (the writer's refusals) done\n";
+    }
+
+    // 4b. One entry that cannot be written keeps no other off the stick.
+    {
+        AnalysisLedger ledger;
+        ledger["contents/a.wav"] = entry("contents/a.wav", 'a');
+        auto bad = entry("contents/b.wav", 'b');
+        bad.tempoMin = "70";
+        ledger[bad.pathKey] = bad;
+        ledger["contents/c.wav"] = entry("contents/c.wav", 'c');
+        std::vector<std::string> dropped;
+        const AnalysisLedger kept = writableAnalysisLedger(ledger, &dropped);
+        check(kept.size() == 2 && kept.count("contents/a.wav") == 1 && kept.count("contents/c.wav") == 1,
+              "the writable entries are kept");
+        check(dropped.size() == 1 && dropped[0].find("contents/b.wav") != std::string::npos
+                  && dropped[0] == analysisLedgerEntryProblem("contents/b.wav", bad),
+              "the one left out is named with its problem");
+        std::string problem;
+        check(serializeAnalysisLedger(kept, &problem).has_value(), "and the rest serialises");
+        std::cout << "case 4b (an entry that cannot be written is left out, the rest kept) done\n";
     }
 
     // 5. Tempos: two decimals, nothing else.

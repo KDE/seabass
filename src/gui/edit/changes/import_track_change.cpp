@@ -827,18 +827,34 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             session.noteItemApplied();
         }
         // The analysis ledger: what made the analysis written here, and
-        // the grids the libraries were left with, read back from the
-        // analysis file as it is on the stick.
+        // the grids the libraries were left with, rekordbox's from the
+        // analysis file's bytes as they were written. The ledger never
+        // costs a save: a grid that cannot be read from them is "-".
         if (m_analysis && m_analysis->provenance && (!analysisFile.empty() || m_engineAnalysed)) {
             std::string rekordboxGrid;
             if (!analysisFile.empty()) {
-                rekordboxGrid = infrastructure::rekordbox::pqtzGridFingerprint(infrastructure::rekordbox::AnlzFile::readRaw(
-                    pathToUtf8(pictureFile(analysisFile.substr(0, analysisFile.size() - 3) + "DAT"))));
+                const std::string datFile =
+                    pathToUtf8(pictureFile(analysisFile.substr(0, analysisFile.size() - 3) + "DAT"));
+                try {
+                    rekordboxGrid = infrastructure::rekordbox::pqtzGridFingerprint(
+                        infrastructure::rekordbox::AnlzFile::fromBytes(anlz->dat, datFile));
+                } catch (const std::exception &e) {
+                    ctx.log().record(std::string(Label) + ": " + m_track.stickPath
+                                     + ": the grid in its analysis file could not be read for the analysis ledger ("
+                                     + e.what() + "); recorded as none");
+                }
             }
             const std::string stickRootForLedger = ledgerStickRoot();
             const std::string key = analysisLedgerKeyOf(destination, stickRootForLedger);
             const std::optional<std::int64_t> mtime = fileMtimeUnixOf(destination);
-            if (key.empty() || !mtime) {
+            if (copied.bytes != m_analysis->provenance->fileSize) {
+                // The source was replaced between its analysis and this
+                // save: the analysis is not of the file copied.
+                ctx.log().record(std::string(Label) + ": " + m_track.stickPath
+                                 + " is not recorded in the analysis ledger: the file copied ("
+                                 + std::to_string(copied.bytes) + " bytes) is not the one analysed ("
+                                 + std::to_string(m_analysis->provenance->fileSize) + " bytes)");
+            } else if (key.empty() || !mtime) {
                 ctx.log().record(std::string(Label) + ": " + m_track.stickPath
                                  + " is not recorded in the analysis ledger: its place or its time on the stick "
                                    "cannot be read");

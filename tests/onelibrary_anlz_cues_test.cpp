@@ -18,6 +18,7 @@
 //    row names its analysis file.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -376,6 +377,36 @@ int main(int argc, char **argv)
             }
         }
         check(sawShared, "DeviceLibrary lists the shared analysis file");
+        // A cue before the start of the track, or a loop ending at a time
+        // that is not a number: refused with the reason, nothing written,
+        // never a negative or wrapped time in the table.
+        {
+            const std::string ext = rekordbox::extAnlzPath(root, ownRow.analysisFile);
+            const auto bytesOf = [](const std::string &file) {
+                std::ifstream in(seabass::pathFromUtf8(file), std::ios::binary);
+                return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            };
+            CuePoint badLoop = hot(2, 4000.0);
+            badLoop.isLoop = true;
+            badLoop.loopEndMs = std::nan("");
+            for (const std::vector<CuePoint> &refused :
+                 {std::vector<CuePoint>{hot(1, 2000.0), memory(-3.0)}, std::vector<CuePoint>{hot(1, 2000.0), badLoop}}) {
+                const std::string fileBefore = bytesOf(ext);
+                const auto tableBefore = tableCues(root, ownRow.sourceId);
+                std::string reason;
+                try {
+                    onelibrary::OneLibraryCueWriter writer(root);
+                    writer.writeCuesForPath(ownRow.filePath, refused);
+                    writer.finishWriting();
+                } catch (const std::exception &e) {
+                    reason = e.what();
+                }
+                check(reason.find("is not a time in the track") != std::string::npos,
+                      "a cue at a time the table cannot hold is refused with the reason: " + reason);
+                check(bytesOf(ext) == fileBefore, "the refused write left the analysis file as it was");
+                check(tableCues(root, ownRow.sourceId) == tableBefore, "the refused write left the cue table as it was");
+            }
+        }
         // The table fails after the file was written: the writer puts the
         // file back itself, for a caller with no backup to restore from
         // (the command line's mirror goes on after a failure).

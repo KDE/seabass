@@ -23,4 +23,18 @@ std::string utcTimestamp(std::chrono::system_clock::time_point tp, const char *f
     return std::string(buffer, length);
 }
 
+std::optional<std::string> utcTimestampOfUnixSeconds(std::int64_t unixSeconds, const char *format)
+{
+    // 9999-12-31 23:59:59 UTC.
+    constexpr std::int64_t LastSecond = 253402300799;
+    const std::int64_t clockLimit =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::duration::max()).count();
+    if (unixSeconds < 0 || unixSeconds > LastSecond || unixSeconds >= clockLimit) {
+        return std::nullopt;
+    }
+    return utcTimestamp(std::chrono::system_clock::time_point(
+                            std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::seconds(unixSeconds))),
+                        format);
+}
+
 }  // namespace seabass::infrastructure

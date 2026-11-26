@@ -1077,10 +1077,18 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         // the stick now. A change that writes nothing is a skip, and the
         // save records no entry for it.
         if (m_analysis->provenance) {
+            // The ledger never costs a save: a file that cannot be read
+            // back gives "-".
             std::string rekordboxGridLeft;
             for (const MergedFiles &m : toWrite) {
                 if (rekordboxGridLeft.empty()) {
-                    rekordboxGridLeft = infrastructure::rekordbox::pqtzGridFingerprint(AnlzFile::readRaw(m.paths[0]));
+                    std::string problem;
+                    rekordboxGridLeft = ledgerGridOfAnalysisFile(m.paths[0], &problem);
+                    if (!problem.empty()) {
+                        ctx.log().record(std::string(Label) + ": " + m_stickPath
+                                         + ": the grid in its analysis file could not be read for the analysis ledger ("
+                                         + problem + "); recorded as none");
+                    }
                 }
             }
             std::error_code ec;

@@ -1063,11 +1063,12 @@ bool refuseIfLockedByGui(const std::string &catalogPath, bool force)
     return true;
 }
 
-// A time in seconds since 1970 as "2026-11-26 14:03:00 UTC".
+// A time in seconds since 1970 as "2026-11-26 14:03:00 UTC"; a number
+// that is no such time (a damaged or hostile file) as the number itself.
 std::string utcText(std::int64_t unixSeconds)
 {
-    return seabass::infrastructure::utcTimestamp(
-        std::chrono::system_clock::time_point(std::chrono::seconds(unixSeconds)), "%Y-%m-%d %H:%M:%S UTC");
+    return seabass::infrastructure::utcTimestampOfUnixSeconds(unixSeconds, "%Y-%m-%d %H:%M:%S UTC")
+        .value_or(std::to_string(unixSeconds));
 }
 
 // analysis-ledger: the stick's record of Seabass's own analyses

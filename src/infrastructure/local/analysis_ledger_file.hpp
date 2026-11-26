@@ -10,6 +10,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 // The analyses Seabass wrote to the stick, on the stick:
 // <stick>/Seabass/analysis.tsv.gz (paths::stickAnalysisLedger). For each
@@ -96,18 +97,42 @@ using AnalysisLedger = std::map<std::string, AnalysisLedgerEntry>;
 // a finite number from 0 to 1000.
 std::string formatTempoBpm(double bpm);
 
+// Why a ledger on the stick was not read.
+enum class AnalysisLedgerFault {
+    // It was read, or there is none.
+    None,
+    // The file is there and could not be opened or read (it is not a
+    // regular file, the system refused it, an I/O error): what is in it
+    // is not known, so it must not be replaced.
+    Unreadable,
+    // It was read and is not this format to the letter: nothing in it is
+    // believed, and a later write replaces it.
+    Damaged,
+};
+
 // The stick's ledger. A missing file is an empty ledger, `error` empty:
 // a stick Seabass has written no analysis to. A file that exists and
-// cannot be read, or is not this format to the letter (not gzip, cut
-// short, a #sha256 line missing or not matching, another version, an
-// unknown line kind, a line with the wrong number of fields, a field that
-// does not parse, keys out of order or repeated, no final newline) is
-// ALSO an empty ledger, with `error` naming the file and what is wrong:
-// nothing in it is believed. The caller reports it; a later write
-// replaces the file.
+// cannot be opened or read is ALSO an empty ledger, with `error` naming
+// the file and why, and `fault` (when given) Unreadable. One that was read
+// and is not this format to the letter (not gzip, cut short, a #sha256
+// line missing or not matching, another version, an unknown line kind, a
+// line with the wrong number of fields, a field that does not parse, keys
+// out of order or repeated, no final newline) is an empty ledger with
+// `error` saying so and `fault` Damaged: nothing in it is believed, and
+// the caller reports it; a later write replaces the file.
 //
 // `error` is required; a null pointer throws std::invalid_argument.
-AnalysisLedger readAnalysisLedger(const std::filesystem::path &stickRoot, std::string *error);
+AnalysisLedger readAnalysisLedger(const std::filesystem::path &stickRoot, std::string *error,
+                                  AnalysisLedgerFault *fault = nullptr);
+
+// Why `entry`, filed under `key`, cannot be written as it is (below);
+// empty when it can.
+std::string analysisLedgerEntryProblem(const std::string &key, const AnalysisLedgerEntry &entry);
+
+// `ledger` without the entries that cannot be written as they are, each
+// left out named with its problem in `dropped` (when given), so one bad
+// entry does not keep the others off the stick.
+AnalysisLedger writableAnalysisLedger(const AnalysisLedger &ledger, std::vector<std::string> *dropped);
 
 // The file's text for `ledger` before compression, as
 // writeAnalysisLedger() writes it, #sha256 line included; nullopt with

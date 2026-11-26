@@ -46,6 +46,7 @@
 
 #include "gui/analysis_settings.hpp"
 #include "gui/edit/changes/add_cue_change.hpp"
+#include "gui/edit/changes/analysis_ledger_record.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/changes/reanalyse_track_change.hpp"
 #include "gui/seabass_settings.hpp"
@@ -2491,7 +2492,10 @@ int main(int argc, char **argv)
     //     Analyse again updates the entry; a track it leaves alone gets
     //     none; a save that goes back, and Undo Last Save, leave the file as
     //     it was before; a damaged ledger is replaced by the next save, and
-    //     one that cannot be written is a warning on a save that landed.
+    //     one that cannot be read is left as it is, a warning on a save that
+    //     landed. A grid that cannot be read back is "-", never a failed
+    //     save; an import whose source was replaced after its analysis
+    //     records nothing.
     {
         namespace local = infrastructure::local;
         const fs::path ledgerFile = infrastructure::paths::stickAnalysisLedger(stick.root);
@@ -2572,8 +2576,10 @@ int main(int argc, char **argv)
             assert(entry.analysedAtUnix > 0);
         };
 
-        // 18a. The import.
-        writeBeatWav(computer / "v one.wav", 37, 128.0);
+        // 18a. The import. v one has a key to hear, and no tag naming one:
+        //      the key goes into the rows and the entry says so.
+        const std::vector<double> aMinor{110.0, 130.81, 164.81, 220.0, 261.63, 329.63};
+        writeBeatChordWav(computer / "v one.wav", 37, 128.0, aMinor);
         writeBeatWav(computer / "v two.wav", 38, 128.0);
         assert(offer(QVariantList{pathToQString(computer / "v one.wav"), pathToQString(computer / "v two.wav")},
                      QStringLiteral("Ledger"), true));
@@ -2585,6 +2591,8 @@ int main(int argc, char **argv)
         assert(imported.size() == beforeImport.size() + 2);
         checkEntry("v one.wav", imported.at(keyOf("v one.wav")));
         checkEntry("v two.wav", imported.at(keyOf("v two.wav")));
+        assert(!imported.at(keyOf("v one.wav")).key.empty() && imported.at(keyOf("v one.wav")).keyWritten
+               && "a key heard and written is recorded as written");
         for (const auto &[key, entry] : beforeImport) {
             assert(imported.at(key) == entry && "the entries of other tracks stay as they were");
         }
@@ -2626,8 +2634,14 @@ int main(int argc, char **argv)
             }
             assert(!destination.empty());
             fs::create_directories(destination);  // in the way
+            const std::size_t logBefore = logText().size();
             const QVariantMap failed = saveNow();
             assert(!failed.value("error").toString().isEmpty());
+            // Analyse again was applied before the import failed: its
+            // entry was noted, and the ledger as it was is the save going
+            // back, not a save that never got that far.
+            assert(logText().substr(logBefore).find("track-reanalysis: analysed ") != std::string::npos
+                   && "Analyse again was applied in the save that went back");
             assert(bytesOf(ledgerFile) == ledgerBefore && "a save that went back leaves the ledger as it was");
             fs::remove(destination);
             session->unstageAll(importIds);
@@ -2669,25 +2683,70 @@ int main(int argc, char **argv)
             const local::AnalysisLedger replaced = readLedger();
             assert(replaced.size() == 1);
             checkEntry("v one.wav", replaced.at(keyOf("v one.wav")));
-            assert(logText().substr(logBefore).find("replacing a ledger that could not be read") != std::string::npos);
+            assert(logText().substr(logBefore).find("replacing a damaged ledger") != std::string::npos);
             std::cout << "case 18e (a damaged ledger does not fail the save and is replaced) OK\n";
         }
 
-        // 18f. A ledger that cannot be written (a folder where it belongs):
-        //      the save lands, and says so in plain words.
+        // 18f. A ledger that cannot be read (a folder where it belongs):
+        //      left as it is, not replaced, and the save lands and says so
+        //      in plain words.
         {
             fs::remove(ledgerFile);
             fs::create_directories(ledgerFile / "in the way");
             again = analyseAgainOn(QStringLiteral("Ledger"));
             assert(again.value("analysed").toInt() == 1);
+            const std::size_t logBefore = logText().size();
             const QVariantMap saved = saveNow();
+            const std::string logged = logText().substr(logBefore);
+            assert(logged.find("track(s) not recorded, the ledger left as it is") != std::string::npos);
+            assert(logged.find("replacing") == std::string::npos && logged.find("not written") == std::string::npos);
             std::cerr << "  warning: " << saved.value("warning").toString().toStdString() << std::endl;
             assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1);
             assert(saved.value("warning").toString().contains(
                 QLatin1String("Your changes are saved, but Seabass could not record which tracks it analysed")));
             assert(fs::is_directory(ledgerFile / "in the way"));
             fs::remove_all(ledgerFile);
-            std::cout << "case 18f (a ledger that cannot be written: the save lands with a warning) OK\n";
+            std::cout << "case 18f (a ledger that cannot be read: left as it is, the save lands with a warning) OK\n";
+        }
+
+        // 18g. Analyse again, the analysis file not readable when the grid
+        //      is read back for the ledger: the save lands, the entry
+        //      records no rekordbox grid, Engine's as always.
+        {
+            again = analyseAgainOn(QStringLiteral("Ledger"));
+            assert(again.value("analysed").toInt() == 1);
+            int asked = 0;
+            setBeforeLedgerGridReadForTesting([&asked](const std::string &) {
+                ++asked;
+                throw std::runtime_error("in the way");
+            });
+            const std::size_t logBefore = logText().size();
+            const QVariantMap saved = saveNow();
+            setBeforeLedgerGridReadForTesting({});
+            assert(asked > 0);
+            assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1);
+            assert(logText().substr(logBefore).find("could not be read for the analysis ledger (in the way)")
+                   != std::string::npos);
+            const local::AnalysisLedgerEntry &one = readLedger().at(keyOf("v one.wav"));
+            assert(one.rekordboxGrid.empty() && !one.engineGrid.empty());
+            std::cout << "case 18g (a grid that cannot be read back for the ledger: \"-\", the save lands) OK\n";
+        }
+
+        // 18h. An import whose source is replaced by a file of another size
+        //      after its analysis: the file is copied and the analysis
+        //      written as before, but nothing calls it the copied file's.
+        {
+            writeBeatWav(computer / "x swapped.wav", 30, 128.0);
+            assert(offer(QVariantList{pathToQString(computer / "x swapped.wav")}, QStringLiteral("Ledger"), false));
+            writeBeatWav(computer / "x swapped.wav", 32, 128.0);
+            const std::size_t logBefore = logText().size();
+            const QVariantMap saved = saveNow();
+            assert(saved.value("error").toString().isEmpty());
+            assert(fs::file_size(onStick / "x swapped.wav") == fs::file_size(computer / "x swapped.wav"));
+            assert(readLedger().count(keyOf("x swapped.wav")) == 0 && "an analysis of another file is not recorded");
+            assert(logText().substr(logBefore).find("x swapped.wav is not recorded in the analysis ledger: the file copied")
+                   != std::string::npos);
+            std::cout << "case 18h (an import whose source was replaced after its analysis: no ledger entry) OK\n";
         }
     }
 

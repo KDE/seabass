@@ -21,6 +21,8 @@
 //    nothing, or whose grid changed too much, never follows.
 // 8. A move counts as stored too: rekordbox keeps whole ms, each position
 //    cut, so 1100.0 to 1090.7 is a move of 10, not of 9.3.
+// 9. A start that would come out before 0 lands on 0; a loop held there
+//    keeps its length; the amounts counted are the moves as made.
 
 #include <cassert>
 #include <cmath>
@@ -228,6 +230,42 @@ int main()
         assert(!application::cuesFollowOnTheirOwn(withLoop, 10.0));
         std::cout << "case 8 (a move just under the threshold that is stored as a whole ms at it does not follow on "
                      "its own; a loop's stored end counts) OK\n";
+    }
+
+    // 9.
+    {
+        // The old grid's first beat at 4 ms, the new one's at 0: a cue on
+        // that beat at 1 ms would land at -3 ms, and lands on 0 instead.
+        const std::vector<double> late = grid(4.0, 500.0, 40);
+        const std::vector<double> early = grid(0.0, 500.0, 40);
+        const CueGridPlan plan =
+            application::planCueGridMoves({memory(1.0), loop(2.0, 504.0), hot(2, 0.5), hot(3, 6.0)}, late, early);
+        assert(plan.verdict == CueGridPlan::Verdict::Moves);
+        // 0.5 ms would move by -0.5 ms once held at 0: no move.
+        assert(plan.alreadyThere == 1);
+        assert(plan.moves.size() == 3);
+        for (const auto &move : plan.moves) {
+            assert(move.newMs >= 0.0 && (!move.isLoop || move.newEndMs >= 0.0));
+        }
+        assert(plan.moves[0].cueIndex == 0 && near(plan.moves[0].newMs, 0.0));
+        // The loop's start held at 0 moved by 2 ms; its end, on beat 1,
+        // moves by the same 2 ms and not to its own beat's 500 ms.
+        const auto &held = plan.moves[1];
+        assert(held.isLoop && near(held.newMs, 0.0) && near(held.newEndMs, 502.0));
+        assert(near(held.newEndMs - held.newMs, 504.0 - 2.0) && !held.endBeat);
+        // Not held: 6.0 moves by the full -4 ms.
+        assert(plan.moves[2].cueIndex == 3 && near(plan.moves[2].newMs, 2.0));
+        // The amounts are the moves as made: the held cue and loop moved
+        // 1 and 2 ms, where the grid moved 4.
+        const CueGridPlan heldOnly = application::planCueGridMoves({memory(1.0), loop(2.0, 504.0)}, late, early);
+        assert(near(application::largestCueMoveMs(heldOnly), 2.0));
+        assert(application::cuesFollowOnTheirOwn(heldOnly, 3.0));
+        const std::vector<domain::CuePoint> moved = application::cuesMovedOntoNewGrid(
+            {memory(1.0), loop(2.0, 504.0), hot(2, 0.5), hot(3, 6.0)}, plan);
+        for (const auto &cue : moved) {
+            assert(cue.positionMs >= 0.0 && (!cue.isLoop || cue.loopEndMs >= 0.0));
+        }
+        std::cout << "case 9 (a start that would come out before 0 lands on 0; a loop held there keeps its length) OK\n";
     }
 
     std::cout << "carry_cues_to_new_grid_test: all cases passed\n";

@@ -7,6 +7,7 @@
 #include <QString>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -58,11 +59,25 @@ infrastructure::local::AnalysisLedgerEntry analysisLedgerEntry(const std::string
 // of the changes that landed (in SaveContext::AfterCommit::appliedIds, and
 // not skipped), and writes the file only when its text changes. Nothing
 // is written when nothing landed: a save that went back leaves the ledger
-// as it was. A ledger that cannot be read is replaced, its fault in the
-// save's log. A ledger that cannot be written is a warning on the save in
-// plain words, never a failure: the libraries are committed by then.
+// as it was. A damaged ledger is replaced, its fault in the save's log. A
+// ledger that cannot be opened or read is left as it is and this save's
+// entries are not recorded; that, and a ledger that cannot be written, is
+// a warning on the save in plain words, never a failure: the libraries
+// are committed by then. An entry that cannot be written as it is is left
+// out, named in the log, and the others are written.
 void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
                                infrastructure::local::AnalysisLedgerEntry entry, const std::string &label);
+
+// The fingerprint of the grid in the rekordbox analysis file at
+// `datPath` as it is on the stick now (rekordbox::pqtzGridFingerprint()),
+// for an entry. Never throws: the ledger never costs a save, so a file
+// that cannot be read gives an empty fingerprint ("-") and `problem` says
+// why; `problem` is cleared otherwise.
+std::string ledgerGridOfAnalysisFile(const std::string &datPath, std::string *problem);
+// For a test: called with the path before ledgerGridOfAnalysisFile()
+// reads it, so a test can stand in for a file that cannot be read by
+// throwing. Empty: nothing is called.
+void setBeforeLedgerGridReadForTesting(std::function<void(const std::string &datPath)> hook);
 
 // The modification time of a file, seconds since 1970; nullopt when it
 // cannot be read.

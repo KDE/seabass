@@ -242,15 +242,31 @@ int AnalysisMemoryGate::enter(const application::CancellationToken &cancel)
     }
 }
 
-void AnalysisMemoryGate::noteRead(int ticket, double seconds, int sampleRateHz)
+void AnalysisMemoryGate::noteRead(int ticket, double seconds, int sampleRateHz,
+                                  const application::CancellationToken &cancel)
 {
-    const std::lock_guard<std::mutex> lock(m_mutex);
+    std::unique_lock<std::mutex> lock(m_mutex);
     const auto track = m_tracks.find(ticket);
     if (track == m_tracks.end()) {
         return;
     }
     track->second.heldBytes = analysisBytesFor(seconds, sampleRateHz);
     track->second.peakBytes = std::max(AnalysisTypicalBytes, track->second.heldBytes);
+    for (;;) {
+        cancel.throwIfCancelled();
+        // Tickets count up, so the first in the map is the oldest in hand.
+        if (m_tracks.empty() || m_tracks.begin()->first == ticket) {
+            return;
+        }
+        const std::optional<std::uint64_t> free = m_available ? m_available() : std::nullopt;
+        if (!free || *free >= AnalysisMemoryMargin) {
+            return;
+        }
+        // Woken when a track leaves (this one may have become the oldest);
+        // looked at again a few times a second for memory given back and
+        // a cancel.
+        m_left.wait_for(lock, std::chrono::milliseconds(200));
+    }
 }
 
 void AnalysisMemoryGate::leave(int ticket)

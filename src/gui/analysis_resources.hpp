@@ -60,7 +60,9 @@ constexpr std::uint64_t AnalysisHighRateBytes = 40ull * 1024 * 1024;
 constexpr int AnalysisHighRateHz = 88200;
 // For `seconds` of audio at that rate.
 std::uint64_t analysisBytesFor(double seconds, int sampleRateHz);
-// What a track not yet read is taken to need: eight minutes' worth.
+// What a track not yet read is taken to need: eight minutes' worth. Its
+// sample rate is not known before its first piece is read, so the high
+// rate's extra is not in it: the track's first noteRead() adds it.
 constexpr std::uint64_t AnalysisTypicalBytes = AnalysisBaseBytes + 8 * AnalysisBytesPerMinute;
 // Left to the rest of the computer.
 constexpr std::uint64_t AnalysisMemoryMargin = 1024ull * 1024 * 1024;
@@ -83,6 +85,13 @@ bool analysisMayStart(std::optional<std::uint64_t> availableBytes, std::uint64_t
 // for what it has read. A track past the typical length has nothing held
 // back for it: what it takes from there on, 3.5 MB a minute, is seen in
 // the free memory as it goes.
+//
+// Tracks already in hand go on growing, so several very long recordings
+// at once could take more than the computer has. While free memory is
+// short (under AnalysisMemoryMargin), every track but the oldest in hand
+// waits at its next piece (noteRead) until memory is back or it has become
+// the oldest. The oldest never waits: nothing can wait on itself, and an
+// import never stands still.
 class AnalysisMemoryGate
 {
 public:
@@ -92,8 +101,13 @@ public:
     // Blocks until a track may start; asks `cancel` while it waits and
     // throws application::OperationCancelled. Returns the track's ticket.
     int enter(const application::CancellationToken &cancel);
-    // The track of `ticket` has read `seconds` of audio at that rate.
-    void noteRead(int ticket, double seconds, int sampleRateHz);
+    // The track of `ticket` has read `seconds` of audio at that rate. Then
+    // waits while free memory is short and the track is not the oldest in
+    // hand (above), looking again a few times a second and when a track
+    // leaves; asks `cancel` while it waits and throws
+    // application::OperationCancelled. Free memory that cannot be read
+    // never makes a track wait.
+    void noteRead(int ticket, double seconds, int sampleRateHz, const application::CancellationToken &cancel);
     void leave(int ticket);
 
     int inHand() const;

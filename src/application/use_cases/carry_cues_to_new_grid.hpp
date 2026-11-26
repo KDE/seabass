@@ -79,7 +79,12 @@ struct CueGridPlan
 //   it was on one, else moves by the start's amount;
 // - trusted only when the new beat is within a quarter of the old grid's
 //   beat spacing there (and so is a loop end's); one untrusted cue makes
-//   the track GridChangedTooMuch and no cue moves.
+//   the track GridChangedTooMuch and no cue moves;
+// - a start that would come out before 0 lands on 0, the track's start; a
+//   loop whose start lands there keeps its length, its end moving by what
+//   the start moved (and then has no endBeat). Every move in the plan, and
+//   every amount the review shows and the threshold compares, is the move
+//   as it is made.
 CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const std::vector<double> &oldBeats,
                              const std::vector<double> &newBeats);
 
