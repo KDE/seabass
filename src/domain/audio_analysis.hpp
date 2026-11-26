@@ -4,9 +4,13 @@
 
 #pragma once
 
+#include <cstddef>
 #include <span>
+#include <string>
+#include <vector>
 
 #include "domain/grid_analyser.hpp"
+#include "domain/pcm_source.hpp"
 #include "domain/key_from_audio.hpp"
 #include "domain/seabass_grid_analyser.hpp"
 #include "domain/waveform_from_audio.hpp"
@@ -30,6 +34,31 @@ using AudioAnalysis = musicanalyze::Analysis;
 inline AudioAnalysis analyseAudio(std::span<const float> samples, int sampleRateHz, TempoRange range = {})
 {
     return musicanalyze::analyse(samples, sampleRateHz, range);
+}
+
+// The same of a source, read to its end piece by piece and never held
+// whole: a mix of two hours takes some hundreds of megabytes this way
+// where its samples alone would take over a gigabyte (the numbers are in
+// lib/musicanalyze/README.md). The result is the one the samples joined
+// would give. The source's error, if it stopped on one, goes into
+// `error` (when given), and the analysis is then of what was read: a
+// caller must check it, since a track cut short by a decode error is not
+// the whole track.
+inline AudioAnalysis analyseAudio(PcmSource &source, TempoRange range = {}, std::string *error = nullptr)
+{
+    musicanalyze::Analyser analyser(source.sampleRate(), range);
+    std::vector<float> piece(65536);
+    for (;;) {
+        const std::size_t got = source.read(piece);
+        if (got == 0) {
+            break;
+        }
+        analyser.feed(std::span<const float>(piece.data(), got));
+    }
+    if (error != nullptr) {
+        *error = source.error();
+    }
+    return analyser.finish();
 }
 
 // The tempo the range setting stands for when nothing is set: the

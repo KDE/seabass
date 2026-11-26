@@ -7,7 +7,7 @@
 // The library's version: what its interface is. The only place it is
 // written down; the build reads it from these three lines.
 #define MUSICANALYZE_VERSION_MAJOR 0
-#define MUSICANALYZE_VERSION_MINOR 1
+#define MUSICANALYZE_VERSION_MINOR 2
 #define MUSICANALYZE_VERSION_PATCH 0
 
 namespace musicanalyze
@@ -25,7 +25,9 @@ namespace musicanalyze
 // number here, then write the file again (musicanalyze_test --write).
 // That is a reminder and not a proof: it sees a change on the audio the
 // test makes, and music has more in it than that.
-inline constexpr int GridRevision = 1;
+// Grid 2: the audio is listened to in blocks (the same grid on 2,828 of
+// 2,831 tracks, see grid.cpp), and no grid is looked for under 8 kHz.
+inline constexpr int GridRevision = 2;
 inline constexpr int KeyRevision = 1;
 inline constexpr int WaveformRevision = 1;
 

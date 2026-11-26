@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -93,6 +94,12 @@ inline constexpr double FollowedGridEarlierMs = 3.0;
 // early, 591 within 3 ms.
 inline constexpr double StraightGridLaterMs = 1.2;
 
+// The lowest sample rate a grid is found at. The highest of the bands
+// the analyser listens to begins at 1.5 kHz, and under 3 kHz its filters
+// are no filters at all; from 8 kHz, as for the key and the waveform,
+// every band has room. No file a DJ plays is sampled that low.
+constexpr int GridLowestSampleRateHz = 8000;
+
 // The beat grid of a track.
 //
 // What it listens to: the audio from 30 Hz to 5 kHz in five bands, the
@@ -148,9 +155,33 @@ inline constexpr double StraightGridLaterMs = 1.2;
 // 0), or refine the beat on the samples of the transient.
 //
 // `samples` are mono, full scale 1.0, sample 0 at 0 ms of the beats that
-// come back; they are read once and not kept. No samples, or no sample
-// rate: the error says so.
+// come back; they are read once and not kept. No samples, no sample
+// rate, or one under GridLowestSampleRateHz: the error says so.
 GridAnalysis gridFromSamples(std::span<const float> samples, int sampleRateHz, TempoRange range = {});
+
+// The same of audio that comes in pieces, a decoder's buffers say: feed()
+// them in order, of any length, then finish(). The grid is the one
+// gridFromSamples() makes of the pieces joined (which is this, fed
+// once). What is held meanwhile is a few seconds of audio and what was
+// heard so far (about 40 MB, and 3.5 MB a minute of music), and never the
+// track. No sample rate or one too low, or nothing fed: the error says
+// so.
+class BeatGridAnalyser
+{
+public:
+    explicit BeatGridAnalyser(int sampleRateHz, TempoRange range = {});
+    ~BeatGridAnalyser();
+    BeatGridAnalyser(BeatGridAnalyser &&) noexcept;
+    BeatGridAnalyser &operator=(BeatGridAnalyser &&) noexcept;
+
+    void feed(std::span<const float> samples);
+    // The grid of everything fed; the analyser is spent after it.
+    GridAnalysis finish();
+
+private:
+    class State;
+    std::unique_ptr<State> m_state;
+};
 
 // A grid's tempo as one number: a minute over the middle gap between two
 // beats, not rounded. 0 without two beats. On a grid that follows the

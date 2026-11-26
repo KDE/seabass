@@ -50,4 +50,25 @@ struct Analysis
 // at its faster tempo wants about 88 to 175.
 Analysis analyse(std::span<const float> samples, int sampleRateHz, TempoRange range = {});
 
+// The same of audio that comes in pieces, a decoder's buffers say: feed()
+// them in order, of any length, then finish(). The result is the one
+// analyse() gives for the pieces joined (which is this, fed once). What
+// is held meanwhile is a few seconds of audio and what was heard so far
+// (about 45 MB, and 3.5 MB a minute of music), and never the track: a mix
+// of two hours takes under 500 MB, where its samples alone are 1.3 GB.
+class Analyser
+{
+public:
+    explicit Analyser(int sampleRateHz, TempoRange range = {});
+
+    void feed(std::span<const float> samples);
+    // Everything made of what was fed; the analyser is spent after it.
+    Analysis finish();
+
+private:
+    BeatGridAnalyser m_grid;
+    KeyAnalyser m_key;
+    WaveformMeter m_waveform;
+};
+
 }  // namespace musicanalyze

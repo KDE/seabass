@@ -5,6 +5,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -69,6 +70,28 @@ struct KeyAnalysis
 // with the frequencies of that rate (measured: the seven tracks of the
 // test music that exist at 44.1 and at 48 kHz).
 KeyAnalysis keyFromSamples(std::span<const float> samples, int sampleRateHz);
+
+// The same of audio that comes in pieces, a decoder's buffers say: feed()
+// them in order, of any length, then finish(). The key is the one
+// keyFromSamples() reads from the pieces joined (which is this, fed
+// once), and what is held meanwhile is a second and a half of audio and
+// the sums.
+class KeyAnalyser
+{
+public:
+    explicit KeyAnalyser(int sampleRateHz);
+    ~KeyAnalyser();
+    KeyAnalyser(KeyAnalyser &&) noexcept;
+    KeyAnalyser &operator=(KeyAnalyser &&) noexcept;
+
+    void feed(std::span<const float> samples);
+    // The key of everything fed; the analyser is spent after it.
+    KeyAnalysis finish();
+
+private:
+    class State;
+    std::unique_ptr<State> m_state;
+};
 
 // What the decision is made from, for a test or a comparison to look at:
 // how much of each note there is in each of five octaves from C2 (entry

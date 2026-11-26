@@ -812,6 +812,23 @@ void theOneCall()
               && !one.waveform.entries.empty(),
           "the one call: a waveform of 150 entries a second");
 
+    // A source read piece by piece gives what its samples give at once.
+    InMemoryPcmSource houseSource(house.samples, house.sampleRate);
+    std::string sourceError = "not looked at";
+    const AudioAnalysis read = analyseAudio(houseSource, TempoRange{}, &sourceError);
+    bool sameRead = read.grid.beats.size() == one.grid.beats.size() && read.waveform.entries.size() == one.waveform.entries.size()
+                    && read.bpm == one.bpm && read.key.key == one.key.key && read.key.margin == one.key.margin && sourceError.empty();
+    for (std::size_t i = 0; sameRead && i < one.grid.beats.size(); ++i) {
+        sameRead = read.grid.beats[i].timeMs == one.grid.beats[i].timeMs;
+    }
+    for (std::size_t i = 0; sameRead && i < one.waveform.entries.size(); ++i) {
+        sameRead = read.waveform.entries[i].low == one.waveform.entries[i].low && read.waveform.entries[i].overall == one.waveform.entries[i].overall;
+    }
+    check(sameRead, "the one call on a source: what the samples give, to the last digit");
+    InMemoryPcmSource noRate(house.samples, 0);
+    const AudioAnalysis unread = analyseAudio(noRate, TempoRange{}, &sourceError);
+    check(!sourceError.empty() && !unread.grid.error.empty() && unread.grid.beats.empty(), "the one call on a source that failed: its error, and no grid");
+
     const synth::SynthTrack drummer = synth::renderSynthTrack(*synth::synthPreset("live-drummer-96"));
     const AudioAnalysis followed = analyseAudio(drummer.samples, drummer.sampleRate);
     check(followed.grid.followsTempo, "the one call: a drummer's grid is said to follow the tempo");

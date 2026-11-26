@@ -1189,8 +1189,10 @@ benchmark writes is the same.
 
 What came with it:
 
-- **A version** (`version.hpp`, 0.1.0) for the interface.
-- **A revision for each part** (grid, key, waveform, each at 1): a
+- **A version** (`version.hpp`, 0.1.0 then, 0.2.0 with the audio in
+  pieces) for the interface.
+- **A revision for each part** (grid, key, waveform, each at 1 then;
+  the grid at 2 since the audio in pieces): a
   number that goes up with every change after which the same audio can
   give another result, and with no other. `Analysis::revisions` carries
   them with a result, for the import to keep beside what it writes, so
@@ -1221,13 +1223,73 @@ Not moved yet: the large tests of the analysers
 use the generator of synthetic tracks in `tools/synth_track`; they run
 against the library as they did against the code where it was.
 
-Next in the library: audio in pieces. An analysis holds the whole track
-(about 32 MB a minute of music at its peak, by the code and not yet
-measured), which is what limits the import to mixes of an hour and a
-half. Only the first stage of the grid reads the audio itself, and its
-filters that run backwards through the track can run with a few seconds
-of what comes next instead of all of it; the key and the waveform go
-from front to back already.
+### Audio in pieces
+
+An analysis held the whole track: its samples, a copy of them as
+doubles, a copy of that for the band in hand. That is what limited the
+import to mixes of an hour and a half. Now the library takes the audio
+as a decoder gives it (`Analyser`, and `BeatGridAnalyser`, `KeyAnalyser`
+and `WaveformMeter` for the parts: `feed()` pieces of any length, then
+`finish()`), and the calls that take a whole track are those, fed once.
+`domain::analyseAudio()` takes a source as well as samples.
+
+- **The key and the waveform** went from front to back already: the
+  same sums in the same order, a frame or an entry at a time.
+- **The grid** reads the audio in its first stage only (the bands, their
+  envelopes, the rises: one value a millisecond), and everything after
+  works on that. Its filters run both ways, and backwards from the end
+  of a track wants the whole track. They run backwards over blocks of 8
+  s now, each from 1 s past its end: what lies further on is left out,
+  and of the slowest filter (the high-pass at 30 Hz) a second leaves 4
+  parts in 10^32. The power of the low bands was transformed in pieces
+  already, and the last values of a band are read against its end, so
+  those wait for the end.
+
+Pieces and whole are one sum: the blocks lie at the same samples however
+the audio is cut, and on the generated tracks of the library's test a
+grid, a key and an analysis fed in uneven pieces are those of the whole
+to the last digit.
+
+Against the filters run over the whole track, as they were: every key
+and every waveform the same on all 2,831 tracks, and every beat the
+same on 2,828. On three, all CD rips with a quiet beginning and a
+followed grid, beats of the first seconds moved: 54 beats by two
+thousandths of a millisecond on one, 18 beats by up to 8 ms on another,
+one beat by 20 ms on the third. It is not the look-ahead (the same at 1,
+4 and 8 s; with one block for the whole track every value is the same
+to the bit), it is rounding: filters this far below the sample rate
+multiply up the rounding of each sample's last digit, to a part in
+10^10 of the onset function, and a backward run begun elsewhere rounds
+otherwise. Where a followed grid's choice between two onsets is that
+close, it can fall the other way. (Another compiler's or another
+processor's arithmetic will do the same to such places; a choice that
+close is one to make less close, later.) So the grid's revision goes to
+2. The library's results file, written by the filters over the whole
+track, has every one of its beats within 0.005 ms as before, and a
+block filter broken on purpose fails it three ways: no look-ahead, 20 ms
+of look-ahead, a sample lost at each block's end.
+
+No grid is looked for under 8 kHz any more (the key and the waveform
+stop there too): under 3 kHz the filters of the highest band are no
+filters at all, and what came out was noise. No file a DJ plays is
+sampled that low.
+
+What it costs, measured (optimised build, a process that does nothing
+else, 44.1 kHz): the grid of a four minute track 0.79 s for 0.78 s; and
+at the peak about 45 MB whatever the length and 3.5 MB for every minute
+of music: 56 MB for four minutes, 245 MB for an hour, 357 MB for an
+hour and a half, 445 MB for two hours. At 96 kHz, 287 MB for an hour.
+A whole hour handed over in one piece is 850 MB, most of it the samples
+(it was about 1.9 GB by the code before, not measured then). The rises
+of each band, a value a millisecond, are kept in pieces of a minute: a
+vector left to grow by doubling held up to twice the track. One thing
+found on the way: with the filters' memory kept in the object instead
+of in the loop's own variables the grid took a quarter longer, since
+every sample written had to be taken for a change to it.
+
+Left for later: the bands could now run beside each other on several
+cores (it was memory that spoke against it); and the import still
+decodes a file whole before it analyses, which is its side of this.
 
 ## Denon again: the new music, and the players
 

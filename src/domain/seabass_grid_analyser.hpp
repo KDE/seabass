@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <span>
 #include <string>
 #include <vector>
@@ -22,9 +23,7 @@ using musicanalyze::TempoRange;
 // benchmark and the tests, which run every analyser through that port.
 // The analysis itself is the library's (lib/musicanalyze, grid.hpp, where
 // what it does is written down); this reads a source to its end and
-// hands the samples over. It holds them until the grid is made, which
-// costs no more memory at the peak: that is while the library listens
-// to them, and it has them then either way.
+// hands it over piece by piece, so the track is never held.
 class SeabassGridAnalyser : public GridAnalyser
 {
 public:
@@ -37,14 +36,21 @@ public:
 
     GridAnalysis analyse(PcmSource &source) override
     {
-        const int rate = source.sampleRate();
-        const std::vector<float> samples = readAllSamples(source);
+        musicanalyze::BeatGridAnalyser analyser(source.sampleRate(), m_range);
+        std::vector<float> piece(65536);
+        for (;;) {
+            const std::size_t got = source.read(piece);
+            if (got == 0) {
+                break;
+            }
+            analyser.feed(std::span<const float>(piece.data(), got));
+        }
         if (!source.error().empty()) {
             GridAnalysis failed;
             failed.error = source.error();
             return failed;
         }
-        return analyseSamples(samples, rate);
+        return analyser.finish();
     }
 
     // The same analysis of samples the caller holds already (mono, on the

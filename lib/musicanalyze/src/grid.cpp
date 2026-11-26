@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <optional>
 #include <utility>
@@ -68,33 +69,6 @@ double step(const std::array<Biquad, Count> &filters, std::array<double, Count> 
         value = out;
     }
     return value;
-}
-
-// Forwards and then backwards, so what the filters delay one way they
-// advance the other: an onset stays where it is in time. All of them one
-// way and then all of them the other, which is the same as each both
-// ways in turn.
-//
-// The track is gone over once each way, every sample through all the
-// filters before the next: the same sums in the same order as a pass a
-// filter (on 280 tracks every beat came out the same), and much the
-// faster: a pass a filter reads and writes the whole track for each and
-// waits for one filter's memory, where the filters of a band are four to
-// work on at once. The filters are the largest part of what an analysis
-// costs; measured with a pass a filter, an analysis took twice as long.
-template <std::size_t Count>
-void runBothWays(const std::array<Biquad, Count> &filters, std::vector<double> &x)
-{
-    std::array<double, Count> z1{};
-    std::array<double, Count> z2{};
-    for (double &sample : x) {
-        sample = step(filters, z1, z2, sample);
-    }
-    z1.fill(0.0);
-    z2.fill(0.0);
-    for (std::size_t i = x.size(); i-- > 0;) {
-        x[i] = step(filters, z1, z2, x[i]);
-    }
 }
 
 // -------------------------------------------------------- small arithmetic
@@ -234,48 +208,352 @@ constexpr double EnvelopeSmoothingHz = 60.0;
 // bands take the power of the analytic signal, which has no ripple.
 constexpr double PowerBySquareFromHz = 400.0;
 
+// The audio comes in pieces, and what listens to it holds a few seconds
+// of it and never the track. The filters run both ways (so that nothing
+// moves in time), and a filter running backwards from the end of a track
+// would need all of it; here it runs backwards from this far past the
+// place it is asked about, over blocks of the length below. What lies
+// further on is left out, and that is nothing: of the slowest filter
+// here (the high-pass at 30 Hz, whose memory fades by a third of a
+// percent a sample at 22 kHz) a second leaves 4 parts in 10^32, and a
+// double holds 16 digits.
+//
+// What a block does change is the rounding. A filter this far below the
+// sample rate multiplies up the rounding of every sample's last digit
+// (to a part in 10^10 of the onset function here, measured), and a
+// backward run begun elsewhere rounds otherwise. So the onset function
+// is the one the filters give run over the whole track to nine digits
+// and not to sixteen, however long the look-ahead (measured at 1, 4 and
+// 8 s). On 2,831 tracks that moved no beat on 2,828, and on three (CD
+// rips with a quiet beginning, their grids followed) it moved beats in
+// the first seconds, by two thousandths of a millisecond on one and by
+// up to 8 and 20 ms on the others: places where what decides is that
+// close. The blocks lie at the same samples however the audio is cut
+// into pieces, so a track fed in pieces and fed whole are one sum.
+//
+// A longer block means less run twice and more held: at a second ahead
+// and blocks of eight, an eighth more of the backward runs, and some 40
+// MB held for a track of any length.
+constexpr double AheadSeconds = 1.0;
+constexpr double BlockSeconds = 8.0;
+
+// A cascade of filters run over a signal forwards and then backwards, so
+// what the filters delay one way they advance the other: an onset stays
+// where it is in time. All of them one way and then all of them the
+// other, which is the same as each both ways in turn. The signal is fed
+// in pieces of any length and comes out, in order, as far as it is done.
+//
+// Every sample goes through all the filters before the next: the same
+// sums in the same order as a pass a filter, and much the faster, since
+// a pass a filter reads and writes the signal for each and waits for one
+// filter's memory, where the filters of a band are four to work on at
+// once. The filters are the largest part of what an analysis costs;
+// measured with a pass a filter, an analysis took twice as long.
+template <std::size_t Count>
+class BothWays
+{
+public:
+    BothWays(const std::array<Biquad, Count> &filters, double rate)
+        : m_filters(filters), m_ahead(std::max<std::size_t>(1, static_cast<std::size_t>(AheadSeconds * rate))),
+          m_block(std::max<std::size_t>(1, static_cast<std::size_t>(BlockSeconds * rate)))
+    {
+    }
+
+    // Takes `in` and adds to `out` what is done by it.
+    void feed(std::span<const double> in, std::vector<double> &out)
+    {
+        // The filters and their memory in the loop's own hands: left in
+        // the object, every sample written would have to be taken for a
+        // change to them, and the loop runs at half the speed.
+        const std::array<Biquad, Count> filters = m_filters;
+        std::size_t at = 0;
+        while (at < in.size()) {
+            const std::size_t take = std::min(in.size() - at, m_block + m_ahead - m_held.size());
+            const std::size_t base = m_held.size();
+            m_held.resize(base + take);
+            std::array<double, Count> z1 = m_z1;
+            std::array<double, Count> z2 = m_z2;
+            double *held = m_held.data() + base;
+            const double *from = in.data() + at;
+            for (std::size_t i = 0; i < take; ++i) {
+                held[i] = step(filters, z1, z2, from[i]);
+            }
+            m_z1 = z1;
+            m_z2 = z2;
+            at += take;
+            if (m_held.size() == m_block + m_ahead) {
+                backwards(m_block, out);
+            }
+        }
+    }
+
+    // The signal has ended: adds the rest to `out`.
+    void finish(std::vector<double> &out) { backwards(m_held.size(), out); }
+
+private:
+    // Backwards over all that is held, which went forwards as it came,
+    // and the first `count` values of it given out and let go.
+    void backwards(std::size_t count, std::vector<double> &out)
+    {
+        const std::array<Biquad, Count> filters = m_filters;
+        std::array<double, Count> z1{};
+        std::array<double, Count> z2{};
+        const std::size_t base = out.size();
+        out.resize(base + count);
+        const double *held = m_held.data();
+        double *given = out.data() + base;
+        // What lies ahead is only run through; what is asked for is kept.
+        for (std::size_t i = m_held.size(); i-- > count;) {
+            step(filters, z1, z2, held[i]);
+        }
+        for (std::size_t i = count; i-- > 0;) {
+            given[i] = step(filters, z1, z2, held[i]);
+        }
+        m_held.erase(m_held.begin(), m_held.begin() + static_cast<std::ptrdiff_t>(count));
+    }
+
+    std::array<Biquad, Count> m_filters;
+    std::array<double, Count> m_z1{};
+    std::array<double, Count> m_z2{};
+    std::size_t m_ahead;
+    std::size_t m_block;
+    std::vector<double> m_held;
+};
+
 // The power of a band that has nothing above 400 Hz, without the ripple
 // of its square: the squared size of its analytic signal (the band, and
-// the band a quarter of a cycle on). `step` is filled with how many
-// samples of the band one value stands for: the band is thinned to about
-// 1400 values a second first, which holds everything under 700 Hz, and
-// transformed in pieces of 16384 that overlap by half, the middle half
-// of each kept, since the ends of a piece are where the transform has to
-// make something up.
-std::vector<double> rippleFreePower(const std::vector<double> &band, double rate, std::size_t &step)
+// the band a quarter of a cycle on). The band is thinned to about 1400
+// values a second first, which holds everything under 700 Hz (one value
+// stands for step() samples of the band), and transformed in pieces of
+// 16384 that overlap by half, the middle half of each kept, since the
+// ends of a piece are where the transform has to make something up. The
+// band is fed in pieces of any length.
+class RippleFreePower
 {
-    step = std::max<std::size_t>(1, static_cast<std::size_t>(rate / 1400.0));
-    const std::size_t count = (band.size() + step - 1) / step;
-    constexpr std::size_t Piece = 16384;
-    std::vector<double> power(count, 0.0);
-    std::vector<std::complex<double>> z(Piece);
-    for (std::size_t start = 0; start < count; start += Piece / 2) {
-        const std::size_t length = std::min(Piece, count - start);
-        std::fill(z.begin(), z.end(), std::complex<double>(0.0, 0.0));
-        for (std::size_t i = 0; i < length; ++i) {
-            z[i] = band[(start + i) * step];
+public:
+    explicit RippleFreePower(double rate) : m_step(std::max<std::size_t>(1, static_cast<std::size_t>(rate / 1400.0))), m_z(Piece) {}
+
+    std::size_t step() const { return m_step; }
+
+    // Takes `band`, which goes on where the last call's ended, and adds
+    // to `out` the power that is done by it.
+    void feed(std::span<const double> band, std::vector<double> &out)
+    {
+        for (const double value : band) {
+            if (m_seen % m_step == 0) {
+                m_thinned.push_back(value);
+                // A piece is transformed once there is a value beyond
+                // it: the last piece of a band is kept to its end, and
+                // only then is this known not to be it.
+                if (m_thinned.size() > Piece) {
+                    transformed(false, out);
+                    m_thinned.erase(m_thinned.begin(), m_thinned.begin() + Piece / 2);
+                    m_first = false;
+                }
+            }
+            ++m_seen;
         }
-        fft(z, false);
+    }
+
+    // The band has ended: adds the rest to `out`.
+    void finish(std::vector<double> &out)
+    {
+        if (!m_thinned.empty()) {
+            transformed(true, out);
+            m_thinned.clear();
+        }
+    }
+
+private:
+    static constexpr std::size_t Piece = 16384;
+
+    void transformed(bool last, std::vector<double> &out)
+    {
+        const std::size_t length = std::min(Piece, m_thinned.size());
+        std::fill(m_z.begin(), m_z.end(), std::complex<double>(0.0, 0.0));
+        for (std::size_t i = 0; i < length; ++i) {
+            m_z[i] = m_thinned[i];
+        }
+        fft(m_z, false);
         // The analytic signal: the upper half of the spectrum doubled,
         // the lower half (the mirror) dropped.
         for (std::size_t k = 1; k < Piece / 2; ++k) {
-            z[k] *= 2.0;
+            m_z[k] *= 2.0;
         }
         for (std::size_t k = Piece / 2 + 1; k < Piece; ++k) {
-            z[k] = 0.0;
+            m_z[k] = 0.0;
         }
-        fft(z, true);
-        const std::size_t from = start == 0 ? 0 : Piece / 4;
-        const std::size_t to = start + Piece >= count ? length : 3 * Piece / 4;
+        fft(m_z, true);
+        const std::size_t from = m_first ? 0 : Piece / 4;
+        const std::size_t to = last ? length : 3 * Piece / 4;
         for (std::size_t i = from; i < to; ++i) {
-            power[start + i] = std::norm(z[i]);
-        }
-        if (start + Piece >= count) {
-            break;
+            out.push_back(std::norm(m_z[i]));
         }
     }
-    return power;
-}
+
+    std::size_t m_step;
+    std::size_t m_seen = 0;
+    bool m_first = true;
+    std::vector<double> m_thinned;
+    std::vector<std::complex<double>> m_z;
+};
+
+// A value a millisecond for as long as a track lasts, added one at a
+// time and not known beforehand how many: kept in pieces of a minute or
+// so, since a vector left to grow holds up to twice what is in it, and
+// for a moment three times.
+class Rises
+{
+public:
+    void add(double value)
+    {
+        if (m_size % Piece == 0) {
+            m_pieces.emplace_back();
+            m_pieces.back().reserve(Piece);
+        }
+        m_pieces.back().push_back(value);
+        ++m_size;
+    }
+    std::size_t size() const { return m_size; }
+    double operator[](std::size_t i) const { return m_pieces[i / Piece][i % Piece]; }
+    void clear()
+    {
+        m_pieces = {};
+        m_size = 0;
+    }
+
+private:
+    static constexpr std::size_t Piece = 65536;
+    std::vector<std::vector<double>> m_pieces;
+    std::size_t m_size = 0;
+};
+
+// One band of the audio, listened to as it comes: its rises, a value a
+// millisecond, what they add up to, and the band's mean level.
+class BandListener
+{
+public:
+    BandListener(const std::array<double, 2> &edges, double rate)
+        : m_band(std::array{highpass(edges[0], rate, ButterworthFourthQ[0]), highpass(edges[0], rate, ButterworthFourthQ[1]),
+                            lowpass(std::min(edges[1], 0.45 * rate), rate, ButterworthFourthQ[0]),
+                            lowpass(std::min(edges[1], 0.45 * rate), rate, ButterworthFourthQ[1])},
+                 rate),
+          m_rippleFree(edges[1] <= PowerBySquareFromHz && rate >= 4.0 * PowerBySquareFromHz), m_ripple(rate),
+          // The band's power comes at this many values a second.
+          m_powerRate(m_rippleFree ? rate / static_cast<double>(m_ripple.step()) : rate),
+          m_smooth(std::array{lowpass(EnvelopeSmoothingHz, m_powerRate, std::numbers::sqrt2 / 2.0)}, m_powerRate)
+    {
+    }
+
+    // The audio, at the rate given, in pieces of any length.
+    void feed(std::span<const double> audio)
+    {
+        m_filtered.clear();
+        m_band.feed(audio, m_filtered);
+        powered(false);
+        envelopes(false, 0);
+    }
+
+    // The audio has ended and makes `milliseconds` values.
+    void finish(std::size_t milliseconds)
+    {
+        m_filtered.clear();
+        m_band.finish(m_filtered);
+        powered(true);
+        envelopes(true, milliseconds);
+        while (rises.size() < milliseconds) {
+            rises.add(0.0);
+        }
+        level = milliseconds > 0 ? m_levels / static_cast<double>(milliseconds) : 0.0;
+    }
+
+    Rises rises;
+    double risen = 0.0;
+    double level = 0.0;
+
+private:
+    // What came through the band filter (m_filtered) made into power,
+    // smoothed, and added to what waits to be read a millisecond at a
+    // time.
+    void powered(bool last)
+    {
+        m_power.clear();
+        if (m_rippleFree) {
+            m_ripple.feed(m_filtered, m_power);
+            if (last) {
+                m_ripple.finish(m_power);
+            }
+        } else {
+            m_power.resize(m_filtered.size());
+            for (std::size_t i = 0; i < m_filtered.size(); ++i) {
+                m_power[i] = m_filtered[i] * m_filtered[i];
+            }
+        }
+        m_smooth.feed(m_power, m_waiting);
+        if (last) {
+            m_smooth.finish(m_waiting);
+        }
+    }
+
+    // The envelope read off the smoothed power a millisecond at a time,
+    // and its rises. While the band goes on, only as far as the
+    // millisecond after is there to be read as well: the last values of a
+    // band are read against its end, and the track may end anywhere.
+    void envelopes(bool last, std::size_t milliseconds)
+    {
+        const std::size_t there = m_waitingFrom + m_waiting.size();
+        if (there == 0) {
+            return;
+        }
+        for (;;) {
+            if (last) {
+                if (m_ms >= milliseconds) {
+                    break;
+                }
+            } else if (!(static_cast<std::size_t>(static_cast<double>(m_ms + 1) * m_powerRate / 1000.0) + 1 < there)) {
+                break;
+            }
+            const double at = static_cast<double>(m_ms) * m_powerRate / 1000.0;
+            const auto below = std::min(static_cast<std::size_t>(at), there - 1);
+            const std::size_t above = std::min(below + 1, there - 1);
+            const double part = at - static_cast<double>(below);
+            const double power = m_waiting[below - m_waitingFrom] * (1.0 - part) + m_waiting[above - m_waitingFrom] * part;
+            const double envelope = std::sqrt(std::max(power, 0.0));
+            if (m_ms == 0) {
+                rises.add(0.0);
+            } else {
+                const double rise = std::max(envelope - m_before, 0.0);
+                rises.add(rise);
+                risen += rise;
+                m_levels += envelope;
+            }
+            m_before = envelope;
+            ++m_ms;
+        }
+        // What the next millisecond no longer reads is let go.
+        const auto next = static_cast<std::size_t>(static_cast<double>(m_ms) * m_powerRate / 1000.0);
+        if (!last && next > m_waitingFrom) {
+            const std::size_t gone = std::min(next - m_waitingFrom, m_waiting.size());
+            m_waiting.erase(m_waiting.begin(), m_waiting.begin() + static_cast<std::ptrdiff_t>(gone));
+            m_waitingFrom += gone;
+        }
+    }
+
+    BothWays<4> m_band;
+    bool m_rippleFree;
+    RippleFreePower m_ripple;
+    double m_powerRate;
+    BothWays<1> m_smooth;
+    std::vector<double> m_filtered;
+    std::vector<double> m_power;
+    // The smoothed power not yet read, and which value of the band's its
+    // first is.
+    std::vector<double> m_waiting;
+    std::size_t m_waitingFrom = 0;
+    std::size_t m_ms = 0;
+    double m_before = 0.0;
+    double m_levels = 0.0;
+};
 
 // The onset function twice over: every band, which is what the tempo is
 // read from, and the bands from 70 Hz, which is what says where in the
@@ -286,114 +564,141 @@ struct Onsets
     std::vector<double> forBeat;
 };
 
-// One value a millisecond: value i is at i ms on the source's timeline.
-// Reads the samples once, into a working copy of its own; whoever holds
-// them can let go of them as soon as this returns.
-Onsets onsetFunction(std::span<const float> samples, int sampleRate)
+// A track listened to as it comes: feed() its audio in pieces, in order,
+// then finish() gives the onset function, one value a millisecond, value
+// i at i ms of the audio. What it holds meanwhile is a few seconds of
+// audio for each band and the rises found so far.
+class OnsetListener
 {
-    // A sample that is no number (a decoder's slip) is silence: left in,
-    // the filters would spread it over the whole track.
-    std::vector<double> audio(samples.size());
-    for (std::size_t i = 0; i < samples.size(); ++i) {
-        audio[i] = std::isfinite(samples[i]) ? static_cast<double>(samples[i]) : 0.0;
-    }
-    // Half the rate is enough for 5 kHz and halves the work: every other
-    // sample of the audio, low-passed both ways first so nothing folds
-    // down and nothing moves in time.
-    double rate = static_cast<double>(sampleRate);
-    if (rate >= 40000.0) {
-        runBothWays(std::array{lowpass(0.2 * rate, rate, ButterworthFourthQ[0]),
-                               lowpass(0.2 * rate, rate, ButterworthFourthQ[1])},
-                    audio);
-        const std::size_t half = (audio.size() + 1) / 2;
-        for (std::size_t i = 0; i < half; ++i) {
-            audio[i] = audio[2 * i];
+public:
+    explicit OnsetListener(int sampleRate) : m_rate(static_cast<double>(sampleRate))
+    {
+        // Half the rate is enough for 5 kHz and halves the work: every
+        // other sample of the audio, low-passed both ways first so
+        // nothing folds down and nothing moves in time.
+        if (m_rate >= 40000.0) {
+            m_halving.emplace(std::array{lowpass(0.2 * m_rate, m_rate, ButterworthFourthQ[0]),
+                                         lowpass(0.2 * m_rate, m_rate, ButterworthFourthQ[1])},
+                              m_rate);
+            m_rate /= 2.0;
         }
-        audio.resize(half);
-        audio.shrink_to_fit();
-        rate /= 2.0;
-    }
-    if (audio.size() < 2) {
-        return Onsets{};
+        m_bands.reserve(Bands.size());
+        for (const auto &edges : Bands) {
+            m_bands.emplace_back(edges, m_rate);
+        }
     }
 
-    const auto milliseconds = static_cast<std::size_t>(static_cast<double>(audio.size() - 1) * 1000.0 / rate);
-    std::vector<double> band;
-    std::vector<double> envelope(milliseconds);
-    // Per band: its rises, a value a millisecond, what they add up to, and
-    // the band's mean level.
-    std::array<std::vector<double>, Bands.size()> rises;
-    std::array<double, Bands.size()> risen{};
-    std::array<double, Bands.size()> levels{};
-    for (std::size_t b = 0; b < Bands.size(); ++b) {
-        const auto &edges = Bands[b];
-        band = audio;
-        const double top = std::min(edges[1], 0.45 * rate);
-        runBothWays(std::array{highpass(edges[0], rate, ButterworthFourthQ[0]), highpass(edges[0], rate, ButterworthFourthQ[1]),
-                               lowpass(top, rate, ButterworthFourthQ[0]), lowpass(top, rate, ButterworthFourthQ[1])},
-                    band);
-        // The band's power, at `powerRate` values a second.
-        double powerRate = rate;
-        if (edges[1] <= PowerBySquareFromHz && rate >= 4.0 * PowerBySquareFromHz) {
-            std::size_t step = 1;
-            band = rippleFreePower(band, rate, step);
-            powerRate = rate / static_cast<double>(step);
-        } else {
-            for (double &value : band) {
-                value *= value;
+    void feed(std::span<const float> samples)
+    {
+        // In pieces of a second or so, so that what is in hand stays
+        // small however much is fed at once.
+        constexpr std::size_t Piece = 65536;
+        for (std::size_t at = 0; at < samples.size(); at += Piece) {
+            const std::size_t take = std::min(Piece, samples.size() - at);
+            m_piece.resize(take);
+            for (std::size_t i = 0; i < take; ++i) {
+                // A sample that is no number (a decoder's slip) is
+                // silence: left in, the filters would spread it over the
+                // whole track.
+                m_piece[i] = std::isfinite(samples[at + i]) ? static_cast<double>(samples[at + i]) : 0.0;
             }
+            if (m_halving) {
+                m_lowPassed.clear();
+                m_halving->feed(m_piece, m_lowPassed);
+                everyOther();
+            }
+            heard();
         }
-        runBothWays(std::array{lowpass(EnvelopeSmoothingHz, powerRate, std::numbers::sqrt2 / 2.0)}, band);
-        for (std::size_t ms = 0; ms < milliseconds; ++ms) {
-            const double at = static_cast<double>(ms) * powerRate / 1000.0;
-            const auto below = std::min(static_cast<std::size_t>(at), band.size() - 1);
-            const std::size_t above = std::min(below + 1, band.size() - 1);
-            const double part = at - static_cast<double>(below);
-            const double power = band[below] * (1.0 - part) + band[above] * part;
-            envelope[ms] = std::sqrt(std::max(power, 0.0));
-        }
-        rises[b].assign(milliseconds, 0.0);
-        for (std::size_t ms = 1; ms < milliseconds; ++ms) {
-            rises[b][ms] = std::max(envelope[ms] - envelope[ms - 1], 0.0);
-            risen[b] += rises[b][ms];
-            levels[b] += envelope[ms];
-        }
-        levels[b] /= static_cast<double>(milliseconds);
     }
 
-    // The bands are summed, each counted alike whatever its level: scaled
-    // so that its rises have a mean of 1. Two kinds of band are left out,
-    // because scaled up like that they would be taken for a rhythm:
-    //
-    //  - a band with next to nothing in it, a hundredth of the loudest
-    //    band's level: what leaks into it from a tone next door, or the
-    //    noise floor of 16 bits. On 250 tracks of the collection the
-    //    quietest band of any track is at 7 hundredths of the loudest.
-    //  - a band that holds a level and hardly rises: a tone, a pad, hum.
-    //    Drums rise by many times the band's mean level every second (8
-    //    times at the least on those tracks, 15 to 27 on the middle one),
-    //    a held note by next to nothing.
-    constexpr double ThereAtAll = 0.01;
-    constexpr double RisesASecondOfTheLevel = 1.0;
-    const double loudest = *std::max_element(levels.begin(), levels.end());
-    Onsets onsets;
-    onsets.forTempo.assign(milliseconds, 0.0);
-    onsets.forBeat.assign(milliseconds, 0.0);
-    const double seconds = static_cast<double>(milliseconds) / 1000.0;
-    for (std::size_t b = 0; b < Bands.size(); ++b) {
-        if (!(levels[b] > ThereAtAll * loudest) || !(risen[b] > RisesASecondOfTheLevel * levels[b] * seconds)) {
-            continue;
+    Onsets finish()
+    {
+        if (m_halving) {
+            m_piece.clear();
+            m_lowPassed.clear();
+            m_halving->finish(m_lowPassed);
+            everyOther();
+            heard();
         }
-        const double scale = static_cast<double>(milliseconds) / risen[b];
-        for (std::size_t ms = 1; ms < milliseconds; ++ms) {
-            onsets.forTempo[ms] += scale * rises[b][ms];
-            if (b >= FirstBandForTheBeat) {
-                onsets.forBeat[ms] += scale * rises[b][ms];
+        if (m_count < 2) {
+            return Onsets{};
+        }
+        const auto milliseconds = static_cast<std::size_t>(static_cast<double>(m_count - 1) * 1000.0 / m_rate);
+        for (BandListener &band : m_bands) {
+            band.finish(milliseconds);
+        }
+
+        // The bands are summed, each counted alike whatever its level: scaled
+        // so that its rises have a mean of 1. Two kinds of band are left out,
+        // because scaled up like that they would be taken for a rhythm:
+        //
+        //  - a band with next to nothing in it, a hundredth of the loudest
+        //    band's level: what leaks into it from a tone next door, or the
+        //    noise floor of 16 bits. On 250 tracks of the collection the
+        //    quietest band of any track is at 7 hundredths of the loudest.
+        //  - a band that holds a level and hardly rises: a tone, a pad, hum.
+        //    Drums rise by many times the band's mean level every second (8
+        //    times at the least on those tracks, 15 to 27 on the middle one),
+        //    a held note by next to nothing.
+        constexpr double ThereAtAll = 0.01;
+        constexpr double RisesASecondOfTheLevel = 1.0;
+        double loudest = m_bands.front().level;
+        for (const BandListener &band : m_bands) {
+            loudest = std::max(loudest, band.level);
+        }
+        Onsets onsets;
+        onsets.forTempo.assign(milliseconds, 0.0);
+        onsets.forBeat.assign(milliseconds, 0.0);
+        const double seconds = static_cast<double>(milliseconds) / 1000.0;
+        for (std::size_t b = 0; b < m_bands.size(); ++b) {
+            BandListener &band = m_bands[b];
+            if (band.level > ThereAtAll * loudest && band.risen > RisesASecondOfTheLevel * band.level * seconds) {
+                const double scale = static_cast<double>(milliseconds) / band.risen;
+                for (std::size_t ms = 1; ms < milliseconds; ++ms) {
+                    onsets.forTempo[ms] += scale * band.rises[ms];
+                    if (b >= FirstBandForTheBeat) {
+                        onsets.forBeat[ms] += scale * band.rises[ms];
+                    }
+                }
             }
+            // A band's rises are let go of as soon as they are counted.
+            band.rises.clear();
+        }
+        return onsets;
+    }
+
+private:
+    // Of what came through the low-pass (m_lowPassed), every other
+    // sample of the track, into m_piece.
+    void everyOther()
+    {
+        m_piece.clear();
+        for (const double value : m_lowPassed) {
+            if (m_lowPassedSeen % 2 == 0) {
+                m_piece.push_back(value);
+            }
+            ++m_lowPassedSeen;
         }
     }
-    return onsets;
-}
+
+    // m_piece, the audio at the rate the bands are read at, to every band.
+    void heard()
+    {
+        m_count += m_piece.size();
+        for (BandListener &band : m_bands) {
+            band.feed(m_piece);
+        }
+    }
+
+    double m_rate;
+    std::optional<BothWays<2>> m_halving;
+    std::vector<BandListener> m_bands;
+    std::vector<double> m_piece;
+    std::vector<double> m_lowPassed;
+    std::size_t m_lowPassedSeen = 0;
+    // How many samples the bands have been given.
+    std::size_t m_count = 0;
+};
 
 // ------------------------------------------------------------- the limits
 
@@ -1820,14 +2125,62 @@ double usualBpm(const std::vector<Beat> &beats)
     return *middle > 0.0 ? 60000.0 / *middle : 0.0;
 }
 
-GridAnalysis gridFromSamples(std::span<const float> samples, int sampleRateHz, TempoRange range)
+class BeatGridAnalyser::State
 {
-    if (sampleRateHz <= 0 || samples.empty()) {
+public:
+    State(int sampleRateHz, TempoRange range) : range(usableTempoRange(range))
+    {
+        if (sampleRateHz >= GridLowestSampleRateHz) {
+            listener.emplace(sampleRateHz);
+        }
+    }
+    // Empty where the sample rate is too low.
+    std::optional<OnsetListener> listener;
+    TempoRange range;
+    bool any = false;
+};
+
+BeatGridAnalyser::BeatGridAnalyser(int sampleRateHz, TempoRange range)
+{
+    if (sampleRateHz > 0) {
+        m_state = std::make_unique<State>(sampleRateHz, range);
+    }
+}
+
+BeatGridAnalyser::~BeatGridAnalyser() = default;
+BeatGridAnalyser::BeatGridAnalyser(BeatGridAnalyser &&) noexcept = default;
+BeatGridAnalyser &BeatGridAnalyser::operator=(BeatGridAnalyser &&) noexcept = default;
+
+void BeatGridAnalyser::feed(std::span<const float> samples)
+{
+    if (m_state && !samples.empty()) {
+        m_state->any = true;
+        if (m_state->listener) {
+            m_state->listener->feed(samples);
+        }
+    }
+}
+
+GridAnalysis BeatGridAnalyser::finish()
+{
+    if (!m_state || !m_state->any || !m_state->listener) {
         GridAnalysis failed;
-        failed.error = "no samples";
+        failed.error = !m_state || !m_state->any ? "no samples" : "the sample rate is too low for a beat grid";
+        m_state.reset();
         return failed;
     }
-    return gridFromOnsets(onsetFunction(samples, sampleRateHz), usableTempoRange(range));
+    const Onsets onsets = m_state->listener->finish();
+    const TempoRange range = m_state->range;
+    // The listening is let go of before the grid is worked out.
+    m_state.reset();
+    return gridFromOnsets(onsets, range);
+}
+
+GridAnalysis gridFromSamples(std::span<const float> samples, int sampleRateHz, TempoRange range)
+{
+    BeatGridAnalyser analyser(sampleRateHz, range);
+    analyser.feed(samples);
+    return analyser.finish();
 }
 
 }  // namespace musicanalyze

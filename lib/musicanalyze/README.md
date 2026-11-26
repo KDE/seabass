@@ -24,8 +24,8 @@ Known limits:
 - Whether a track is at a tempo or at its double is a choice more than a
   fact; a tempo range steers it, and in doubt the double is taken.
 - The key is a first version.
-- It wants the whole track in memory at once. Taking the audio in pieces
-  is planned; the waveform does already (`WaveformMeter`).
+- A result comes when the track has ended: this is analysis of a file,
+  not beat tracking while music plays.
 
 ## Use
 
@@ -44,10 +44,36 @@ for (const musicanalyze::Beat &beat : found.grid.beats) {
 // found.revisions: which code made each part
 ```
 
-Each part can be called on its own: `gridFromSamples()` (grid.hpp),
-`keyFromSamples()` (key.hpp), `waveformFromSamples()` (waveform.hpp). The
-headers say what each listens to and how it decides. Decoding is the
-caller's: the library takes samples, not files.
+The track need not be in memory. Feed it as the decoder gives it, in
+pieces of any length, and the result is the same to the last digit as
+for the track handed over whole:
+
+```cpp
+musicanalyze::Analyser analyser(44100);
+while (/* the decoder has more */) {
+    analyser.feed(piece);   // std::span<const float>, mono
+}
+const musicanalyze::Analysis found = analyser.finish();
+```
+
+Each part can be called on its own, whole or in pieces:
+`gridFromSamples()` and `BeatGridAnalyser` (grid.hpp), `keyFromSamples()`
+and `KeyAnalyser` (key.hpp), `waveformFromSamples()` and `WaveformMeter`
+(waveform.hpp). The headers say what each listens to and how it decides.
+Decoding is the caller's: the library takes samples, not files.
+
+## What it costs
+
+Measured on one core of a desktop machine of 2024, optimised build: a
+track of four minutes takes about 0.8 s for the grid, 0.7 s for the key
+and 0.1 s for the waveform.
+
+Memory, fed in pieces (the peak of a process that does nothing else, at
+44.1 or 48 kHz): about 45 MB whatever the length, and 3.5 MB for every
+minute of music on top. Four minutes: 56 MB. An hour: 245 MB. Two hours:
+445 MB. At 96 kHz the first number is some 40 MB more. Handed a whole
+track in one piece, the samples themselves come on top of that, 10 MB a
+minute at 44.1 kHz.
 
 ## Building it into a project
 
@@ -66,7 +92,7 @@ project around it uses.
 
 Two things are numbered, in `include/musicanalyze/version.hpp`:
 
-- The library's **version** (0.1.0) is about its interface. Before 1.0 a
+- The library's **version** (0.2.0) is about its interface. Before 1.0 a
   new minor version may change it.
 - A **revision** each for the grid, the key and the waveform is about
   results: it goes up with every change after which the same audio can

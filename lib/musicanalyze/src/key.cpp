@@ -9,6 +9,7 @@
 #include <complex>
 #include <cstddef>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <utility>
 #include <vector>
@@ -89,39 +90,6 @@ private:
     double m_z1 = 0.0, m_z2 = 0.0;
 };
 
-// Every `step`th sample, after an eighth-order Butterworth low-pass at
-// four tenths of the new rate: what would fold down into the notes (at
-// 11 kHz, everything from 8.9 kHz up) is 45 dB down and more. `rate` is
-// the new rate on return.
-std::vector<double> thinned(std::span<const float> samples, int sampleRateHz, double &rate)
-{
-    const auto step = static_cast<std::size_t>(std::max(1.0, std::round(sampleRateHz / WorkingRateHz)));
-    rate = static_cast<double>(sampleRateHz) / static_cast<double>(step);
-    std::vector<double> out;
-    out.reserve(samples.size() / step + 1);
-    if (step == 1) {
-        for (const float sample : samples) {
-            out.push_back(std::isfinite(sample) ? static_cast<double>(sample) : 0.0);
-        }
-        return out;
-    }
-    // The four sections of an eighth-order Butterworth.
-    constexpr std::array<double, 4> Q{0.50979557910415917, 0.60134488693504529, 0.89997622313641570, 2.5629154477415055};
-    std::array<LowPass, 4> sections{LowPass(0.4 * rate, sampleRateHz, Q[0]), LowPass(0.4 * rate, sampleRateHz, Q[1]),
-                                    LowPass(0.4 * rate, sampleRateHz, Q[2]), LowPass(0.4 * rate, sampleRateHz, Q[3])};
-    for (std::size_t i = 0; i < samples.size(); ++i) {
-        // A sample that is no number (a decoder's slip) is silence.
-        double x = std::isfinite(samples[i]) ? static_cast<double>(samples[i]) : 0.0;
-        for (LowPass &section : sections) {
-            x = section.process(x);
-        }
-        if (i % step == 0) {
-            out.push_back(x);
-        }
-    }
-    return out;
-}
-
 // In place, a power of two long.
 void transform(std::vector<std::complex<double>> &data, const std::vector<std::complex<double>> &twiddle)
 {
@@ -150,79 +118,132 @@ void transform(std::vector<std::complex<double>> &data, const std::vector<std::c
     }
 }
 
-// How much of each third of a semitone from C2 up there is over the
-// track, every frame counting the same. Empty: under one frame of audio.
-std::optional<std::array<double, Thirds>> thirdsOfTheTrack(std::span<const float> samples, int sampleRateHz)
+// How much of each third of a semitone a track has, from C2 up five
+// octaves, read as the track comes: feed() its audio in pieces, in
+// order, then finish(). What is held meanwhile is one frame of the
+// thinned audio (a second and a half) and the sums.
+//
+// The audio is thinned first: every `step`th sample, after an
+// eighth-order Butterworth low-pass at four tenths of the new rate, so
+// that what would fold down into the notes (at 11 kHz, everything from
+// 8.9 kHz up) is 45 dB down and more. Then frame by frame, each a third
+// of a second after the one before: the peaks of its spectrum, each at
+// its true frequency (a parabola through the peak and its neighbours on
+// a log scale), gathered into thirds of a semitone, and every frame
+// counted the same, loud or quiet.
+class ThirdsReader
 {
-    if (sampleRateHz < KeyLowestSampleRateHz) {
-        return std::nullopt;
-    }
-    double rate = 0.0;
-    const std::vector<double> audio = thinned(samples, sampleRateHz, rate);
-    if (audio.size() < FrameSamples) {
-        return std::nullopt;
-    }
-    const double c2 = 440.0 * std::pow(2.0, -33.0 / 12.0);
-    const double binHz = rate / static_cast<double>(FrameSamples);
-    // From half a semitone under C2 to half a semitone over C7: the first
-    // bin at or above each.
-    const auto firstBinAt = [&](double hz) { return static_cast<std::size_t>(std::ceil(hz / binHz)); };
-    const std::size_t low = std::max<std::size_t>(firstBinAt(c2 * std::pow(2.0, -0.5 / 12.0)), 2);
-    const std::size_t high = std::min(firstBinAt(c2 * 32.0 * std::pow(2.0, 0.5 / 12.0)), FrameSamples / 2 - 1);
-    if (high <= low) {
-        return std::nullopt;
-    }
-
-    std::vector<double> window(FrameSamples);
-    for (std::size_t i = 0; i < FrameSamples; ++i) {
-        window[i] = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(FrameSamples - 1));
-    }
-    std::vector<std::complex<double>> twiddle(FrameSamples / 2);
-    for (std::size_t k = 0; k < FrameSamples / 2; ++k) {
-        twiddle[k] = std::polar(1.0, -2.0 * std::numbers::pi * static_cast<double>(k) / static_cast<double>(FrameSamples));
-    }
-
-    std::array<double, Thirds> total{};
-    std::vector<std::complex<double>> frame(FrameSamples);
-    std::vector<double> magnitude(high + 2);
-    std::array<double, Thirds> inFrame{};
-    const std::size_t frames = 1 + (audio.size() - FrameSamples) / FrameStep;
-    for (std::size_t f = 0; f < frames; ++f) {
+public:
+    // `sampleRateHz` is KeyLowestSampleRateHz at the least.
+    explicit ThirdsReader(int sampleRateHz)
+        : m_step(static_cast<std::size_t>(std::max(1.0, std::round(sampleRateHz / WorkingRateHz)))),
+          m_rate(static_cast<double>(sampleRateHz) / static_cast<double>(m_step)),
+          // The four sections of an eighth-order Butterworth.
+          m_sections{LowPass(0.4 * m_rate, sampleRateHz, Q[0]), LowPass(0.4 * m_rate, sampleRateHz, Q[1]),
+                     LowPass(0.4 * m_rate, sampleRateHz, Q[2]), LowPass(0.4 * m_rate, sampleRateHz, Q[3])},
+          m_binHz(m_rate / static_cast<double>(FrameSamples)), m_window(FrameSamples), m_twiddle(FrameSamples / 2),
+          m_frame(FrameSamples)
+    {
+        const auto firstBinAt = [&](double hz) { return static_cast<std::size_t>(std::ceil(hz / m_binHz)); };
+        m_low = std::max<std::size_t>(firstBinAt(m_c2 * std::pow(2.0, -0.5 / 12.0)), 2);
+        m_high = std::min(firstBinAt(m_c2 * 32.0 * std::pow(2.0, 0.5 / 12.0)), FrameSamples / 2 - 1);
         for (std::size_t i = 0; i < FrameSamples; ++i) {
-            frame[i] = audio[f * FrameStep + i] * window[i];
+            m_window[i] = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(FrameSamples - 1));
         }
-        transform(frame, twiddle);
-        for (std::size_t k = low - 2; k <= high + 1; ++k) {
-            magnitude[k] = std::abs(frame[k]);
+        for (std::size_t k = 0; k < FrameSamples / 2; ++k) {
+            m_twiddle[k] = std::polar(1.0, -2.0 * std::numbers::pi * static_cast<double>(k) / static_cast<double>(FrameSamples));
         }
-        inFrame.fill(0.0);
+        m_magnitude.resize(m_high + 2);
+        m_audio.reserve(FrameSamples);
+    }
+
+    void feed(std::span<const float> samples)
+    {
+        if (m_high <= m_low) {
+            return;
+        }
+        for (const float sample : samples) {
+            // A sample that is no number (a decoder's slip) is silence.
+            double x = std::isfinite(sample) ? static_cast<double>(sample) : 0.0;
+            if (m_step > 1) {
+                for (LowPass &section : m_sections) {
+                    x = section.process(x);
+                }
+            }
+            if (m_seen % m_step == 0) {
+                m_audio.push_back(x);
+                if (m_audio.size() == FrameSamples) {
+                    frame();
+                    m_audio.erase(m_audio.begin(), m_audio.begin() + FrameStep);
+                }
+            }
+            ++m_seen;
+        }
+    }
+
+    // Empty where there is nothing to read a key from: not one whole
+    // frame of audio.
+    std::optional<std::array<double, Thirds>> finish() const
+    {
+        if (m_frames == 0) {
+            return std::nullopt;
+        }
+        return m_total;
+    }
+
+private:
+    static constexpr std::array<double, 4> Q{0.50979557910415917, 0.60134488693504529, 0.89997622313641570, 2.5629154477415055};
+
+    // The frame that m_audio holds, added to the sums.
+    void frame()
+    {
+        for (std::size_t i = 0; i < FrameSamples; ++i) {
+            m_frame[i] = m_audio[i] * m_window[i];
+        }
+        transform(m_frame, m_twiddle);
+        for (std::size_t k = m_low - 2; k <= m_high + 1; ++k) {
+            m_magnitude[k] = std::abs(m_frame[k]);
+        }
+        std::array<double, Thirds> inFrame{};
         double sum = 0.0;
-        // A peak: higher than the bin below and no lower than the one
-        // above. Where it truly is comes from the parabola through the
-        // logarithms of the three, at most half a bin either way; what it
-        // adds is its own height.
-        for (std::size_t k = low; k < high; ++k) {
-            const double below = magnitude[k - 1], here = magnitude[k], above = magnitude[k + 1];
+        for (std::size_t k = m_low; k < m_high; ++k) {
+            const double below = m_magnitude[k - 1], here = m_magnitude[k], above = m_magnitude[k + 1];
             if (!(here > below && here >= above)) {
                 continue;
             }
             const double la = std::log(below + 1e-9), lb = std::log(here + 1e-9), lc = std::log(above + 1e-9);
             const double offset = std::clamp(0.5 * (la - lc) / (la - 2.0 * lb + lc - 1e-12), -0.5, 0.5);
-            const double hz = (static_cast<double>(k) + offset) * binHz;
-            const double third = std::floor(36.0 * std::log2(hz / c2) + 1.5);
+            const double hz = (static_cast<double>(k) + offset) * m_binHz;
+            const double third = std::floor(36.0 * std::log2(hz / m_c2) + 1.5);
             if (third >= 0.0 && third < static_cast<double>(Thirds)) {
                 inFrame[static_cast<std::size_t>(third)] += here;
                 sum += here;
             }
         }
-        // Every frame the same weight, a quiet one as a loud one. The
-        // 1e-6 is against full scale 1.0: a silent frame adds nothing.
         for (int i = 0; i < Thirds; ++i) {
-            total[static_cast<std::size_t>(i)] += inFrame[static_cast<std::size_t>(i)] / (sum + 1e-6);
+            m_total[static_cast<std::size_t>(i)] += inFrame[static_cast<std::size_t>(i)] / (sum + 1e-6);
         }
+        ++m_frames;
     }
-    return total;
-}
+
+    std::size_t m_step;
+    double m_rate;
+    std::array<LowPass, 4> m_sections;
+    double m_binHz;
+    // C2, the lowest note read.
+    double m_c2 = 440.0 * std::pow(2.0, -33.0 / 12.0);
+    std::size_t m_low = 0;
+    std::size_t m_high = 0;
+    std::vector<double> m_window;
+    std::vector<std::complex<double>> m_twiddle;
+    std::vector<std::complex<double>> m_frame;
+    std::vector<double> m_magnitude;
+    // The thinned audio from the start of the next frame on.
+    std::vector<double> m_audio;
+    std::size_t m_seen = 0;
+    std::size_t m_frames = 0;
+    std::array<double, Thirds> m_total{};
+};
 
 }  // namespace
 
@@ -233,9 +254,13 @@ std::string keyName(MusicalKey key)
     return std::string(Names[static_cast<std::size_t>(tonic)]) + (key.minor ? "m" : "");
 }
 
-std::optional<std::array<double, 60>> pitchPicture(std::span<const float> samples, int sampleRateHz)
+namespace
 {
-    const std::optional<std::array<double, Thirds>> thirds = thirdsOfTheTrack(samples, sampleRateHz);
+
+// The thirds of a semitone made into notes: how much of each note there
+// is in each of five octaves.
+std::optional<std::array<double, 60>> pictureOf(const std::optional<std::array<double, Thirds>> &thirds)
+{
     if (!thirds) {
         return std::nullopt;
     }
@@ -281,18 +306,10 @@ std::optional<std::array<double, 60>> pitchPicture(std::span<const float> sample
     return picture;
 }
 
-KeyAnalysis keyFromSamples(std::span<const float> samples, int sampleRateHz)
+// The key a picture of the notes is in.
+KeyAnalysis keyOf(const std::optional<std::array<double, 60>> &picture)
 {
     KeyAnalysis analysis;
-    if (sampleRateHz <= 0 || samples.empty()) {
-        analysis.error = "no samples";
-        return analysis;
-    }
-    if (sampleRateHz < KeyLowestSampleRateHz) {
-        analysis.error = "the sample rate is too low to read a key";
-        return analysis;
-    }
-    const std::optional<std::array<double, 60>> picture = pitchPicture(samples, sampleRateHz);
     if (!picture) {
         return analysis;
     }
@@ -324,6 +341,74 @@ KeyAnalysis keyFromSamples(std::span<const float> samples, int sampleRateHz)
     analysis.key = MusicalKey{static_cast<int>(top % 12), top >= 12};
     analysis.margin = best - second;
     return analysis;
+}
+
+}  // namespace
+
+std::optional<std::array<double, 60>> pitchPicture(std::span<const float> samples, int sampleRateHz)
+{
+    if (sampleRateHz < KeyLowestSampleRateHz) {
+        return std::nullopt;
+    }
+    ThirdsReader reader(sampleRateHz);
+    reader.feed(samples);
+    return pictureOf(reader.finish());
+}
+
+class KeyAnalyser::State
+{
+public:
+    explicit State(int sampleRateHz)
+    {
+        if (sampleRateHz >= KeyLowestSampleRateHz) {
+            reader.emplace(sampleRateHz);
+        }
+    }
+    // Empty where the sample rate is too low.
+    std::optional<ThirdsReader> reader;
+    bool any = false;
+};
+
+KeyAnalyser::KeyAnalyser(int sampleRateHz)
+{
+    if (sampleRateHz > 0) {
+        m_state = std::make_unique<State>(sampleRateHz);
+    }
+}
+
+KeyAnalyser::~KeyAnalyser() = default;
+KeyAnalyser::KeyAnalyser(KeyAnalyser &&) noexcept = default;
+KeyAnalyser &KeyAnalyser::operator=(KeyAnalyser &&) noexcept = default;
+
+void KeyAnalyser::feed(std::span<const float> samples)
+{
+    if (m_state && !samples.empty()) {
+        m_state->any = true;
+        if (m_state->reader) {
+            m_state->reader->feed(samples);
+        }
+    }
+}
+
+KeyAnalysis KeyAnalyser::finish()
+{
+    KeyAnalysis analysis;
+    if (!m_state || !m_state->any) {
+        analysis.error = "no samples";
+    } else if (!m_state->reader) {
+        analysis.error = "the sample rate is too low to read a key";
+    } else {
+        analysis = keyOf(pictureOf(m_state->reader->finish()));
+    }
+    m_state.reset();
+    return analysis;
+}
+
+KeyAnalysis keyFromSamples(std::span<const float> samples, int sampleRateHz)
+{
+    KeyAnalyser analyser(sampleRateHz);
+    analyser.feed(samples);
+    return analyser.finish();
 }
 
 }  // namespace musicanalyze
