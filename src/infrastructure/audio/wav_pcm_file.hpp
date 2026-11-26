@@ -54,17 +54,15 @@ enum class WavReading
     ToEndOfFile,
 };
 
-// A WAV whose header the recorder did not finish: the player was switched
-// off or the stick pulled while it recorded.
+// A WAV whose header was not completed, in one of the two forms that are
+// evidence of a recorder that stopped before it wrote the length (a player
+// switched off or a stick pulled while recording; the file cannot say which).
 struct WavUnfinished
 {
     enum class Kind
     {
-        NoSize,      // the data size is 0 or 0xFFFFFFFF in a plain RIFF
-        PastEnd,     // the data size is more than the file holds
-        StaleSize,   // the data size is less than the file holds, and what
-                     // follows is whole frames to the end and does not
-                     // start with a chunk's id
+        NoSize,   // the data size is 0 or 0xFFFFFFFF in a plain RIFF
+        PastEnd,  // the data size is more than the file holds (cut short)
     };
     Kind kind = Kind::NoSize;
     // Whole frames from the start of the data chunk's audio to the end of
@@ -86,23 +84,24 @@ struct WavUnfinished
 //
 // After the data chunk the file may hold: whole chunks (a recorder's cue,
 // LIST or bext) to the end, the last one without its pad byte; zero bytes
-// to the end (padding); an ID3v1 block (128 bytes from "TAG") at the very
-// end; and after a data chunk of an odd size, chunks that start right
-// after it without its pad byte, when they then end exactly at the end of
-// the file.
+// to the end (padding), no more than one second of audio of them; an ID3v1
+// block (128 bytes from "TAG") at the very end; and after a data chunk of
+// an odd size, chunks that start right after it without its pad byte, when
+// they then end exactly at the end of the file.
 //
 // Unfinished (state() Unfinished, unfinished() says how): a data size of 0
-// or 0xFFFFFFFF in a plain RIFF, a data size more than the file holds, and
-// a data size less than the file holds when the bytes after it are whole
-// frames to the end of the file and do not start with a chunk's id (and are
-// none of what may follow the audio, above). Read to the end of the
-// file only with WavReading::ToEndOfFile; unfinished() is set either way.
+// or 0xFFFFFFFF in a plain RIFF, and a data size more than the file holds.
+// Read to the end of the file only with WavReading::ToEndOfFile;
+// unfinished() is set either way, unless the file holds no whole frame
+// (then refused, holdsNoAudio()).
 //
 // Refused, with the reason in error(): a file that is not a WAV, another
 // sample format (float, 8 or 32 bit, compressed), a plain RIFF over 4 GB,
-// whose data size cannot be told from its header, and a file that holds
-// more than its header describes in any other way (the reason then says
-// how long the header says the audio is and how long the file could hold).
+// an RF64 or BW64 whose ds64 chunk is missing or gives a data size of 0,
+// and a file that holds more than its header describes in any other way,
+// zero bytes of more than a second included (the reason then gives the
+// length the header declares and the length the file could hold, and says
+// only that the header does not match the file).
 //
 // Never throws from the constructor; readFrames() throws on a read error
 // (the file was taken away meanwhile).
@@ -128,6 +127,8 @@ public:
     // Set whenever the header is unfinished, read to the end or not. The
     // sample format is in layout() then too.
     const std::optional<WavUnfinished> &unfinished() const { return m_unfinished; }
+    // Refused because there is not one whole frame of audio in it.
+    bool holdsNoAudio() const { return m_noAudio; }
     // When open: what is read. With WavReading::ToEndOfFile and an
     // unfinished header, `frames` is unfinished()->framesHeld.
     const WavLayout &layout() const { return m_layout; }
@@ -140,8 +141,9 @@ public:
 private:
     // Whether the bytes from `at` to the end are what may follow the
     // audio (see the class comment). `strict`: whole chunks only, ending
-    // exactly at the end of the file.
-    bool onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize, bool strict) const;
+    // exactly at the end of the file. A run of zero bytes to the end is
+    // padding only up to `maxZeroBytes`.
+    bool onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize, bool strict, std::uint64_t maxZeroBytes) const;
     bool zeroBytesFrom(std::uint64_t at, std::uint64_t fileSize) const;
     void refuse(std::string why);
 
@@ -149,6 +151,7 @@ private:
     WavLayout m_layout;
     State m_state = State::Refused;
     std::optional<WavUnfinished> m_unfinished;
+    bool m_noAudio = false;
     std::string m_error;
 };
 

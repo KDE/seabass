@@ -204,13 +204,22 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
                     return;
                 }
             } else if (isId(chunk.data(), "data")) {
-                if (m_layout.rf64 && size32 == 0xFFFFFFFF) {
+                if (m_layout.rf64 && (size32 == 0xFFFFFFFF || size32 == 0)) {
+                    // RF64 and BW64 keep the size in ds64. One that is not
+                    // there or 0 is not read as a recorder that stopped:
+                    // these forms are not what the measured case was.
                     if (!ds64DataSize) {
-                        refuse("its RF64 header is damaged (no ds64 chunk before the audio)");
+                        refuse("its RF64 header does not say how long its audio is (it has no ds64 chunk before "
+                               "the audio)");
+                        return;
+                    }
+                    if (*ds64DataSize == 0) {
+                        refuse("its RF64 header does not say how long its audio is (the audio size in its ds64 "
+                               "chunk is 0)");
                         return;
                     }
                     size = *ds64DataSize;
-                } else if (size32 == 0 || size32 == 0xFFFFFFFF) {
+                } else if (!m_layout.rf64 && (size32 == 0 || size32 == 0xFFFFFFFF)) {
                     // What a recorder leaves when it was stopped before it
                     // could write the length: the audio runs to the end.
                     noSize = true;
@@ -253,31 +262,27 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
                 return;
             }
             // The header must describe the whole file: after the audio,
-            // only what onlyChunksFrom() takes. After an odd data chunk a
-            // writer may have left out the pad byte: then the chunks must
-            // end exactly at the end of the file.
-            const bool described = onlyChunksFrom(at, fileSize, false)
-                || ((dataBytes & 1U) != 0 && onlyChunksFrom(*dataOffset + dataBytes, fileSize, true));
+            // only what onlyChunksFrom() takes, zero bytes up to a second
+            // of audio (more digital silence than that is more likely audio
+            // the header does not count than padding). After an odd data
+            // chunk a writer may have left out the pad byte: then the
+            // chunks must end exactly at the end of the file.
+            const std::uint64_t oneSecond = static_cast<std::uint64_t>(fmt->sampleRate) * align;
+            const bool described = onlyChunksFrom(at, fileSize, false, oneSecond)
+                || ((dataBytes & 1U) != 0 && onlyChunksFrom(*dataOffset + dataBytes, fileSize, true, 0));
             if (!described) {
-                // Audio after a stale data size: whole frames to the end,
-                // and not the start of a chunk (bytes that begin with a
-                // chunk's id are a damaged chunk, not audio).
-                bool chunkAfter = false;
-                if (held - dataBytes >= 4) {
-                    std::array<std::byte, 4> id{};
-                    m_file->readAt(*dataOffset + dataBytes, id);
-                    chunkAfter = isChunkId(id.data());
+                // Not offered as unfinished: a finished file with a trailer
+                // this does not know (a raw ID3v2 tag, a stray byte before
+                // a chunk) would have it appended as noise. Only what is
+                // known is said.
+                const std::string declared = wavDuration(dataBytes / align, fmt->sampleRate);
+                const std::string room = wavDuration(held / align, fmt->sampleRate);
+                std::string why = "its header declares " + declared + " of audio and the file could hold " + room;
+                if (declared == room) {
+                    why += " (" + std::to_string(held - dataBytes) + " bytes more than the header declares)";
                 }
-                if ((held - dataBytes) % align == 0 && !chunkAfter) {
-                    unfinished = WavUnfinished::Kind::StaleSize;
-                } else {
-                    refuse("its header says it holds " + wavDuration(dataBytes / align, fmt->sampleRate)
-                           + " of audio, and the file has room for " + wavDuration(held / align, fmt->sampleRate)
-                           + ". The recording was not finished properly (the recorder was stopped by a power loss or "
-                             "the stick was pulled), so its header does not describe the whole file, and keeping it "
-                             "would keep only part of the set");
-                    return;
-                }
+                refuse(why + ": the header does not match the file");
+                return;
             }
         }
 
@@ -287,27 +292,23 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
             info.framesHeld = held / align;
             info.partialFrameBytes = held % align;
             info.framesDeclared = *unfinished == WavUnfinished::Kind::NoSize ? 0 : dataBytes / align;
-            m_unfinished = info;
             if (info.framesHeld == 0) {
+                m_noAudio = true;
                 refuse("it holds no audio");
                 return;
             }
+            m_unfinished = info;
             const std::string holds = wavDuration(info.framesHeld, fmt->sampleRate);
             if (reading == WavReading::AsDeclared) {
                 m_state = State::Unfinished;
                 switch (info.kind) {
                     case WavUnfinished::Kind::NoSize:
-                        m_error = "the player did not finish this recording: its header does not say how long the "
-                                  "audio is. The file holds " + holds + " of audio";
+                        m_error = "its header was not completed: it does not say how long the audio is. The file "
+                                  "holds " + holds + " of audio";
                         break;
                     case WavUnfinished::Kind::PastEnd:
-                        m_error = "the player did not finish this recording: its header says it holds "
+                        m_error = "its header was not completed: it declares "
                             + wavDuration(info.framesDeclared, fmt->sampleRate) + " of audio, and the file holds "
-                            + holds;
-                        break;
-                    case WavUnfinished::Kind::StaleSize:
-                        m_error = "the player did not finish this recording: its header says it holds "
-                            + wavDuration(info.framesDeclared, fmt->sampleRate) + " of audio, and the file has room for "
                             + holds;
                         break;
                 }
@@ -318,6 +319,7 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
         m_layout.dataBytes = dataBytes;
         m_layout.frames = dataBytes / align;
         if (m_layout.frames == 0) {
+            m_noAudio = true;
             refuse("it holds no audio");
             return;
         }
@@ -351,14 +353,15 @@ bool WavPcmFile::zeroBytesFrom(std::uint64_t at, std::uint64_t fileSize) const
     return true;
 }
 
-bool WavPcmFile::onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize, bool strict) const
+bool WavPcmFile::onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize, bool strict,
+                                std::uint64_t maxZeroBytes) const
 {
     constexpr std::uint64_t Id3v1Bytes = 128;
     while (at < fileSize) {
         if (!strict) {
             // Padding to the end, or an ID3v1 block at the very end.
             if (zeroBytesFrom(at, fileSize)) {
-                return true;
+                return fileSize - at <= maxZeroBytes;
             }
             if (fileSize - at == Id3v1Bytes) {
                 std::array<std::byte, 3> tag{};

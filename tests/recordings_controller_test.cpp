@@ -411,8 +411,10 @@ int main(int argc, char **argv)
     }
 
 #if defined(SEABASS_HAVE_RECORDING_ENCODER)
-    // A recording the player did not finish: its row says so, with the
-    // seconds of audio the file holds.
+    // A recording whose header was not completed: its row says so, with
+    // the seconds of audio the file holds, and the seconds the header
+    // declares where it declares any (cut short). One without a whole
+    // frame holds no audio.
     {
         for (int i = 0; i < 300 && controller.busy(); ++i) {
             listed.wait(100);
@@ -420,26 +422,51 @@ int main(int argc, char **argv)
         std::string unfinished = wav(44100 * 2, 'u');
         unfinished.replace(40, 4, std::string(4, '\xff'));
         write(stick / "Sessions" / "U1.wav", unfinished);
+        std::string cutShort = wav(44100 * 2, 'c');
+        const std::uint32_t declared = 44100 * 4 * 4;  // four seconds
+        for (int i = 0; i < 4; ++i) {
+            cutShort[static_cast<std::size_t>(40 + i)] = static_cast<char>((declared >> (8 * i)) & 0xff);
+        }
+        cutShort += "\x01\x02";  // a partial last frame
+        write(stick / "Sessions" / "C1.wav", cutShort);
+        std::string empty = wav(0, 'e');
+        empty.replace(40, 4, std::string(4, '\0'));
+        write(stick / "Sessions" / "E1.wav", empty);
         write(stick / "Sessions" / "F1.wav", wav(44100, 'f'));
         const int listedBefore = listed.count();
         controller.load(QStringLiteral("STICK"), QString(), pathToQString(engine));
         assert(waitFor(listed, listedBefore + 1));
         auto *model = controller.recordings();
+        using Model = seabass::gui::RecordingListModel;
         bool sawUnfinished = false;
+        bool sawCutShort = false;
+        bool sawEmpty = false;
         bool sawFinished = false;
         for (int i = 0; i < model->rowCount(); ++i) {
-            const QString name = model->data(model->index(i), seabass::gui::RecordingListModel::FileNameRole).toString();
-            const bool rowUnfinished = model->data(model->index(i), seabass::gui::RecordingListModel::UnfinishedRole).toBool();
-            const double held = model->data(model->index(i), seabass::gui::RecordingListModel::HeldSecondsRole).toDouble();
+            const QModelIndex index = model->index(i);
+            const QString name = model->data(index, Model::FileNameRole).toString();
+            const bool rowUnfinished = model->data(index, Model::UnfinishedRole).toBool();
+            const double held = model->data(index, Model::HeldSecondsRole).toDouble();
+            const double declaredSeconds = model->data(index, Model::DeclaredSecondsRole).toDouble();
+            const bool noAudio = model->data(index, Model::HoldsNoAudioRole).toBool();
             if (name == QStringLiteral("U1.wav")) {
-                sawUnfinished = rowUnfinished && held > 1.99 && held < 2.01;
+                sawUnfinished = rowUnfinished && held > 1.99 && held < 2.01 && declaredSeconds < 0 && !noAudio;
+            } else if (name == QStringLiteral("C1.wav")) {
+                sawCutShort = rowUnfinished && held > 1.99 && held < 2.01 && declaredSeconds > 3.99
+                    && declaredSeconds < 4.01 && !noAudio;
+            } else if (name == QStringLiteral("E1.wav")) {
+                sawEmpty = noAudio && !rowUnfinished;
             } else if (name == QStringLiteral("F1.wav")) {
-                sawFinished = !rowUnfinished && held < 0;
+                sawFinished = !rowUnfinished && held < 0 && declaredSeconds < 0 && !noAudio;
             }
         }
         assert(sawUnfinished);
+        assert(sawCutShort);
+        std::cout << "ok: a recording cut short is marked with both lengths\n";
+        assert(sawEmpty);
+        std::cout << "ok: a recording without a whole frame holds no audio\n";
         assert(sawFinished);
-        std::cout << "ok: a recording the player did not finish is marked, with the audio the file holds\n";
+        std::cout << "ok: a recording whose header was not completed is marked, with the audio the file holds\n";
     }
 #endif
 

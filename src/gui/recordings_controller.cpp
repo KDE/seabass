@@ -68,6 +68,10 @@ QVariant RecordingListModel::data(const QModelIndex &index, int role) const
             return m_states[static_cast<std::size_t>(index.row())].unfinished;
         case HeldSecondsRole:
             return m_states[static_cast<std::size_t>(index.row())].heldSeconds;
+        case DeclaredSecondsRole:
+            return m_states[static_cast<std::size_t>(index.row())].declaredSeconds;
+        case HoldsNoAudioRole:
+            return m_states[static_cast<std::size_t>(index.row())].holdsNoAudio;
         default:
             return {};
     }
@@ -96,6 +100,8 @@ QHash<int, QByteArray> RecordingListModel::roleNames() const
         {IncludedRole, "included"},
         {UnfinishedRole, "unfinished"},
         {HeldSecondsRole, "heldSeconds"},
+        {DeclaredSecondsRole, "declaredSeconds"},
+        {HoldsNoAudioRole, "holdsNoAudio"},
     };
 }
 
@@ -162,8 +168,9 @@ application::RecordingDeleteHooks &deleteHooks()
     return hooks;
 }
 
-// For each WAV, whether the player finished it: its header only, a few
-// reads. A recording that could not be kept anyway says nothing here.
+// For each WAV, whether its header was completed, and whether it holds any
+// audio: its header only, a few reads. A recording refused for another
+// reason says nothing here.
 std::vector<RecordingListModel::HeaderState> headerStates(const std::vector<application::Recording> &recordings)
 {
     std::vector<RecordingListModel::HeaderState> states(recordings.size());
@@ -174,10 +181,14 @@ std::vector<RecordingListModel::HeaderState> headerStates(const std::vector<appl
             continue;
         }
         const infrastructure::audio::WavPcmFile wav(pathFromUtf8(recordings[i].path));
+        states[i].holdsNoAudio = wav.holdsNoAudio();
         if (const auto &unfinished = wav.unfinished(); unfinished && wav.layout().sampleRate > 0) {
+            const auto rate = static_cast<double>(wav.layout().sampleRate);
             states[i].unfinished = true;
-            states[i].heldSeconds =
-                static_cast<double>(unfinished->framesHeld) / static_cast<double>(wav.layout().sampleRate);
+            states[i].heldSeconds = static_cast<double>(unfinished->framesHeld) / rate;
+            if (unfinished->kind != infrastructure::audio::WavUnfinished::Kind::NoSize) {
+                states[i].declaredSeconds = static_cast<double>(unfinished->framesDeclared) / rate;
+            }
         }
     }
 #endif

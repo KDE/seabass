@@ -113,7 +113,8 @@ Page {
 
     // Opens the form for a row of the list.
     function openKeepForm(row) {
-        keepDialog.openFor(row.path, row.fileName, row.modified, row.unfinished, row.heldSeconds);
+        keepDialog.openFor(row.path, row.fileName, row.modified, row.unfinished, row.heldSeconds,
+                           row.declaredSeconds);
     }
 
     // What the strip says, for the job in hand or the ones that ended.
@@ -256,10 +257,12 @@ Page {
 
         property string wavPath: ""
         property string recording: ""
-        // The player did not finish the recording: the audio the file
-        // holds is kept only when the person ticks the box for it.
+        // The recording's header was not completed: the audio the file
+        // holds is kept only when the person ticks the box for it. The
+        // header's own length is -1 when it declares none.
         property bool unfinished: false
         property double heldSeconds: -1
+        property double declaredSeconds: -1
         // Shown once the person has tried to start, or has typed.
         property bool tried: false
         readonly property var keep: root.keepController
@@ -279,12 +282,13 @@ Page {
         readonly property bool ready: problems.length === 0 && keep !== null && keep.coverPreparing !== true
             && (!keepDialog.unfinished || keepUnfinishedBox.checked)
 
-        function openFor(path, name, recorded, unfinished, heldSeconds) {
+        function openFor(path, name, recorded, unfinished, heldSeconds, declaredSeconds) {
             const suggested = root.keepController.suggestionsFor(name, recorded);
             keepDialog.wavPath = path;
             keepDialog.recording = name;
             keepDialog.unfinished = unfinished === true;
             keepDialog.heldSeconds = heldSeconds ?? -1;
+            keepDialog.declaredSeconds = declaredSeconds ?? -1;
             keepUnfinishedBox.checked = false;
             keepDialog.tried = false;
             artistField.text = suggested.artist;
@@ -343,8 +347,9 @@ Page {
         }
         ExperimentalBadge {}
 
-        // A recording the player did not finish: said first, and kept only
-        // with the box ticked.
+        // A recording whose header was not completed: said first, both
+        // lengths where there are two, and kept only with the box ticked.
+        // The cause is given as what usually leads there, not as fact.
         ColumnLayout {
             objectName: "keepUnfinishedNotice"
             Layout.fillWidth: true
@@ -355,9 +360,15 @@ Page {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Theme.danger
-                text: qsTr("The player did not finish this recording: it was switched off or the stick was pulled "
-                    + "while it recorded. The file holds %1 of audio. The recording on the stick is not changed.")
-                    .arg(root.duration(keepDialog.heldSeconds))
+                text: keepDialog.declaredSeconds >= 0
+                    ? qsTr("The header of this recording was not completed: the header declares %1 of audio, the "
+                        + "file holds %2. This happens when a player is switched off or a stick is pulled while "
+                        + "recording. The recording on the stick is not changed.")
+                        .arg(root.duration(keepDialog.declaredSeconds)).arg(root.duration(keepDialog.heldSeconds))
+                    : qsTr("The header of this recording was not completed: it does not say how long the audio "
+                        + "is. The file holds %1 of audio. This happens when a player is switched off or a stick "
+                        + "is pulled while recording. The recording on the stick is not changed.")
+                        .arg(root.duration(keepDialog.heldSeconds))
             }
             SeabassCheckBox {
                 id: keepUnfinishedBox
@@ -669,6 +680,8 @@ Page {
                 required property bool included
                 required property bool unfinished
                 required property double heldSeconds
+                required property double declaredSeconds
+                required property bool holdsNoAudio
 
                 readonly property var kept: root.keepController !== null
                     ? (root.keepRevision, root.keepController.outcomeFor(row.path)) : ({})
@@ -692,8 +705,16 @@ Page {
                     if (row.modified && !isNaN(row.modified.getTime())) {
                         parts.push(row.modified.toLocaleString(Qt.locale(), Locale.ShortFormat));
                     }
+                    if (row.holdsNoAudio) {
+                        parts.push(qsTr("holds no audio"));
+                        return parts.join(" · ");
+                    }
                     if (row.unfinished) {
-                        parts.push(qsTr("not finished by the player, %1 of audio").arg(root.duration(row.heldSeconds)));
+                        parts.push(row.declaredSeconds >= 0
+                            ? qsTr("header not completed: it declares %1, the file holds %2")
+                                .arg(root.duration(row.declaredSeconds)).arg(root.duration(row.heldSeconds))
+                            : qsTr("header not completed, the file holds %1 of audio")
+                                .arg(root.duration(row.heldSeconds)));
                         return parts.join(" · ");
                     }
                     const length = root.duration(row.durationSeconds);
@@ -769,7 +790,7 @@ Page {
                     }
                     Button {
                         objectName: "keepButton"
-                        visible: root.keepOffered && root.keepController.canKeep(row.path)
+                        visible: root.keepOffered && root.keepController.canKeep(row.path) && !row.holdsNoAudio
                         text: qsTr("Keep…")
                         icon.source: Theme.iconUrl("document-save")
                         icon.color: enabled ? Theme.text : Theme.textMuted

@@ -274,15 +274,15 @@ TestCase {
         rows.append({path: "/media/u/WHALESHARK/Sessions/Milkshaken.wav", fileName: "Milkshaken.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 2239137764,
                      modified: new Date(2026, 4, 7, 20, 6), durationSeconds: 12693.5, included: false,
-                     unfinished: false, heldSeconds: -1});
+                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
         rows.append({path: "/media/u/WHALESHARK/Sessions/Session-0002.wav", fileName: "Session-0002.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 111384620,
                      modified: new Date(2026, 6, 12, 2, 30), durationSeconds: 631.4, included: false,
-                     unfinished: false, heldSeconds: -1});
+                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
         rows.append({path: "/media/u/WHALESHARK/PIONEER REC/REC001.WAV", fileName: "REC001.WAV",
                      folderName: "PIONEER REC", source: "pioneer", sizeBytes: 457387052,
                      modified: new Date(2017, 0, 1, 1, 0), durationSeconds: -1, included: false,
-                     unfinished: false, heldSeconds: -1});
+                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
         controller.recount();
     }
 
@@ -593,7 +593,7 @@ TestCase {
             controller.recordings.append({path: "/media/u/WHALESHARK/Sessions/Set.mp3", fileName: "Set.mp3",
                                           folderName: "Sessions", source: "engine", sizeBytes: 1000,
                                           modified: new Date(2026, 1, 1), durationSeconds: 10, included: false,
-                                          unfinished: false, heldSeconds: -1});
+                                          unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
         });
         for (let i = 0; i < 3; ++i) {
             verify(findChild(row(page, i), "keepButton").visible, "row " + i + " is a WAV and can be kept");
@@ -1070,9 +1070,10 @@ TestCase {
         dialog.reject();
     }
 
-    // A recording the player did not finish: the row says so with the
-    // audio the file holds; the form says it plainly and starts only once
-    // the box is ticked, and the choice goes with the job.
+    // A recording whose header was not completed and declares no length:
+    // the row says so with the audio the file holds; the form says it
+    // plainly, the cause only as what usually leads there, and starts only
+    // once the box is ticked, and the choice goes with the job.
     function test_anUnfinishedRecording() {
         const page = makePage(controller => {
             addRecordings(controller);
@@ -1080,15 +1081,16 @@ TestCase {
             controller.recordings.setProperty(1, "heldSeconds", 3723.4);
         });
         const details = findChild(row(page, 1), "detailsLabel").text;
-        verify(details.endsWith("not finished by the player, 1:02:03 of audio"), details);
-        verify(findChild(row(page, 0), "detailsLabel").text.indexOf("not finished") < 0, "a finished one says nothing of it");
+        verify(details.endsWith("header not completed, the file holds 1:02:03 of audio"), details);
+        verify(findChild(row(page, 0), "detailsLabel").text.indexOf("not completed") < 0, "a finished one says nothing of it");
 
         const dialog = openForm(page, 1);
         const notice = field(page, "keepUnfinishedNotice");
-        verify(notice.visible, "the form says the player did not finish it");
+        verify(notice.visible, "the form says the header was not completed");
         compare(field(page, "keepUnfinishedLabel").text,
-                "The player did not finish this recording: it was switched off or the stick was pulled while it "
-                + "recorded. The file holds 1:02:03 of audio. The recording on the stick is not changed.");
+                "The header of this recording was not completed: it does not say how long the audio is. The file "
+                + "holds 1:02:03 of audio. This happens when a player is switched off or a stick is pulled while "
+                + "recording. The recording on the stick is not changed.");
         const box = field(page, "keepUnfinishedBox");
         compare(box.text, "Keep the audio the file holds");
         compare(box.checked, false, "the box starts unticked");
@@ -1115,21 +1117,63 @@ TestCase {
         compare(page.keepController.lastForm.keepUnfinished, false, "and no choice sent");
     }
 
-    // A kept job's notes show when it is done: the player did not finish
-    // it, and how much was kept.
+    // Cut short: the header declares more than the file holds. The row and
+    // the form give both lengths, and the form opened for another such
+    // recording right after shows that one's.
+    function test_aRecordingCutShortShowsBothLengths() {
+        const page = makePage(controller => {
+            addRecordings(controller);
+            controller.recordings.setProperty(1, "unfinished", true);
+            controller.recordings.setProperty(1, "heldSeconds", 2530.2);
+            controller.recordings.setProperty(1, "declaredSeconds", 3600);
+            controller.recordings.setProperty(0, "unfinished", true);
+            controller.recordings.setProperty(0, "heldSeconds", 61);
+        });
+        const details = findChild(row(page, 1), "detailsLabel").text;
+        verify(details.endsWith("header not completed: it declares 1:00:00, the file holds 42:10"), details);
+        openForm(page, 1);
+        compare(field(page, "keepUnfinishedLabel").text,
+                "The header of this recording was not completed: the header declares 1:00:00 of audio, the file "
+                + "holds 42:10. This happens when a player is switched off or a stick is pulled while recording. "
+                + "The recording on the stick is not changed.");
+        saveScreenshot(page, "recordings-keep-form-cut-short");
+        findChild(page, "keepDialog").close();
+        tryVerify(() => !findChild(page, "keepDialog").visible, 2000);
+        openForm(page, 0);
+        verify(field(page, "keepUnfinishedLabel").text.indexOf("does not say how long") >= 0,
+               "one that declares no length: its own words, not the last one's lengths");
+    }
+
+    // A WAV without one whole frame of audio: the row says so and offers
+    // no keeping.
+    function test_aRecordingThatHoldsNoAudio() {
+        const page = makePage(controller => {
+            addRecordings(controller);
+            controller.recordings.setProperty(1, "holdsNoAudio", true);
+        });
+        const details = findChild(row(page, 1), "detailsLabel").text;
+        verify(details.endsWith("holds no audio"), details);
+        verify(!findChild(row(page, 1), "keepButton").visible, "not offered to keep");
+        verify(findChild(row(page, 0), "keepButton").visible, "another WAV still is");
+    }
+
+    // A kept job's notes show when it is done: the header was not
+    // completed, and how much was kept.
     function test_theNotesOfAKeptJob() {
         const page = makePage(addRecordings, keep => {
             keptKeep(keep);
             const done = Object.assign({}, keep.finishedJobs[0]);
-            done.notes = ["The player did not finish this recording. The FLAC holds 1:02:03 of audio, every whole "
-                          + "frame the file held. The recording on the stick was not changed."];
+            done.notes = ["The header of this recording was not completed and did not say how long the audio is, "
+                          + "so the file was read to its end. The FLAC holds 1:02:03 of audio, every whole frame "
+                          + "the file held. The recording on the stick was not changed."];
             keep.finishedJobs = [done];
             keep.revision++;
         });
         const strip = findChild(page, "keepProgress");
         mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
         compare(findChild(strip, "passiveProgressNote").text,
-                "The player did not finish this recording. The FLAC holds 1:02:03 of audio, every whole frame the file "
-                + "held. The recording on the stick was not changed.");
+                "The header of this recording was not completed and did not say how long the audio is, so the file "
+                + "was read to its end. The FLAC holds 1:02:03 of audio, every whole frame the file held. The "
+                + "recording on the stick was not changed.");
     }
 }

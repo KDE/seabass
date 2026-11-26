@@ -192,7 +192,12 @@ public:
         m_result.message.clear();
         m_result.leftBehind.clear();
         if (m_result.unfinished) {
-            m_result.notes.push_back("The player did not finish this recording. The FLAC holds " + m_keptDuration
+            const std::string what = m_declaredDuration
+                ? "The header of this recording was not completed: it declares " + *m_declaredDuration
+                    + " of audio, the file held " + m_keptDuration + "."
+                : "The header of this recording was not completed and did not say how long the audio is, so the "
+                  "file was read to its end.";
+            m_result.notes.push_back(what + " The FLAC holds " + m_keptDuration
                                      + " of audio, every whole frame the file held"
                                      + (m_partialBytes > 0 ? "; the last " + std::to_string(m_partialBytes)
                                                                  + " bytes, less than a frame, were left out."
@@ -350,15 +355,23 @@ private:
         if (encoded.unfinished) {
             m_keptDuration = clockDuration(encoded.framesInWav, encoded.sampleRate);
             m_partialBytes = encoded.partialFrameBytesDropped;
+            if (encoded.framesDeclared) {
+                m_declaredDuration = clockDuration(*encoded.framesDeclared, encoded.sampleRate);
+            }
             if (encoded.sampleRate > 0) {
                 m_result.keptSeconds =
                     static_cast<double>(encoded.framesInWav) / static_cast<double>(encoded.sampleRate);
             }
         }
         if (encoded.unfinished && !m_request.keepUnfinished && !encoded.encoded && !encoded.cancelled) {
-            return fail("The recording was not kept: the player did not finish it, so its header does not describe "
-                        "the audio. The file holds " + m_keptDuration
-                        + " of audio. Choose \"Keep the audio the file holds\" to keep that.");
+            const std::string what = m_declaredDuration
+                ? "its header was not completed. The header declares " + *m_declaredDuration
+                    + " of audio, the file holds " + m_keptDuration + "."
+                : "its header was not completed and does not say how long the audio is. The file holds "
+                    + m_keptDuration + " of audio.";
+            return fail("The recording was not kept: " + what
+                        + " This happens when a player is switched off or a stick is pulled while recording. "
+                          "Choose \"Keep the audio the file holds\" to keep that.");
         }
         if (encoded.cancelled) {
             m_result.status = KeepRecordingResult::Status::Cancelled;
@@ -495,6 +508,8 @@ private:
     bool m_encodeStarted = false;
     std::optional<std::uint64_t> m_encodedBytes;
     std::string m_keptDuration;
+    // What the header declares; nullopt when it declares no size.
+    std::optional<std::string> m_declaredDuration;
     std::uint64_t m_partialBytes = 0;
 };
 

@@ -161,13 +161,18 @@ from day one.
   the QImage cover preparer and the TagLib tag writer. Nothing under the
   target's name is ever replaced; a failure or a cancel leaves no file in
   the folder; the recording on the stick is only read and never deleted
-  here. A recording the player did not finish (switched off or the stick
-  pulled while it recorded, so its WAV header was never completed) is
-  marked on its row and kept only when "Keep the audio the file holds" is
-  ticked: every whole frame the file holds, the WAV never repaired.
+  here. A recording whose WAV header was not completed (a data size of 0
+  or 0xFFFFFFFF in a plain RIFF, or more than the file holds) is marked
+  on its row with the length the file holds, and the length the header
+  declares where it declares one, and kept only when "Keep the audio the
+  file holds" is ticked: every whole frame the file holds, the WAV never
+  repaired. A header that declares less than the file holds, or a finished
+  file followed by more than a second of zero bytes or bytes it does not
+  know, is refused with both lengths; RF64 takes its size from ds64 only.
   Leftover temporary files (`*.seabass-encode-tmp`, `*.seabass-tag-tmp`)
   older than a day are swept from the target folder at the start of a
-  job. Shown only with Experimental on. Verified with synthetic WAVs
+  job, except a tag writer's copy whose FLAC is not beside it, which the
+  job's notes name instead. Shown only with Experimental on. Verified with synthetic WAVs
   (`keep_recording_test`, `keep_recording_controller_test`,
   `recording_encoder_test`, `recording_tag_writer_test`,
   `local_keep_recording_files_test`); no real recording has been kept

@@ -25,16 +25,21 @@
 //   - a valid FLAC of other audio with its MD5 zeroed, and a 24 bit FLAC
 //     that differs from the WAV in the lowest byte of one sample only, put
 //     in the place of the encoded file: the comparison itself refuses them;
-//   - a WAV with bytes after its data chunk: chunks, zero bytes to the end,
-//     an ID3v1 block at the end, and after an odd data chunk a chunk
-//     without the pad byte that ends exactly at the end are fine; anything
-//     else is refused with the two lengths, counted in whole frames;
-//   - a recording the player did not finish (a data size of 0 or
-//     0xFFFFFFFF, one past the end, a stale one with whole frames after
-//     it), 16 and 24 bit, with a partial last frame: refused, saying so,
-//     without the choice; with it, every whole frame is kept, the partial
-//     frame reported, STREAMINFO's total the frames kept and the FLAC the
-//     signal of those frames;
+//   - a WAV with bytes after its data chunk: chunks, zero bytes to the end
+//     (up to a second of audio), an ID3v1 block at the end, and after an
+//     odd data chunk a chunk without the pad byte that ends exactly at the
+//     end are fine; anything else (a stale size with frames after it, a raw
+//     ID3v2 tag, a stray pad byte before a LIST, more than a second of
+//     zeros) is refused with the two lengths, counted in whole frames, the
+//     choice to keep an unfinished one or not;
+//   - a recording whose header was not completed (a data size of 0 or
+//     0xFFFFFFFF in a plain RIFF, one past the end), 16 and 24 bit, with a
+//     partial last frame: refused, saying so with both lengths where there
+//     are two, without the choice; with it, every whole frame is kept, the
+//     partial frame reported, STREAMINFO's total the frames kept and the
+//     FLAC the signal of those frames;
+//   - RF64 with a data size of 0 is refused with a plain reason, and a file
+//     without one whole frame holds no audio;
 //   - the temporary file is named "<FLAC>.<16 hex>.seabass-encode-tmp",
 //     and the recorder writes under that name (no extension added);
 //   - a temporary name too long for the filesystem: refused, saying so;
@@ -69,6 +74,8 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -328,7 +335,7 @@ void refusals(const std::string &dir)
         WavSpec spec{44100, 2, 16, 44100};
         spec.declaredDataBytes = 44100 * 4 * 2;
         recording_test::writeWav(wav, spec);
-        refused("cut short", wav, flac, "did not finish");
+        refused("cut short", wav, flac, "it declares 0:02 of audio, and the file holds 0:01");
         check(!exists(flac), "cut short: no FLAC");
     }
     // Not a WAV.
@@ -344,7 +351,7 @@ void refusals(const std::string &dir)
         WavSpec spec{44100, 2, 16, 44100};
         spec.declaredDataBytes = 0xFFFFFFFFU;
         recording_test::writeWav(wav, spec);
-        refused("unfinished", wav, dir + "/unfinished.flac", "did not finish");
+        refused("unfinished", wav, dir + "/unfinished.flac", "its header was not completed: it does not say how long");
     }
     // A sample format that is not read: 8 bit, written by hand.
     {
@@ -409,8 +416,9 @@ void refusals(const std::string &dir)
     }
 }
 
-// A stale data size, and garbage after the audio: the header does not
-// describe the file, which is refused with the two lengths.
+// A header that declares less than the file holds, and garbage after the
+// audio: the header does not match the file, which is refused with the
+// two lengths and nothing said of a cause. Never offered as unfinished.
 void trailingBytes(const std::string &dir)
 {
     QtFlacRecordingEncoder encoder;
@@ -419,49 +427,72 @@ void trailingBytes(const std::string &dir)
         const std::string flac = dir + "/" + label + ".flac";
         recording_test::writeWav(wav, spec);
         const Run run = encode(encoder, wav, flac);
-        check(!run.result.encoded && !run.result.cancelled, label + ": refused");
+        check(!run.result.encoded && !run.result.cancelled && !run.result.unfinished, label + ": refused, not as unfinished");
         check(run.result.error.find(reason) != std::string::npos,
               label + ": the reason says \"" + reason + "\": " + run.result.error);
+        check(run.result.error.find("the header does not match the file") != std::string::npos
+                  && run.result.error.find("pulled") == std::string::npos
+                  && run.result.error.find("power") == std::string::npos,
+              label + ": only what is known is said: " + run.result.error);
         check(!exists(flac) && noTempBeside(flac), label + ": nothing written");
+        // Not with the choice either: it is not offered.
+        const Run chosen = encode(encoder, wav, flac, application::CancellationToken::none(), 2.0, true);
+        check(!chosen.result.encoded && !exists(flac) && noTempBeside(flac), label + ": with the choice, refused too");
     };
-    // Two minutes recorded, the header still says one: what a recorder
-    // that lost power after an earlier update of the header leaves.
+    // Two minutes of frames, the header says one (a stale size).
     WavSpec stale{44100, 2, 16, 44100 * 120};
     stale.declaredDataBytes = 44100 * 4 * 60;
-    refusedWith("stale-size", stale, "header says it holds 1:00 of audio, and the file has room for 2:00");
+    refusedWith("stale-size", stale, "its header declares 1:00 of audio and the file could hold 2:00");
+    // A finished file and a raw ID3v2 tag after it.
+    WavSpec id3v2{44100, 2, 16, 44100 * 3};
+    id3v2.trailing = std::string("ID3\x04\x00\x00\x00\x00\x02\x01", 10) + "TIT2" + std::string(253, '\x05');
+    refusedWith("raw-id3v2", id3v2, "its header declares 0:03 of audio and the file could hold 0:03 (267 bytes more");
+    // A stray pad byte before a LIST chunk (the data chunk is even).
+    WavSpec strayPad{44100, 2, 16, 44100 * 3};
+    strayPad.trailing = std::string(1, '\0') + std::string("LIST\x04\x00\x00\x00INFO", 12);
+    refusedWith("stray-pad-before-list", strayPad,
+                "its header declares 0:03 of audio and the file could hold 0:03 (13 bytes more");
+    // More than a second of zero bytes after the audio: digital silence
+    // that long is not taken for padding.
+    WavSpec longZeros{44100, 2, 16, 44100 * 2};
+    longZeros.trailing = std::string(44100 * 4 + 4, '\0');
+    refusedWith("zeros-over-a-second", longZeros, "its header declares 0:02 of audio and the file could hold 0:03");
+    WavSpec chunkThenLongZeros{44100, 2, 16, 44100 * 2};
+    chunkThenLongZeros.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12) + std::string(44100 * 4 + 1, '\0');
+    refusedWith("chunk-then-zeros-over-a-second", chunkThenLongZeros, "the header does not match the file");
     // Not zero, not a chunk, not whole frames: refused, the room counted
     // in whole frames only.
     WavSpec garbage{44100, 2, 16, 44100};
     garbage.trailing = std::string(4095, '\x7f');
-    refusedWith("garbage-after", garbage, "not finished properly");
+    refusedWith("garbage-after", garbage, "the header does not match the file");
     WavSpec roomInFrames{44100, 2, 16, 44100 * 2};
     roomInFrames.declaredDataBytes = 44100 * 4;
     roomInFrames.trailing = std::string(44100 * 4 * 59 + 3, '\x01');  // 59 s and 3 bytes of garbage
-    refusedWith("room-in-frames", roomInFrames, "header says it holds 0:01 of audio, and the file has room for 1:01");
+    refusedWith("room-in-frames", roomInFrames, "its header declares 0:01 of audio and the file could hold 1:01");
     // Zero bytes that stop short of the end are not padding.
     WavSpec zerosThenJunk{44100, 2, 16, 44100};
     zerosThenJunk.trailing = std::string(100, '\0') + "junk!";
-    refusedWith("zeros-then-junk", zerosThenJunk, "not finished properly");
+    refusedWith("zeros-then-junk", zerosThenJunk, "the header does not match the file");
     // An ID3v1 block that is not at the very end.
     WavSpec id3NotAtEnd{44100, 2, 16, 44100};
     id3NotAtEnd.trailing = "TAG" + std::string(125, ' ') + "x";
-    refusedWith("id3-not-at-end", id3NotAtEnd, "not finished properly");
+    refusedWith("id3-not-at-end", id3NotAtEnd, "the header does not match the file");
     // After an odd data chunk, a chunk without the pad byte that does not
     // end at the end of the file.
     WavSpec oddDataRunsOn{44100, 1, 24, 44101};
     oddDataRunsOn.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12) + "zz";
-    refusedWith("odd-data-runs-on", oddDataRunsOn, "not finished properly");
+    refusedWith("odd-data-runs-on", oddDataRunsOn, "the header does not match the file");
     // ... nor with zero bytes after it: the walk without the pad byte
     // takes chunks only, to the very end.
     WavSpec oddDataThenZeros{44100, 1, 24, 44101};
     oddDataThenZeros.trailing = std::string("LIST\x04\x00\x00\x00INFO", 12) + std::string(4, '\0');
-    refusedWith("odd-data-then-zeros", oddDataThenZeros, "not finished properly");
+    refusedWith("odd-data-then-zeros", oddDataThenZeros, "the header does not match the file");
     WavSpec runsPast{44100, 2, 16, 44100};
     runsPast.trailing = std::string("LIST\xff\x00\x00\x00INFO", 12);
-    refusedWith("chunk-runs-past", runsPast, "not finished properly");
+    refusedWith("chunk-runs-past", runsPast, "the header does not match the file");
     WavSpec secondData{44100, 2, 16, 44100};
     secondData.trailing = std::string("data\x04\x00\x00\x00" "abcd", 12) + "x";
-    refusedWith("second-data", secondData, "not finished properly");
+    refusedWith("second-data", secondData, "the header does not match the file");
 }
 
 // A recording the player did not finish, in each header state it leaves.
@@ -491,10 +522,11 @@ void unfinishedHeaders(const std::string &dir)
         past.declaredDataBytes = static_cast<std::uint32_t>((frames + 48000) * align);
         past.trailing = std::string(1, '\x22');
         cases.push_back({"unfinished-past-end-" + b, past, 1});
-        // Less than the file holds, whole frames after it and no chunk.
-        WavSpec stale{48000, 2, bits, frames};
-        stale.declaredDataBytes = static_cast<std::uint32_t>(48000 * align);
-        cases.push_back({"unfinished-stale-" + b, stale, 0});
+        // Cut short ending in a partial frame of all but one byte.
+        WavSpec pastPartial{48000, 2, bits, frames};
+        pastPartial.declaredDataBytes = static_cast<std::uint32_t>((frames + 48000 * 60) * align);
+        pastPartial.trailing = std::string(align - 1, '\x33');
+        cases.push_back({"unfinished-past-end-partial-" + b, pastPartial, align - 1});
     }
     for (const Case &c : cases) {
         const std::string wav = dir + "/" + c.label + ".wav";
@@ -508,9 +540,23 @@ void unfinishedHeaders(const std::string &dir)
             const std::string flac = dir + "/" + c.label + "-refused.flac";
             const Run run = encode(encoder, wav, flac);
             check(!run.result.encoded && run.result.unfinished
-                      && run.result.error.find("did not finish") != std::string::npos,
+                      && run.result.error.find("its header was not completed") != std::string::npos,
                   c.label + ": without the choice, refused as unfinished (" + run.result.error + ")");
             check(run.result.framesInWav == c.spec.frames, c.label + ": the frames the file holds are reported");
+            check(run.result.sampleRate == c.spec.rate, c.label + ": and the rate, so a length can be said");
+            const std::uint32_t align = static_cast<std::uint32_t>(c.spec.bits / 8 * c.spec.channels);
+            const std::uint32_t declared = *c.spec.declaredDataBytes;
+            if (declared == 0 || declared == 0xFFFFFFFFU) {
+                check(!run.result.framesDeclared, c.label + ": no declared length");
+            } else {
+                check(run.result.framesDeclared == std::optional<std::uint64_t>(declared / align),
+                      c.label + ": the declared length is reported");
+                const std::string both = "it declares "
+                    + infrastructure::audio::wavDuration(declared / align, c.spec.rate) + " of audio, and the file holds "
+                    + infrastructure::audio::wavDuration(c.spec.frames, c.spec.rate);
+                check(run.result.error.find(both) != std::string::npos,
+                      c.label + ": both lengths said (\"" + both + "\"): " + run.result.error);
+            }
             check(!exists(flac) && noTempBeside(flac), c.label + ": without the choice, nothing written");
         }
         const std::string flac = dir + "/" + c.label + ".flac";
@@ -539,6 +585,77 @@ void unfinishedHeaders(const std::string &dir)
                                2.0, true);
         check(run.result.encoded && !run.result.unfinished && run.result.framesInWav == spec.frames,
               "a finished WAV with the choice: read as its header declares");
+    }
+}
+
+// What the reader makes of headers, without encoding: RF64 sizes, how much
+// zero padding a finished file may have, and a file without one frame.
+void headerReadings(const std::string &dir)
+{
+    using infrastructure::audio::WavPcmFile;
+    using infrastructure::audio::WavReading;
+    const auto read = [&](const std::string &label, const WavSpec &spec, WavReading reading) {
+        const std::string wav = dir + "/" + label + ".wav";
+        recording_test::writeWav(wav, spec);
+        return std::make_unique<WavPcmFile>(pathFromUtf8(wav), reading);
+    };
+    // RF64 with a data size of 0, in ds64 or in the data chunk too: not a
+    // recorder that stopped, refused with a plain reason, either way.
+    for (const auto chunkSize : {std::uint32_t{0xFFFFFFFFU}, std::uint32_t{0}}) {
+        WavSpec spec{48000, 2, 24, 48000};
+        spec.rf64 = true;
+        spec.ds64DataBytes = 0;
+        spec.declaredDataBytes = chunkSize;
+        for (const WavReading reading : {WavReading::AsDeclared, WavReading::ToEndOfFile}) {
+            const auto wav = read("rf64-zero", spec, reading);
+            check(wav->state() == WavPcmFile::State::Refused && !wav->unfinished()
+                      && wav->error().find("RF64 header does not say how long its audio is (the audio size in its "
+                                           "ds64 chunk is 0)") != std::string::npos,
+                  "RF64, ds64 data size 0, data chunk " + std::to_string(chunkSize) + ": refused, not unfinished: "
+                      + wav->error());
+        }
+    }
+    // RF64 whose data chunk says 0 and whose ds64 has the size: read as ds64 says.
+    {
+        WavSpec spec{48000, 2, 24, 48000};
+        spec.rf64 = true;
+        spec.declaredDataBytes = 0;
+        const auto wav = read("rf64-chunk-zero", spec, WavReading::AsDeclared);
+        check(wav->isOpen() && wav->layout().frames == spec.frames, "RF64, data chunk 0, ds64 right: read as ds64 says");
+    }
+    // Zero padding of exactly a second: a finished file.
+    {
+        WavSpec spec{44100, 2, 16, 44100};
+        spec.trailing = std::string(44100 * 4, '\0');
+        const auto wav = read("zeros-one-second", spec, WavReading::AsDeclared);
+        check(wav->isOpen() && !wav->unfinished() && wav->layout().frames == spec.frames,
+              "a second of zero padding: finished, read as declared (" + wav->error() + ")");
+    }
+    // ... one byte more: refused, both lengths.
+    {
+        WavSpec spec{44100, 2, 16, 44100};
+        spec.trailing = std::string(44100 * 4 + 1, '\0');
+        const auto wav = read("zeros-one-second-and-a-byte", spec, WavReading::ToEndOfFile);
+        check(wav->state() == WavPcmFile::State::Refused && !wav->unfinished()
+                  && wav->error() == "its header declares 0:01 of audio and the file could hold 0:02: the header does "
+                                     "not match the file",
+              "a second and a byte of zeros: refused with both lengths: " + wav->error());
+    }
+    // No whole frame held: refused, holds no audio, not offered as unfinished.
+    for (const std::uint32_t declared : {std::uint32_t{0}, std::uint32_t{0xFFFFFFFFU}, std::uint32_t{4000}}) {
+        WavSpec spec{44100, 2, 16, 0};
+        spec.declaredDataBytes = declared;
+        spec.trailing = std::string(3, '\x01');
+        for (const WavReading reading : {WavReading::AsDeclared, WavReading::ToEndOfFile}) {
+            const auto wav = read("no-frame", spec, reading);
+            check(wav->state() == WavPcmFile::State::Refused && wav->holdsNoAudio() && !wav->unfinished()
+                      && wav->error() == "it holds no audio",
+                  "no whole frame, declared " + std::to_string(declared) + ": holds no audio: " + wav->error());
+        }
+    }
+    {
+        const auto wav = read("one-frame", WavSpec{44100, 2, 16, 1}, WavReading::AsDeclared);
+        check(wav->isOpen() && !wav->holdsNoAudio(), "one frame: open, holds audio");
     }
 }
 
@@ -896,6 +1013,7 @@ int main(int argc, char **argv)
         refusals(dir);
         trailingBytes(dir);
         unfinishedHeaders(dir);
+        headerReadings(dir);
         temporaryNames(dir);
         comparisonAlone(dir);
         placement(dir);

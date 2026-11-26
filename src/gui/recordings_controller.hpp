@@ -43,10 +43,14 @@ public:
         ModifiedRole,          // QDateTime, invalid when unknown
         DurationSecondsRole,   // -1 when unknown
         IncludedRole,
-        // The player did not finish the recording (its WAV header was
-        // never completed), and the seconds of audio the file holds.
+        // The recording's WAV header was not completed, the seconds of
+        // audio the file holds, and the seconds the header declares (-1
+        // when it declares no length).
         UnfinishedRole,
-        HeldSecondsRole,  // -1 unless unfinished
+        HeldSecondsRole,      // -1 unless unfinished
+        DeclaredSecondsRole,  // -1 unless unfinished and declared
+        // Not one whole frame of audio in the file: not offered to keep.
+        HoldsNoAudioRole,
     };
 
     using QAbstractListModel::QAbstractListModel;
@@ -61,6 +65,8 @@ public:
     {
         bool unfinished = false;
         double heldSeconds = -1.0;
+        double declaredSeconds = -1.0;
+        bool holdsNoAudio = false;
     };
     void setRecordings(std::vector<application::Recording> recordings, std::vector<HeaderState> states = {});
     void setAllIncluded(bool included);

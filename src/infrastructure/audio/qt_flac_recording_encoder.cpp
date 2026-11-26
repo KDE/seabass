@@ -228,6 +228,7 @@ private:
         result.framesInWav = m_result.framesInWav;
         result.unfinished = m_result.unfinished;
         result.partialFrameBytesDropped = m_result.partialFrameBytesDropped;
+        result.framesDeclared = m_result.framesDeclared;
     }
 
     void report(double fraction)
@@ -274,6 +275,13 @@ private:
             m_result.unfinished = true;
             m_result.framesInWav = unfinished->framesHeld;
             m_result.partialFrameBytesDropped = unfinished->partialFrameBytes;
+            if (unfinished->kind != WavUnfinished::Kind::NoSize) {
+                m_result.framesDeclared = unfinished->framesDeclared;
+            }
+            // The format is known: a refusal for it can say how long.
+            m_result.sampleRate = m_wav->layout().sampleRate;
+            m_result.channels = m_wav->layout().channels;
+            m_result.bitsPerSample = m_wav->layout().bitsPerSample;
         }
         if (!m_wav->isOpen()) {
             return refuse(m_wav->error());

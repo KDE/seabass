@@ -734,7 +734,8 @@ void lateCancelAndLeftFiles(const QString &scratch)
 
 }  // namespace
 
-// A recording the player did not finish is kept only with the choice; the
+// A recording whose header was not completed is kept only with the choice
+// (the reason says the length the file holds, through the real encoder); the
 // kept copy counts in the delete confirmation only while its FLAC is there
 // as it was kept; a recording is known by its path, size and time; and
 // the records are forgotten when the stick changes.
@@ -765,7 +766,9 @@ void keptCopiesAndIdentity(const QString &scratch)
     // Without the choice: not kept, saying why.
     const QVariantMap refused = runJob(form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Unfinished")));
     check(refused.value("state").toString() == QStringLiteral("failed")
-              && refused.value("message").toString().contains(QStringLiteral("did not finish")),
+              && refused.value("message").toString().contains(
+                  QStringLiteral("its header was not completed and does not say how long the audio is. The file "
+                                 "holds 0:01 of audio.")),
           "an unfinished recording without the choice: not kept: " + refused.value("message").toString().toStdString());
     // With it: kept, the notes say so.
     QVariantMap chosen = form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Unfinished"));
@@ -774,8 +777,10 @@ void keptCopiesAndIdentity(const QString &scratch)
     check(kept.value("state").toString() == QStringLiteral("kept") && kept.value("unfinished").toBool()
               && kept.value("keptSeconds").toDouble() > 0.99 && kept.value("keptSeconds").toDouble() < 1.01,
           "an unfinished recording with the choice: kept, with how much");
-    check(kept.value("notes").toStringList().join(QLatin1Char(' ')).contains(QStringLiteral("did not finish")),
-          "and its notes say the player did not finish it");
+    check(kept.value("notes").toStringList().join(QLatin1Char(' ')).contains(
+              QStringLiteral("did not say how long the audio is, so the file was read to its end. The FLAC holds 0:01")),
+          "and its notes say the header was not completed and the file was read to its end: "
+              + kept.value("notes").toStringList().join(QLatin1Char(' ')).toStdString());
     const QString flac = kept.value("flacPath").toString();
 
     // Kept once, then a second keep that fails: the first copy still counts.

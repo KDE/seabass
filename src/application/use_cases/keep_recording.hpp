@@ -81,8 +81,11 @@ public:
     // Removes Seabass's own leftover temporary files in `folder` (not
     // below it, links never followed): regular files named as the
     // encoder and the tag writer name theirs, older than a day, whose
-    // FLAC's name `inHand` does not claim for a job of this process.
-    // Answers a sentence per file removed, or found and not removable.
+    // FLAC's name `inHand` does not claim for a job of this process. A tag
+    // writer's copy whose FLAC is not beside it is never removed (after an
+    // interrupted replace it can be the only copy of a kept FLAC): it is
+    // named instead. Answers a sentence per file removed, found and not
+    // removable, or left for that reason.
     virtual std::vector<std::string>
     sweepLeftovers(const std::string &folder, const std::function<bool(const std::string &flacName)> &inHand) = 0;
 };
@@ -154,10 +157,10 @@ struct KeepRecordingResult
     // message says so when that could not be told.
     std::string leftBehind;
     // Things to know about the job, kept or not, a sentence each: the
-    // recording was not finished by the player and how much of it was
-    // kept, a leftover temporary file of an earlier job that was removed.
+    // recording's header was not completed and how much of it was kept,
+    // a leftover temporary file of an earlier job that was removed.
     std::vector<std::string> notes;
-    // The player did not finish the recording; when kept, the FLAC holds
+    // The recording's header was not completed; when kept, the FLAC holds
     // keptSeconds of audio, every whole frame the file held.
     bool unfinished = false;
     double keptSeconds = 0.0;

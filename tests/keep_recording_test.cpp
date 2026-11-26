@@ -169,6 +169,8 @@ public:
     bool unfinished = false;
     std::uint64_t heldFrames = 0;
     std::uint64_t partialBytes = 0;
+    // What the header declares; nullopt when it declares no size.
+    std::optional<std::uint64_t> declaredFrames;
     std::vector<std::string> notes;
     // The option the job was given.
     bool keepUnfinishedGiven = false;
@@ -192,8 +194,9 @@ public:
             result.sampleRate = 48000;
             result.framesInWav = heldFrames;
             result.partialFrameBytesDropped = partialBytes;
+            result.framesDeclared = declaredFrames;
             if (!options.keepUnfinished) {
-                result.error = "Session-0001.wav cannot be encoded: the player did not finish this recording";
+                result.error = "Session-0001.wav cannot be encoded: its header was not completed";
                 return result;
             }
         }
@@ -800,10 +803,13 @@ void testAnEncoderExceptionSaysWhatIsLeft()
     check(!run.called("write remove"), "an encoder that throws: that file is not removed as the job's");
 }
 
-// A recording the player did not finish: refused unless the person chose
-// to keep what the file holds; when kept, the notes say so and how much.
+// A recording whose header was not completed: refused unless the person
+// chose to keep what the file holds; when kept, the notes say so and how
+// much. Both lengths where the header declares one; the cause only as what
+// usually leads there; a file read to its end is said to be.
 void testAnUnfinishedRecording()
 {
+    const std::string why = "This happens when a player is switched off or a stick is pulled while recording.";
     {
         Run run;
         run.encoder.unfinished = true;
@@ -811,11 +817,24 @@ void testAnUnfinishedRecording()
         run.go();
         check(run.result.status == KeepRecordingResult::Status::Failed && !run.encoder.keepUnfinishedGiven,
               "unfinished, no choice: refused, and the encoder was not told to keep it");
-        check(run.result.message.find("did not finish") != std::string::npos
-                  && run.result.message.find("1:02:03") != std::string::npos
-                  && run.result.message.find("Keep the audio the file holds") != std::string::npos,
-              "unfinished, no choice: the message says what the file holds and how to keep it: " + run.result.message);
+        check(run.result.message
+                  == "The recording was not kept: its header was not completed and does not say how long the audio "
+                     "is. The file holds 1:02:03 of audio. " + why
+                      + " Choose \"Keep the audio the file holds\" to keep that.",
+              "unfinished, no size, no choice: the message says what the file holds and how to keep it: "
+                  + run.result.message);
         check(run.result.unfinished && run.nothingLeft(), "unfinished, no choice: nothing left");
+    }
+    {
+        Run run;
+        run.encoder.unfinished = true;
+        run.encoder.heldFrames = 48000ULL * 2530;
+        run.encoder.declaredFrames = 48000ULL * 3600;
+        run.go();
+        check(run.result.message
+                  == "The recording was not kept: its header was not completed. The header declares 1:00:00 of "
+                     "audio, the file holds 42:10. " + why + " Choose \"Keep the audio the file holds\" to keep that.",
+              "cut short, no choice: both lengths: " + run.result.message);
     }
     {
         Run run;
@@ -830,9 +849,29 @@ void testAnUnfinishedRecording()
         check(run.result.unfinished && run.result.keptSeconds > 3723.0 && run.result.keptSeconds < 3723.01,
               "unfinished, chosen: the kept length is reported");
         const std::string notes = run.result.notes.empty() ? std::string() : run.result.notes.back();
-        check(notes.find("did not finish") != std::string::npos && notes.find("1:02:03") != std::string::npos
-                  && notes.find("5 bytes") != std::string::npos && notes.find("not changed") != std::string::npos,
-              "unfinished, chosen: the notes say so, how much was kept and the partial frame left out: " + notes);
+        check(notes
+                  == "The header of this recording was not completed and did not say how long the audio is, so the "
+                     "file was read to its end. The FLAC holds 1:02:03 of audio, every whole frame the file held; the "
+                     "last 5 bytes, less than a frame, were left out. The recording on the stick was not changed.",
+              "unfinished, no size, chosen: the notes say so, that the file was read to its end, how much was kept "
+              "and the partial frame left out: " + notes);
+    }
+    {
+        Run run;
+        run.encoder.unfinished = true;
+        run.encoder.heldFrames = 48000ULL * 2530 + 3;
+        run.encoder.partialBytes = 2;
+        run.encoder.declaredFrames = 48000ULL * 3600;
+        KeepRecordingRequest r = request();
+        r.keepUnfinished = true;
+        run.go(r);
+        const std::string notes = run.result.notes.empty() ? std::string() : run.result.notes.back();
+        check(run.result.status == KeepRecordingResult::Status::Kept
+                  && notes
+                      == "The header of this recording was not completed: it declares 1:00:00 of audio, the file "
+                         "held 42:10. The FLAC holds 42:10 of audio, every whole frame the file held; the last 2 "
+                         "bytes, less than a frame, were left out. The recording on the stick was not changed.",
+              "cut short, chosen: both lengths and the partial frame in the notes: " + notes);
     }
     {
         Run run;

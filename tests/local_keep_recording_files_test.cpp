@@ -9,9 +9,16 @@
 //     one, one whose FLAC a job has in hand, one whose name only looks
 //     like one (no 16 hex digits, an audio extension after the suffix), a
 //     link named like one (and what it points to), a folder named like
-//     one, and one in a folder below;
+//     one, and one in a folder below. A tag writer's copy whose FLAC is not
+//     beside it (it can be the only copy of a kept FLAC) is never removed:
+//     an old one is named in the notes; an encoder's file without its FLAC
+//     goes as any;
 //   - isWithin(): a folder inside the root, the root itself, a folder
-//     still to be made inside it, and one outside it.
+//     still to be made inside it, and one outside it;
+//   - withinByDevice(), the device rule, with device numbers given: a root
+//     that is a mount point takes what is on its device, unless the root is
+//     on the home folder's device; a root that is no mount point takes
+//     nothing by device.
 
 #include "infrastructure/local/local_keep_recording_files.hpp"
 
@@ -81,11 +88,20 @@ void sweep(const fs::path &root)
     const fs::path link = dir / (std::string("Link.flac.00000000000000cc") + RecordingEncodeTempSuffix);
     const fs::path folderNamed = dir / (std::string("Dir.flac.00000000000000dd") + RecordingEncodeTempSuffix);
     const fs::path below = dir / "below" / (std::string("Set.flac.00000000000000ee") + RecordingEncodeTempSuffix);
+    // The FLAC oldTag is a copy of, beside it.
+    const fs::path oldTagFlac = dir / "Set \xC3\xA9.flac";
+    // Tag writer's copies whose FLAC is not there: an old and a young one;
+    // and an encoder's file without its FLAC.
+    const fs::path onlyCopy = dir / (std::string("Gone.flac.0000000000000011") + RecordingTagTempSuffix);
+    const fs::path youngOnlyCopy = dir / (std::string("Fresh.flac.0000000000000022") + RecordingTagTempSuffix);
+    const fs::path encodeNoFlac = dir / (std::string("Never.flac.0000000000000033") + RecordingEncodeTempSuffix);
 
-    for (const fs::path &p : {oldEncode, oldTag, inHand, notHex, shortToken, audioAfter, music, pointedTo, below}) {
+    for (const fs::path &p : {oldEncode, oldTag, oldTagFlac, inHand, notHex, shortToken, audioAfter, music, pointedTo,
+                              below, onlyCopy, encodeNoFlac}) {
         writeFile(p, "bytes", old);
     }
     writeFile(youngEncode, "bytes", young);
+    writeFile(youngOnlyCopy, "bytes", young);
     std::error_code ec;
     fs::create_symlink(pointedTo, link, ec);
     check(!ec, "the test made its link (" + ec.message() + ")");
@@ -100,8 +116,22 @@ void sweep(const fs::path &root)
             return flacName == "Busy.flac";
         });
     check(!fs::exists(oldEncode) && noteNames(notes, oldEncode), "an old encoder leftover: removed and said");
-    check(!fs::exists(oldTag) && noteNames(notes, oldTag), "an old tag writer leftover, a name outside ASCII: removed and said");
-    check(notes.size() == 2, "nothing else is said: " + std::to_string(notes.size()) + " notes");
+    check(!fs::exists(oldTag) && noteNames(notes, oldTag),
+          "an old tag writer leftover beside its FLAC, a name outside ASCII: removed and said");
+    check(fs::exists(oldTagFlac), "and its FLAC is left");
+    check(!fs::exists(encodeNoFlac) && noteNames(notes, encodeNoFlac),
+          "an old encoder leftover without its FLAC: removed and said (unverified by definition)");
+    check(fs::exists(onlyCopy), "an old tag writer copy whose FLAC is not there: left (it may be the only copy)");
+    const std::string onlyCopyNote = "A FLAC copy from an interrupted earlier run is still in the folder under this "
+                                     "name; it may be a complete recording: " + seabass::pathToUtf8(onlyCopy);
+    bool namedPlainly = false;
+    for (const std::string &note : notes) {
+        namedPlainly = namedPlainly || note == onlyCopyNote;
+    }
+    check(namedPlainly, "and named in the notes in plain words");
+    check(fs::exists(youngOnlyCopy) && !noteNames(notes, youngOnlyCopy),
+          "a younger one whose FLAC is not there: left, not named (another Seabass may be writing it)");
+    check(notes.size() == 4, "nothing else is said: " + std::to_string(notes.size()) + " notes");
     check(fs::exists(youngEncode), "a leftover younger than a day: left (another Seabass may be writing it)");
     check(fs::exists(inHand), "a leftover of a FLAC a job has in hand: left");
     bool askedBusy = false;
@@ -135,6 +165,50 @@ void within(const fs::path &root)
           "a stick that is not there: cannot tell");
 }
 
+void deviceRule()
+{
+    using seabass::infrastructure::WithinByDevice;
+    using seabass::infrastructure::withinByDevice;
+    // A stick: its root is a mount point (device 7 under device 1), home on 1.
+    WithinByDevice stick;
+    stick.root = 7;
+    stick.aboveRoot = 1;
+    stick.home = 1;
+    stick.there = 7;
+    check(withinByDevice(stick), "a stick's mount point: a path on its device (a bind mount of it) is within");
+    WithinByDevice elsewhere = stick;
+    elsewhere.there = 1;
+    check(!withinByDevice(elsewhere), "a stick's mount point: a path on the computer's disk is not within by device");
+    WithinByDevice homeUnknown = stick;
+    homeUnknown.home.reset();
+    check(withinByDevice(homeUnknown), "the home folder's device unknown: the rule stays in force");
+    // A "stick" whose root is a mount point on the home folder's device (a
+    // btrfs subvolume's top, /home): the rule does not apply.
+    WithinByDevice onHome;
+    onHome.root = 1;
+    onHome.aboveRoot = 2;
+    onHome.home = 1;
+    onHome.there = 1;
+    check(!withinByDevice(onHome), "a root that is a mount point on the home device: a folder there is not within by device");
+    WithinByDevice topOnHome;
+    topOnHome.root = 1;
+    topOnHome.aboveRoot = 1;
+    topOnHome.rootIsTop = true;
+    topOnHome.home = 1;
+    topOnHome.there = 1;
+    check(!withinByDevice(topOnHome), "\"/\" on the home device as root: not within by device");
+    WithinByDevice topElsewhere = topOnHome;
+    topElsewhere.home = 3;
+    check(withinByDevice(topElsewhere), "\"/\" as root, home on another device: within by device");
+    // A root that is no mount point takes nothing by device.
+    WithinByDevice plainFolder;
+    plainFolder.root = 7;
+    plainFolder.aboveRoot = 7;
+    plainFolder.home = 1;
+    plainFolder.there = 7;
+    check(!withinByDevice(plainFolder), "a root that is not a mount point: nothing by device");
+}
+
 }  // namespace
 
 int main()
@@ -144,6 +218,7 @@ int main()
     fs::create_directories(root);
     sweep(root);
     within(root);
+    deviceRule();
     fs::remove_all(root);
     if (failures > 0) {
         std::cout << "local_keep_recording_files_test: " << failures << " FAILED\n";

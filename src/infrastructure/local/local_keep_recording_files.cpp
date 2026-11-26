@@ -4,15 +4,17 @@
 
 #include "infrastructure/local/local_keep_recording_files.hpp"
 
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <cerrno>
 #include <iterator>
 #include <system_error>
 
 #include <chrono>
 
 #if !defined(_WIN32)
+#include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -75,7 +77,36 @@ std::optional<dev_t> deviceOf(const fs::path &path)
 }
 #endif
 
+#if !defined(_WIN32)
+// The person's home folder: $HOME, else the password database's.
+std::optional<fs::path> homeFolder()
+{
+    if (const char *home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        return fs::path(home);
+    }
+    if (const passwd *entry = ::getpwuid(::getuid()); entry != nullptr && entry->pw_dir != nullptr) {
+        return fs::path(entry->pw_dir);
+    }
+    return std::nullopt;
+}
+#endif
+
 }  // namespace
+
+bool withinByDevice(const WithinByDevice &facts)
+{
+    // A root that is a mount point is a whole device: whatever is on that
+    // device is on it, through a bind mount of one of its folders too.
+    // That is what a removable stick is. A root on the device of the home
+    // folder is not one (a test folder, or a library on an internal disk,
+    // whose root can be a mount point too: a btrfs subvolume's top,
+    // /home): there the rule would take every folder of the computer for
+    // the stick, and the walk up the folders is the check. A home whose
+    // device cannot be told leaves the rule in force.
+    const bool rootIsMount = facts.root != facts.aboveRoot || facts.rootIsTop;
+    const bool onHomeDevice = facts.home && *facts.home == facts.root;
+    return rootIsMount && !onHomeDevice && facts.there == facts.root;
+}
 
 std::optional<bool> LocalKeepRecordingFiles::isWithin(const std::string &path, const std::string &folder)
 {
@@ -105,16 +136,23 @@ std::optional<bool> LocalKeepRecordingFiles::isWithin(const std::string &path, c
         }
     }
 #if !defined(_WIN32)
-    // A root that is a mount point is a whole device: whatever is on that
-    // device is on it, through a bind mount of one of its folders too.
     const std::optional<dev_t> rootDevice = deviceOf(root);
     const std::optional<dev_t> aboveRoot = deviceOf(root.parent_path());
     const std::optional<dev_t> thereDevice = deviceOf(*there);
     if (!rootDevice || !aboveRoot || !thereDevice) {
         return std::nullopt;
     }
-    const bool rootIsMount = *rootDevice != *aboveRoot || root == root.parent_path();
-    if (rootIsMount && *thereDevice == *rootDevice) {
+    WithinByDevice facts;
+    facts.root = static_cast<std::uint64_t>(*rootDevice);
+    facts.aboveRoot = static_cast<std::uint64_t>(*aboveRoot);
+    facts.rootIsTop = root == root.parent_path();
+    facts.there = static_cast<std::uint64_t>(*thereDevice);
+    if (const std::optional<fs::path> home = homeFolder()) {
+        if (const std::optional<dev_t> homeDevice = deviceOf(*home)) {
+            facts.home = static_cast<std::uint64_t>(*homeDevice);
+        }
+    }
+    if (withinByDevice(facts)) {
         return true;
     }
 #endif
@@ -258,6 +296,23 @@ std::vector<std::string> LocalKeepRecordingFiles::sweepLeftovers(const std::stri
             continue;  // younger than a day: another Seabass may be writing it
         }
         const std::string path = pathToUtf8(entry);
+        // The tag writer's copy of a FLAC whose FLAC is not there: after
+        // an interrupted replace on FAT or exFAT it can be the only copy
+        // of a kept recording (taglib_recording_tag_writer.hpp). Never
+        // removed, and named, so it is not left unseen. The encoder's
+        // file is unverified by definition and goes.
+        if (name.ends_with(audio::RecordingTagTempSuffix)) {
+            std::error_code flacEc;
+            const fs::file_status flac = fs::symlink_status(folder / pathFromUtf8(*flacName), flacEc);
+            if (flac.type() == fs::file_type::not_found) {
+                notes.push_back("A FLAC copy from an interrupted earlier run is still in the folder under this name; "
+                                "it may be a complete recording: " + path);
+                continue;
+            }
+            if (flacEc) {
+                continue;  // cannot tell whether the FLAC is there: left alone
+            }
+        }
         std::string failure;
         if (removeEntry(entry, failure)) {
             notes.push_back("A temporary file an earlier keep left behind, more than a day old, was removed: " + path);

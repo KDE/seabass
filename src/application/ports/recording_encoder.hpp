@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,13 +53,16 @@ struct RecordingEncodeResult
     // one. Equal when encoded.
     std::uint64_t framesInWav = 0;
     std::uint64_t framesVerified = 0;
-    // The player did not finish the recording: its header is unfinished.
-    // When encoded, framesInWav is the whole frames the file held and
-    // partialFrameBytesDropped the bytes of a last, partial frame that
-    // were left out; when refused for it, keepUnfinished was not set, and
-    // framesInWav is what the file holds.
+    // The WAV's header was not completed (a data size of 0 or 0xFFFFFFFF,
+    // or more than the file holds). When encoded, framesInWav is the whole
+    // frames the file held and partialFrameBytesDropped the bytes of a
+    // last, partial frame that were left out; when refused for it,
+    // keepUnfinished was not set, and framesInWav is what the file holds.
+    // framesDeclared is what the header declares, in whole frames, and
+    // nullopt when it declares no size (the file is then read to its end).
     bool unfinished = false;
     std::uint64_t partialFrameBytesDropped = 0;
+    std::optional<std::uint64_t> framesDeclared;
     // Things the person should know of an encoding that succeeded, in
     // words (a second name of the FLAC that could not be removed).
     std::vector<std::string> notes;

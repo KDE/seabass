@@ -67,6 +67,8 @@ struct WavSpec
     bool rf64 = false;
     // What the data chunk's header says, when it is to lie.
     std::optional<std::uint32_t> declaredDataBytes;
+    // What an RF64's ds64 chunk says the data size is, when it is to lie.
+    std::optional<std::uint64_t> ds64DataBytes;
     // A chunk before fmt, as recorders write (bext, LIST).
     bool extraChunk = false;
     // Another noise under the tone (signalSample's `variant`).
@@ -111,7 +113,7 @@ inline bool writeWav(const std::string &path, const WavSpec &spec)
         out.write("ds64", 4);
         put32(out, 28);
         put64(out, riffSize);
-        put64(out, dataBytes);
+        put64(out, spec.ds64DataBytes ? *spec.ds64DataBytes : dataBytes);
         put64(out, spec.frames);
         put32(out, 0);
     }
