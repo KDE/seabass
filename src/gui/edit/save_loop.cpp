@@ -4,6 +4,7 @@
 
 #include "gui/edit/save_loop.hpp"
 
+#include <QElapsedTimer>
 #include <QSet>
 
 #include "infrastructure/durable_file_write.hpp"
@@ -22,6 +23,8 @@
 
 namespace seabass::gui
 {
+
+Q_LOGGING_CATEGORY(lcSave, "seabass.save", QtWarningMsg)
 
 namespace
 {
@@ -173,7 +176,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     SaveLoopResult result;
     // Awake from the first backup to the last finish hook: a suspend halfway
     // through a save leaves the stick half-written. See SleepInhibitor.
+    qCInfo(lcSave) << "loop: start," << changes.size() << "change(s)";
     const auto keepAwake = SleepInhibitor::hold(QStringLiteral("Saving changes to a DJ library"));
+    qCInfo(lcSave) << "loop: awake held";
 
     // Everything that can say what it will overwrite is backed up before
     // anything is applied, in one pass. Two reasons, and the ordering one
@@ -226,8 +231,10 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         // the opposite of what was asked. It is the copy Undo Last Save
         // restores from, and says so.
         ctx.status(QStringLiteral("Saving an undo copy"));
+        qCInfo(lcSave) << "loop: undo copy," << backupUnits << "file(s)";
         try {
             ctx.backupAllNow(upfront, /*countFiles=*/true);
+            qCInfo(lcSave) << "loop: undo copy done";
         } catch (const std::exception &e) {
             // Nothing has been written yet, so refusing here costs the
             // user nothing and protects everything.
@@ -290,8 +297,16 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         ChangeOutcome outcome;
         bool damagedRowSkipped = false;
         try {
+            // Every 200th and any slow one: a save holds over a thousand
+            // changes, and a CI log is capped (#144).
+            QElapsedTimer applyTimer;
+            applyTimer.start();
             ctx.beginChange(declaredByChange[index]);
             outcome = change->apply(ctx);
+            if (index % 200 == 0 || index + 1 == changes.size() || applyTimer.elapsed() > 2000) {
+                qCInfo(lcSave) << "loop: applied" << index + 1 << "of" << changes.size() << change->id() << "in"
+                               << applyTimer.elapsed() << "ms";
+            }
         } catch (const infrastructure::engine::DamagedEngineRowError &e) {
             // One Engine row with a damaged blob (#107): the writer left it
             // alone before writing anything of it, and it is no reason to
@@ -381,7 +396,9 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // ok means "the whole batch went through". A cancel hands the hooks
     // false, so a scratch copy commits what completed; a failed save
     // (ctx.saveFailed()) has it commit nothing.
+    qCInfo(lcSave) << "loop: finish hooks";
     const auto finish = ctx.runFinishHooks(result.error.isEmpty() && !result.cancelled);
+    qCInfo(lcSave) << "loop: finish hooks done";
     if (finish.error) {
         // A commit that did not land: whatever the others committed, and
         // whatever the changes wrote straight onto the stick, goes back
@@ -435,6 +452,7 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
                 }
             }
         }
+        qCInfo(lcSave) << "loop: after-commit hooks";
         for (const QString &warning : ctx.runAfterCommitHooks(after)) {
             afterCommitWarnings << warning;
         }

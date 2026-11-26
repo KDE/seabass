@@ -89,6 +89,7 @@
 #include <QFile>
 #include <QImage>
 #include <QSettings>
+#include <QLoggingCategory>
 #include <QThreadPool>
 #include <QUrl>
 #include <QString>
@@ -3342,6 +3343,12 @@ void seedMetadataStoreForTests()
 #ifdef Q_OS_LINUX
         QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
 #endif
+        // A save that never reports back on Tumbleweed (#144): under
+        // GitLab CI every save says its stages, so a failing test's output
+        // shows where it stopped. Locally only when asked for.
+        if (qEnvironmentVariableIsSet("GITLAB_CI")) {
+            QLoggingCategory::setFilterRules(QStringLiteral("seabass.save.info=true"));
+        }
 
         // The same interface font the app names for itself in
         // gui/main.cpp, and for the same reason: a harness whose labels

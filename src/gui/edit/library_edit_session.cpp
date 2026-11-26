@@ -580,7 +580,9 @@ void LibraryEditSession::save()
     QString enginePath = m_enginePath;
     application::CancellationToken cancel = m_writeCancel;
 
+    qCInfo(lcSave) << "session: save queued," << changes.size() << "change(s)";
     m_watcher.setFuture(QtConcurrent::run([changes, rekordboxPath, enginePath, cancel, bridge]() {
+        qCInfo(lcSave) << "worker: started";
         SaveLoopResult result;
         QString refusal = refuseIfDjSoftwareRunning();
         if (!refusal.isEmpty()) {
@@ -592,17 +594,20 @@ void LibraryEditSession::save()
             auto locks = infrastructure::backup::acquireStickLocks(
                 {infrastructure::backup::backupDirForCatalogPath(any.toStdString())});
             auto status = [bridge](const QString &text) { bridge->warn(text.toStdString()); };
+            qCInfo(lcSave) << "worker: stick locked";
             SaveContext ctx(cancel, *bridge, status, rekordboxPath, enginePath);
             result = runSaveLoop(changes, ctx);
         } catch (const std::exception &e) {
             result.error = QString::fromStdString(e.what());
         }
+        qCInfo(lcSave) << "worker: done, error" << result.error;
         return result;
     }));
 }
 
 void LibraryEditSession::onSaveFinished()
 {
+    qCInfo(lcSave) << "session: result taken";
     QString thrown;
     SaveLoopResult result = takeResult(m_watcher, &thrown);
     if (!thrown.isEmpty()) {
@@ -729,6 +734,7 @@ void LibraryEditSession::onSaveFinished()
     emit pendingChanged();
     emit stateChanged();
     m_registry->sessionStateChanged();
+    qCInfo(lcSave) << "session: emitting saveFinished";
     emit saveFinished(m_lastSummary);
     releaseLockIfUnneeded();
 }

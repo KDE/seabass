@@ -6,6 +6,7 @@
 
 #include <cstdint>
 
+#include <QLoggingCategory>
 #include <QString>
 #include <QStringList>
 
@@ -66,6 +67,12 @@ struct SaveLoopResult
 // as still pending, so a retry re-applies them; the per-item writers are
 // idempotent. A cancel is not a failure: the changes before it stand,
 // and so do the rest of the units they belong to (changesACancelLetsLand()).
+// The stages of a save, at info level: off unless asked for
+// (QT_LOGGING_RULES="seabass.save.info=true"). The QML tests turn it on
+// under GitLab CI, where a save on Tumbleweed sometimes never reports
+// back (#144) and the log is the only way to see where it stopped.
+Q_DECLARE_LOGGING_CATEGORY(lcSave)
+
 SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &changes, SaveContext &ctx);
 
 // Which of changes[from..] a cancel arriving before changes[from] still
