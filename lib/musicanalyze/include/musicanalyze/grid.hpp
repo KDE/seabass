@@ -54,7 +54,9 @@ struct GridAnalysis
     bool followsTempo = false;
     // Empty when the analyzer ran. Audio it could not work on is reported
     // here rather than as an empty grid, which would read as "no beats in
-    // this track" (speech, ambience).
+    // this track" (speech, ambience). Audio too short to repeat itself
+    // (under 4 s, or under four beats of the range's slowest tempo) is
+    // no error: it has no beats, as speech has none.
     std::string error;
 };
 

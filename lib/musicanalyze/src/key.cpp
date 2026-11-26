@@ -358,7 +358,7 @@ std::optional<std::array<double, 60>> pitchPicture(std::span<const float> sample
 class KeyAnalyzer::State
 {
 public:
-    explicit State(int sampleRateHz)
+    explicit State(int sampleRateHz) : hasRate(sampleRateHz > 0)
     {
         if (sampleRateHz >= KeyLowestSampleRateHz) {
             reader.emplace(sampleRateHz);
@@ -366,15 +366,12 @@ public:
     }
     // Empty where the sample rate is too low.
     std::optional<ThirdsReader> reader;
+    // False where what was given as the sample rate is none (0, or less).
+    bool hasRate;
     bool any = false;
 };
 
-KeyAnalyzer::KeyAnalyzer(int sampleRateHz)
-{
-    if (sampleRateHz > 0) {
-        m_state = std::make_unique<State>(sampleRateHz);
-    }
-}
+KeyAnalyzer::KeyAnalyzer(int sampleRateHz) : m_state(std::make_unique<State>(sampleRateHz)) {}
 
 KeyAnalyzer::~KeyAnalyzer() = default;
 KeyAnalyzer::KeyAnalyzer(KeyAnalyzer &&) noexcept = default;
@@ -393,7 +390,9 @@ void KeyAnalyzer::feed(std::span<const float> samples)
 KeyAnalysis KeyAnalyzer::finish()
 {
     KeyAnalysis analysis;
-    if (!m_state || !m_state->any) {
+    if (m_state && !m_state->hasRate) {
+        analysis.error = "no sample rate";
+    } else if (!m_state || !m_state->any) {
         analysis.error = "no samples";
     } else if (!m_state->reader) {
         analysis.error = "the sample rate is too low to read a key";

@@ -45,6 +45,14 @@ set_target_properties(musicanalyze PROPERTIES
 )
 target_compile_features(musicanalyze PUBLIC cxx_std_20)
 
+# No multiply and add fused into one instruction (which rounds once where
+# the two round twice): Clang does that by default where the processor
+# has the instruction, as on Apple's ARM, and a grid decided by the last
+# digit would come out differently there under the same revision.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(musicanalyze PRIVATE -ffp-contract=off)
+endif()
+
 # The grid analyzer filters a whole track ten times over: built optimized
 # even in a Debug build (GCC and Clang), so a test suite that analyzes
 # audio is not several times slower for it.

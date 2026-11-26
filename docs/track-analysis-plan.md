@@ -41,9 +41,10 @@ Tier 2: `-DSEABASS_FETCH_FIXTURES=ON` downloads
 `https://vizzzion.org/seabass/downloads/fixtures/<name>-<date>.zip` at
 configure time into the build tree, checked against a SHA-256 pinned in
 `cmake/SeabassFixtures.cmake`; `-DSEABASS_REAL_ANALYSIS_FIXTURE=<dir>`
-points at an unpacked copy instead. A test that wants the data skips,
-naming both switches, when neither is given, and fails when a directory
-is given and its `MANIFEST.json` is missing or does not match.
+points at an unpacked copy instead. A test that wants the data is
+registered only when one of the two is given (configure names both
+switches otherwise), and fails when the directory's `MANIFEST.json` is
+missing or does not match.
 
 Tier 3: `SEABASS_PRIVATE_AUDIO=<dir>`, for `tools/analysis_benchmark` only.
 No test in ctest depends on it.
@@ -1333,6 +1334,52 @@ rest as right where a grid is with rekordbox's: rekordbox wrong on 11,
 ours on 17 (28 as imported), Engine on 25 at the least, with 48 more on
 which it is away from the grid rekordbox and ours share and which
 nobody has listened to.
+
+### Right and wrong, with listening as the ground truth
+
+The count from here on: a track that was listened to is right or wrong
+as the ear said, for each of the two grids heard (rekordbox's, and ours
+as it was), however close the two are; where the ear found neither
+right or could not tell, the track counts against nobody. A track
+nobody listened to is
+right for rekordbox, and right for another grid when that is in line
+with rekordbox's: the same tempo, the same beat, within 10 ms at the
+middle (running apart in places still counts: by the ear those are
+mostly fine either way or cannot be told). A grid nobody heard on a
+track that was listened to (ours after a change, Engine DJ's) takes the
+verdict of the heard grid it is in line with, and is not counted right
+where it is in line with neither. Answers given from the pictures are
+not listening. Outside the tracks heard, the count leans on rekordbox.
+
+Every track of the five sets, 2,826 (the damaged file and the wrong
+recordings out), of which 101 were listened to:
+
+| Set | Tracks | Heard | rekordbox right | Ours right, before the double rule | Ours right, now |
+|---|---|---|---|---|---|
+| Collection | 1,475 | 0 | 1,475 | 1,310 | 1,311 |
+| First variety list | 110 | 8 | 108 | 81 | 85 |
+| Second playlist | 231 | 4 | 231 | 159 | 171 |
+| CD rips | 730 | 30 | 726 | 497 | 508 |
+| Indie playlist | 280 | 59 | 260 | 242 | 253 |
+| All | 2,826 | 101 | 2,800 (99.1 %) | 2,289 (81.0 %) | 2,328 (82.4 %) |
+
+On the indie playlist rekordbox is wrong on 9, ours as imported on 27,
+ours now on 14, Engine DJ on 60; on 11 the ear could not tell or found
+neither right. Over all five sets rekordbox is wrong on 11 and ours on
+480 (522 before the double rule), with 15 tracks undecided. (The count
+given first, 11, 28 and 17 on the indie playlist, let a grid within 10
+ms of the right one pass where the ear had preferred the other, and
+counted "neither" against both.)
+
+What is not in line with rekordbox now, and so not right unless heard
+so: on the collection 82 tracks over 10 ms off, 73 half a beat out, 9
+at another tempo; on the CD rips 154 at another tempo, 55 over 10 ms
+off, 21 half a beat out. The collection's were looked at on the
+pictures for its tuning half, which show where a grid sits though not
+its tempo: 85 answers, 69 of them for ours. With those answers counted
+as well (and none from the pictures on tempo), rekordbox is right on
+2,710 (95.9 %) and ours on 2,398 (84.9 %); on the collection 1,399 and
+1,368.
 
 ## Denon again: the new music, and the players
 

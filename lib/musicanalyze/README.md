@@ -113,7 +113,7 @@ arithmetic, and if the test fails on your platform with the library
 unchanged, that is worth a report.
 
 The larger tests (drummers who wander, tempo ranges, tunings, sample
-rates) are still in Seabass's own suite, `tests/seabass_grid_analyzer_test.cpp`,
+rates) are still in Seabass's own suite, `tests/seabass_grid_analyser_test.cpp`,
 `tests/key_from_audio_test.cpp` and `tests/waveform_from_audio_test.cpp`,
 because they use Seabass's generator of synthetic tracks.
 

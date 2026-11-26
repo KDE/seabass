@@ -515,13 +515,27 @@ void theOneCallIsItsParts()
 void whatCannotBeAnalyzedSaysSo()
 {
     const std::vector<float> some(44100, 0.1f);
-    check(!gridFromSamples({}, 44100).error.empty(), "no samples: the grid says so");
-    check(!gridFromSamples(some, 0).error.empty(), "no sample rate: the grid says so");
-    check(gridFromSamples(some, 4000).error.find("sample rate") != std::string::npos, "4 kHz: the grid says so");
+    const auto blamesTheRate = [](const std::string &error) { return error.find("sample rate") != std::string::npos; };
+    check(gridFromSamples({}, 44100).error == "no samples", "no samples: the grid says so, and does not blame the sample rate");
+    check(blamesTheRate(gridFromSamples(some, 0).error), "no sample rate: the grid says so");
+    check(blamesTheRate(gridFromSamples(some, -44100).error), "a sample rate under 0: the grid says so");
+    check(blamesTheRate(gridFromSamples({}, 0).error), "no sample rate and no samples: the grid names the rate");
+    check(blamesTheRate(gridFromSamples(some, 4000).error), "4 kHz: the grid says so");
+    check(blamesTheRate(gridFromSamples(some, GridLowestSampleRateHz - 1).error), "one under the lowest rate: the grid says so");
     check(gridFromSamples(std::vector<float>(8000 * 20, 0.0f), GridLowestSampleRateHz).error.empty(), "8 kHz: a grid is looked for");
-    check(!keyFromSamples({}, 44100).error.empty(), "no samples: the key says so");
-    check(keyFromSamples(some, 4000).error.find("sample rate") != std::string::npos, "4 kHz: the key says so");
+    check(keyFromSamples({}, 44100).error == "no samples", "no samples: the key says so, and does not blame the sample rate");
+    check(blamesTheRate(keyFromSamples(some, 0).error), "no sample rate: the key says so");
+    check(blamesTheRate(keyFromSamples(some, 4000).error), "4 kHz: the key says so");
+    check(blamesTheRate(keyFromSamples(some, KeyLowestSampleRateHz - 1).error), "one under the lowest rate: the key says so");
+    check(keyFromSamples(some, KeyLowestSampleRateHz).error.empty(), "8 kHz: a key is looked for");
     check(waveformFromSamples(some, 4000).entries.empty(), "4 kHz: no waveform");
+    check(waveformFromSamples(some, WaveformLowestSampleRateHz - 1).entries.empty() && !waveformFromSamples(some, WaveformLowestSampleRateHz).entries.empty(),
+          "a waveform from the lowest rate on, and none one under it");
+    // Three seconds of a kick on every beat: too short to repeat itself,
+    // which is no beats and nobody's error.
+    const Audio shortTrack = house(44100, 126.0, 3.0, 0.25);
+    const GridAnalysis tooShort = gridFromSamples(shortTrack.samples, shortTrack.rate);
+    check(tooShort.error.empty() && tooShort.beats.empty(), "three seconds of music: no beats, and no error");
     const Analysis nothing = analyze({}, 44100);
     check(!nothing.grid.error.empty() && nothing.bpm == 0.0 && !nothing.key.key && nothing.waveform.entries.empty(),
           "the one call on no samples: an error, and nothing made up");
@@ -628,7 +642,28 @@ void audioInPiecesIsTheAudioWhole()
     check(!none.finish().error.empty(), "a grid analyzer fed nothing says so");
     BeatGridAnalyzer noRate(0);
     noRate.feed(track.samples);
-    check(!noRate.finish().error.empty(), "a grid analyzer without a sample rate says so");
+    check(noRate.finish().error.find("sample rate") != std::string::npos, "a grid analyzer without a sample rate says so");
+    KeyAnalyzer noRateKey(0);
+    noRateKey.feed(track.samples);
+    check(noRateKey.finish().error.find("sample rate") != std::string::npos, "a key analyzer without a sample rate says so");
+    // Fed again after it has given its result, each is as one fed
+    // nothing: an error or an empty result, and never the old one again.
+    BeatGridAnalyzer spentGrid(track.rate);
+    spentGrid.feed(track.samples);
+    check(spentGrid.finish().beats.size() > 50, "a grid analyzer at 44.1 kHz finds the beats");
+    spentGrid.feed(track.samples);
+    const GridAnalysis afterSpent = spentGrid.finish();
+    check(afterSpent.error == "no samples" && afterSpent.beats.empty(), "a grid analyzer that has given its grid is spent, fed again or not");
+    WaveformMeter spentMeter(track.rate);
+    spentMeter.feed(track.samples);
+    check(!spentMeter.finish().entries.empty(), "a meter at 44.1 kHz measures a track");
+    spentMeter.feed(track.samples);
+    check(spentMeter.finish().entries.empty(), "a meter that has given its waveform is spent");
+    analyzer.feed(track.samples);
+    const Analysis again = analyzer.finish();
+    check(!again.grid.error.empty() && again.grid.beats.empty() && again.bpm == 0.0 && !again.key.key && !again.key.error.empty()
+              && again.waveform.entries.empty(),
+          "an analyzer that has given its analysis is spent: errors, and nothing made up");
     KeyAnalyzer slowKey(4000);
     slowKey.feed(track.samples);
     check(slowKey.finish().error.find("sample rate") != std::string::npos, "a key analyzer at 4 kHz says it is the sample rate");
@@ -641,6 +676,33 @@ void audioInPiecesIsTheAudioWhole()
     const Analysis empty = nothing.finish();
     check(!empty.grid.error.empty() && !empty.key.error.empty() && empty.waveform.entries.empty() && empty.bpm == 0.0,
           "an analyzer fed nothing: errors, and nothing made up");
+}
+
+// One track made at every sample rate a file comes in, and at the lowest
+// one read: the same grid, wherever the bands' filters and the halving
+// of the rate fall. (Measured when this was written: every beat within
+// 0.05 ms of where 44.1 kHz has it.)
+void everySampleRateGivesTheGrid()
+{
+    const Audio reference = house(44100, 126.0, 40.0, 0.25);
+    const GridAnalysis expected = gridFromSamples(reference.samples, reference.rate);
+    check(expected.beats.size() > 80, "the track at 44.1 kHz has its beats");
+    for (const int rate : {GridLowestSampleRateHz, 11025, 22050, 32000, 48000, 96000, 192000}) {
+        const std::string at = " at " + std::to_string(rate) + " Hz";
+        const Audio audio = house(rate, 126.0, 40.0, 0.25);
+        const Analysis analysis = analyze(audio.samples, audio.rate);
+        check(analysis.grid.error.empty() && !analysis.grid.followsTempo && std::abs(analysis.bpm - 126.0) < 0.01,
+              "the tempo is 126" + at + ": " + number(analysis.bpm, 4));
+        double farthest = 0.0;
+        const bool sameCount = analysis.grid.beats.size() == expected.beats.size();
+        for (std::size_t i = 0; sameCount && i < expected.beats.size(); ++i) {
+            farthest = std::max(farthest, std::abs(analysis.grid.beats[i].timeMs - expected.beats[i].timeMs));
+        }
+        check(sameCount && farthest < 0.3,
+              "the beats are where 44.1 kHz has them" + at + ": " + std::to_string(analysis.grid.beats.size()) + " beats for "
+                  + std::to_string(expected.beats.size()) + ", farthest by " + number(farthest, 3) + " ms");
+        check(analysis.waveform.entries.size() == 6000 && analysis.key.error.empty(), "a waveform of 40 s and a key looked for" + at);
+    }
 }
 
 void theVersionIsTheHeaders()
@@ -669,6 +731,7 @@ int main(int argc, char **argv)
     theOneCallIsItsParts();
     piecesGiveTheWhole();
     audioInPiecesIsTheAudioWhole();
+    everySampleRateGivesTheGrid();
     checkResults(arguments[0]);
     if (failures != 0) {
         std::cerr << failures << " failed\n";

@@ -344,9 +344,9 @@ namespace
 
 // The waveform sections of a rekordbox analysis file are amplitudes and
 // colours, one byte per column, and a loud passage reads as letters: an
-// export that keeps them (AnonymizationOptions::keepWaveforms) showed
-// runs of letters long enough to pass for words in 16 of 59 real .EXT
-// files. Their bodies are blanked before the sweep, so it looks at the
+// export that keeps them (AnonymizationOptions::keepWaveforms) has runs
+// of letters long enough to pass for words (in 16 of 59 real .EXT files
+// measured). Their bodies are blanked before the sweep, so it looks at the
 // sections that can hold text (the path, the cue comments) and the
 // framing, and nothing else changes: the file on disk is not touched.
 bool isWaveformSectionTag(const std::string &bytes, std::size_t at)

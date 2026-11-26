@@ -41,7 +41,7 @@ struct KeyAnalysis
     // surer. Not a probability; for telling a clear case from a close one.
     double margin = 0.0;
     // Why there is no key, where that is not the music's doing: no
-    // samples, or a sample rate under KeyLowestSampleRateHz.
+    // samples, no sample rate, or one under KeyLowestSampleRateHz.
     std::string error;
 };
 

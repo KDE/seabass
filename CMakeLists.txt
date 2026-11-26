@@ -4764,16 +4764,21 @@ target_link_libraries(anonymize_library_test PRIVATE seabass_core)
 add_test(NAME anonymize_library_test COMMAND anonymize_library_test)
 
 # Real analysis data (tier 2), read through the app's own readers. The
-# fixture directory comes from cmake/SeabassFixtures.cmake; empty, the
-# test skips and says how to get one. Set even when empty, so a value
-# left in the calling shell cannot stand in for the configured one.
-add_executable(real_analysis_fixture_test tests/real_analysis_fixture_test.cpp)
-target_include_directories(real_analysis_fixture_test PRIVATE src)
-target_link_libraries(real_analysis_fixture_test PRIVATE seabass_core Qt6::Core)
-add_test(NAME real_analysis_fixture_test COMMAND real_analysis_fixture_test)
-set_tests_properties(real_analysis_fixture_test PROPERTIES
-    ENVIRONMENT "SEABASS_REAL_ANALYSIS_FIXTURE=${SEABASS_REAL_ANALYSIS_FIXTURE_DIR}"
-    SKIP_RETURN_CODE 77)
+# fixture directory comes from cmake/SeabassFixtures.cmake. Built
+# wherever Qt is, so it keeps compiling; a test only where a fixture was
+# configured, so a build without one has no test that does not run. The
+# directory is set in the test's environment, so a value left in the
+# calling shell cannot stand in for the configured one.
+if(TARGET Qt6::Core)
+    add_executable(real_analysis_fixture_test tests/real_analysis_fixture_test.cpp)
+    target_include_directories(real_analysis_fixture_test PRIVATE src)
+    target_link_libraries(real_analysis_fixture_test PRIVATE seabass_core Qt6::Core)
+    if(SEABASS_REAL_ANALYSIS_FIXTURE_DIR)
+        add_test(NAME real_analysis_fixture_test COMMAND real_analysis_fixture_test)
+        set_tests_properties(real_analysis_fixture_test PROPERTIES
+            ENVIRONMENT "SEABASS_REAL_ANALYSIS_FIXTURE=${SEABASS_REAL_ANALYSIS_FIXTURE_DIR}")
+    endif()
+endif()
 
 add_executable(libdjinterop_engine_cue_writer_propagate_test
     tests/libdjinterop_engine_cue_writer_propagate_test.cpp

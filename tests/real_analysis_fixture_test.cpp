@@ -8,10 +8,11 @@
 //
 // The fixture is not in the repository. cmake/SeabassFixtures.cmake hands
 // its directory over as SEABASS_REAL_ANALYSIS_FIXTURE in this test's
-// environment, and leaves it empty when neither switch was given: then
-// this skips (exit 77), saying how to get it. A directory that is given
-// and is not a whole fixture is a failure, never a skip, so a broken path
-// or a truncated download cannot pass for "no fixture".
+// environment, and registers the test only when there is one: a build
+// without the fixture has no such test, rather than one that does not
+// run. Run by hand without a directory it fails, saying how to get one,
+// and so does a directory that is not a whole fixture: a broken path or
+// a truncated download cannot pass for "no fixture".
 //
 // What it checks:
 //  * every file MANIFEST.json lists is there, with its size and SHA-256,
@@ -56,8 +57,6 @@ using namespace seabass::infrastructure;
 
 namespace
 {
-
-constexpr int SkipExitCode = 77;
 
 int failures = 0;
 
@@ -142,9 +141,9 @@ int main()
 {
     const char *configured = std::getenv("SEABASS_REAL_ANALYSIS_FIXTURE");
     if (configured == nullptr || std::string(configured).empty()) {
-        std::cout << "SKIP: no real-analysis fixture configured. Configure with -DSEABASS_FETCH_FIXTURES=ON to "
+        std::cerr << "FAIL: no real-analysis fixture configured. Configure with -DSEABASS_FETCH_FIXTURES=ON to "
                      "download it, or with -DSEABASS_REAL_ANALYSIS_FIXTURE=<dir> to use an unpacked copy.\n";
-        return SkipExitCode;
+        return 1;
     }
     const fs::path root = seabass::pathFromUtf8(configured);
     const fs::path manifestPath = root / "MANIFEST.json";

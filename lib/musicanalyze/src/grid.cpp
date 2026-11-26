@@ -8,9 +8,10 @@
 #include <array>
 #include <cmath>
 #include <complex>
-#include <initializer_list>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <numbers>
@@ -123,10 +124,15 @@ void fft(std::vector<std::complex<double>> &data, bool inverse)
     const double sign = inverse ? 1.0 : -1.0;
     // One table for the largest stage, read with a stride by the smaller
     // ones: a twiddle built by repeated multiplication drifts. Kept from
-    // call to call, one each way: the tempo curve transforms the same
-    // length twice for every two seconds of a track.
+    // call to call, one each way, for the lengths that come again and
+    // again: the listening and the tempo curve transform 16384 values
+    // many times a track. The one long transform of a whole track
+    // builds a table of its own and lets go of it: kept, it would hold
+    // 64 MB a thread after a mix of an hour, until the thread ends.
+    constexpr std::size_t LargestKept = 16384;
     thread_local std::array<std::vector<std::complex<double>>, 2> tables;
-    std::vector<std::complex<double>> &twiddle = tables[inverse ? 1 : 0];
+    std::vector<std::complex<double>> once;
+    std::vector<std::complex<double>> &twiddle = n / 2 > LargestKept ? once : tables[inverse ? 1 : 0];
     if (twiddle.size() != n / 2) {
         twiddle.resize(n / 2);
         for (std::size_t k = 0; k < n / 2; ++k) {
@@ -2128,7 +2134,7 @@ double usualBpm(const std::vector<Beat> &beats)
 class BeatGridAnalyzer::State
 {
 public:
-    State(int sampleRateHz, TempoRange range) : range(usableTempoRange(range))
+    State(int sampleRateHz, TempoRange range) : hasRate(sampleRateHz > 0), range(usableTempoRange(range))
     {
         if (sampleRateHz >= GridLowestSampleRateHz) {
             listener.emplace(sampleRateHz);
@@ -2136,16 +2142,13 @@ public:
     }
     // Empty where the sample rate is too low.
     std::optional<OnsetListener> listener;
+    // False where what was given as the sample rate is none (0, or less).
+    bool hasRate;
     TempoRange range;
     bool any = false;
 };
 
-BeatGridAnalyzer::BeatGridAnalyzer(int sampleRateHz, TempoRange range)
-{
-    if (sampleRateHz > 0) {
-        m_state = std::make_unique<State>(sampleRateHz, range);
-    }
-}
+BeatGridAnalyzer::BeatGridAnalyzer(int sampleRateHz, TempoRange range) : m_state(std::make_unique<State>(sampleRateHz, range)) {}
 
 BeatGridAnalyzer::~BeatGridAnalyzer() = default;
 BeatGridAnalyzer::BeatGridAnalyzer(BeatGridAnalyzer &&) noexcept = default;
@@ -2163,9 +2166,15 @@ void BeatGridAnalyzer::feed(std::span<const float> samples)
 
 GridAnalysis BeatGridAnalyzer::finish()
 {
-    if (!m_state || !m_state->any || !m_state->listener) {
+    if (!m_state || !m_state->hasRate || !m_state->any || !m_state->listener) {
         GridAnalysis failed;
-        failed.error = !m_state || !m_state->any ? "no samples" : "the sample rate is too low for a beat grid";
+        if (m_state && !m_state->hasRate) {
+            failed.error = "no sample rate";
+        } else if (!m_state || !m_state->any) {
+            failed.error = "no samples";
+        } else {
+            failed.error = "the sample rate is too low for a beat grid";
+        }
         m_state.reset();
         return failed;
     }

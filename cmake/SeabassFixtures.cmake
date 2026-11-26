@@ -13,8 +13,8 @@
 # hand or kept outside the build tree.
 #
 # The result is SEABASS_REAL_ANALYSIS_FIXTURE_DIR: the unpacked tree, or
-# empty when there is none. Tests get it through their environment, and
-# skip when it is empty.
+# empty when there is none. The tests that need it get it through their
+# environment, and are registered only when there is one.
 
 option(SEABASS_FETCH_FIXTURES "Download the tier 2 real-analysis fixture at configure time" OFF)
 set(SEABASS_FIXTURE_BASE_URL "https://vizzzion.org/seabass/downloads/fixtures"

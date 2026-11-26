@@ -265,7 +265,9 @@ public:
     //
     // Bounds come from the format rather than from guesswork: the heap
     // starts at the page's heap_pos and ends where the row-index groups
-    // begin (len_page - num_row_groups * 0x24), and a row's extent runs
+    // begin (every group but the last takes 0x24 bytes from the end of
+    // the page, the last only its flag words and the slots the page has
+    // allocated), and a row's extent runs
     // to the next row's start. That last part is an upper bound rather
     // than the true length, so this under-clears rather than over-clears
     // -- it can leave a few bytes of a dead row's tail inside a live

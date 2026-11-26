@@ -552,9 +552,10 @@ configure; it never quietly goes on without the data. A tree already
 unpacked from the pinned zip is left alone. A published zip is never
 replaced: a new fixture gets a new name and a new pin.
 
-`real_analysis_fixture_test` skips (naming both switches) when neither
-is given, and fails when a directory is given and its `MANIFEST.json`
-is missing or the tree does not match it: every file's size and
+`real_analysis_fixture_test` is registered only when one of the two is
+given (configure says "Real-analysis fixture: none" and names both
+switches otherwise; the test is still built), and fails when the
+directory's `MANIFEST.json` is missing or the tree does not match it: every file's size and
 SHA-256, and no file the manifest does not list. With a good tree it
 reads every paired track through the app's own readers (rekordbox's
 beat grid, PWAV, PWV4, PWV6, the scrolling and detail waveforms;

@@ -18,7 +18,6 @@ namespace seabass::infrastructure::rekordbox
 // A track's three analysis files (.DAT, .EXT, .2EX) built from nothing,
 // for a track Seabass puts on a stick itself: what a player needs to show
 // a beat grid and waveforms, and the empty cue lists it expects to find.
-// A first version, to be replaced behind this interface.
 //
 // The layout is rekordbox 7's, measured on its own exports (300 files of
 // a stick, 5198 of a collection, and the testshark_t73 fixture):
