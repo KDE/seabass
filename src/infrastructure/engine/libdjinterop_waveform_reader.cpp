@@ -158,6 +158,8 @@ domain::TrackAnalysis readTrackAnalysisFrom(const StickDatabaseRead &read, const
             try {
                 const std::vector<djinterop::waveform_entry> entries = track->waveform();
                 analysis.waveform = previewOf(entries);
+                analysis.waveformLook = domain::WaveformLook::Engine;
+                analysis.detail.look = domain::WaveformLook::Engine;
                 if (!entries.empty() && entries.size() <= detailUpTo) {
                     analysis.detail.columns.reserve(entries.size());
                     for (const djinterop::waveform_entry &entry : entries) {
@@ -187,6 +189,7 @@ domain::TrackAnalysis readTrackAnalysisFrom(const StickDatabaseRead &read, const
             } catch (const std::exception &) {
                 analysis.waveform.clear();
                 analysis.detail = {};
+                analysis.waveformLook = domain::WaveformLook::Unknown;
             }
         }
         // The grid is placed by the rate trackData records (or works one

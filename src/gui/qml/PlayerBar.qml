@@ -360,6 +360,7 @@ Frame {
             property string artworkPath: root.controller.artworkPath || ""
             property string fallbackArtworkPath: root.controller.fallbackArtworkPath || ""
             property var waveform: root.controller.waveform
+            property string waveformLook: root.controller.waveformLook !== undefined ? root.controller.waveformLook : ""
             property var cues: root.controller.cues
             property real durationMs: root.controller.duration
             property real positionMs: root.controller.position
@@ -378,6 +379,7 @@ Frame {
                 face.artworkPath = face.artworkPath;
                 face.fallbackArtworkPath = face.fallbackArtworkPath;
                 face.waveform = face.waveform;
+                face.waveformLook = face.waveformLook;
                 face.cues = face.cues;
                 face.durationMs = face.durationMs;
                 face.positionMs = face.positionMs;
@@ -463,11 +465,9 @@ Frame {
                     // The grid cut out of the bars (option G): a ruler
                     // lane was too heavy for the bar.
                     gridStyle: "sliced"
-                    // Drawn as the player it came from draws it, the way the
-                    // zoomed popup does: Engine's layered bands for a track
-                    // from Engine, the CDJ's colours for one from either
-                    // rekordbox catalog.
-                    colorScheme: face.format === "engine" ? "engine" : "vivid"
+                    // Drawn as the software whose analysis it is draws it
+                    // (WaveformView.look), in every view alike.
+                    look: face.waveformLook
                     // Only the beats drawn at this width, read with the
                     // waveform when the track was loaded; laid out again for a
                     // new track, a new length or a new width.

@@ -1357,6 +1357,11 @@ Page {
                                                     ? root.playbackController.waveformFor(strip.modelData.side,
                                                         root.pathForFormat(strip.modelData.side), strip.modelData.sourceId)
                                                     : []
+                                                look: root.playbackController && root.playbackController.analysisRevision !== -1
+                                                    && typeof root.playbackController.waveformLookFor === "function"
+                                                    ? root.playbackController.waveformLookFor(strip.modelData.side,
+                                                        root.pathForFormat(strip.modelData.side), strip.modelData.sourceId)
+                                                    : ""
                                                 // The same cached read as the waveform's,
                                                 // only the beats drawn at this width.
                                                 beatsSelected: true

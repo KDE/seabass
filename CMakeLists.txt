@@ -2309,6 +2309,13 @@ target_link_libraries(rekordbox_waveform_sections_test PRIVATE seabass_core DjIn
 target_compile_definitions(rekordbox_waveform_sections_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME rekordbox_waveform_sections_test COMMAND rekordbox_waveform_sections_test)
 
+# How each waveform is drawn (domain::WaveformLook), and rekordbox's 3Band
+# overview read as one section of the .2EX.
+add_executable(rekordbox_waveform_looks_test tests/rekordbox_waveform_looks_test.cpp)
+target_include_directories(rekordbox_waveform_looks_test PRIVATE src tests)
+target_link_libraries(rekordbox_waveform_looks_test PRIVATE seabass_core seabass_core_testing)
+add_test(NAME rekordbox_waveform_looks_test COMMAND rekordbox_waveform_looks_test)
+
 # Issue #38: how many tracks an Engine player will have to analyse. Takes
 # the fixture path, because its real distribution (1214 of 1564) is what
 # makes the count mean anything.

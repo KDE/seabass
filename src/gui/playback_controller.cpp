@@ -102,8 +102,9 @@ domain::TrackAnalysis readAnalysis(const QString &format, const QString &library
 {
     try {
         if (format == "rekordbox") {
+            // Drawn, so rekordbox's 3Band overview where the stick has it.
             return infrastructure::rekordbox::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
-                                                                nullptr, pathIndex);
+                                                                nullptr, pathIndex, /*threeBandOverview=*/true);
         }
         if (format == "engine") {
             return infrastructure::engine::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
@@ -261,6 +262,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
     m_advanceWhenLibraryFree = false;
     m_analysisPending = false;
     m_waveform.clear();
+    m_waveformLook.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
     m_drawnBeats.clear();
@@ -368,6 +370,7 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
 void PlaybackController::readLoadedAnalysis()
 {
     m_waveform.clear();
+    m_waveformLook.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
     m_drawnBeats.clear();
@@ -391,6 +394,7 @@ void PlaybackController::readLoadedAnalysis()
                                 MaximumKeptDetailColumns);
     }
     m_waveform = toVariantList(analysis.waveform);
+    m_waveformLook = QString::fromLatin1(domain::waveformLookName(analysis.waveformLook));
     // Kept for the popup only where it is overview-sized (Engine 2.x
     // and 3.x, about a thousand entries); a 1.x high-resolution
     // waveform (ten megabytes for an hour) is read again off the GUI
@@ -423,6 +427,7 @@ void PlaybackController::loadFile(const QString &format, const QString &libraryP
     m_advanceWhenLibraryFree = false;
     m_analysisPending = false;
     m_waveform.clear();
+    m_waveformLook.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
     m_drawnBeats.clear();
@@ -516,7 +521,8 @@ PlaybackController::CachedAnalysis PlaybackController::cachedAnalysis(const QStr
     } else {
         analysis = readAnalysis(format, libraryPath, sourceId, index.get());
     }
-    CachedAnalysis read{toVariantList(analysis.waveform), std::move(analysis.beats), analysis.beatRateRecorded};
+    CachedAnalysis read{toVariantList(analysis.waveform), std::move(analysis.beats), analysis.beatRateRecorded,
+                        QString::fromLatin1(domain::waveformLookName(analysis.waveformLook))};
     m_analysisCache.insert(key, new CachedAnalysis(read));
     return read;
 }
@@ -569,6 +575,12 @@ QVariantList PlaybackController::waveformFor(const QString &format, const QStrin
     return cachedAnalysis(format, libraryPath, sourceId).waveform;
 }
 
+QString PlaybackController::waveformLookFor(const QString &format, const QString &libraryPath,
+                                           const QString &sourceId) const
+{
+    return cachedAnalysis(format, libraryPath, sourceId).look;
+}
+
 QVariantList PlaybackController::beatGridFor(const QString &format, const QString &libraryPath,
                                               const QString &sourceId) const
 {
@@ -606,7 +618,8 @@ QVariantMap PlaybackController::detailWaveform() const
     }
     return {{QStringLiteral("columns"), QByteArray()},
             {QStringLiteral("msPerColumn"), 0.0},
-            {QStringLiteral("startMs"), m_beatShiftMs}};
+            {QStringLiteral("startMs"), m_beatShiftMs},
+            {QStringLiteral("look"), QString()}};
 }
 
 void PlaybackController::dropDetailWaveform()
@@ -623,14 +636,16 @@ void PlaybackController::dropDetailWaveform()
     }
 }
 
-void PlaybackController::setDetailWaveform(const QByteArray &columns, double msPerColumn, int serial)
+void PlaybackController::setDetailWaveform(const QByteArray &columns, double msPerColumn, const QString &look,
+                                           int serial)
 {
     if (serial != m_trackSerial) {
         return;   // another track has been loaded since it was asked for
     }
     m_detailWaveform = {{QStringLiteral("columns"), columns},
                         {QStringLiteral("msPerColumn"), msPerColumn},
-                        {QStringLiteral("startMs"), m_beatShiftMs}};
+                        {QStringLiteral("startMs"), m_beatShiftMs},
+                        {QStringLiteral("look"), look}};
     m_detailSerial = serial;
     emit detailWaveformChanged();
 }
@@ -651,7 +666,7 @@ void PlaybackController::requestDetailWaveform()
     const bool engine = m_currentFormat == QLatin1String("engine");
     if ((!engine && m_currentFormat != QLatin1String("rekordbox")) || m_currentLibraryPath.isEmpty()
         || m_currentSourceId.startsWith(QLatin1String("recording:"))) {
-        setDetailWaveform({}, 0.0, serial);
+        setDetailWaveform({}, 0.0, QString(), serial);
         return;
     }
     // Not while a library is being written: an analysis file, the
@@ -660,7 +675,8 @@ void PlaybackController::requestDetailWaveform()
     // load() kept is handed over meanwhile.
     if (m_libraryBusy) {
         if (engine && m_loadedDetailKept) {
-            setDetailWaveform(columnBytes(m_loadedDetail), m_loadedDetail.msPerColumn, serial);
+            setDetailWaveform(columnBytes(m_loadedDetail), m_loadedDetail.msPerColumn,
+                              QString::fromLatin1(domain::waveformLookName(m_loadedDetail.look)), serial);
         }
         return;
     }
@@ -703,8 +719,12 @@ void PlaybackController::requestDetailWaveform()
                     = infrastructure::rekordbox::readDetailWaveform(path, sourceId, nullptr, index.get());
                 read.columns = columnBytes(detail);
                 read.msPerColumn = detail.msPerColumn;
+                read.look = QString::fromLatin1(domain::waveformLookName(detail.look));
                 return cancel.cancelled() ? DetailRead{} : read;
             }
+            // Engine's, whether from the audio or from Engine's overview:
+            // drawn as a Denon player draws it.
+            read.look = QString::fromLatin1(domain::waveformLookName(domain::WaveformLook::Engine));
             bool fromAudio = false;
 #ifdef SEABASS_HAVE_QT_AUDIO
             const QFileInfo info(audioPath);
@@ -760,7 +780,7 @@ void PlaybackController::requestDetailWaveform()
                  ++m_audioDetailDecodes;
                  keepAudioDetail(std::move(read.decoded));
              }
-             setDetailWaveform(read.columns, read.msPerColumn, serial);
+             setDetailWaveform(read.columns, read.msPerColumn, read.look, serial);
          },
          [](const QString &) {}, [] {}});
 }
@@ -1120,6 +1140,7 @@ void PlaybackController::stop()
     m_currentSourceId.clear();
     m_currentFilePath.clear();
     m_waveform.clear();
+    m_waveformLook.clear();
     m_beatTimesMs.clear();
     m_beatNumbers.clear();
     m_drawnBeats.clear();

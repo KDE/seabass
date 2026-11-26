@@ -647,6 +647,10 @@ HealthCheckPage {
                                     waveformData: root.playbackController.analysisRevision === -1 ? []
                                         : root.playbackController.waveformFor(issueDelegate.format,
                                         root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
+                                    look: root.playbackController.analysisRevision === -1
+                                        || typeof root.playbackController.waveformLookFor !== "function" ? ""
+                                        : root.playbackController.waveformLookFor(issueDelegate.format,
+                                        root.pathForFormat(issueDelegate.format), trackFrame.modelData.sourceId)
                                     // The same cached read as the waveform's, only
                                     // the beats drawn at this width.
                                     beatsSelected: true

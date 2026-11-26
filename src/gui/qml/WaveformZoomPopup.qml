@@ -417,11 +417,10 @@ SeabassDialog {
     // the overview until then, and where there is nothing finer.
     readonly property var detail: root.showing && root.controller && root.controller.detailWaveform
         ? root.controller.detailWaveform : ({})
-    // Each library's detail in its own player's colours: an Engine
-    // track as a Denon player draws it, a rekordbox one in rekordbox's
-    // three-band colours (WaveformView.colorScheme).
-    readonly property string colorScheme: root.controller && root.controller.currentFormat === "engine"
-        ? "engine" : "vivid"
+    // Each library's waveform in the look of the software whose analysis
+    // it is (WaveformView.look): the detail's own, else the overview's.
+    readonly property string look: root.hasDetail ? root.detail.look || ""
+        : root.controller && root.controller.waveformLook !== undefined ? root.controller.waveformLook : ""
     readonly property bool hasDetail: root.detail.columns !== undefined && root.detail.columns !== null
         && root.detail.columns.byteLength >= 3
     // The beats drawn at this zoom, for the whole track: the same rule as
@@ -462,8 +461,8 @@ SeabassDialog {
 
     // The Beat Grids & Waveforms page hands over both copies of the
     // track, rekordbox's first: [{label, available (there is something to
-    // show), track (as openFor() takes it), scheme (WaveformView's
-    // colorScheme), columns, msPerColumn, startMs, ticksAt(durationMs,
+    // show), track (as openFor() takes it), look (WaveformView's
+    // look), columns, msPerColumn, startMs, ticksAt(durationMs,
     // widthPx)}], every one on the player's timeline; in Both the side the
     // player has loaded is drawn from the player's detail. Elsewhere it is
     // empty: the popup shows the track the player has, with no box.
@@ -556,7 +555,7 @@ SeabassDialog {
     readonly property var lanes: {
         if (!root.showingBoth) {
             return [{
-                scheme: root.colorScheme,
+                look: root.look,
                 columns: root.hasDetail ? root.detail.columns : null,
                 columnMs: root.hasDetail ? root.detail.msPerColumn || 0 : 0,
                 startMs: root.hasDetail ? root.detail.startMs || 0 : 0,
@@ -570,7 +569,7 @@ SeabassDialog {
         // as its single view draws it; the other from what the page read.
         const own = (i) => i === root.loadedSide && root.hasDetail;
         return root.sides.map((side, i) => ({
-            scheme: side.scheme,
+            look: side.look || "",
             columns: own(i) ? root.detail.columns : side.columns && side.columns.byteLength >= 3 ? side.columns : null,
             columnMs: own(i) ? root.detail.msPerColumn || 0 : side.msPerColumn || 0,
             startMs: own(i) ? root.detail.startMs || 0 : side.startMs || 0,
@@ -797,7 +796,10 @@ SeabassDialog {
                                 }
                                 Component.onCompleted: Qt.callLater(tileView.markMade)
                                 showRuler: tileView.made && tileView.lane.ticks ? tileView.lane.ticks.length > 0 : false
-                                colorScheme: tileView.lane.scheme || "vivid"
+                                look: tileView.lane.look || ""
+                                // Zoomed in: drawn as a deck scrolls it,
+                                // around the centre line.
+                                overview: false
                                 // Played or not is shown by the dimming below, which
                                 // moves with the playhead without a repaint.
                                 unplayedOpacity: 1

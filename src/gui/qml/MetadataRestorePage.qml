@@ -518,6 +518,10 @@ Page {
                     ? proposalRow.stickWaveform(root.playbackController,
                                                 controller.waveformSourceAt(proposalRow.index))
                     : []
+                waveformLook: proposalRow.expanded
+                    ? proposalRow.stickWaveformLook(root.playbackController,
+                                                    controller.waveformSourceAt(proposalRow.index))
+                    : ""
                 // The waveform is the stick's, so a missing one is too.
                 waveformMissingText: "No waveform on the stick for this track"
                 // What this row's badge is counting is not what is on

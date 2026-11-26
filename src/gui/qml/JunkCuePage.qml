@@ -470,6 +470,7 @@ Page {
                         // lane and no numbers (#104).
                         gridStyle: "lines"
                         waveformData: root.playbackController.waveform
+                        look: root.playbackController.waveformLook
                         format: root.playbackController.currentFormat
                         cueData: root.playbackController.cues
                         beatsSelected: true

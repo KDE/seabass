@@ -387,6 +387,11 @@ Page {
                     ? root.playbackController.waveformFor(card.track.side, root.pathForFormat(card.track.side),
                                                           card.track.sourceId)
                     : []
+                look: root.playbackController && root.playbackController.analysisRevision !== -1
+                    && typeof root.playbackController.waveformLookFor === "function"
+                    ? root.playbackController.waveformLookFor(card.track.side, root.pathForFormat(card.track.side),
+                                                              card.track.sourceId)
+                    : ""
                 format: card.track.side
                 cueData: card.track.cues
                 trackDurationMs: card.track.durationMs

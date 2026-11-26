@@ -159,19 +159,30 @@ QtObject {
     readonly property real beatSlicedMarkOpacity: 0.8
     readonly property real beatSlicedMinimumSpacing: 12
 
-    // A waveform column's colour from its three bands, 0..1 each, as
-    // {r, g, b} of 0..255. "Classic" is the colour every waveform has
-    // drawn: bass in blue, mids in green and yellow, highs towards white,
-    // blended by each band's strength. "Vivid" (the zoomed popup) is the
-    // three-band look of a CDJ: saturated blue lows, amber mids, white
-    // highs, each band weighted by its square so the loudest one decides,
-    // and the whole made darker for a quiet column and brighter for a
-    // loud one.
-    readonly property color waveformVividLow: "#1f5fff"
-    readonly property color waveformVividMid: "#ff9a1a"
-    readonly property color waveformVividHigh: "#ffffff"
-    readonly property real waveformVividQuietBrightness: 0.35
-    // "Engine" (the zoomed popup on an Engine track): how a Denon player
+    // A waveform is drawn in the look of the software whose analysis it
+    // is (WaveformView.look). rekordbox 3Band (rekordbox 7.2's waveform):
+    // blue lows, amber mids, white highs, sampled from photos of
+    // rekordbox 7.2 on a laptop screen (2026-11-26); to be checked
+    // against a screenshot before they are final.
+    readonly property color waveformRekordboxLow: "#0050ff"
+    readonly property color waveformRekordboxMid: "#e38a26"
+    readonly property color waveformRekordboxHigh: "#f2f2ee"
+    // How rekordbox puts its three bands together. In the photos blue
+    // frames every column and white is the core, which layers each as
+    // tall as its own band cannot give (lows and mids are about equally
+    // loud in PWV6 and PWV7): the bands are stacked outward from the
+    // centre line, high in the core, mid around it, low outside, as far
+    // as the photos tell. One switch until a screenshot of the same
+    // passage settles it.
+    readonly property bool waveformRekordboxStacked: true
+    // The stacked sum that fills the height: about the loudest low + mid
+    // + high of PWV6 and PWV7 (each 0..1 of 127) on a loud track.
+    readonly property real waveformRekordboxStackedFull: 1.2
+    // rekordbox Blue (PWAV and PWV3, older exports): a blue going white
+    // with each column's whiteness.
+    readonly property color waveformRekordboxBlue: "#1e6cff"
+    readonly property real waveformRekordboxBlueWhitest: 0.85
+    // Engine's look (every waveform from an Engine library): how a Denon player
     // with Engine OS draws its scrolling waveform, three layers mirrored
     // around the centre line, each as tall as its own band, the low one
     // first and the high one on top: a blue envelope, green inside it, a
@@ -186,29 +197,6 @@ QtObject {
     readonly property real waveformPlayedShade: 0.45
     // How long the player bar takes to blend from one track to the next.
     readonly property int playerBlendDuration: 250
-    function waveformRgb(low, mid, high, vivid) {
-        // A band out of range, or not a number, is clamped (NaN to 0):
-        // never an invalid colour.
-        const band01 = (v) => v > 0 ? Math.min(1, v) : 0;
-        low = band01(low);
-        mid = band01(mid);
-        high = band01(high);
-        if (!vivid) {
-            return {r: Math.min(255, Math.round(60 + high * 195)),
-                    g: Math.min(255, Math.round(60 + mid * 150 + high * 60)),
-                    b: Math.min(255, Math.round(90 + low * 165))};
-        }
-        const wl = low * low, wm = mid * mid, wh = high * high;
-        const sum = wl + wm + wh;
-        const amplitude = Math.max(low, mid, high);
-        const bright = waveformVividQuietBrightness + (1 - waveformVividQuietBrightness) * amplitude;
-        const band = (c) => sum > 0
-            ? (wl * waveformVividLow[c] + wm * waveformVividMid[c] + wh * waveformVividHigh[c]) / sum
-            : waveformVividLow[c];
-        return {r: Math.round(255 * band("r") * bright), g: Math.round(255 * band("g") * bright),
-                b: Math.round(255 * band("b") * bright)};
-    }
-
     function mix(a, b, t) {
         return Qt.rgba(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0);
     }

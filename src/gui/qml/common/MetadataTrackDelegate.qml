@@ -128,6 +128,8 @@ Rectangle {
     // nothing rather than something untrue.
     property bool showWaveform: false
     property var waveformData: []
+    // How waveformData is drawn (WaveformView.look): stickWaveformLook().
+    property string waveformLook: ""
     property var waveformCues: []
     property real waveformDurationMs: 0
     property string waveformMissingText: ""
@@ -143,6 +145,14 @@ Rectangle {
             return [];
         }
         return player.waveformFor(source.format, source.libraryPath, source.sourceId);
+    }
+    // How that waveform is drawn, from the same read.
+    function stickWaveformLook(player, source) {
+        if (!player || !source || !source.format || player.analysisRevision === -1
+                || typeof player.waveformLookFor !== "function") {
+            return "";
+        }
+        return player.waveformLookFor(source.format, source.libraryPath, source.sourceId);
     }
 
     // ---- playing it ----------------------------------------------------
@@ -407,6 +417,7 @@ Rectangle {
                 gridStyle: "lines"
                 objectName: "rowWaveform"
                 waveformData: delegate.waveformData
+                look: delegate.waveformLook
                 cueData: delegate.waveformCues
                 trackDurationMs: delegate.waveformDurationMs
                 // A metadata row often has no length; its cues are what

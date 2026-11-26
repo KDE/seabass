@@ -1725,6 +1725,7 @@ Page {
                             // A backdrop behind a row's text: no ruler lane.
                             gridStyle: "lines"
                             waveformData: playbackController.waveform
+                            look: playbackController.waveformLook
                             format: playbackController.currentFormat
                             cueData: playbackController.cues
                             trackDurationMs: playbackController.duration

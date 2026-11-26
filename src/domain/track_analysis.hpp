@@ -19,6 +19,8 @@ namespace seabass::domain
 struct TrackAnalysis
 {
     std::vector<WaveformColumn> waveform;
+    // How `waveform` is drawn (see WaveformLook).
+    WaveformLook waveformLook = WaveformLook::Unknown;
     std::vector<Beat> beats;
     // Whether the beat times rest on a sample rate the library records.
     // rekordbox stores times, so always. Engine stores sample offsets, and

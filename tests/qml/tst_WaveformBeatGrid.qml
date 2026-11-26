@@ -616,20 +616,82 @@ TestCase {
         }
     }
 
-    // The vivid colours of the popup: saturated blue lows, amber mids,
-    // white highs, a quiet column darker than a loud one; the classic
-    // colours unchanged.
-    function test_theVividColours() {
-        const low = Theme.waveformRgb(1, 0, 0, true);
-        verify(low.b > 220 && low.r < 60 && low.g < 120, "blue lows: " + JSON.stringify(low));
-        const mid = Theme.waveformRgb(0, 1, 0, true);
-        verify(mid.r > 220 && mid.g > 120 && mid.b < 60, "amber mids: " + JSON.stringify(mid));
-        const high = Theme.waveformRgb(0, 0, 1, true);
-        verify(high.r > 240 && high.g > 240 && high.b > 240, "white highs: " + JSON.stringify(high));
-        const quiet = Theme.waveformRgb(0.2, 0, 0, true);
-        verify(quiet.b < low.b * 0.6, "a quiet column darker: " + JSON.stringify(quiet));
-        compare(Theme.waveformRgb(1, 1, 1, false), {r: 255, g: 255, b: 255});
-        compare(Theme.waveformRgb(0, 0, 0, false), {r: 60, g: 60, b: 90});
+    // Each look draws as the software whose analysis it is (#108's
+    // sibling plan, "waveform colour follows the data"). rekordbox's 3Band
+    // overview stands on the bottom edge, its bands stacked outward: high
+    // at the base, mid above it, low on top, in Theme's colours. Engine's
+    // is centred, each band as tall as its own value. Blue is one bar a
+    // column, blue going white with the whiteness. Columns of low 0.6,
+    // mid 0.3, high 0.12: stacked, the high layer reaches 0.1 of the
+    // height, mid + high 0.35, all three 0.85.
+    // `change` run, and then the bars painted again: a look changes only
+    // them, not the grid's canvas or the overlay.
+    function barsRepaintedAfter(host, change) {
+        host.paints[0].clear();
+        change();
+        tryVerify(() => host.paints[0].count > 0, 5000, "the bars painted again");
+        waitForPolish(testCase.Window.window);
+    }
+    function test_eachLookDrawsAsItsSoftwareDoes() {
+        const band = {low: 0.6, mid: 0.3, high: 0.12};
+        const near = (c, want) => distance(c, want) < 0.12;
+        const host = makeView({trackDurationMs: 60000, gridStyle: "lines", progress: 1,
+                               look: "rekordbox-3band", waveformData: columns(600, band)});
+        verify(host.view.bottomAnchored, "a rekordbox overview stands on the bottom edge");
+        const top = host.view.waveTop, h = host.view.waveHeight;
+        let image = grabImage(host);
+        let at = (fraction) => PixelScale.pixel(image, host, 300, top + h * (1 - fraction));
+        verify(near(at(0.05), Theme.waveformRekordboxHigh), "white at the base: " + at(0.05));
+        verify(near(at(0.22), Theme.waveformRekordboxMid), "amber above it: " + at(0.22));
+        verify(near(at(0.6), Theme.waveformRekordboxLow), "blue on top: " + at(0.6));
+        verify(near(at(0.95), Theme.background), "the ground above: " + at(0.95));
+        if (screenshotDir && screenshotDir.length > 0) {
+            image.save(screenshotDir + "/waveform-look-rekordbox-3band.png");
+        }
+
+        // Zoomed in (not an overview): around the centre line.
+        barsRepaintedAfter(host, () => host.view.overview = false);
+        verify(!host.view.bottomAnchored);
+        image = grabImage(host);
+        const centre = top + h / 2;
+        at = (dy) => PixelScale.pixel(image, host, 300, centre + dy * h);
+        verify(near(at(0.02), Theme.waveformRekordboxHigh), "white at the centre line: " + at(0.02));
+        verify(near(at(-0.11), Theme.waveformRekordboxMid), "amber around it: " + at(-0.11));
+        verify(near(at(0.3), Theme.waveformRekordboxLow), "blue outside: " + at(0.3));
+        verify(near(at(-0.47), Theme.background), "the ground past it: " + at(-0.47));
+
+        // Engine: centred, each band as tall as itself, high on top.
+        barsRepaintedAfter(host, () => host.view.look = "engine");
+        verify(!host.view.bottomAnchored, "Engine's overview is centred");
+        image = grabImage(host);
+        verify(near(at(0.03), Theme.waveformEngineHigh), "Engine's white core: " + at(0.03));
+        verify(near(at(-0.1), Theme.waveformEngineMid), "Engine's green: " + at(-0.1));
+        verify(near(at(0.22), Theme.waveformEngineLow), "Engine's blue: " + at(0.22));
+        verify(near(at(0.4), Theme.background), "the ground past the low band: " + at(0.4));
+
+        // Blue: a whiteness of none is blue, a full one nearly white.
+        barsRepaintedAfter(host, () => {
+            host.view.look = "rekordbox-blue";
+            host.view.overview = true;
+            host.view.waveformData = columns(300, {low: 0.8, mid: 0.44, high: 0})
+                .concat(columns(300, {low: 0.8, mid: 0.8, high: 0.8}));
+        });
+        verify(host.view.bottomAnchored);
+        image = grabImage(host);
+        const blue = PixelScale.pixel(image, host, 150, top + h * 0.7);
+        const white = PixelScale.pixel(image, host, 450, top + h * 0.7);
+        verify(near(blue, Theme.waveformRekordboxBlue), "no whiteness: blue " + blue);
+        verify(white.r > 0.85 && white.g > 0.85 && white.b > 0.9, "full whiteness: nearly white " + white);
+        verify(near(PixelScale.pixel(image, host, 150, top + h * 0.1), Theme.background), "0.8 of the height, from the bottom");
+    }
+
+    // A look not known draws as Blue draws one height, never nothing.
+    function test_anUnknownLookStillDraws() {
+        const host = makeView({trackDurationMs: 60000, gridStyle: "lines", progress: 1,
+                               waveformData: columns(600, {low: 1, mid: 0, high: 0})});
+        compare(host.view.look, "");
+        verify(!host.view.bottomAnchored, "centred");
+        verify(inkAt(host, 300, host.view.waveTop + host.view.waveHeight / 2) > 0.3, "bars drawn");
     }
 
     // A view states its grid style; one that does not gets the lines only,
@@ -642,18 +704,6 @@ TestCase {
         const view = createTemporaryObject(plainView, testCase, {trackDurationMs: 60000, beatData: grid(500, 0, 60000)});
         compare(view.gridStyle, "lines");
         compare(view.rulerHeight, 0);
-    }
-
-    // A colour is never invalid, whatever the bands hold.
-    function test_aColourIsAlwaysValid() {
-        for (const vivid of [false, true]) {
-            for (const bands of [[NaN, 2, -1], [Infinity, NaN, 0.5], [-3, -3, -3]]) {
-                const c = Theme.waveformRgb(bands[0], bands[1], bands[2], vivid);
-                for (const v of [c.r, c.g, c.b]) {
-                    verify(Number.isInteger(v) && v >= 0 && v <= 255, JSON.stringify(bands) + " gave " + JSON.stringify(c));
-                }
-            }
-        }
     }
 
     // Sliced, every beat would cut too much of the bars away: the gaps of

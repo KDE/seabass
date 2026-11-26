@@ -104,6 +104,8 @@ DetailWaveform AudioDetailWaveformBuilder::finish()
     detail.columns = std::move(m_columns);
     m_columns = {};
     detail.msPerColumn = 1000.0 / ColumnsPerSecond;
+    // Made from the audio as a Denon player makes its own: Engine's look.
+    detail.look = WaveformLook::Engine;
     return detail;
 }
 

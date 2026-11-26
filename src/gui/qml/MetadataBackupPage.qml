@@ -712,6 +712,9 @@ Page {
                 waveformData: proposalRow.expanded
                     ? proposalRow.stickWaveform(root.playbackController, proposalRow.stickSource)
                     : []
+                waveformLook: proposalRow.expanded
+                    ? proposalRow.stickWaveformLook(root.playbackController, proposalRow.stickSource)
+                    : ""
                 waveformMissingText: "No waveform on the stick for this track"
                 // The catalog row behind this one, asked of the controller
                 // once, and only for the row under the pointer, the open

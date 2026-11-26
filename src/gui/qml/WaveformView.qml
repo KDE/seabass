@@ -183,13 +183,24 @@ Canvas {
         ? Math.min(Theme.beatRulerMaximumHeight,
                    Math.max(Theme.beatRulerMinimumHeight, Math.round(root.height * Theme.beatRulerHeightRatio)))
         : 0
-    // The band colours: "classic" as every view has drawn them;
-    // "vivid", the brighter, more contrasted CDJ-style colours of the
-    // zoomed popup on a rekordbox track (see Theme.waveformRgb()); or
-    // "engine", the zoomed popup on an Engine track, drawn as a Denon
-    // player draws it: the three bands as layers, each as tall as its own
-    // band, low first and high on top (Theme.waveformEngine*).
-    property string colorScheme: "classic"
+    // How the bars are drawn: in the look of the software whose analysis
+    // they are (domain::WaveformLook), handed over with the data, so a
+    // waveform's colours say which library it came from in every view:
+    //   "rekordbox-3band"  rekordbox 7's 3Band: blue lows, amber mids,
+    //                      white highs (Theme.waveformRekordbox*);
+    //   "rekordbox-blue"   rekordbox's Blue (an export without 3Band
+    //                      data): one height a column, blue going white;
+    //   "engine"           as a Denon player draws it: the three bands as
+    //                      layers, each as tall as its own band, low first
+    //                      and high on top (Theme.waveformEngine*);
+    //   ""                 not known: drawn as Blue draws one height.
+    property string look: ""
+    // The whole track (true) or a stretch of it zoomed in (false), as
+    // rekordbox draws them: its overview stands on the bottom edge and its
+    // scrolling waveform around the centre line. Engine centres both.
+    property bool overview: true
+    readonly property bool bottomAnchored: root.overview
+        && (root.look === "rekordbox-3band" || root.look === "rekordbox-blue")
     // How opaque a bar not yet played is; a played one is opaque.
     property real unplayedOpacity: 0.62
     // The waveform's own band, under the lane.
@@ -235,7 +246,8 @@ Canvas {
     onColumnStartMsChanged: requestPaint()
     onBeatTicksChanged: requestPaint()
     onGridStyleChanged: requestPaint()
-    onColorSchemeChanged: requestPaint()
+    onLookChanged: requestPaint()
+    onOverviewChanged: requestPaint()
     onUnplayedOpacityChanged: requestPaint()
     onRulerHeightChanged: requestPaint()
     onShownStartMsChanged: {
@@ -380,36 +392,53 @@ Canvas {
         const lengthMs = spread ? n : (root.trackDurationMs > 0 ? root.trackDurationMs : spanMs);
         const pxPerMs = w / spanMs;
         const barW = colMs * pxPerMs;
-        const vivid = root.colorScheme === "vivid";
-        const engine = root.colorScheme === "engine";
-        const engineFill = (c) => "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + ","
+        // rekordbox 3Band and Engine draw the bands as layers, one outline
+        // each (below); Blue, and a look not known, one bar a column.
+        const threeBand = root.look === "rekordbox-3band";
+        const layered = threeBand || root.look === "engine";
+        const stacked = threeBand && Theme.waveformRekordboxStacked;
+        const fillOf = (c) => "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + ","
             + Math.round(c.b * 255) + ",";
-        const engineLow = engineFill(Theme.waveformEngineLow);
-        const engineMid = engineFill(Theme.waveformEngineMid);
-        const engineHigh = engineFill(Theme.waveformEngineHigh);
+        const layerFills = threeBand
+            ? [fillOf(Theme.waveformRekordboxLow), fillOf(Theme.waveformRekordboxMid), fillOf(Theme.waveformRekordboxHigh)]
+            : [fillOf(Theme.waveformEngineLow), fillOf(Theme.waveformEngineMid), fillOf(Theme.waveformEngineHigh)];
+        const bottom = root.bottomAnchored;
+        const blue = Theme.waveformRekordboxBlue;
         const unplayed = root.unplayedOpacity;
-        // Engine's columns (or pixels), drawn as outlines once all are
-        // known (below).
-        const engineBars = [];
+        // The layered looks' columns (or pixels), drawn as outlines once
+        // all are known (below).
+        const layerBars = [];
         // A bar is drawn over the ground, never over a line: its own
         // rectangle is cleared first, so a translucent (unplayed) bar
         // shows the ground through it and not the grid.
         const bar = (x, width, low, mid, high, played) => {
-            const amplitude = Math.max(low, mid, high);
-            const barH = Math.max(1, amplitude * h);
-            const c = Theme.waveformRgb(low, mid, high, vivid);
-            const alpha = played ? 1.0 : unplayed;
-            const y = top + (h - barH) / 2;
             // Both edges on the device grid, so neighbouring bars meet
             // without a seam at a fractional scale.
             const left = root.at(x);
             const right = Math.max(left + 1 / root.dpr, root.at(x + width));
-            if (engine) {
-                engineBars.push({left: left, right: right, low: low, mid: mid, high: high});
+            if (layered) {
+                if (stacked) {
+                    // Outward from the centre: high in the core, mid
+                    // around it, low outside (Theme.waveformRekordboxStacked).
+                    const full = Theme.waveformRekordboxStackedFull;
+                    layerBars.push({left: left, right: right, low: Math.min(1, (low + mid + high) / full),
+                                    mid: Math.min(1, (mid + high) / full), high: Math.min(1, high / full)});
+                } else {
+                    layerBars.push({left: left, right: right, low: low, mid: mid, high: high});
+                }
                 return;
             }
+            // Blue: the height is the low band, the whiteness the high
+            // band's share of it (the reader's PWAV and PWV3 columns).
+            const amplitude = Math.max(low, mid, high);
+            const barH = Math.max(1, amplitude * h);
+            const white = amplitude > 0 ? Math.min(1, high / amplitude) * Theme.waveformRekordboxBlueWhitest : 0;
+            const alpha = played ? 1.0 : unplayed;
+            const y = bottom ? top + h - barH : top + (h - barH) / 2;
             ctx.clearRect(left, y, right - left, barH);
-            ctx.fillStyle = "rgba(" + c.r + "," + c.g + "," + c.b + "," + alpha + ")";
+            ctx.fillStyle = "rgba(" + Math.round(255 * (blue.r + (1 - blue.r) * white)) + ","
+                + Math.round(255 * (blue.g + (1 - blue.g) * white)) + ","
+                + Math.round(255 * (blue.b + (1 - blue.b) * white)) + "," + alpha + ")";
             ctx.fillRect(left, y, right - left, barH);
         };
         const played = (ms) => root.progress >= 0 && ms / lengthMs < root.progress;
@@ -417,9 +446,9 @@ Canvas {
         const first = Math.max(0, Math.floor((startMs - firstMs) / colMs) - 1);
         const last = Math.min(n - 1, Math.ceil((startMs + spanMs - firstMs) / colMs) + 1);
         if (barW >= 1) {
-            // A pixel between columns, except in Engine's layers: a
-            // player draws them as one continuous envelope.
-            const gap = engine ? 0 : 1;
+            // A pixel between columns, except in layers: rekordbox and a
+            // player draw those as one continuous envelope.
+            const gap = layered ? 0 : 1;
             for (let i = first; i <= last; i++) {
                 const ms = firstMs + i * colMs;
                 const x = (ms - startMs) * pxPerMs;
@@ -459,40 +488,44 @@ Canvas {
             }
         }
 
-        // Engine's layers, as a player draws them: each band one filled,
-        // antialiased outline mirrored around the centre line, low, then
-        // mid, then high on top. The upper edge runs through the columns'
-        // values at their left edges: where a value falls it slopes down
-        // from the column before, and where it rises it steps up straight
-        // at the column's own left edge (on the device grid), so an
-        // attack is never drawn earlier than the column it is in. What
-        // the outlines cover is cleared first, so no grid line shows
-        // through; drawn at unplayedOpacity, and opaque where it has
-        // played when the view has a progress (the popup has none: it
-        // shows what has played by its shade).
-        if (engine && engineBars.length > 0) {
-            const centre = top + h / 2;
+        // The layers, as rekordbox and a Denon player draw them: each band
+        // one filled, antialiased outline, low, then mid, then high on top;
+        // mirrored around the centre line, or standing on the bottom edge
+        // (bottomAnchored: a rekordbox overview). The upper edge runs
+        // through the columns' values at their left edges: where a value
+        // falls it slopes down from the column before, and where it rises
+        // it steps up straight at the column's own left edge (on the
+        // device grid), so an attack is never drawn earlier than the
+        // column it is in. What the outlines cover is cleared first, so no
+        // grid line shows through; drawn at unplayedOpacity, and opaque
+        // where it has played when the view has a progress (the popup has
+        // none: it shows what has played by its shade).
+        if (layered && layerBars.length > 0) {
+            const base = bottom ? top + h : top + h / 2;
+            const reach = bottom ? h : h / 2;
             const outline = (valueOf) => {
                 const upper = [];
                 let previous = -1;
-                for (const b of engineBars) {
-                    const half = Math.max(0, valueOf(b)) * h / 2;
-                    if (previous >= 0 && half > previous) {
-                        upper.push({x: b.left, y: centre - previous});
+                for (const b of layerBars) {
+                    const extent = Math.max(0, valueOf(b)) * reach;
+                    if (previous >= 0 && extent > previous) {
+                        upper.push({x: b.left, y: base - previous});
                     }
-                    upper.push({x: b.left, y: centre - half});
-                    previous = half;
+                    upper.push({x: b.left, y: base - extent});
+                    previous = extent;
                 }
-                const end = engineBars[engineBars.length - 1].right;
-                upper.push({x: end, y: centre - previous});
+                const end = layerBars[layerBars.length - 1].right;
+                upper.push({x: end, y: base - previous});
                 ctx.beginPath();
-                ctx.moveTo(upper[0].x, centre);
+                ctx.moveTo(upper[0].x, base);
                 for (const p of upper) {
                     ctx.lineTo(p.x, p.y);
                 }
-                ctx.lineTo(end, centre);
-                for (let k = upper.length - 1; k >= 0; --k) {
-                    ctx.lineTo(upper[k].x, 2 * centre - upper[k].y);
+                ctx.lineTo(end, base);
+                if (!bottom) {
+                    for (let k = upper.length - 1; k >= 0; --k) {
+                        ctx.lineTo(upper[k].x, 2 * base - upper[k].y);
+                    }
                 }
                 ctx.closePath();
             };
@@ -503,8 +536,7 @@ Canvas {
             ctx.fill();
             ctx.restore();
             // With a progress (the player bar), what has played is drawn
-            // opaque, left of where the music is, as the other schemes
-            // draw a played bar.
+            // opaque, left of where the music is, as a played bar is.
             const splitX = root.progress >= 0
                 ? Math.max(0, Math.min(w, root.at((root.progress * lengthMs - startMs) * pxPerMs))) : 0;
             for (const [from, to, alpha] of [[0, splitX, 1.0], [splitX, w, unplayed]]) {
@@ -515,7 +547,7 @@ Canvas {
                 ctx.beginPath();
                 ctx.rect(from, 0, to - from, height);
                 ctx.clip();
-                for (const [band, fill] of [["low", engineLow], ["mid", engineMid], ["high", engineHigh]]) {
+                for (const [band, fill] of [["low", layerFills[0]], ["mid", layerFills[1]], ["high", layerFills[2]]]) {
                     ctx.fillStyle = fill + alpha + ")";
                     outline((b) => b[band]);
                     ctx.fill();

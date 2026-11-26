@@ -874,6 +874,7 @@ Page {
                             readonly property int columnCount: rekordboxLane.ready && trackRow.analysis.columns
                                 ? trackRow.analysis.columns.byteLength / 3 : 0
                             columnBytes: rekordboxLane.ready ? trackRow.analysis.columns : null
+                            look: rekordboxLane.ready ? trackRow.analysis.look || "" : ""
                             trackDurationMs: rekordboxLane.ready ? trackRow.analysis.durationMs : 0
                             columnMs: rekordboxLane.columnCount > 0
                                 ? trackRow.analysis.durationMs / rekordboxLane.columnCount : 0
@@ -910,11 +911,10 @@ Page {
                             Layout.preferredHeight: comparison.laneHeight
                             gridStyle: "lines"
                             beatsSelected: true
-                            // Drawn as Engine draws it, as the zoomed
-                            // popup does: Engine's colours, the bands as
-                            // one outline each, at full strength. The
-                            // grid's lines are the same in every scheme.
-                            colorScheme: "engine"
+                            // Drawn as Engine draws it, as every view
+                            // draws Engine's analysis, at full strength.
+                            // The grid's lines are the same in every look.
+                            look: trackRow.engineSide.look || "engine"
                             unplayedOpacity: 1
                             readonly property bool ready: trackRow.engineSide.ready === true
                             columnBytes: engineLane.ready ? trackRow.engineSide.columns : null
@@ -1017,6 +1017,7 @@ Page {
                             }
                             gridStyle: "lines"
                             columnBytes: trackRow.analysis.ready === true ? trackRow.analysis.columns : null
+                            look: trackRow.analysis.ready === true ? trackRow.analysis.look || "" : ""
                             trackDurationMs: trackRow.analysis.ready === true ? trackRow.analysis.durationMs : 0
                             beatsSelected: true
                             beatData: trackRow.analysis.ready === true
@@ -1252,7 +1253,7 @@ Page {
         };
         return [{
             label: "rekordbox",
-            scheme: "vivid",
+            look: detailed(detail.rekordboxColumns) ? detail.rekordboxLook || "" : rekordbox.look || "",
             track: c.zoomTrack(id),
             available: rekordbox.ready === true && rekordbox.playable === true,
             detailed: detailed(detail.rekordboxColumns),
@@ -1265,7 +1266,7 @@ Page {
             ticksAt: (durationMs, widthPx) => c.comparisonBeatTicks(id, widthPx),
         }, {
             label: "Engine",
-            scheme: "engine",
+            look: "engine",
             track: engineTrack,
             available: engine.ready === true && engine.hasEngineTrack === true && engine.playable === true
                 && engineTrack.filePath !== undefined,

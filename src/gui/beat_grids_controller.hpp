@@ -533,6 +533,8 @@ private:
         std::uint64_t generation = 0;
         QByteArray rekordboxColumns;
         double rekordboxMsPerColumn = 0.0;
+        // domain::waveformLookName() of rekordbox's detail: 3Band or Blue.
+        QString rekordboxLook;
         QByteArray engineColumns;
         double engineMsPerColumn = 0.0;
     };
@@ -541,6 +543,8 @@ private:
     struct RowAnalysis
     {
         QByteArray columns;
+        // domain::waveformLookName() of the columns' look.
+        QString look;
         std::vector<domain::Beat> beats;
         bool beatRateRecorded = true;
         // The track's audio file is there to be played.

@@ -167,6 +167,10 @@ Card {
             waveformData: root.playbackController && root.playbackController.analysisRevision !== -1
                 ? root.playbackController.waveformFor(root.track.side, root.playbackPath, root.track.sourceId)
                 : []
+            look: root.playbackController && root.playbackController.analysisRevision !== -1
+                && typeof root.playbackController.waveformLookFor === "function"
+                ? root.playbackController.waveformLookFor(root.track.side, root.playbackPath, root.track.sourceId)
+                : ""
             // Out of the same cached read as the waveform above (no second
             // file read or query for a row), and only the beats drawn at
             // this width: a row does not lay out a whole grid.

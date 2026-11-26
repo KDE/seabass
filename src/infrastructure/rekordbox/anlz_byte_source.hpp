@@ -40,7 +40,20 @@ public:
     // than an error, which is what the old "ifstream did not open" check
     // did too.
     virtual std::optional<std::string> read(const std::string &relativePath) = 0;
+
+    // One section of the file, whole (its 12-byte header, its own header
+    // and its body), by its four-character tag ("PWV6"): the first one
+    // the file has. nullopt when there is no such file or section, or the
+    // file's section headers do not add up. The default reads the whole
+    // file and walks it; a source that can seek reads only the section
+    // headers it passes and the section itself (FilesystemAnlzSource):
+    // PWV6 is 3.6 KB at the end of a 176 KB .2EX, after PWV7.
+    virtual std::optional<std::string> readSection(const std::string &relativePath, const std::string &fourcc);
 };
+
+// The section of `file` (an analysis file's bytes) tagged `fourcc`, as
+// AnlzByteSource::readSection() returns it.
+std::optional<std::string> anlzSectionOf(const std::string &file, const std::string &fourcc);
 
 // Reads from a real PIONEER directory. `pioneerRoot` is the folder itself,
 // the same argument every other rekordbox class takes.
@@ -49,6 +62,7 @@ class FilesystemAnlzSource : public AnlzByteSource
 public:
     explicit FilesystemAnlzSource(std::string pioneerRoot);
     std::optional<std::string> read(const std::string &relativePath) override;
+    std::optional<std::string> readSection(const std::string &relativePath, const std::string &fourcc) override;
 
 private:
     std::string m_pioneerRoot;

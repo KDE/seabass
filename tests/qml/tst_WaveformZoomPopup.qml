@@ -66,6 +66,9 @@ TestCase {
             // What the details pane asks for, set by the tests that show one.
             property var waveformFor: null
             property var beatTicksFor: null
+            // The look the real player hands over with the data of the
+            // library it has loaded (PlaybackController.waveformLook).
+            readonly property string waveformLook: currentFormat === "engine" ? "engine" : "rekordbox-3band"
             function cuesOnGridTimeline(format, path, cues) { return cues; }
             // Quiet columns, a fifth of the height, 150 a second: the lines
             // behind them show above and below.
@@ -95,7 +98,7 @@ TestCase {
             function requestDetailWaveform() {
                 ++detailRequests;
                 if (autoDetail) {
-                    detailWaveform = detail;
+                    detailWaveform = Object.assign({look: waveformLook}, detail);
                 }
             }
             function beatTicksAt(durationMs, widthPx) {
@@ -762,20 +765,18 @@ TestCase {
         return {columns: buffer, msPerColumn: 1000 / 150, startMs: 0};
     }
     function test_eachLibraryInItsOwnColours_data() {
-        return [{tag: "rekordbox", format: "rekordbox", scheme: "vivid"},
-                {tag: "engine", format: "engine", scheme: "engine"}];
+        return [{tag: "rekordbox", format: "rekordbox", look: "rekordbox-3band"},
+                {tag: "engine", format: "engine", look: "engine"}];
     }
     function test_eachLibraryInItsOwnColours(data) {
         const player = makeFakePlayer({position: 60000, currentFormat: data.format});
         player.detail = columnsOf(230, 128, 51);
         const popup = openLoaded(player);
-        compare(popup.colorScheme, data.scheme);
+        compare(popup.look, data.look);
         waitForTiles(popup);
         for (const tile of tiles(popup)) {
-            compare(tile.colorScheme, data.scheme, "every tile");
-        }
-        if (data.format !== "engine") {
-            return;
+            compare(tile.look, data.look, "every tile");
+            compare(tile.overview, false, "zoomed in: drawn around the centre line");
         }
         const a = area(popup);
         const x = Math.round(popup.lineX + 40);
@@ -786,7 +787,7 @@ TestCase {
         verify(tile !== undefined, "a tile right of the position line");
         const image = grabImage(testCase);
         if (screenshotDir && screenshotDir.length > 0) {
-            image.save(screenshotDir + "/waveform-zoom-popup-engine-colours.png");
+            image.save(screenshotDir + "/waveform-zoom-popup-" + data.tag + "-colours.png");
         }
         const tileX = tile.mapFromItem(a, x, 0).x;
         const centre = tile.waveTop + tile.waveHeight / 2;
@@ -804,11 +805,22 @@ TestCase {
             }
             verify(distance(best, want) < 0.04, what + ": got " + best.r + "," + best.g + "," + best.b);
         };
-        // Half-heights: high 0.1, mid 0.25, low 0.45 of the band.
         const h = tile.waveHeight;
-        near(0.05 * h, Theme.waveformEngineHigh, "the core is the high band");
-        near(-0.18 * h, Theme.waveformEngineMid, "around it the mid band");
-        near(0.38 * h, Theme.waveformEngineLow, "outside it the low band");
+        if (data.format === "engine") {
+            // Layers as tall as their bands. Half-heights: high 0.1, mid
+            // 0.25, low 0.45 of the band.
+            near(0.05 * h, Theme.waveformEngineHigh, "the core is the high band");
+            near(-0.18 * h, Theme.waveformEngineMid, "around it the mid band");
+            near(0.38 * h, Theme.waveformEngineLow, "outside it the low band");
+            return;
+        }
+        // rekordbox's bands stacked outward (Theme.waveformRekordboxStacked):
+        // high 0.2, mid + high 0.7, all three 1.6 of the stacked full
+        // height, so half-heights of 0.083, 0.29 and the whole band.
+        verify(Theme.waveformRekordboxStacked, "drawn stacked, as this measures");
+        near(0.04 * h, Theme.waveformRekordboxHigh, "the core is the high band");
+        near(-0.18 * h, Theme.waveformRekordboxMid, "around it the mid band");
+        near(0.4 * h, Theme.waveformRekordboxLow, "outside it the low band");
     }
 
     // Engine's bands are drawn as antialiased outlines through the
@@ -1937,12 +1949,12 @@ TestCase {
     // track: rekordbox's and Engine's.
     function sidesFor(engineAvailable) {
         return [
-            {label: "rekordbox", available: true, scheme: "vivid",
+            {label: "rekordbox", available: true, look: "rekordbox-3band",
              columns: columnsOf(230, 128, 51).columns, msPerColumn: 1000 / 150, startMs: 0,
              ticksAt: (durationMs, widthPx) => BeatGridTicks.layout(testCase.grid(0, durationMs), durationMs, widthPx).ticks,
              track: {format: "rekordbox", libraryPath: "/fixture/PIONEER", sourceId: "7",
                      filePath: "/fixture/Contents/major-tom.mp3", title: "Major Tom", artist: "DJ Amador"}},
-            {label: "Engine", available: engineAvailable, scheme: "engine",
+            {label: "Engine", available: engineAvailable, look: "engine",
              columns: columnsOf(120, 90, 60).columns, msPerColumn: 1000 / 150, startMs: 0,
              ticksAt: (durationMs, widthPx) => BeatGridTicks.layout(testCase.grid(10, durationMs), durationMs, widthPx).ticks,
              track: {format: "engine", libraryPath: "/fixture/Engine Library", sourceId: "e7",
@@ -1992,7 +2004,7 @@ TestCase {
         compare(box.count, 3, "rekordbox, Engine and Both");
         compare(box.currentIndex, 0, "rekordbox's copy is loaded");
         compare(box.currentText, "rekordbox");
-        compare(popup.colorScheme, "vivid", "in rekordbox's colours");
+        compare(popup.look, "rekordbox-3band", "in rekordbox's look");
 
         popup.zoomBy(2, popup.lineX);
         const span = popup.shownSpanMs;
@@ -2006,7 +2018,7 @@ TestCase {
         compare(player.currentFormat, "engine");
         tryCompare(player, "position", 60000, 2000, "the player goes back to where it was");
         compare(box.currentIndex, 1);
-        compare(popup.colorScheme, "engine", "in Engine's colours");
+        compare(popup.look, "engine", "in Engine's look");
         compare(popup.shownSpanMs, span, "at the same zoom");
         compare(popup.attached, false, "still held where it was scrolled to");
         compare(popup.manualMs, at, "at the same place");
@@ -2017,7 +2029,7 @@ TestCase {
         compare(player.currentFormat, "rekordbox");
         tryCompare(player, "position", 60000, 2000);
         compare(popup.attached, true, "following, as before the switch");
-        compare(popup.colorScheme, "vivid");
+        compare(popup.look, "rekordbox-3band");
         compare(popup.shownSpanMs, span);
     }
 
@@ -2085,10 +2097,10 @@ TestCase {
         compare(lanes[0].height, lanes[1].height);
         tryVerify(() => tilesOf(lanes[0]).length > 0 && tilesOf(lanes[1]).length > 0, 2000, "tiles in both");
         for (const tile of tilesOf(lanes[0])) {
-            compare(tile.colorScheme, "vivid", "rekordbox's half in rekordbox's look");
+            compare(tile.look, "rekordbox-3band", "rekordbox's half in rekordbox's look");
         }
         for (const tile of tilesOf(lanes[1])) {
-            compare(tile.colorScheme, "engine", "Engine's half in Engine's look");
+            compare(tile.look, "engine", "Engine's half in Engine's look");
         }
         verify(tilesOf(lanes[0]).every((t) => t.byteColumns > 0), "rekordbox's columns drawn");
         verify(tilesOf(lanes[1]).every((t) => t.byteColumns > 0), "Engine's columns drawn");
@@ -2134,7 +2146,7 @@ TestCase {
         compare(player.currentFormat, "engine");
         tryCompare(player, "position", 90000, 2000);
         compare(lanesOf(popup).length, 1);
-        compare(popup.colorScheme, "engine");
+        compare(popup.look, "engine");
         box.activated(2);
         compare(popup.showingBoth, true, "and Both again");
         compare(lanesOf(popup).length, 2);

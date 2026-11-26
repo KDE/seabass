@@ -66,6 +66,9 @@ class PlaybackController : public QObject
     // waveform, beatTimesMs and beatNumbers come with the track, or after
     // it when it was loaded during a write (see analysisPending).
     Q_PROPERTY(QVariantList waveform READ waveform NOTIFY loadedAnalysisChanged)
+    // How `waveform` is drawn: "rekordbox-3band", "rekordbox-blue",
+    // "engine", or "" (domain::WaveformLook, WaveformView.look).
+    Q_PROPERTY(QString waveformLook READ waveformLook NOTIFY loadedAnalysisChanged)
     // Its own signal, not trackChanged: the cues of the loaded track can
     // arrive after it (see takeCues()), and that is not a new track.
     Q_PROPERTY(QVariantList cues READ cues NOTIFY cuesChanged)
@@ -167,6 +170,7 @@ public:
     QString artworkPath() const { return m_artworkPath; }
     QString fallbackArtworkPath() const { return m_fallbackArtworkPath; }
     QVariantList waveform() const { return m_waveform; }
+    QString waveformLook() const { return m_waveformLook; }
     QVariantList cues() const { return m_cues; }
     QList<qreal> beatTimesMs() const { return m_beatTimesMs; }
     QList<int> beatNumbers() const { return m_beatNumbers; }
@@ -238,6 +242,9 @@ public:
     // binding asks again through analysisRevision.
     Q_INVOKABLE QVariantList waveformFor(const QString &format, const QString &libraryPath,
                                           const QString &sourceId) const;
+    // How that waveform is drawn (waveformLook), from the same read.
+    Q_INVOKABLE QString waveformLookFor(const QString &format, const QString &libraryPath,
+                                        const QString &sourceId) const;
     // Drops every analysis waveformFor(), beatGridFor() and beatTicksFor()
     // have kept, so the next ask reads the library again. Called when a
     // write ends (libraryBusy going false) and, from Main.qml, when the
@@ -409,6 +416,7 @@ private:
     QString m_artworkPath;
     QString m_fallbackArtworkPath;
     QVariantList m_waveform;
+    QString m_waveformLook;
     // On the playback timeline: the page's list moved by m_cueShiftMs
     // (infrastructure/audio/playback_timeline.hpp), as are the beat
     // times below. 0 for anything but an MP3 with a readable lead-in.
@@ -450,7 +458,7 @@ private:
     // for the popup) into the m_ members, on the playback timeline.
     void readLoadedAnalysis();
     // `columns` as detailWaveform hands them over: three bytes a column.
-    void setDetailWaveform(const QByteArray &columns, double msPerColumn, int serial);
+    void setDetailWaveform(const QByteArray &columns, double msPerColumn, const QString &look, int serial);
     void dropDetailWaveform();
     // An audio file's detail as made from it, or that it could not be
     // made, for the file as it was when it was decoded: its size and
@@ -470,6 +478,8 @@ private:
     {
         QByteArray columns;
         double msPerColumn = 0.0;
+        // domain::waveformLookName() of the detail's look.
+        QString look;
         // Set where the worker decoded the audio file (or tried to):
         // what to keep in m_audioDetails, success or failure.
         std::shared_ptr<const AudioDetailEntry> decoded;
@@ -502,6 +512,8 @@ private:
         QVariantList waveform;
         std::vector<domain::Beat> beats;
         bool beatRateRecorded = true;
+        // domain::waveformLookName() of the waveform's look.
+        QString look;
     };
     CachedAnalysis cachedAnalysis(const QString &format, const QString &libraryPath, const QString &sourceId) const;
     // Keyed on format+libraryPath+sourceId (see waveformFor()'s own doc

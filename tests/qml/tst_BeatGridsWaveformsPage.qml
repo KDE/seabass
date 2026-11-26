@@ -2080,10 +2080,11 @@ TestCase {
         const rekordbox = findChild(row, "comparisonRekordbox");
         const engine = findChild(row, "comparisonEngine");
         tryVerify(() => rekordbox.byteColumns > 0 && engine.byteColumns > 0, 30000, "both waveforms are drawn");
-        compare(engine.colorScheme, "engine");
+        compare(engine.look, "engine");
         compare(engine.unplayedOpacity, 1, "at full strength, as the popup draws Engine");
-        verify(rekordbox.colorScheme !== "engine", "rekordbox's lane: " + rekordbox.colorScheme);
-        verify(findChild(row, "rowSourceWaveform").colorScheme !== "engine", "the row's own waveform is rekordbox's");
+        // The fixture's analysis files have no 3Band data: rekordbox's Blue.
+        compare(rekordbox.look, "rekordbox-blue", "rekordbox's lane");
+        compare(findChild(row, "rowSourceWaveform").look, "rekordbox-blue", "the row's own waveform is rekordbox's");
     }
 
     // The popup opens in the look of the side it was opened from, and a
@@ -2109,7 +2110,7 @@ TestCase {
         clickOn(engine);
         tryCompare(popup, "opened", true, 10000);
         compare(realPlayback.currentFormat, "engine");
-        compare(popup.colorScheme, "engine", "opened from Engine's lane: Engine's look");
+        compare(popup.look, "engine", "opened from Engine's lane: Engine's look");
         compare(box.visible, true, "both sides of the track: the box is shown");
         compare(box.currentText, "Engine");
         tryVerify(() => popup.sides.length === 2 && popup.sides[0].available && popup.sides[1].available,
@@ -2122,7 +2123,7 @@ TestCase {
         box.activated(0);
         compare(realPlayback.currentFormat, "rekordbox", "rekordbox's copy loaded");
         compare(realPlayback.currentSourceId, b04);
-        compare(popup.colorScheme, "vivid", "in rekordbox's look");
+        compare(popup.look, "rekordbox-blue", "in rekordbox's look");
         compare(box.currentText, "rekordbox");
         tryVerify(() => popup.lengthKnown && Math.abs(realPlayback.position - 30000) < 50, 10000,
                   "at the same place: " + realPlayback.position);
@@ -2132,7 +2133,7 @@ TestCase {
 
         clickOn(rekordbox);
         tryCompare(popup, "opened", true, 10000);
-        compare(popup.colorScheme, "vivid", "opened from rekordbox's lane: rekordbox's look");
+        compare(popup.look, "rekordbox-blue", "opened from rekordbox's lane: rekordbox's look");
         compare(box.currentText, "rekordbox");
         popup.close();
         tryCompare(popup, "visible", false);
@@ -2175,8 +2176,8 @@ TestCase {
             return out;
         };
         tryVerify(() => tilesOf(lanes[0]).length > 0 && tilesOf(lanes[1]).length > 0, 10000);
-        compare(tilesOf(lanes[0])[0].colorScheme, "vivid");
-        compare(tilesOf(lanes[1])[0].colorScheme, "engine");
+        compare(tilesOf(lanes[0])[0].look, "rekordbox-blue");
+        compare(tilesOf(lanes[1])[0].look, "engine");
         tryVerify(() => tilesOf(lanes[0]).some((t) => t.byteColumns > 0)
                   && tilesOf(lanes[1]).some((t) => t.byteColumns > 0), 10000, "both waveforms drawn");
         tryVerify(() => tilesOf(lanes[0]).some((t) => t.beatTicks.length > 0)
@@ -2235,7 +2236,7 @@ TestCase {
         verify(Math.abs(popup.detail.msPerColumn - both[0].ms) < 0.01, "at the same step");
         box.activated(1);
         tryCompare(realPlayback, "currentFormat", "engine");
-        tryVerify(() => popup.hasDetail && popup.colorScheme === "engine", 30000, "Engine's own detail");
+        tryVerify(() => popup.hasDetail && popup.look === "engine", 30000, "Engine's own detail");
         compare(popup.detail.columns.byteLength, both[1].bytes, "Engine: the same columns as in Both");
         verify(Math.abs(popup.detail.msPerColumn - both[1].ms) < 0.01, "at the same step");
         popup.close();
@@ -2383,7 +2384,7 @@ TestCase {
         // rekordbox's single view: the same offset and the same beat.
         box.activated(0);
         tryCompare(realPlayback, "currentFormat", "rekordbox");
-        tryVerify(() => popup.hasDetail && popup.colorScheme === "vivid", 30000, "rekordbox's own detail");
+        tryVerify(() => popup.hasDetail && popup.look === "rekordbox-blue", 30000, "rekordbox's own detail");
         settle();
         verify(Math.abs(popup.detail.startMs - shift) < 1e-6,
                "rekordbox's own view moves its waveform as its lane in Both did: " + popup.detail.startMs + " and " + shift);

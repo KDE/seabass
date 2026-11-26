@@ -201,6 +201,9 @@ Page {
             // analysisRevision: asked again when a write ends.
             waveformData: root.track && root.playbackController.analysisRevision !== -1
                 ? root.playbackController.waveformFor(root.format, root.libraryPath, root.track.sourceId) : []
+            look: root.track && root.playbackController.analysisRevision !== -1
+                && typeof root.playbackController.waveformLookFor === "function"
+                ? root.playbackController.waveformLookFor(root.format, root.libraryPath, root.track.sourceId) : ""
             // The same read as the waveform's (one cache entry), only the
             // beats drawn at this width.
             beatsSelected: true

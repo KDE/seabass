@@ -19,7 +19,7 @@ using Anlz = rekordbox_anlz_t;
 
 domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const std::string &trackSourceId,
                                         std::shared_ptr<AnlzByteSource> anlzSource,
-                                        const AnlzPathIndex *pathIndex)
+                                        const AnlzPathIndex *pathIndex, bool threeBandOverview)
 {
     try {
         const auto trackId = static_cast<uint32_t>(std::stoul(trackSourceId));
@@ -32,13 +32,57 @@ domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const st
         if (!anlzSource) {
             anlzSource = anlzSourceForPioneerRoot(pioneerRoot);
         }
-        return readTrackAnalysis(*anlzSource, *analyzePath);
+        return readTrackAnalysis(*anlzSource, *analyzePath, threeBandOverview);
     } catch (const std::exception &) {
         return {};
     }
 }
 
-domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::string &analyzePath)
+namespace
+{
+
+std::uint32_t sectionU32(const std::string &section, std::size_t at)
+{
+    const auto *b = reinterpret_cast<const unsigned char *>(section.data() + at);
+    return static_cast<std::uint32_t>(b[0]) << 24 | static_cast<std::uint32_t>(b[1]) << 16
+           | static_cast<std::uint32_t>(b[2]) << 8 | static_cast<std::uint32_t>(b[3]);
+}
+
+// rekordbox's three-band bytes, low, mid and high, run to 127.
+constexpr double ThreeBandFull = 127.0;
+
+// PWV6 from the .2EX next to the analysis file, read alone: the
+// overview rekordbox draws in 3Band, 1,200 entries of low, mid and high.
+// Empty where there is no .2EX, no PWV6, or one whose header does not
+// add up.
+std::vector<domain::WaveformColumn> threeBandOverviewOf(AnlzByteSource &source, const std::string &analyzePath)
+{
+    std::vector<domain::WaveformColumn> columns;
+    const auto section = source.readSection(anlzSiblingRelativePath(analyzePath, ".2EX"), "PWV6");
+    if (!section || section->size() < 20) {
+        return columns;
+    }
+    const std::uint32_t headerLength = sectionU32(*section, 4);
+    const std::uint32_t entryBytes = sectionU32(*section, 12);
+    const std::uint32_t entries = sectionU32(*section, 16);
+    if (entryBytes != 3 || entries == 0 || headerLength < 20
+        || static_cast<std::uint64_t>(headerLength) + static_cast<std::uint64_t>(entries) * 3 != section->size()) {
+        return columns;
+    }
+    columns.reserve(entries);
+    for (std::size_t i = headerLength; i + 2 < section->size(); i += 3) {
+        const auto band = [&](std::size_t k) {
+            return std::min(1.0, static_cast<unsigned char>((*section)[i + k]) / ThreeBandFull);
+        };
+        columns.push_back({band(0), band(1), band(2)});
+    }
+    return columns;
+}
+
+}  // namespace
+
+domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::string &analyzePath,
+                                        bool threeBandOverview)
 {
     domain::TrackAnalysis analysis;
     try {
@@ -68,6 +112,7 @@ domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::s
                     col.high = height * whiteness;
                     analysis.waveform.push_back(col);
                 }
+                analysis.waveformLook = domain::WaveformLook::RekordboxBlue;
             } else if (section->fourcc() == Anlz::SECTION_TAGS_BEAT_GRID && analysis.beats.empty()) {
                 // PQTZ: rekordbox writes every beat out, with its place in the bar.
                 auto *tag = dynamic_cast<Anlz::beat_grid_tag_t *>(section->body());
@@ -86,6 +131,16 @@ domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::s
     } catch (const std::exception &) {
         // Half an analysis is no use to anyone who asked for a whole one.
         return {};
+    }
+    if (threeBandOverview) {
+        try {
+            if (auto threeBand = threeBandOverviewOf(anlzSource, analyzePath); !threeBand.empty()) {
+                analysis.waveform = std::move(threeBand);
+                analysis.waveformLook = domain::WaveformLook::RekordboxThreeBand;
+            }
+        } catch (const std::exception &) {
+            // The .DAT's overview stands.
+        }
     }
     return analysis;
 }
@@ -239,10 +294,11 @@ domain::DetailWaveform readDetailWaveform(AnlzByteSource &source, const std::str
                 detail.columns.reserve(entries->size() / 3);
                 for (std::size_t i = 0; i + 2 < entries->size(); i += 3) {
                     const auto band = [&](std::size_t k) {
-                        return std::min(1.0, static_cast<unsigned char>((*entries)[i + k]) / 127.0);
+                        return std::min(1.0, static_cast<unsigned char>((*entries)[i + k]) / ThreeBandFull);
                     };
                     detail.columns.push_back({band(0), band(1), band(2)});
                 }
+                detail.look = domain::WaveformLook::RekordboxThreeBand;
             }
         }
     } catch (const std::exception &) {
@@ -259,6 +315,7 @@ domain::DetailWaveform readDetailWaveform(AnlzByteSource &source, const std::str
                     for (unsigned char b : *entries) {
                         detail.columns.push_back(monochromeColumn(b));
                     }
+                    detail.look = domain::WaveformLook::RekordboxBlue;
                 }
             }
         } catch (const std::exception &) {

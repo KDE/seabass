@@ -192,6 +192,8 @@ Pane {
         panel.pendingLoopEndMs = -1;
         waveformView.waveformData = playbackController.waveformFor(
             panel.trackFormat, panel.trackLibraryPath, delegate.sourceId);
+        waveformView.look = typeof playbackController.waveformLookFor === "function"
+            ? playbackController.waveformLookFor(panel.trackFormat, panel.trackLibraryPath, delegate.sourceId) : "";
         waveformView.format = panel.trackFormat;
         // Last, once every field above is set.
         panel.refreshArtistTracks();
@@ -235,6 +237,10 @@ Pane {
             if (panel.trackSourceId.length > 0) {
                 waveformView.waveformData = panel.playbackController.waveformFor(
                     panel.trackFormat, panel.trackLibraryPath, panel.trackSourceId);
+                waveformView.look = typeof panel.playbackController.waveformLookFor === "function"
+                    ? panel.playbackController.waveformLookFor(panel.trackFormat, panel.trackLibraryPath,
+                                                               panel.trackSourceId)
+                    : "";
             }
         }
     }

@@ -854,7 +854,9 @@ void BeatGridsController::pumpRowReads()
             return out;
         }
         domain::TrackAnalysis analysis = infrastructure::rekordbox::readTrackAnalysis(
-            library->rekordboxPath.toStdString(), sourceId, nullptr, library->anlzIndex.get());
+            library->rekordboxPath.toStdString(), sourceId, nullptr, library->anlzIndex.get(),
+            /*threeBandOverview=*/true);
+        out->look = QString::fromLatin1(domain::waveformLookName(analysis.waveformLook));
         out->columns.reserve(static_cast<qsizetype>(analysis.waveform.size() * 3));
         const auto byte = [](double v) {
             return static_cast<char>(static_cast<unsigned char>(std::lround(std::clamp(v, 0.0, 1.0) * 255.0)));
@@ -1048,6 +1050,7 @@ QVariantMap BeatGridsController::engineAnalysis(const QString &rekordboxId) cons
     out.insert(QStringLiteral("ready"), true);
     out.insert(QStringLiteral("hasEngineTrack"), kept->hasEngineTrack);
     out.insert(QStringLiteral("columns"), kept->columns);
+    out.insert(QStringLiteral("look"), QString::fromLatin1(domain::waveformLookName(domain::WaveformLook::Engine)));
     out.insert(QStringLiteral("durationMs"), track->durationMs);
     out.insert(QStringLiteral("rateRecorded"), kept->beatRateRecorded);
     out.insert(QStringLiteral("rekordboxShiftMs"), kept->rekordboxShiftMs);
@@ -1116,6 +1119,7 @@ QVariantMap BeatGridsController::rowAnalysis(const QString &rekordboxId) const
     return {
         {QStringLiteral("ready"), true},
         {QStringLiteral("columns"), kept->columns},
+        {QStringLiteral("look"), kept->look},
         {QStringLiteral("durationMs"), track->durationMs},
         {QStringLiteral("playable"), kept->fileThere},
     };
@@ -1212,6 +1216,7 @@ QVariantMap BeatGridsController::zoomDetail(const QString &rekordboxId) const
         {QStringLiteral("rekordboxRead"), m_zoomDetail->rekordboxRead},
         {QStringLiteral("rekordboxColumns"), m_zoomDetail->rekordboxColumns},
         {QStringLiteral("rekordboxMsPerColumn"), m_zoomDetail->rekordboxMsPerColumn},
+        {QStringLiteral("rekordboxLook"), m_zoomDetail->rekordboxLook},
         {QStringLiteral("engineRead"), m_zoomDetail->engineRead},
         {QStringLiteral("engineColumns"), m_zoomDetail->engineColumns},
         {QStringLiteral("engineMsPerColumn"), m_zoomDetail->engineMsPerColumn},
@@ -1258,6 +1263,7 @@ void BeatGridsController::pumpZoomDetail()
                 library->rekordboxPath.toStdString(), sourceId, nullptr, library->anlzIndex.get());
             out->rekordboxColumns = bytes(rekordbox);
             out->rekordboxMsPerColumn = rekordbox.msPerColumn;
+            out->rekordboxLook = QString::fromLatin1(domain::waveformLookName(rekordbox.look));
             out->rekordboxRead = true;
         }
         if (readEngine && !cancel.cancelled()) {
@@ -1287,6 +1293,7 @@ void BeatGridsController::pumpZoomDetail()
                     read->rekordboxRead = true;
                     read->rekordboxColumns = m_zoomDetail->rekordboxColumns;
                     read->rekordboxMsPerColumn = m_zoomDetail->rekordboxMsPerColumn;
+                    read->rekordboxLook = m_zoomDetail->rekordboxLook;
                 }
                 if (!read->engineRead && m_zoomDetail->engineRead) {
                     read->engineRead = true;

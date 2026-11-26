@@ -52,15 +52,23 @@ std::vector<domain::WaveformColumn> readWaveformPreview(const std::string &pione
 // a 1,400-track stick, for every track asked about. A caller reading many
 // tracks' analyses in a row (a list of waveforms) should hold an index
 // built from the same export.pdb and pass it here.
+//
+// The overview is PWAV, in rekordbox's Blue look (WaveformLook). With
+// `threeBandOverview`, a caller that draws it asks for rekordbox's 3Band
+// overview instead: PWV6 from the .2EX next to the .DAT, read alone
+// (AnlzByteSource::readSection), where there is one; PWAV stays where
+// there is not. A caller after the grid alone leaves it off and reads no
+// second file.
 domain::TrackAnalysis readTrackAnalysis(const std::string &pioneerRoot, const std::string &trackSourceId,
                                         std::shared_ptr<AnlzByteSource> anlzSource = nullptr,
-                                        const AnlzPathIndex *pathIndex = nullptr);
+                                        const AnlzPathIndex *pathIndex = nullptr, bool threeBandOverview = false);
 
 // The same, from the analysis file at `analyzePath` (as export.pdb's
 // analyze_path and exportLibrary.db's content.analysisDataFilePath spell
 // it) through `anlzSource`: for a row whose file is known without asking
 // export.pdb, a OneLibrary row's. Nothing throws.
-domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::string &analyzePath);
+domain::TrackAnalysis readTrackAnalysis(AnlzByteSource &anlzSource, const std::string &analyzePath,
+                                        bool threeBandOverview = false);
 
 // The parts of rekordbox's newer waveforms a Denon overview is made from
 // (see domain/engine_overview.hpp), as raw section bodies: each one
@@ -99,7 +107,8 @@ RekordboxWaveformSections readWaveformSections(const std::string &pioneerRoot, c
 // domain/engine_overview.cpp; PWV7 against PWV6 on a real stick gives the
 // same order), each 0 to 127. PWV3's byte is PWAV's: a 5-bit height and
 // a 3-bit whiteness, rendered the way readTrackAnalysis() renders PWAV.
-// The colour scrolling waveform (PWV5) is not read. Empty where neither
+// The colour scrolling waveform (PWV5) is not read. The detail's look
+// says which it is (3Band or Blue). Empty where neither
 // is there or a file does not parse; nothing throws.
 domain::DetailWaveform readDetailWaveform(AnlzByteSource &source, const std::string &analyzePath);
 

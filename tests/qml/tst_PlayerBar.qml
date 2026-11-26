@@ -122,6 +122,8 @@ TestCase {
             property int duration: 372000
             property string errorMessage: ""
             property var waveform: []
+            // As the real player hands it over with the loaded track's data.
+            property string waveformLook: currentFormat === "engine" ? "engine" : "rekordbox-3band"
             property var cues: []
             property int trackSerial: 1
             property var calls: []
@@ -195,8 +197,8 @@ TestCase {
         }
     }
 
-    // The waveform is drawn as the player the track came from draws it:
-    // Engine's layered bands for an Engine track, the CDJ's colours for one
+    // The waveform is drawn in the look its data has, as the controller
+    // hands it over: Engine's for an Engine track, rekordbox's for one
     // from either rekordbox catalog. A face on its way out keeps the look
     // of the track it shows.
     function test_theWaveformTakesTheLibrarysLook() {
@@ -205,16 +207,18 @@ TestCase {
         verify(bar !== null);
         const face = findChild(bar, "playerFace");
         const waveform = findChild(face, "playerWaveform");
-        compare(waveform.colorScheme, "engine", "Engine OS: Engine's look");
+        compare(waveform.look, "engine", "Engine OS: Engine's look");
         controller.currentFormat = "rekordbox";
-        compare(waveform.colorScheme, "vivid", "DeviceLibrary: the CDJ's");
-        controller.currentFormat = "onelibrary";
-        compare(waveform.colorScheme, "vivid", "OneLibrary: the CDJ's");
+        compare(waveform.look, "rekordbox-3band", "DeviceLibrary: rekordbox's");
+        controller.waveformLook = "rekordbox-blue";
+        compare(waveform.look, "rekordbox-blue", "an export without 3Band data: rekordbox's Blue");
+        compare(waveform.bottomAnchored, true, "rekordbox's overview stands on the bottom edge");
 
-        controller.currentFormat = "engine";
+        controller.waveformLook = "engine";
         face.freeze();
-        controller.currentFormat = "rekordbox";
-        compare(waveform.colorScheme, "engine", "a frozen face keeps its track's look");
+        controller.waveformLook = "rekordbox-3band";
+        compare(waveform.look, "engine", "a frozen face keeps its track's look");
+        compare(waveform.bottomAnchored, false, "Engine's is centred");
     }
 
     // Playing: the rim and the glyph are lit green, and stay lit. The
