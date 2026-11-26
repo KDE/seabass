@@ -1315,17 +1315,166 @@ std::optional<std::u16string> strictUtf16Of(const std::string &utf8)
 
 namespace
 {
-std::optional<PdbRowWriter::TrackCommentCapacity> commentCapacityAt(const std::string &buffer, size_t rowBodyOffset)
+
+constexpr uint32_t TracksTableType = 0;
+// Why a comment is refused when the row is not one this writer rebuilds:
+// not "no room", which would say a shorter comment fits (#108).
+constexpr const char *trackCommentUnwritable =
+    "this track's row in export.pdb is not laid out the way rekordbox lays out a track row, so Seabass does not "
+    "rewrite it and its comment cannot be written here";
+// The fixed part of a track row: everything up to and including its
+// twenty-one string offsets. The strings follow it.
+constexpr size_t TrackRowHeaderSize = TrackOfsStringsOffset + TrackStringCount * 2;
+// track_row.index_shift, the row's index on its page times 0x20.
+constexpr size_t TrackIndexShiftOffset = 2;
+// What rekordbox leaves after a track row before the next one: 44 to 54
+// bytes on the rows of the four exports in tests/fixtures, mostly 48 to
+// 52. A row Seabass moves is given the same.
+constexpr size_t TrackRowRoom = 48;
+// The most a rebuilt row can differ in alignment padding from what was
+// measured for it: up to three bytes before each long string, and a row
+// has at most the comment, title, file name and path long (#108).
+constexpr size_t TrackRowAlignmentSlack = 12;
+
+bool isLongDeviceSqlString(unsigned char lengthAndKind)
 {
-    const size_t header = rowBodyOffset + TrackOfsStringsOffset + TrackStringCount * 2;
-    const size_t absOffset = trackStringAbsOffset(buffer, rowBodyOffset, TrackStringIndexComment);
-    if (absOffset < header || !stringStaysInRowPage(buffer, rowBodyOffset, absOffset)) {
+    return lengthAndKind == 0x40 || lengthAndKind == 0x90;
+}
+
+// The track row at `rowBodyOffset` built again with `comment` (an
+// encoded DeviceSQL string) as its comment, every other byte of it as it
+// was: the 136-byte header with its offsets moved, then each of the
+// twenty-one strings in slot order, a long one (long ASCII or UTF-16) on
+// a four-byte boundary of the row with zeros before it. That is how
+// rekordbox lays out every track row of the four exports in
+// tests/fixtures (2,479 rows): strings in slot order, none shared, none
+// pointing back into the header, and the 1 to 3 bytes before a long
+// string the only gaps.
+//
+// nullopt when the row is not laid out like that, so that rebuilding it
+// could lose or move something nothing here knows about: a slot pointing
+// into the header or at a string another slot also names, strings out of
+// order or overlapping, or one that leaves the row's page.
+std::optional<std::string> trackRowWithComment(const std::string &buffer, size_t rowBodyOffset, const std::string &comment)
+{
+    if (rowBodyOffset + TrackRowHeaderSize > buffer.size()) {
         return std::nullopt;
     }
-    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(buffer, absOffset);
-    return PdbRowWriter::TrackCommentCapacity{span.isUtf16 ? span.textCapacityBytes / 2 : span.textCapacityBytes,
-                                              span.isUtf16};
+    std::string row = buffer.substr(rowBodyOffset, TrackRowHeaderSize);
+    size_t previousEnd = TrackRowHeaderSize;
+    for (int k = 0; k < TrackStringCount; ++k) {
+        const size_t rel = readU16LE(buffer, rowBodyOffset + TrackOfsStringsOffset + static_cast<size_t>(k) * 2);
+        const size_t at = rowBodyOffset + rel;
+        if (rel < previousEnd || !stringStaysInRowPage(buffer, rowBodyOffset, at)) {
+            return std::nullopt;
+        }
+        previousEnd = rel + readDeviceSqlStringSpan(buffer, at).totalBytes;
+        const std::string bytes = k == TrackStringIndexComment ? comment : buffer.substr(at, previousEnd - rel);
+        if (isLongDeviceSqlString(static_cast<unsigned char>(bytes.at(0)))) {
+            row.resize(paddedRowSize(row.size()), '\0');
+        }
+        if (row.size() + bytes.size() > 0xFFFF) {
+            return std::nullopt;
+        }
+        writeU16LE(row, TrackOfsStringsOffset + static_cast<size_t>(k) * 2, static_cast<uint16_t>(row.size()));
+        row += bytes;
+    }
+    return row;
 }
+
+// Where the row starting at heap offset `heapOffset` of the page at
+// `base` must end: at the next row's start, deleted rows included (their
+// bytes are free, but nothing here has measured writing into them), or at
+// the end of the heap's used part.
+size_t rowExtent(const std::string &buffer, size_t base, size_t lenPage, size_t heapOffset)
+{
+    const uint32_t numRowOffsets = readU32LE(buffer, base + 24) & 0x1FFFu;
+    size_t end = readU16LE(buffer, base + 30);
+    for (uint32_t i = 0; i < numRowOffsets; ++i) {
+        const size_t groupBase = base + lenPage - (i / 16) * RowGroupSizeBytes;
+        const size_t other = readU16LE(buffer, groupBase - 6 - 2 * (i % 16));
+        if (other > heapOffset && other < end) {
+            end = other;
+        }
+    }
+    return end > heapOffset ? end - heapOffset : 0;
+}
+
+// Whether the page's own count of its free and used bytes is what its row
+// offsets say: every page of rekordbox's adds up (free = heap size - used
+// - 2 per row offset - 4 per group of sixteen), and a page that does not
+// is one where a new row could be written over a live one.
+bool pageAddsUp(const std::string &buffer, size_t base, size_t lenPage)
+{
+    const uint32_t numRowOffsets = readU32LE(buffer, base + 24) & 0x1FFFu;
+    const size_t freeSize = readU16LE(buffer, base + 28);
+    const size_t usedSize = readU16LE(buffer, base + 30);
+    const size_t groups = numRowOffsets == 0 ? 0 : (numRowOffsets - 1) / 16 + 1;
+    if (freeSize + usedSize + 2 * numRowOffsets + 4 * groups != lenPage - PageHeaderSize) {
+        return false;
+    }
+    for (uint32_t i = 0; i < numRowOffsets; ++i) {
+        const size_t groupBase = base + lenPage - (i / 16) * RowGroupSizeBytes;
+        if (readU16LE(buffer, groupBase - 6 - 2 * (i % 16)) >= usedSize) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// How many bytes a new row may take on the page at `base`, its row offset
+// and a new group's flags paid for: 0 when the page takes no row.
+size_t roomForOneRow(const std::string &buffer, size_t base, size_t lenPage)
+{
+    if (!pageAddsUp(buffer, base, lenPage)) {
+        return 0;
+    }
+    const uint32_t numRowOffsets = readU32LE(buffer, base + 24) & 0x1FFFu;
+    if (numRowOffsets + 1 >= 0x7FFu) {
+        return 0;
+    }
+    const size_t cost = 2 + (numRowOffsets % 16 == 0 ? 4 : 0);
+    const size_t freeSize = readU16LE(buffer, base + 28);
+    return freeSize > cost ? (freeSize - cost) & ~size_t(3) : 0;
+}
+
+// Every string of the track row as text, read through the parser the app
+// reads a stick with: what a moved row is checked against.
+std::optional<std::vector<std::string>> trackStringsOf(const std::string &buffer, uint32_t trackId, size_t *presentRows)
+{
+    std::istringstream iss(buffer);
+    kaitai::kstream ks(&iss);
+    Pdb pdb(false, &ks);
+    std::optional<std::vector<std::string>> strings;
+    *presentRows = 0;
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != Pdb::PAGE_TYPE_TRACKS) {
+            continue;
+        }
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    auto *t = row->present() ? dynamic_cast<Pdb::track_row_t *>(row->body()) : nullptr;
+                    if (t == nullptr || t->id() != trackId) {
+                        continue;
+                    }
+                    ++*presentRows;
+                    std::vector<std::string> texts;
+                    for (auto *s : {t->isrc(), t->texter(), t->unknown_string_2(), t->unknown_string_3(),
+                                    t->unknown_string_4(), t->message(), t->kuvo_public(), t->autoload_hot_cues(),
+                                    t->unknown_string_5(), t->unknown_string_6(), t->date_added(), t->release_date(),
+                                    t->mix_name(), t->unknown_string_7(), t->analyze_path(), t->analyze_date(),
+                                    t->comment(), t->title(), t->unknown_string_8(), t->filename(), t->file_path()}) {
+                        texts.push_back(sqlText(s));
+                    }
+                    strings = std::move(texts);
+                }
+            }
+        });
+    }
+    return strings;
+}
+
 }  // namespace
 
 std::optional<PdbRowWriter::TrackCommentCapacity> PdbRowWriter::trackCommentCapacity(uint32_t trackId) const
@@ -1337,7 +1486,36 @@ std::optional<PdbRowWriter::TrackCommentCapacity> PdbRowWriter::trackCommentCapa
     if (!found) {
         return std::nullopt;
     }
-    return commentCapacityAt(m_buffer, found->rowBodyOffset);
+    return commentCapacityOfRow(found->rowBodyOffset, canStartPage(TracksTableType));
+}
+
+std::optional<PdbRowWriter::TrackCommentCapacity> PdbRowWriter::commentCapacityOfRow(size_t rowBodyOffset,
+                                                                                     bool newPagePossible) const
+{
+    // The row without a comment, and so what the comment string may take
+    // wherever the row can go: where it is, up to the next row; elsewhere
+    // on its page; or on a new page of the track table (#108).
+    const auto bare = trackRowWithComment(m_buffer, rowBodyOffset, std::string(1, '\x03'));
+    if (!bare) {
+        return std::nullopt;
+    }
+    const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+    const size_t base = rowBodyOffset / lenPage * lenPage;
+    const size_t without = bare->size() - 1 + TrackRowAlignmentSlack;
+    size_t room = 0;
+    const auto consider = [&](size_t rowBytes, size_t room_after) {
+        if (rowBytes >= without + room_after) {
+            room = std::max(room, rowBytes - without - room_after);
+        }
+    };
+    consider(rowExtent(m_buffer, base, lenPage, rowBodyOffset - base - PageHeaderSize), 0);
+    consider(roomForOneRow(m_buffer, base, lenPage), TrackRowRoom);
+    if (newPagePossible) {
+        consider((lenPage - PageHeaderSize - 6) & ~size_t(3), TrackRowRoom);
+    }
+    // Counted as UTF-16, two bytes a character after a four-byte header:
+    // the most any comment takes, so plain ASCII fits in it too.
+    return TrackCommentCapacity{room >= 4 ? (room - 4) / 2 : 0, true};
 }
 
 std::string PdbRowWriter::trackCommentRefusal(const std::string &comment, const TrackCommentCapacity &capacity)
@@ -1358,6 +1536,18 @@ std::string PdbRowWriter::trackCommentRefusal(const std::string &comment, const 
     return {};
 }
 
+bool PdbRowWriter::canStartPage(uint32_t tableType) const
+{
+    try {
+        // A row too large for the last page is placed on a new one, so
+        // placeRows() answers with the checks a new page has to pass.
+        const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+        return !placeRows(tableType, {std::string(lenPage - PageHeaderSize - 8, '\0')}).perNewPage.empty();
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
 bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment, std::string *refusal)
 {
     const auto refuse = [&](const std::string &why) {
@@ -1366,6 +1556,9 @@ bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment,
         }
         return false;
     };
+    if (m_format != Format::Export) {
+        throw std::logic_error("tracks live in export.pdb");
+    }
     auto found = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
         auto *t = dynamic_cast<Pdb::track_row_t *>(body);
         return t != nullptr && t->id() == trackId;
@@ -1375,29 +1568,92 @@ bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment,
     }
     const auto capacity = trackCommentCapacity(trackId);
     if (!capacity) {
-        return refuse("this track's comment field in export.pdb cannot be written in place");
+        return refuse(trackCommentUnwritable);
     }
     if (const std::string why = trackCommentRefusal(comment, *capacity); !why.empty()) {
         return refuse(why);
     }
-    const size_t absOffset = trackStringAbsOffset(m_buffer, found->rowBodyOffset, TrackStringIndexComment);
-    const DeviceSqlStringSpan span = readDeviceSqlStringSpan(m_buffer, absOffset);
-    const size_t text = absOffset + (span.totalBytes - span.textCapacityBytes);
-    if (capacity->utf16) {
-        std::u16string units = *strictUtf16Of(comment);
-        units.resize(capacity->units, u' ');
-        for (size_t i = 0; i < units.size(); ++i) {
-            m_buffer.at(text + i * 2) = static_cast<char>(units[i] & 0xFF);
-            m_buffer.at(text + i * 2 + 1) = static_cast<char>(units[i] >> 8);
-        }
-    } else {
-        std::string bytes = comment;
-        bytes.resize(capacity->units, ' ');
-        for (size_t i = 0; i < bytes.size(); ++i) {
-            m_buffer.at(text + i) = bytes[i];
-        }
+    size_t rowsBefore = 0;
+    auto expected = trackStringsOf(m_buffer, trackId, &rowsBefore);
+    auto rebuilt = trackRowWithComment(m_buffer, found->rowBodyOffset, encodeDeviceSqlString(comment));
+    if (!expected || !rebuilt) {
+        return refuse(trackCommentUnwritable);
     }
-    m_editedPageIndices.insert(found->pageIndex);
+    // As the readers give it back: they trim what ends a string in blanks.
+    std::string readable = comment;
+    while (!readable.empty() && (readable.back() == ' ' || readable.back() == '\t' || readable.back() == '\0')) {
+        readable.pop_back();
+    }
+    (*expected)[TrackStringIndexComment] = readable;
+
+    // All of it or none, checked by reading the row back below.
+    const std::string bufferBefore = m_buffer;
+    const auto editedBefore = m_editedPageIndices;
+    const auto appendedBefore = m_appendedPages;
+    const auto deletedBefore = m_deletedRowsByPage;
+    const auto undo = [&] {
+        m_buffer = bufferBefore;
+        m_editedPageIndices = editedBefore;
+        m_appendedPages = appendedBefore;
+        m_deletedRowsByPage = deletedBefore;
+    };
+
+    const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);
+    const size_t base = lenPage * found->pageIndex;
+    const size_t heapOffset = found->rowBodyOffset - base - PageHeaderSize;
+    const size_t extent = rowExtent(m_buffer, base, lenPage, heapOffset);
+    try {
+        if (rebuilt->size() <= extent) {
+            // It fits where it is (#108): written over itself, the rest of
+            // its span up to the next row zeroed, so no byte of the old
+            // comment stays behind and nothing else on the page moves.
+            std::copy(rebuilt->begin(), rebuilt->end(),
+                      m_buffer.begin() + static_cast<std::ptrdiff_t>(found->rowBodyOffset));
+            std::fill_n(m_buffer.begin() + static_cast<std::ptrdiff_t>(found->rowBodyOffset + rebuilt->size()),
+                        extent - rebuilt->size(), '\0');
+            m_editedPageIndices.insert(found->pageIndex);
+        } else {
+            // Moved, as rekordbox moves a row it rewrites: the old one
+            // marked deleted, the new one written with rekordbox's room
+            // after it, on the same page when that has the room, otherwise
+            // where placeRows() puts a new row of the track table (its last
+            // page, or a new page). Rows are found by id, never by where
+            // they are, so nothing outside the track table names a place.
+            std::string row = *rebuilt;
+            row.resize(paddedRowSize(row.size() + TrackRowRoom), '\0');
+            const bool samePage = row.size() <= roomForOneRow(m_buffer, base, lenPage);
+            const RowPlacement placement = samePage ? RowPlacement{} : placeRows(TracksTableType, {row});
+            uint32_t rowIndex = 0;
+            if (samePage) {
+                rowIndex = readU32LE(m_buffer, base + 24) & 0x1FFFu;
+            } else if (placement.onLastPage > 0) {
+                const size_t lastBase = lenPage * placement.lastPage;
+                if (!pageAddsUp(m_buffer, lastBase, lenPage)) {
+                    return refuse("export.pdb's last page of tracks does not add up (its free and used sizes against "
+                                  "its rows), so the comment's row cannot be moved there");
+                }
+                rowIndex = readU32LE(m_buffer, lastBase + 24) & 0x1FFFu;
+            }
+            writeU16LE(row, TrackIndexShiftOffset, static_cast<uint16_t>(rowIndex * 0x20));
+            deleteRowAt(found->pageIndex, found->presentFlagsOffset, found->rowIndexBit);
+            if (samePage) {
+                size_t next = 0;
+                appendRowsToPage(found->pageIndex, {row}, next, 1);
+            } else {
+                writeRows(placement, {row});
+            }
+        }
+    } catch (const PdbPageFull &e) {
+        undo();
+        return refuse(std::string("export.pdb has no room to move this track's row: ") + e.what());
+    }
+    size_t rowsAfter = 0;
+    const auto readBack = trackStringsOf(m_buffer, trackId, &rowsAfter);
+    if (!readBack || *readBack != *expected || rowsAfter != rowsBefore) {
+        undo();
+        throw std::logic_error("export.pdb: the row of track " + std::to_string(trackId)
+                               + " did not read back as written with its new comment; nothing was changed");
+    }
     return true;
 }
 
@@ -2234,6 +2490,7 @@ bool PdbRowWriter::trackInAnyPlaylist(uint32_t trackId) const
 std::vector<PdbRowWriter::TrackPathRow> PdbRowWriter::trackPathRows() const
 {
     std::vector<TrackPathRow> rows;
+    const bool newPagePossible = m_format == Format::Export && canStartPage(TracksTableType);
     std::istringstream iss(m_buffer);
     kaitai::kstream ks(&iss);
     Pdb pdb(false, &ks);
@@ -2250,7 +2507,7 @@ std::vector<PdbRowWriter::TrackPathRow> PdbRowWriter::trackPathRows() const
                     if (auto *t = dynamic_cast<Pdb::track_row_t *>(row->body())) {
                         const size_t body = static_cast<size_t>(pdb.len_page()) * page->page_index()
                                             + static_cast<size_t>(row->row_base());
-                        rows.push_back({t->id(), sqlText(t->file_path()), commentCapacityAt(m_buffer, body)});
+                        rows.push_back({t->id(), sqlText(t->file_path()), commentCapacityOfRow(body, newPagePossible)});
                     }
                 }
             }

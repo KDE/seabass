@@ -167,15 +167,16 @@ public:
     bool setTrackFilePath(uint32_t trackId, const std::string &filename, const std::string &filePath,
                           std::string *refusal);
 
-    // How long a comment the row can hold (#105), in the unit its field
-    // counts: the comment string keeps the span the exported value takes,
-    // since a row cannot grow here, so this is that span. An ASCII field
-    // (device_sql_short_ascii or _long_ascii) holds `units` plain ASCII
-    // characters and nothing else; a UTF-16 one (_long_utf16le) holds
-    // `units` UTF-16 code units, one per character but two for a character
-    // outside the Basic Multilingual Plane (most emoji). nullopt when there
-    // is no such row, or its comment slot cannot be written (unused, or
-    // its string leaves the page).
+    // How long a comment the row can take (#105, #108), in UTF-16 code
+    // units: one per character, two for a character outside the Basic
+    // Multilingual Plane (most emoji). setTrackComment() rebuilds the row
+    // around the comment and moves it when it outgrows its place, so this
+    // is what the row can take wherever it can go: where it is, elsewhere
+    // on its page, or on a new page of the track table, whichever holds
+    // the most. Counted as UTF-16, the widest encoding, so plain ASCII of
+    // that length fits too; `utf16` is always true, any text is taken.
+    // nullopt when there is no such row, or the row is not laid out the
+    // way rekordbox lays out a track row (see setTrackComment()).
     struct TrackCommentCapacity
     {
         size_t units = 0;
@@ -201,14 +202,25 @@ public:
     // writes by, for a caller that asks first.
     static std::string trackCommentRefusal(const std::string &comment, const TrackCommentCapacity &capacity);
 
-    // The DJ's comment on a track row, written into the span the exported
-    // comment takes (#105): encoded as that field encodes (ASCII bytes, or
-    // UTF-16LE code units), right-padded with spaces to fill the span, its
-    // header untouched, so the row keeps its size. The readers trim the
-    // padding, as they do for every padded string. Refused, with *refusal
-    // saying why and nothing written, by trackCommentRefusal()'s rule:
-    // never cut short and never transliterated. Returns false, and no
-    // refusal, when no track with this id exists. `refusal` is required.
+    // The DJ's comment on a track row (#105, #108), at its own length,
+    // never padded. The row is built again around it: its header with the
+    // string offsets moved, and its strings in slot order as rekordbox lays
+    // them out, each byte as it was but the comment's, which is encoded as
+    // rekordbox encodes a string (short ASCII up to 126 characters, long
+    // ASCII, or UTF-16). A row that fits where it is, up to the next row,
+    // is written over itself. A row that does not is moved as rekordbox
+    // moves one: the old row marked deleted, the new one written with the
+    // room rekordbox leaves after a track row, on its own page when that
+    // has the room, else on the track table's last page or a new one.
+    // Players and Seabass find a row by its id, never by where it is.
+    // The row is read back with every string before this returns; one
+    // that does not read back as written puts everything back and throws.
+    // Refused, with *refusal saying why and nothing written, by
+    // trackCommentRefusal()'s rule against trackCommentCapacity(), for a
+    // row not laid out the way rekordbox lays one out, and when the row has
+    // to move and the track table cannot take a new page. Returns false,
+    // and no refusal, when no track with this id exists. `refusal` is
+    // required.
     bool setTrackComment(uint32_t trackId, const std::string &comment, std::string *refusal);
 
     // The track row's other free-text slots. Kept apart from
@@ -513,6 +525,12 @@ private:
         std::string nameBytes;
     };
     RowPlacement placeRows(uint32_t tableType, const std::vector<std::string> &rows) const;
+    // Whether a new page of the table could be started now: its last page
+    // leads to its empty candidate, and that page is empty.
+    bool canStartPage(uint32_t tableType) const;
+    // trackCommentCapacity() for the track row at `rowBodyOffset`, told
+    // whether the track table can take a new page.
+    std::optional<TrackCommentCapacity> commentCapacityOfRow(size_t rowBodyOffset, bool newPagePossible) const;
     static size_t rowsFitting(uint32_t numRowOffsets, uint16_t freeSize, const std::vector<std::string> &rows, size_t from);
     void writeRows(const RowPlacement &placement, const std::vector<std::string> &rows);
     uint32_t startPage(size_t tableEntry, uint32_t tableType);

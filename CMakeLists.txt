@@ -4439,6 +4439,15 @@ add_test(NAME pdb_append_playlist_entries_test COMMAND pdb_append_playlist_entri
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library/rekordbox/rekordbox/export.pdb
     ${CMAKE_SOURCE_DIR}/tests/fixtures/pdb_new_page)
 
+add_executable(pdb_track_comment_test tests/pdb_track_comment_test.cpp)
+target_link_libraries(pdb_track_comment_test PRIVATE seabass_core seabass_core_testing rekordbox_format ZLIB::ZLIB)
+target_include_directories(pdb_track_comment_test PRIVATE src tests)
+add_test(NAME pdb_track_comment_test COMMAND pdb_track_comment_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/one_stick_two_catalogs/rekordbox/rekordbox/export.pdb
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library/rekordbox/rekordbox/export.pdb
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73/stick/PIONEER/rekordbox/export.pdb
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/cue-offsets/stick/PIONEER/rekordbox/export.pdb)
+
 add_executable(pdb_playlist_tree_test tests/pdb_playlist_tree_test.cpp)
 target_link_libraries(pdb_playlist_tree_test PRIVATE seabass_core seabass_core_testing rekordbox_format ZLIB::ZLIB)
 target_include_directories(pdb_playlist_tree_test PRIVATE src tests)
