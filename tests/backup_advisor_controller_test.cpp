@@ -167,6 +167,37 @@ void wire(BackupAdvisorController &controller, FakeReader &fake)
         });
 }
 
+// Asked to read every stick again, the advisor lists a stick it knows as
+// pending before reassessAll() returns, and keeps its last word on it
+// until the new one is in. The restore page relies on both: it hides a
+// warning about what a restore replaced while the stick is pending.
+void reassessAllMakesAKnownStickPendingAtOnce(const fs::path &root)
+{
+    FakeReader fake;
+    BackupAdvisorController controller;
+    wire(controller, fake);
+    const Stick a = makeStick(root, "again_a");
+    const QString aTracks = FakeReader::key(a.pioneer, FingerprintPass::Tracks);
+
+    controller.assess(QStringLiteral("A"), a.mountPoint, a.pioneer, QString());
+    waitUntilIdle(controller);
+    assert(controller.advice().contains(a.mountPoint) && controller.pending().isEmpty());
+
+    int pendingChanges = 0;
+    QObject::connect(&controller, &BackupAdvisorController::pendingChanged, [&] { ++pendingChanges; });
+    fake.held[aTracks] = true;
+    controller.reassessAll();
+    assert(controller.pending().contains(a.mountPoint) && "pending as soon as it is asked");
+    assert(pendingChanges > 0 && "and said so");
+    assert(controller.advice().contains(a.mountPoint) && "its last word stays until the new one is in");
+    fake.waitEntered(aTracks);
+    assert(controller.pending().contains(a.mountPoint) && "pending while it is read");
+    fake.release(aTracks);
+    waitUntilIdle(controller);
+    assert(controller.pending().isEmpty() && controller.advice().contains(a.mountPoint));
+    std::cout << "a stick read again is pending from the moment it is asked OK\n";
+}
+
 void forgetWhileFactsQueuedOrRunning(const fs::path &root)
 {
     FakeReader fake;
@@ -283,6 +314,7 @@ int main(int argc, char **argv)
     fs::remove_all(root);
     fs::create_directories(root);
 
+    reassessAllMakesAKnownStickPendingAtOnce(root);
     forgetWhileFactsQueuedOrRunning(root);
     forgetCancelsTheCuesStep(root);
     engineOnlyStickNeedsNoCuesStep(root, seabass::pathFromUtf8(argv[1]));

@@ -83,7 +83,14 @@ Page {
     // Stick Backup card has it; null when it has none (yet).
     readonly property var targetAdvice: root.backupAdvisor && root.backupAdvisor.advice && root.selectedDisk
         && root.selectedDisk.mountPoint ? (root.backupAdvisor.advice[root.selectedDisk.mountPoint] || null) : null
+    // After a restore here the stick holds the backup, and the advisor's
+    // last word was about what the restore replaced: not one to warn with
+    // while it reads the drive again. Before a restore its last word
+    // stands, read again or not.
+    readonly property bool targetAdvicePending: root.backupAdvisor && root.backupAdvisor.pending && root.selectedDisk
+        && root.selectedDisk.mountPoint ? root.backupAdvisor.pending.indexOf(root.selectedDisk.mountPoint) >= 0 : false
     readonly property bool targetChangedSinceBackup: root.targetAdvice !== null && root.targetAdvice.state === "outdated"
+        && !(root.restoreStarted && root.targetAdvicePending)
     readonly property bool archiveReady: root.info.label !== undefined && (!root.info.error || root.info.error.length === 0)
     // A drive not reported as removable media is asked about first (see
     // FixedDriveCheck), and its name is always typed: it may hold more
@@ -838,6 +845,11 @@ Page {
         if (root.restoring) {
             root.restoreStarted = true;
             root.reportDismissed = false;
+        } else if (root.restoreStarted && root.backupAdvisor && typeof root.backupAdvisor.reassessAll === "function") {
+            // Finished or stopped part-way, the stick is not what the
+            // advisor read: it reads again, as it does when Home comes
+            // back, so the warning above is about the stick as it is now.
+            root.backupAdvisor.reassessAll();
         }
     }
     readonly property bool failedWithoutReport: root.restoreStarted && !root.restoring && !root.hasResult

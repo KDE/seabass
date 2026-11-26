@@ -391,6 +391,56 @@ TestCase {
         compare(findChild(none, "changedSinceBackupBanner").visible, false, "no advisor: nothing said");
     }
 
+    // An advisor that answers as the real one does: asked to read again,
+    // the drive is pending until its new word is in.
+    Component {
+        id: advisorComponent
+        QtObject {
+            property var advice: ({"/media/STICK": {state: "outdated",
+                                                    detail: "The library has changed since its last backup."}})
+            property var pending: []
+            property int reassessed: 0
+            function reassessAll() {
+                reassessed += 1;
+                pending = ["/media/STICK"];
+            }
+            function answer(state, detail) {
+                advice = {"/media/STICK": {state: state, detail: detail}};
+                pending = [];
+            }
+        }
+    }
+
+    // A restore replaces what the warning was about: when it ends the
+    // advisor is asked again, and the warning waits for its new word.
+    function test_changedSinceBackupIsAskedAgainAfterARestore() {
+        const preview = {filesToWrite: 14, filesUnchanged: 1147, bytesToWrite: 500 * 1024 * 1024, extras: 0,
+                         targetHasEngineLibrary: true, freeBytes: 8 * 1024 * 1024 * 1024, enoughFreeSpace: true};
+        const advisor = createTemporaryObject(advisorComponent, testCase);
+        const controller = createTemporaryObject(liveDisksControllerComponent, testCase,
+                                                 {disks: [makeDisk({})], nextDisks: [makeDisk({})], preview: preview});
+        const page = createTemporaryObject(pageComponent, testCase,
+                                           {controller: controller, appSettingsController: fakeAppSettings(),
+                                            backupAdvisor: advisor});
+        const banner = findChild(page, "changedSinceBackupBanner");
+        compare(banner.visible, true, "changed since its backup: warned before the restore");
+        compare(advisor.reassessed, 0, "opening the page asks nothing");
+        advisor.pending = ["/media/STICK"];
+        compare(banner.visible, true, "before a restore the warning stands while the advisor reads again");
+        advisor.pending = [];
+
+        controller.restoring = true;
+        compare(advisor.reassessed, 0, "nothing is asked while the restore runs");
+        controller.restoring = false;
+        compare(advisor.reassessed, 1, "the restore ended: the advisor reads the stick again");
+        compare(banner.visible, false, "its old word is not shown while it reads");
+
+        advisor.answer("current", "Backup is up to date.");
+        compare(banner.visible, false, "the stick now holds its backup: nothing to warn of");
+        advisor.answer("outdated", "The library has changed since its last backup.");
+        compare(banner.visible, true, "and a stick that differs again is warned of again");
+    }
+
     // A blank target with nothing at stake: no typing required.
     function test_confirmOnBlankTargetNeedsNoTypingAndCallsRestore() {
         var page = makePage([makeDisk({})]);
