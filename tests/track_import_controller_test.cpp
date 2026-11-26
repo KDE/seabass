@@ -2429,6 +2429,104 @@ int main(int argc, char **argv)
             std::cout << "case 16s (a track the threshold switched on, then Move all: moved, and not said to have "
                          "moved on its own) OK\n";
         }
+
+        // 16t. Near the track's start rekordbox keeps whole ms and Engine
+        //      samples, so a grid moving its first beat from 2.2 ms to the
+        //      start meets each library's copy of a cue differently: an
+        //      intro loop over four beats at 2 ms in rekordbox and 2.4 ms in
+        //      Engine (one start held at 0, the other not), and a hot cue
+        //      at 1 ms in rekordbox and 0.8 ms in Engine (one a move of
+        //      1 ms, the other under the minimum). No analyser puts a beat
+        //      that near the start of a test file, so the review's two
+        //      grids are set by hand: 120 BPM from 2.2 ms, and from 0. The
+        //      save refuses nothing, and the cues move in all three
+        //      libraries.
+        {
+            writeBeatChordWav(computer / "z start.wav", 49, 120.0, aMinor);
+            assert(offer(QVariantList{pathToQString(computer / "z start.wav")}, QStringLiteral("Start"), true));
+            assert(saveNow().value("error").toString().isEmpty());
+            std::vector<domain::Track> rows = rowsOf("z start.wav");
+            const double first = 2.0;
+            const double fourth = 2002.0;
+            const auto stageLoop = [&](const QString &format, const domain::Track &row, double from, double to) {
+                const QString path = format == QLatin1String("engine") ? engine : pioneer;
+                assert(session->stage(std::make_unique<AddCueChange>(
+                    format, path, QString::fromStdString(row.sourceId), from, QStringLiteral("hot"), 1,
+                    QStringLiteral("#00FF00"), QStringLiteral("intro"), true, to, QStringLiteral("t"))));
+            };
+            stageLoop(QStringLiteral("rekordbox"), rows[0], first, fourth);
+            stageLoop(QStringLiteral("engine"), rows[2], first + 0.4, fourth + 0.4);
+            stageCue(QStringLiteral("rekordbox"), rows[0], 1.0, true, 2);
+            stageCue(QStringLiteral("engine"), rows[2], 0.8, true, 2);
+            assert(saveNow().value("written").toInt() == 4);
+            const std::vector<domain::Track> before = rowsOf("z start.wav");
+            const auto padOf = [](const domain::Track &row, int pad) {
+                for (const auto &cue : row.cues) {
+                    if (cue.kind == domain::CuePoint::Kind::Hot && cue.hotCueNumber == pad) {
+                        return cue;
+                    }
+                }
+                assert(false && "the pad is set");
+                return domain::CuePoint{};
+            };
+            for (const domain::Track &row : before) {
+                std::cerr << "  z start " << row.format << ": loop " << padOf(row, 1).positionMs << " to "
+                          << padOf(row, 1).loopEndMs << ", hot cue 2 at " << padOf(row, 2).positionMs << std::endl;
+            }
+
+            writeBeatChordWav(onStick / "z start.wav", 49, 120.0, aMinor, 0.29);
+            analyseAgainOn(QStringLiteral("Start"));
+            std::shared_ptr<ReanalyseTrackChange> change;
+            for (const auto &pending : session->pendingChanges()) {
+                if (auto again = std::dynamic_pointer_cast<ReanalyseTrackChange>(pending);
+                    again && again->subject().startsWith(QLatin1String("z start"))) {
+                    change = again;
+                }
+            }
+            assert(change);
+            ReanalyseTrackChange::CueReview review = change->cueReview();
+            const double shift = -2.2;
+            review.oldBeats.clear();
+            review.newBeats.clear();
+            for (int i = 0; i < 90; ++i) {
+                review.oldBeats.push_back(2.2 + i * 500.0);
+                review.newBeats.push_back(i * 500.0);
+            }
+            // The cues the review read from the stick are the ones placed.
+            assert(review.cues.size() == 2);
+            review.plan = application::planCueGridMoves(review.cues, review.oldBeats, review.newBeats);
+            assert(review.plan.verdict == application::CueGridPlan::Verdict::Moves);
+            change->setCueReview(review);
+            change->setMoveCues(true);
+            const std::size_t from = logSize();
+            const QVariantMap summary = saveNow();
+            const std::string log = logSince(from);
+            assert(summary.value("written").toInt() == 1);
+            assert(log.find("holds other cue points than the review showed") == std::string::npos
+                   && "no library is taken for holding other cues");
+            assert(!summary.value("notes").toString().contains(QLatin1String("were left where they are")));
+            const std::vector<domain::Track> after = rowsOf("z start.wav");
+            const char *libraries[] = {"DeviceLibrary", "OneLibrary", "Engine"};
+            for (std::size_t i = 0; i < after.size(); ++i) {
+                const domain::CuePoint loopWas = padOf(before[i], 1);
+                const domain::CuePoint loopNow = padOf(after[i], 1);
+                const domain::CuePoint hotNow = padOf(after[i], 2);
+                std::cerr << "  z start " << libraries[i] << ": loop " << loopNow.positionMs << " to " << loopNow.loopEndMs
+                          << ", hot cue 2 at " << hotNow.positionMs << std::endl;
+                // The loop's start at the track's start, or 0.2 ms after it
+                // in Engine; its end on its beat, moved by the grid's amount
+                // (rekordbox's whole ms cut it by up to 1 ms more).
+                assert(loopNow.positionMs >= 0.0 && loopNow.positionMs < 0.5);
+                assert(loopNow.positionMs < loopWas.positionMs - 0.5 && "the loop moved");
+                assert(std::abs(loopNow.loopEndMs - (loopWas.loopEndMs + shift)) < 1.0 + 1e-6);
+                // Hot cue 2 at the start, within the millisecond rekordbox
+                // keeps, in every library.
+                assert(hotNow.positionMs >= 0.0 && hotNow.positionMs < 1.0);
+            }
+            assert(std::abs(padOf(after[0], 2).positionMs) < 1e-6 && "rekordbox's hot cue 2 moved to the start");
+            std::cout << "case 16t (near the start, a loop held at 0 in one library and not in another, and a cue "
+                         "moved in one and under a millisecond in another: the cues move in all three libraries) OK\n";
+        }
     }
 
 
@@ -2496,9 +2594,12 @@ int main(int argc, char **argv)
     //     none; a save that goes back, and Undo Last Save, leave the file as
     //     it was before; a damaged ledger is replaced by the next save, and
     //     one that cannot be read is left as it is, a warning on a save that
-    //     landed. A grid that cannot be read back is "-", never a failed
-    //     save; an import whose source was replaced after its analysis
-    //     records nothing.
+    //     landed, and so is one that can be read and not written. A grid
+    //     that cannot be read back is "-", never a failed save; an import
+    //     whose source was replaced after its analysis (another size, or
+    //     a time more than 2 s from the one analysed) records nothing.
+    //     Each entry holds the grid's confidence, whether it follows the
+    //     tempo and the key's margin as the analyser reported them.
     {
         namespace local = infrastructure::local;
         const fs::path ledgerFile = infrastructure::paths::stickAnalysisLedger(stick.root);
@@ -2577,6 +2678,19 @@ int main(int argc, char **argv)
             assert(!engineNow.empty() && entry.engineGrid == engineNow);
             assert(entry.keyWritten == (!entry.key.empty() && pdb.key == entry.key));
             assert(entry.analysedAtUnix > 0);
+            // How sure the analyser was, as it reported it for this file:
+            // the same file analysed again gives the same numbers.
+            const auto heard = analyseForImport(pathToUtf8(file), application::CancellationToken{}, range);
+            assert(heard && heard->provenance);
+            std::cerr << "  " << name << ": grid confidence " << entry.gridConfidence << " (analyser "
+                      << heard->confidence << "), follows tempo " << entry.gridFollowsTempo << ", key margin '"
+                      << entry.keyMargin << "' (analyser " << heard->keyMargin << ")" << std::endl;
+            assert(!heard->beats.empty() && "both ledger tracks have a grid");
+            assert(!entry.gridConfidence.empty() && entry.gridConfidence == local::formatGridConfidence(heard->confidence));
+            assert(entry.gridFollowsTempo == (heard->followsTempo ? "1" : "0"));
+            assert(entry.key == heard->key);
+            assert(entry.key.empty() ? entry.keyMargin.empty()
+                                     : !entry.keyMargin.empty() && entry.keyMargin == local::formatKeyMargin(heard->keyMargin));
         };
 
         // 18a. The import. v one has a key to hear, and no tag naming one:
@@ -2707,6 +2821,8 @@ int main(int argc, char **argv)
             assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1);
             assert(saved.value("warning").toString().contains(
                 QLatin1String("Your changes are saved, but Seabass could not record which tracks it analysed")));
+            assert(saved.value("warning").toString().contains(QLatin1String("seabass-cli analysis-ledger --reset"))
+                   && "the warning says what the person can do");
             assert(fs::is_directory(ledgerFile / "in the way"));
             fs::remove_all(ledgerFile);
             std::cout << "case 18f (a ledger that cannot be read: left as it is, the save lands with a warning) OK\n";
@@ -2735,7 +2851,33 @@ int main(int argc, char **argv)
             std::cout << "case 18g (a grid that cannot be read back for the ledger: \"-\", the save lands) OK\n";
         }
 
-        // 18h. An import whose source is replaced by a file of another size
+        // 18h. A ledger that can be read and not written: a folder where
+        //      the atomic write puts its temporary file. The save lands
+        //      with a warning that says what to do, and the ledger stays
+        //      as it was.
+        {
+            again = analyseAgainOn(QStringLiteral("Ledger"));
+            assert(again.value("analysed").toInt() == 1);
+            const std::string before = bytesOf(ledgerFile);
+            assert(!before.empty());
+            fs::path temporary = ledgerFile;
+            temporary += ".tmp-seabass-write";
+            fs::create_directories(temporary / "in the way");
+            const std::size_t logBefore = logText().size();
+            const QVariantMap saved = saveNow();
+            fs::remove_all(temporary);
+            std::cerr << "  warning: " << saved.value("warning").toString().toStdString() << std::endl;
+            assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1);
+            assert(logText().substr(logBefore).find("analysis ledger: not written") != std::string::npos);
+            assert(saved.value("warning").toString().contains(
+                QLatin1String("Your changes are saved, but Seabass could not record which tracks it analysed")));
+            assert(saved.value("warning").toString().contains(QLatin1String("free space")));
+            assert(bytesOf(ledgerFile) == before && "a ledger that could not be written stays as it was");
+            std::cout << "case 18h (a ledger that can be read and not written: the save lands with a warning, the "
+                         "ledger as it was) OK\n";
+        }
+
+        // 18i. An import whose source is replaced by a file of another size
         //      after its analysis: the file is copied, and nothing calls
         //      the analysis the copied file's (import_held_rows_test case 4:
         //      none of it is written).
@@ -2750,7 +2892,33 @@ int main(int argc, char **argv)
             assert(readLedger().count(keyOf("x swapped.wav")) == 0 && "an analysis of another file is not recorded");
             assert(logText().substr(logBefore).find("x swapped.wav is not recorded in the analysis ledger: the file copied")
                    != std::string::npos);
-            std::cout << "case 18h (an import whose source was replaced after its analysis: no ledger entry) OK\n";
+            std::cout << "case 18i (an import whose source was replaced after its analysis: no ledger entry) OK\n";
+        }
+
+        // 18j. Sources rewritten at the same size after their analysis: one
+        //      modified 10 s later is not recorded, one 1 s later is (FAT
+        //      keeps times in 2 s steps).
+        {
+            writeBeatWav(computer / "x touched.wav", 30, 126.0);
+            writeBeatWav(computer / "x close.wav", 31, 126.0);
+            assert(offer(QVariantList{pathToQString(computer / "x touched.wav"), pathToQString(computer / "x close.wav")},
+                         QStringLiteral("Ledger"), false));
+            const auto later = [&](const fs::path &file, int seconds) {
+                fs::last_write_time(file, fs::last_write_time(file) + std::chrono::seconds(seconds));
+            };
+            later(computer / "x touched.wav", 10);
+            later(computer / "x close.wav", 1);
+            const std::size_t logBefore = logText().size();
+            const QVariantMap saved = saveNow();
+            assert(saved.value("error").toString().isEmpty());
+            const local::AnalysisLedger after = readLedger();
+            assert(after.count(keyOf("x touched.wav")) == 0 && "a source modified since its analysis is not recorded");
+            assert(after.count(keyOf("x close.wav")) == 1 && "within 2 s it is the file analysed");
+            assert(logText().substr(logBefore).find("x touched.wav is not recorded in the analysis ledger: the file "
+                                                    "copied")
+                   != std::string::npos);
+            std::cout << "case 18j (a source rewritten at its size after its analysis: not recorded; within 2 s it "
+                         "is) OK\n";
         }
     }
 

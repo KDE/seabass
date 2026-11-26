@@ -37,9 +37,9 @@ struct CueGridMove
     double newMs = 0.0;
     // The beat both positions are on, counted from the grids' first (0).
     std::size_t beat = 0;
-    // A loop's end, before and after; its beat when the end was on one
-    // too (and then follows that beat), none when it moves by the start's
-    // amount.
+    // A loop's end, before and after; its beat whenever the end was on
+    // one (and then it follows that beat, even when the start was held at
+    // the track's start), none when it moves by the start's amount.
     double oldEndMs = 0.0;
     double newEndMs = 0.0;
     std::optional<std::size_t> endBeat;
@@ -66,6 +66,11 @@ struct CueGridPlan
     int offBeat = 0;
     // Cues on a beat whose move would be under CueMoveMinimumMs.
     int alreadyThere = 0;
+    // Those cues, as the move they would make: not made, and kept only so
+    // that two plans of one track can be compared cue for cue. Near the
+    // track's start the hold at 0 can make one library's copy of a cue a
+    // move under the minimum and another's a move over it.
+    std::vector<CueGridMove> stayed;
 };
 
 // What would move, from `cues` and the two grids (beat times in ms, in
@@ -80,11 +85,13 @@ struct CueGridPlan
 // - trusted only when the new beat is within a quarter of the old grid's
 //   beat spacing there (and so is a loop end's); one untrusted cue makes
 //   the track GridChangedTooMuch and no cue moves;
-// - a start that would come out before 0 lands on 0, the track's start; a
-//   loop whose start lands there keeps its length, its end moving by what
-//   the start moved (and then has no endBeat). Every move in the plan, and
-//   every amount the review shows and the threshold compares, is the move
-//   as it is made.
+// - a start that would come out before 0 lands on 0, the track's start,
+//   and so does an end. The hold changes the amounts only, never which
+//   beat a cue or a loop's end belongs to: a held loop whose end was on a
+//   beat ends on that beat of the new grid; one whose end was not keeps
+//   its length, its end moving by what the start moved. Every move in the
+//   plan, and every amount the review shows and the threshold compares,
+//   is the move as it is made.
 CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const std::vector<double> &oldBeats,
                              const std::vector<double> &newBeats);
 

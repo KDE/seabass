@@ -85,6 +85,9 @@ AnalysisLedgerEntry analysisLedgerEntry(const std::string &pathKey, const Import
     entry.engineGrid = engineGrid;
     entry.key = key;
     entry.keyWritten = keyWritten && !key.empty();
+    entry.gridConfidence = provenance.gridConfidence;
+    entry.gridFollowsTempo = provenance.gridFollowsTempo;
+    entry.keyMargin = provenance.keyMargin;
     return entry;
 }
 
@@ -171,8 +174,12 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
             // save's entries go unrecorded, and the save says so.
             ctx.log().record("analysis ledger: " + std::to_string(landed.size())
                              + " track(s) not recorded, the ledger left as it is: " + readError);
-            throw std::runtime_error("Your changes are saved, but Seabass could not record which tracks it analysed ("
-                                     + readError + "), so it will not know them for its own analyses later.");
+            throw std::runtime_error(
+                "Your changes are saved, but Seabass could not record which tracks it analysed (" + readError
+                + "), so it will not know them for its own analyses later. The record on the stick cannot be read, so "
+                  "Seabass leaves it as it is and says this at every save. Check the stick for errors on a computer. "
+                  "If it stays unreadable, \"seabass-cli analysis-ledger --reset\" moves the record aside, deleting "
+                  "nothing, and the next save starts a new one.");
         }
         const std::int64_t now =
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -223,8 +230,11 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
             &writeError);
         if (!written) {
             ctx.log().record("analysis ledger: not written: " + writeError);
-            throw std::runtime_error("Your changes are saved, but Seabass could not record which tracks it analysed ("
-                                     + writeError + "), so it will not know them for its own analyses later.");
+            throw std::runtime_error(
+                "Your changes are saved, but Seabass could not record which tracks it analysed (" + writeError
+                + "), so it will not know them for its own analyses later. The record on the stick is as it was. "
+                  "Check that the stick has free space and is not write-protected; the next save that writes an "
+                  "analysis tries again.");
         }
         ctx.log().record("analysis ledger: recorded " + std::to_string(landed.size()) + " track(s), "
                          + std::to_string(next.size()) + " in all"

@@ -4,6 +4,7 @@
 
 #include "infrastructure/local/analysis_ledger_file.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -22,6 +23,7 @@
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/stick_backup/backup_manifest.hpp"
+#include "infrastructure/utc_timestamp.hpp"
 
 namespace seabass::infrastructure::local
 {
@@ -35,7 +37,7 @@ using stick_backup::unescapeManifestField;
 
 constexpr std::string_view Magic = "seabass-analysis";
 constexpr std::string_view TrailerPrefix = "#sha256\t";
-constexpr std::size_t TrackFieldCount = 16;
+constexpr std::size_t TrackFieldCount = 19;
 
 // A ledger of ten thousand tracks is a few megabytes of text; this only
 // stops a damaged file from taking the machine's memory with it.
@@ -88,6 +90,70 @@ bool isTempoText(std::string_view text)
     return true;
 }
 
+// Digits, a point, exactly `decimals` digits: "0.875" for 3, "4.20" for
+// 2.
+bool isDecimalText(std::string_view text, std::size_t decimals)
+{
+    const std::size_t point = text.find('.');
+    if (point == std::string_view::npos || point == 0 || text.size() - point != decimals + 1) {
+        return false;
+    }
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (i != point && (text[i] < '0' || text[i] > '9')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A grid's confidence as written: "0.000" to "1.000".
+bool isGridConfidenceText(std::string_view text)
+{
+    return isDecimalText(text, 3) && (text[0] == '0' || text == "1.000") && text.find('.') == 1;
+}
+
+// `value` with exactly `decimals` decimals, built from an integer so no
+// locale and no rounding mode of a stream decides the text. Empty for a
+// value that is not a finite number from 0 to `max`.
+std::string formatDecimal(double value, int decimals, double max)
+{
+    if (!std::isfinite(value) || value < 0.0 || value > max) {
+        return {};
+    }
+    long long scale = 1;
+    for (int i = 0; i < decimals; ++i) {
+        scale *= 10;
+    }
+    const long long scaled = std::llround(value * static_cast<double>(scale));
+    char text[48];
+    std::snprintf(text, sizeof text, "%lld.%0*lld", scaled / scale, decimals, scaled % scale);
+    return text;
+}
+
+// "-", or the text as written; "-" reads as empty.
+bool parseOptionalText(std::string_view text, bool (*valid)(std::string_view), std::string &out)
+{
+    if (text == "-") {
+        out.clear();
+        return true;
+    }
+    if (!valid(text)) {
+        return false;
+    }
+    out = std::string(text);
+    return true;
+}
+
+bool isFollowsTempoText(std::string_view text)
+{
+    return text == "0" || text == "1";
+}
+
+bool isKeyMarginText(std::string_view text)
+{
+    return isDecimalText(text, 2);
+}
+
 // "-" or 64 lowercase hex digits; "-" reads as empty.
 bool parseFingerprint(std::string_view text, std::string &out)
 {
@@ -127,6 +193,18 @@ std::string unwritable(const std::string &key, const AnalysisLedgerEntry &entry)
     }
     if (entry.key == "-") {
         return "the entry for " + key + " has \"-\" for a key, which reads back as none";
+    }
+    if (!entry.gridConfidence.empty() && !isGridConfidenceText(entry.gridConfidence)) {
+        return "the entry for " + key + " has a grid confidence not written as formatGridConfidence() writes one";
+    }
+    if (!entry.gridFollowsTempo.empty() && !isFollowsTempoText(entry.gridFollowsTempo)) {
+        return "the entry for " + key + " says the grid follows the tempo with neither 0 nor 1";
+    }
+    if (entry.gridConfidence.empty() != entry.gridFollowsTempo.empty()) {
+        return "the entry for " + key + " has one of the grid's confidence and its following the tempo, not both";
+    }
+    if (!entry.keyMargin.empty() && !isKeyMarginText(entry.keyMargin)) {
+        return "the entry for " + key + " has a key margin not written as formatKeyMargin() writes one";
     }
     return {};
 }
@@ -223,6 +301,18 @@ std::optional<AnalysisLedger> parseText(std::string_view text, std::string *prob
         if (!parseInteger(f[15], e.analysedAtUnix)) {
             return fail("the time of the analysis is not a decimal number");
         }
+        if (!parseOptionalText(f[16], isGridConfidenceText, e.gridConfidence)) {
+            return fail("the grid's confidence is neither \"-\" nor a number from 0.000 to 1.000 with three decimals");
+        }
+        if (!parseOptionalText(f[17], isFollowsTempoText, e.gridFollowsTempo)) {
+            return fail("gridFollowsTempo is neither \"-\" nor 0 or 1");
+        }
+        if (e.gridConfidence.empty() != e.gridFollowsTempo.empty()) {
+            return fail("the grid's confidence and gridFollowsTempo are not both \"-\" or both given");
+        }
+        if (!parseOptionalText(f[18], isKeyMarginText, e.keyMargin)) {
+            return fail("the key margin is neither \"-\" nor a number with two decimals");
+        }
         if (previousKey && !(*previousKey < *key)) {
             return fail(*previousKey == *key ? "a key listed twice" : "keys out of order");
         }
@@ -242,7 +332,18 @@ std::optional<AnalysisLedger> parseText(std::string_view text, std::string *prob
     return ledger;
 }
 
+std::function<void(std::string &)> &afterLedgerRead()
+{
+    static std::function<void(std::string &)> hook;
+    return hook;
+}
+
 }  // namespace
+
+void setAfterAnalysisLedgerReadForTesting(std::function<void(std::string &bytes)> hook)
+{
+    afterLedgerRead() = std::move(hook);
+}
 
 std::string formatTempoBpm(double bpm)
 {
@@ -255,6 +356,18 @@ std::string formatTempoBpm(double bpm)
     char text[32];
     std::snprintf(text, sizeof text, "%lld.%02lld", hundredths / 100, hundredths % 100);
     return text;
+}
+
+std::string formatGridConfidence(double confidence)
+{
+    return formatDecimal(confidence, 3, 1.0);
+}
+
+std::string formatKeyMargin(double margin)
+{
+    // Far above any score difference the key detector gives; it only
+    // keeps the integer the text is built from in range.
+    return formatDecimal(margin, 2, 1e12);
 }
 
 std::string analysisLedgerEntryProblem(const std::string &key, const AnalysisLedgerEntry &entry)
@@ -302,6 +415,9 @@ std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger,
         out += '\t' + (e.key.empty() ? std::string("-") : escapeManifestField(e.key));
         out += std::string("\t") + (e.keyWritten ? "1" : "0");
         out += '\t' + std::to_string(e.analysedAtUnix);
+        out += '\t' + (e.gridConfidence.empty() ? std::string("-") : e.gridConfidence);
+        out += '\t' + (e.gridFollowsTempo.empty() ? std::string("-") : e.gridFollowsTempo);
+        out += '\t' + (e.keyMargin.empty() ? std::string("-") : e.keyMargin);
         out += '\n';
     }
     const std::string digest = hashing::toHex(hashing::Sha256::of(out));
@@ -356,9 +472,20 @@ AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error,
     if (!in) {
         return refuse(AnalysisLedgerFault::Unreadable, "cannot open it");
     }
-    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (in.bad()) {
-        return refuse(AnalysisLedgerFault::Unreadable, "reading it failed");
+    // As many bytes as the file has. A read that fails part way looks like
+    // the end of the file to a stream on some standard libraries (libc++,
+    // MSVC's), and the gzip would then look cut short: a ledger that was
+    // not read would be called damaged and replaced, its history lost. So
+    // fewer bytes than the file's size is a file that could not be read.
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    in.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    bytes.resize(static_cast<std::size_t>(std::max<std::streamsize>(in.gcount(), 0)));
+    if (afterLedgerRead()) {
+        afterLedgerRead()(bytes);
+    }
+    if (bytes.size() != size) {
+        return refuse(AnalysisLedgerFault::Unreadable, "reading it stopped after " + std::to_string(bytes.size())
+                                                           + " of its " + std::to_string(size) + " bytes");
     }
     std::istringstream compressed(bytes);
     std::string text;
@@ -418,6 +545,48 @@ bool writeAnalysisLedger(const fs::path &stickRoot, const AnalysisLedger &ledger
         return false;
     }
     return true;
+}
+
+std::optional<fs::path> moveAnalysisLedgerAside(const fs::path &stickRoot, std::chrono::system_clock::time_point now,
+                                                std::string *error)
+{
+    if (error == nullptr) {
+        throw std::invalid_argument("moveAnalysisLedgerAside: the error out-parameter is required");
+    }
+    error->clear();
+    const fs::path file = paths::stickAnalysisLedger(stickRoot);
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(file, ec);
+    if (status.type() == fs::file_type::not_found) {
+        *error = pathToUtf8(file) + ": there is none to move aside";
+        return std::nullopt;
+    }
+    if (ec) {
+        *error = pathToUtf8(file) + ": cannot look at it (" + ec.message() + ")";
+        return std::nullopt;
+    }
+    // Basic ISO 8601, without the colons FAT and Windows refuse in a name.
+    const std::string stamp = utcTimestamp(now, "%Y%m%dT%H%M%SZ");
+    if (stamp.empty()) {
+        *error = pathToUtf8(file) + ": the computer's clock gives no time to name the moved file by";
+        return std::nullopt;
+    }
+    const std::string base = pathToUtf8(file.filename()) + ".unreadable-" + stamp;
+    // Two in one second keep each other: the second is numbered.
+    fs::path aside = file.parent_path() / pathFromUtf8(base);
+    for (int n = 2; fs::exists(fs::symlink_status(aside, ec)); ++n) {
+        if (n > 1000) {
+            *error = pathToUtf8(file) + ": too many moved ledgers named " + base + " already";
+            return std::nullopt;
+        }
+        aside = file.parent_path() / pathFromUtf8(base + "-" + std::to_string(n));
+    }
+    fs::rename(file, aside, ec);
+    if (ec) {
+        *error = pathToUtf8(file) + ": cannot move it to " + pathToUtf8(aside) + " (" + ec.message() + ")";
+        return std::nullopt;
+    }
+    return aside;
 }
 
 }  // namespace seabass::infrastructure::local

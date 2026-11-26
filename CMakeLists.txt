@@ -3170,6 +3170,13 @@ function(seabass_cli_test name)
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 endfunction()
 
+# analysis-ledger --reset on a scratch stick: what cannot be used is moved
+# aside, never deleted; a ledger that can be read is never moved.
+add_test(NAME cli_analysis_ledger_reset
+    COMMAND ${CMAKE_COMMAND} "-DCLI=$<TARGET_FILE:seabass-cli>"
+            "-DSCRATCH=${CMAKE_BINARY_DIR}/test-scratch/cli_analysis_ledger_reset"
+            -P ${CMAKE_SOURCE_DIR}/tests/cli_analysis_ledger_reset.cmake)
+
 seabass_cli_test(cli_help EXIT 0 ARGS --help
     EXPECT "Usage" "seabass-cli scan .--rekordbox" "seabass-cli sync --rekordbox"
            "seabass-cli sync-after-export .--rekordbox" "  sync-after-export  Compares"
@@ -3902,6 +3909,14 @@ if(TARGET seabass_edit)
     target_include_directories(analysis_summary_note_test PRIVATE src tests)
     target_link_libraries(analysis_summary_note_test PRIVATE seabass_edit Qt6::Core)
     add_test(NAME analysis_summary_note_test COMMAND analysis_summary_note_test)
+
+    # Analyse again's save compares each library's plan for a track's cues
+    # with the review's: near the track's start, where the hold at 0 meets
+    # rekordbox's whole ms and Engine's samples differently.
+    add_executable(reanalyse_cue_comparison_test tests/reanalyse_cue_comparison_test.cpp)
+    target_include_directories(reanalyse_cue_comparison_test PRIVATE src tests)
+    target_link_libraries(reanalyse_cue_comparison_test PRIVATE seabass_edit Qt6::Core)
+    add_test(NAME reanalyse_cue_comparison_test COMMAND reanalyse_cue_comparison_test)
 
     # Metadata Backup plays a stored row from a stick that has its file:
     # the stick it came from first, then any other.

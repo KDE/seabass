@@ -9,32 +9,53 @@
 namespace seabass::infrastructure
 {
 
-std::string utcTimestamp(std::chrono::system_clock::time_point tp, const char *format)
+namespace
 {
-    const std::time_t t = std::chrono::system_clock::to_time_t(std::chrono::floor<std::chrono::seconds>(tp));
+
+// 3000-12-31 23:59:59 UTC: the last second MSVC's gmtime_s converts (past
+// it gmtime_s fails, and strftime given what it left aborts the program).
+// The same limit on every platform, so a time is shown, or not, alike.
+constexpr std::int64_t LastSecond =
+    std::chrono::duration_cast<std::chrono::seconds>(
+        (std::chrono::sys_days{std::chrono::year{3001} / 1 / 1} - std::chrono::seconds{1}).time_since_epoch())
+        .count();
+static_assert(LastSecond == 32535215999);
+
+std::optional<std::string> formatted(std::int64_t unixSeconds, const char *format)
+{
+    if (unixSeconds < 0 || unixSeconds > LastSecond) {
+        return std::nullopt;
+    }
+    const std::time_t t = static_cast<std::time_t>(unixSeconds);
     std::tm tm{};
 #if defined(_WIN32)
-    gmtime_s(&tm, &t);
+    if (gmtime_s(&tm, &t) != 0) {
+        return std::nullopt;
+    }
 #else
-    gmtime_r(&t, &tm);
+    if (gmtime_r(&t, &tm) == nullptr) {
+        return std::nullopt;
+    }
 #endif
     char buffer[64];
     const std::size_t length = std::strftime(buffer, sizeof(buffer), format, &tm);
     return std::string(buffer, length);
 }
 
+}  // namespace
+
+std::string utcTimestamp(std::chrono::system_clock::time_point tp, const char *format)
+{
+    const std::int64_t seconds =
+        std::chrono::floor<std::chrono::seconds>(tp).time_since_epoch().count();
+    return formatted(seconds, format).value_or(std::string());
+}
+
 std::optional<std::string> utcTimestampOfUnixSeconds(std::int64_t unixSeconds, const char *format)
 {
-    // 9999-12-31 23:59:59 UTC.
-    constexpr std::int64_t LastSecond = 253402300799;
-    const std::int64_t clockLimit =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::duration::max()).count();
-    if (unixSeconds < 0 || unixSeconds > LastSecond || unixSeconds >= clockLimit) {
-        return std::nullopt;
-    }
-    return utcTimestamp(std::chrono::system_clock::time_point(
-                            std::chrono::duration_cast<std::chrono::system_clock::duration>(std::chrono::seconds(unixSeconds))),
-                        format);
+    // Converted from the number itself, never through the system clock,
+    // whose nanoseconds end in 2262 on Linux: no number can overflow it.
+    return formatted(unixSeconds, format);
 }
 
 }  // namespace seabass::infrastructure

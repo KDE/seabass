@@ -22,7 +22,12 @@
 // 8. A move counts as stored too: rekordbox keeps whole ms, each position
 //    cut, so 1100.0 to 1090.7 is a move of 10, not of 9.3.
 // 9. A start that would come out before 0 lands on 0; a loop held there
-//    keeps its length; the amounts counted are the moves as made.
+//    ends on its beat when its end was on one, and keeps its length when
+//    not; the amounts counted are the moves as made; a cue whose held
+//    move is under 1 ms stays, kept in the plan as the move it would make.
+// 10. The reviewer's two tracks near the start: an intro loop at 2 ms in
+//    rekordbox and 2.4 ms in Engine, a cue at 1.1 ms and its copy at
+//    0.8 ms, the grid moving by -2.2 ms: the same beats either way.
 
 #include <cassert>
 #include <cmath>
@@ -249,23 +254,62 @@ int main()
         }
         assert(plan.moves[0].cueIndex == 0 && near(plan.moves[0].newMs, 0.0));
         // The loop's start held at 0 moved by 2 ms; its end, on beat 1,
-        // moves by the same 2 ms and not to its own beat's 500 ms.
+        // still follows its beat: 504 to 500, the loop's beat of the new
+        // grid, not 502 as the length in ms would have it.
         const auto &held = plan.moves[1];
-        assert(held.isLoop && near(held.newMs, 0.0) && near(held.newEndMs, 502.0));
-        assert(near(held.newEndMs - held.newMs, 504.0 - 2.0) && !held.endBeat);
+        assert(held.isLoop && near(held.newMs, 0.0) && near(held.newEndMs, 500.0));
+        assert(held.endBeat == 1u);
         // Not held: 6.0 moves by the full -4 ms.
         assert(plan.moves[2].cueIndex == 3 && near(plan.moves[2].newMs, 2.0));
-        // The amounts are the moves as made: the held cue and loop moved
-        // 1 and 2 ms, where the grid moved 4.
+        // The amounts are the moves as made: the held cue moved 1 ms, the
+        // held loop's start 2 ms and its end 4 ms, where the grid moved 4.
         const CueGridPlan heldOnly = application::planCueGridMoves({memory(1.0), loop(2.0, 504.0)}, late, early);
-        assert(near(application::largestCueMoveMs(heldOnly), 2.0));
-        assert(application::cuesFollowOnTheirOwn(heldOnly, 3.0));
+        assert(near(application::largestCueMoveMs(heldOnly), 4.0));
+        assert(application::cuesFollowOnTheirOwn(heldOnly, 5.0));
+        // A held loop whose end is on no beat keeps its length in ms.
+        const CueGridPlan offBeatEnd = application::planCueGridMoves({loop(2.0, 254.0)}, late, early);
+        assert(offBeatEnd.moves.size() == 1 && !offBeatEnd.moves[0].endBeat);
+        assert(near(offBeatEnd.moves[0].newMs, 0.0) && near(offBeatEnd.moves[0].newEndMs, 252.0));
+        // The cue under a millisecond once held is kept as the move it
+        // would have made, for a comparison of two plans.
+        assert(plan.stayed.size() == 1 && plan.stayed[0].cueIndex == 2 && plan.stayed[0].beat == 0
+               && near(plan.stayed[0].newMs, 0.0));
         const std::vector<domain::CuePoint> moved = application::cuesMovedOntoNewGrid(
             {memory(1.0), loop(2.0, 504.0), hot(2, 0.5), hot(3, 6.0)}, plan);
         for (const auto &cue : moved) {
             assert(cue.positionMs >= 0.0 && (!cue.isLoop || cue.loopEndMs >= 0.0));
         }
-        std::cout << "case 9 (a start that would come out before 0 lands on 0; a loop held there keeps its length) OK\n";
+        assert(near(moved[2].positionMs, 0.5) && "a cue that stayed is not moved");
+        std::cout << "case 9 (a start that would come out before 0 lands on 0; a loop held there ends on its beat, "
+                     "or keeps its length when its end is on none) OK\n";
+    }
+
+    // 10. One track in two libraries near its start, the grid moving by
+    //     -2.2 ms: rekordbox keeps whole ms, Engine samples, so the hold
+    //     at 0 meets each copy differently. Neither changes which beat a
+    //     cue or a loop's end belongs to.
+    {
+        const std::vector<double> oldBeats = grid(2.2, 500.0, 40);
+        const std::vector<double> newBeats = grid(0.0, 500.0, 40);
+        // An intro loop over four beats at 2 ms in rekordbox, 2.4 ms in
+        // Engine: rekordbox's start is held at 0, Engine's is not. Both
+        // end on beat 4 of the new grid, the offset from it kept.
+        const CueGridPlan rekordbox = application::planCueGridMoves({loop(2.0, 2002.0)}, oldBeats, newBeats);
+        const CueGridPlan engine = application::planCueGridMoves({loop(2.4, 2002.4)}, oldBeats, newBeats);
+        assert(rekordbox.moves.size() == 1 && engine.moves.size() == 1);
+        assert(near(rekordbox.moves[0].newMs, 0.0) && near(engine.moves[0].newMs, 0.2));
+        assert(rekordbox.moves[0].endBeat == 4u && engine.moves[0].endBeat == 4u);
+        assert(near(rekordbox.moves[0].newEndMs, 1999.8) && near(engine.moves[0].newEndMs, 2000.2));
+        // A cue at 1.1 ms and its copy at 0.8 ms: both land on 0, one a
+        // move of 1.1 ms, the other under the minimum. The second stays,
+        // on the same beat going to the same place.
+        const CueGridPlan moves = application::planCueGridMoves({hot(2, 1.1)}, oldBeats, newBeats);
+        const CueGridPlan stays = application::planCueGridMoves({hot(2, 0.8)}, oldBeats, newBeats);
+        assert(moves.moves.size() == 1 && moves.stayed.empty() && near(moves.moves[0].newMs, 0.0));
+        assert(stays.moves.empty() && stays.alreadyThere == 1 && stays.stayed.size() == 1);
+        assert(stays.stayed[0].beat == moves.moves[0].beat && near(stays.stayed[0].newMs, moves.moves[0].newMs));
+        std::cout << "case 10 (near the start, the hold at 0 changes amounts only: a loop's end keeps its beat, "
+                     "a cue under a millisecond is kept as the move it would make) OK\n";
     }
 
     std::cout << "carry_cues_to_new_grid_test: all cases passed\n";

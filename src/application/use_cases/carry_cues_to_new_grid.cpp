@@ -72,13 +72,10 @@ CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const st
         move.comment = cue.comment;
         move.beat = *beat;
         move.oldMs = cue.positionMs;
-        double shift = newBeats[*beat] - oldBeats[*beat];
         // A start that would come out before the track's start lands on
-        // it: no file can hold a time before 0.
-        const bool clamped = cue.positionMs + shift < 0.0;
-        if (clamped) {
-            shift = -cue.positionMs;
-        }
+        // it: no file can hold a time before 0. Only the amount is held:
+        // the cue still belongs to its beat.
+        const double shift = std::max(newBeats[*beat] - oldBeats[*beat], -cue.positionMs);
         move.newMs = cue.positionMs + shift;
         double endShift = shift;
         if (cue.isLoop) {
@@ -88,20 +85,17 @@ CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const st
                     untrusted = true;
                     continue;
                 }
-                // A loop whose start was held at the track's start keeps
-                // its length: its end moves by what the start moved.
-                if (!clamped) {
-                    move.endBeat = end;
-                    endShift = newBeats[*end] - oldBeats[*end];
-                }
+                // An end on a beat follows its beat, whether the start was
+                // held at the track's start or not.
+                move.endBeat = end;
+                endShift = newBeats[*end] - oldBeats[*end];
             }
-            if (cue.loopEndMs + endShift < 0.0) {
-                endShift = -cue.loopEndMs;
-            }
+            endShift = std::max(endShift, -cue.loopEndMs);
             move.newEndMs = cue.loopEndMs + endShift;
         }
         if (std::abs(shift) < CueMoveMinimumMs && std::abs(endShift) < CueMoveMinimumMs) {
             ++plan.alreadyThere;
+            plan.stayed.push_back(move);
             continue;
         }
         plan.moves.push_back(move);
@@ -109,6 +103,7 @@ CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const st
     if (untrusted) {
         plan.verdict = CueGridPlan::Verdict::GridChangedTooMuch;
         plan.moves.clear();
+        plan.stayed.clear();
     } else {
         plan.verdict = plan.moves.empty() ? CueGridPlan::Verdict::NothingMoves : CueGridPlan::Verdict::Moves;
     }

@@ -132,6 +132,7 @@ std::shared_ptr<const ImportAnalysis> analyseSourceForImport(
     }
     if (made.key.key) {
         analysis->key = domain::keyName(*made.key.key);
+        analysis->keyMargin = made.key.margin;
     }
     if (const auto after = measure(); before && after == before) {
         const domain::TempoRange used = musicanalyze::usableTempoRange(range);
@@ -145,6 +146,18 @@ std::shared_ptr<const ImportAnalysis> analyseSourceForImport(
         provenance.tempoMax = infrastructure::local::formatTempoBpm(used.highBpm);
         provenance.fileSize = before->first;
         provenance.fileMtimeUnix = before->second;
+        if (!analysis->beats.empty()) {
+            provenance.gridConfidence = infrastructure::local::formatGridConfidence(analysis->confidence);
+            provenance.gridFollowsTempo = analysis->followsTempo ? "1" : "0";
+            if (provenance.gridConfidence.empty()) {
+                // A confidence out of its range is no confidence: neither
+                // is recorded.
+                provenance.gridFollowsTempo.clear();
+            }
+        }
+        if (!analysis->key.empty()) {
+            provenance.keyMargin = infrastructure::local::formatKeyMargin(analysis->keyMargin);
+        }
         analysis->provenance = std::move(provenance);
     }
     return analysis;

@@ -150,11 +150,17 @@ public:
     // and a rating only).
     std::vector<RekordboxWrite> rekordboxWrites() const override;
 
-    // Whether `plan` holds exactly `review`'s moves: the same number, each
-    // of the review's matched by one of the same kind, pad (or memory) and
-    // loop-ness, on the same beat, its old and new places (a loop's ends
-    // too) within `toleranceMs` (domain::cueToleranceMsFor() of the
-    // track's tempo, the app's cue comparison). And a plan that moves.
+    // Whether `plan` holds exactly `review`'s cues: each of the review's
+    // moves is one of the plan's cues, and each of the plan's moves one of
+    // the review's, matched once, by the same kind, pad (or memory) and
+    // loop-ness, on the same beat of the old grid going to the same beat
+    // of the new (a loop's end too), its old and new places within
+    // `toleranceMs` (domain::cueToleranceMsFor() of the track's tempo, the
+    // app's cue comparison). A cue one plan moves and the other leaves
+    // where it is (CueGridPlan::stayed) is the same cue: near the track's
+    // start the hold at 0 can make one library's copy a move under a
+    // millisecond and another's one over it. And a plan whose grids are
+    // trusted (it moves, or nothing of it moves).
     static bool cuesMatchTheReview(const application::CueGridPlan &review, const application::CueGridPlan &plan,
                                    double toleranceMs);
 
@@ -163,9 +169,11 @@ public:
     // exactly as the review moves the same pads, and a pad the review
     // does not move by number may only be a memory cue (or loop) the
     // review moves from the same place, as Engine DJ's import puts those
-    // on free pads. Engine's one main cue follows a memory cue the review
-    // moves from its place, and otherwise stays where it is without
-    // refusing. nullopt when Engine holds other cue points than the
+    // on free pads. A cue one side moves and the other leaves where it is
+    // is the same cue, as in cuesMatchTheReview(). Engine's one main cue
+    // follows a memory cue the review moves from its place, by what the
+    // grid moved at that beat and never before the track's start, and
+    // otherwise stays where it is without refusing. nullopt when Engine holds other cue points than the
     // review showed. The cues as given when nothing of Engine's moves.
     static std::optional<std::vector<domain::CuePoint>> engineCuesOntoNewGrid(const application::CueGridPlan &review,
                                                                              const std::vector<domain::CuePoint> &cues,

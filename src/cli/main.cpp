@@ -137,7 +137,7 @@ void printUsage()
     Console::info("                 [--no-overview-file] [--zero-loudness]");
     Console::info("                 [--restore-engine-analysis | --let-player-analyse]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
-    Console::info("  seabass-cli analysis-ledger [--rekordbox [PATH]] [--engine [PATH]]");
+    Console::info("  seabass-cli analysis-ledger [--rekordbox [PATH]] [--engine [PATH]] [--reset]");
     Console::info("  seabass-cli export-xml [--rekordbox [PATH]] [--engine [PATH]] --out FILE");
     Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
     Console::info("                 [--keep-junk-cues]");
@@ -190,8 +190,9 @@ void printUsage()
     Console::info("           analyser analysed (Seabass/analysis.tsv.gz): for each, the file as it");
     Console::info("           was analysed, the revisions of the analyser, the tempo range, the beat");
     Console::info("           grid each library was left with and the key heard. Says how many were");
-    Console::info("           analysed by an older analyser than this Seabass has. Read-only, always.");
-    Console::info("           Exits 1 when the record cannot be read.");
+    Console::info("           analysed by an older analyser than this Seabass has, and how sure the");
+    Console::info("           analyser was of each grid and key (stored only). Read-only, unless");
+    Console::info("           --reset. Exits 1 when the record cannot be read.");
     Console::info("  export-xml  Writes a rekordbox collection XML (the DJ_PLAYLISTS file");
     Console::info("           rekordbox imports on a computer) covering every catalog given,");
     Console::info("           with their cues merged. This is the one route into rekordbox's own");
@@ -224,6 +225,10 @@ void printUsage()
     Console::info("                      unwritable is still only reported, never guessed at.");
     Console::info("  --dry-run           sync and copy-beatgrids: run the analysis and print the");
     Console::info("                      full proposal, then stop: never prompts, never writes.");
+    Console::info("  --reset             analysis-ledger only: move a record that cannot be used");
+    Console::info("                      aside, to analysis.tsv.gz.unreadable-<UTC time> in the");
+    Console::info("                      same folder (nothing is deleted), so the next save starts");
+    Console::info("                      a new one. A record that can be read is never moved.");
     Console::info("  --force             Write even while a Seabass window on this machine is");
     Console::info("                      editing the same library (its unsaved changes may then");
     Console::info("                      overwrite yours, or yours theirs). Off by default.");
@@ -1072,11 +1077,55 @@ std::string utcText(std::int64_t unixSeconds)
 }
 
 // analysis-ledger: the stick's record of Seabass's own analyses
-// (local/analysis_ledger_file.hpp), printed as it is. Read-only: it never
-// writes, not even to replace a ledger that cannot be read, which is the
-// next save's to do.
+// (local/analysis_ledger_file.hpp), printed as it is. Read-only, unless
+// `reset`: then a ledger that cannot be used (one that cannot be read
+// stays so, and every save warns about it) is moved aside in its folder,
+// never deleted, and the next save that writes an analysis starts a new
+// one. A ledger that can be read is never moved: there is nothing to
+// reset. Like backups --clean, --reset is refused while a Seabass window
+// on this machine edits the stick, unless --force.
+int runAnalysisLedgerReset(const std::string &stickRoot, const std::string &catalogPath, const std::string &lockDir,
+                           bool force)
+{
+    namespace local = seabass::infrastructure::local;
+    namespace paths = seabass::infrastructure::paths;
+    const std::string file = seabass::pathToUtf8(paths::stickAnalysisLedger(seabass::pathFromUtf8(stickRoot)));
+    Console::heading("Analysis ledger (" + file + ")");
+    if (refuseIfLockedByGui(catalogPath, force)) {
+        return 1;
+    }
+    try {
+        auto locks = seabass::infrastructure::backup::acquireStickLocks({lockDir});
+        std::string error;
+        local::AnalysisLedgerFault fault = local::AnalysisLedgerFault::None;
+        (void)local::readAnalysisLedger(seabass::pathFromUtf8(stickRoot), &error, &fault);
+        std::error_code ec;
+        if (fault == local::AnalysisLedgerFault::None) {
+            Console::error(fs::exists(fs::symlink_status(seabass::pathFromUtf8(file), ec))
+                               ? "--reset moves aside a record that cannot be used, and this one can be read: "
+                                 "nothing was moved."
+                               : "--reset found no record on this stick: nothing was moved.");
+            return 1;
+        }
+        Console::info("It cannot be used: " + error);
+        const auto aside = local::moveAnalysisLedgerAside(seabass::pathFromUtf8(stickRoot),
+                                                          std::chrono::system_clock::now(), &error);
+        if (!aside) {
+            Console::error("it could not be moved aside: " + error);
+            return 1;
+        }
+        Console::info("Moved it aside to " + seabass::pathToUtf8(*aside) + ". Nothing was deleted.");
+        Console::info("The next save that writes an analysis of Seabass's own starts a new record; the tracks "
+                      "the old one listed are not in it.");
+        return 0;
+    } catch (const std::exception &e) {
+        Console::error(e.what());
+        return 1;
+    }
+}
+
 int runAnalysisLedgerCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPathArg,
-                             const std::optional<std::string> &enginePathArg)
+                             const std::optional<std::string> &enginePathArg, bool reset, bool force)
 {
     namespace local = seabass::infrastructure::local;
     namespace paths = seabass::infrastructure::paths;
@@ -1093,13 +1142,25 @@ int runAnalysisLedgerCommand(bool wantRekordbox, bool wantEngine, const std::opt
                        + stickRoot + " and " + paths::normalStickRootForCatalogPath(*resolved.enginePath));
         return 1;
     }
+    if (reset) {
+        return runAnalysisLedgerReset(stickRoot, resolved.enginePath ? *resolved.enginePath : *resolved.rekordboxPath,
+                                      backupDirFor(resolved), force);
+    }
     const std::string file = seabass::pathToUtf8(paths::stickAnalysisLedger(seabass::pathFromUtf8(stickRoot)));
     std::string error;
-    const local::AnalysisLedger ledger = local::readAnalysisLedger(seabass::pathFromUtf8(stickRoot), &error);
+    local::AnalysisLedgerFault fault = local::AnalysisLedgerFault::None;
+    const local::AnalysisLedger ledger = local::readAnalysisLedger(seabass::pathFromUtf8(stickRoot), &error, &fault);
     Console::heading("Analysis ledger (" + file + ")");
     if (!error.empty()) {
         Console::error("the record of the tracks Seabass analysed cannot be used: " + error);
-        Console::info("Nothing in it is believed. The next save that writes an analysis replaces it.");
+        if (fault == local::AnalysisLedgerFault::Unreadable) {
+            Console::info("It cannot be read, so no save replaces it, and every save that writes an analysis warns "
+                          "about it. Check the stick for errors on a computer; if it stays unreadable, run this "
+                          "command again with --reset to move it aside (nothing is deleted).");
+        } else {
+            Console::info("Nothing in it is believed. The next save that writes an analysis replaces it; --reset "
+                          "moves it aside first, to keep it.");
+        }
         return 1;
     }
     if (ledger.empty()) {
@@ -1136,6 +1197,12 @@ int runAnalysisLedgerCommand(bool wantRekordbox, bool wantEngine, const std::opt
         Console::info("    key:       " + (entry.key.empty() ? std::string("none heard")
                                            : entry.key + (entry.keyWritten ? ", written into the rows that named none"
                                                                            : ", not written (the rows named a key)")));
+        Console::info("    grid confidence: "
+                      + (entry.gridConfidence.empty()
+                             ? std::string("not recorded")
+                             : entry.gridConfidence
+                                   + (entry.gridFollowsTempo == "1" ? ", follows a moving tempo" : ", one tempo")));
+        Console::info("    key margin:      " + (entry.keyMargin.empty() ? std::string("not recorded") : entry.keyMargin));
     }
     Console::info("");
     Console::info(std::to_string(ledger.size()) + " track(s) analysed by Seabass; " + std::to_string(older)
@@ -2980,6 +3047,7 @@ int main(int argc, char **argv)
     bool autoMode = false;
     bool dryRun = false;
     bool clean = false;
+    bool reset = false;
     bool force = false;
     bool wantRekordbox = false;
     bool wantEngine = false;
@@ -3026,6 +3094,8 @@ int main(int argc, char **argv)
             dryRun = true;
         } else if (arg == "--clean") {
             clean = true;
+        } else if (arg == "--reset") {
+            reset = true;
         } else if (arg == "--keep") {
             if (i + 1 >= args.size()) {
                 Console::error("--keep requires a number");
@@ -3197,7 +3267,7 @@ int main(int argc, char **argv)
     }
 
     if (commands[0] == "analysis-ledger") {
-        return runAnalysisLedgerCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath);
+        return runAnalysisLedgerCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, reset, force);
     }
 
     if (commands[0] == "sync") {

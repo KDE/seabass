@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -92,11 +93,21 @@ bool analysisMayStart(std::optional<std::uint64_t> availableBytes, std::uint64_t
 // waits at its next piece (noteRead) until memory is back or it has become
 // the oldest. The oldest never waits: nothing can wait on itself, and an
 // import never stands still.
+//
+// Free memory is read from the system (the Reader) never while the gate's
+// lock is held. A piece is a second or so of audio, so noteRead() goes by
+// the gate's last reading while it is younger than
+// AnalysisMemoryReadingMaxAge; a track that waits reads again at every
+// look. enter() reads every time: it is asked once a track.
+inline constexpr std::chrono::milliseconds AnalysisMemoryReadingMaxAge{1000};
+
 class AnalysisMemoryGate
 {
 public:
     using Reader = std::function<std::optional<std::uint64_t>()>;
-    explicit AnalysisMemoryGate(Reader available = availableMemoryBytes);
+    using Clock = std::function<std::chrono::steady_clock::time_point()>;
+    explicit AnalysisMemoryGate(Reader available = availableMemoryBytes,
+                                Clock clock = [] { return std::chrono::steady_clock::now(); });
 
     // Blocks until a track may start; asks `cancel` while it waits and
     // throws application::OperationCancelled. Returns the track's ticket.
@@ -123,8 +134,16 @@ private:
         std::uint64_t heldBytes = 0;
     };
     std::uint64_t stillToTakeLocked() const;
+    // Free memory read from the system now, the lock not held on entry
+    // or on return (`lock` is let go for the read); remembered as the
+    // gate's last reading.
+    std::optional<std::uint64_t> readAvailable(std::unique_lock<std::mutex> &lock);
 
     Reader m_available;
+    Clock m_clock;
+    // The last reading and when it was made; none before the first.
+    std::optional<std::optional<std::uint64_t>> m_lastReading;
+    std::chrono::steady_clock::time_point m_lastReadAt;
     mutable std::mutex m_mutex;
     std::condition_variable m_left;
     std::map<int, Track> m_tracks;

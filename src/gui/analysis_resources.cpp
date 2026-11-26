@@ -211,8 +211,9 @@ bool analysisMayStart(std::optional<std::uint64_t> availableBytes, std::uint64_t
     return available >= needed;
 }
 
-AnalysisMemoryGate::AnalysisMemoryGate(Reader available)
+AnalysisMemoryGate::AnalysisMemoryGate(Reader available, Clock clock)
     : m_available(std::move(available))
+    , m_clock(std::move(clock))
 {
 }
 
@@ -225,13 +226,25 @@ std::uint64_t AnalysisMemoryGate::stillToTakeLocked() const
     return bytes;
 }
 
+std::optional<std::uint64_t> AnalysisMemoryGate::readAvailable(std::unique_lock<std::mutex> &lock)
+{
+    // Reading /proc/meminfo, or asking the Mach host, while the other
+    // tracks' pieces wait for the lock would hold them all up.
+    lock.unlock();
+    const std::optional<std::uint64_t> reading = m_available ? m_available() : std::nullopt;
+    lock.lock();
+    m_lastReading = reading;
+    m_lastReadAt = m_clock();
+    return reading;
+}
+
 int AnalysisMemoryGate::enter(const application::CancellationToken &cancel)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
     for (;;) {
         cancel.throwIfCancelled();
-        if (analysisMayStart(m_available ? m_available() : std::nullopt, stillToTakeLocked(),
-                             static_cast<int>(m_tracks.size()))) {
+        const std::optional<std::uint64_t> available = readAvailable(lock);
+        if (analysisMayStart(available, stillToTakeLocked(), static_cast<int>(m_tracks.size()))) {
             const int ticket = m_nextTicket++;
             m_tracks[ticket] = Track{};
             return ticket;
@@ -252,13 +265,26 @@ void AnalysisMemoryGate::noteRead(int ticket, double seconds, int sampleRateHz,
     }
     track->second.heldBytes = analysisBytesFor(seconds, sampleRateHz);
     track->second.peakBytes = std::max(AnalysisTypicalBytes, track->second.heldBytes);
+    bool waited = false;
     for (;;) {
         cancel.throwIfCancelled();
         // Tickets count up, so the first in the map is the oldest in hand.
         if (m_tracks.empty() || m_tracks.begin()->first == ticket) {
             return;
         }
-        const std::optional<std::uint64_t> free = m_available ? m_available() : std::nullopt;
+        // The gate's last reading while it is young enough; a track that
+        // has waited looks again.
+        std::optional<std::uint64_t> free;
+        if (!waited && m_lastReading && m_clock() - m_lastReadAt < AnalysisMemoryReadingMaxAge) {
+            free = *m_lastReading;
+        } else {
+            free = readAvailable(lock);
+            // The lock was let go for the read: an older track may have
+            // left meanwhile.
+            if (m_tracks.empty() || m_tracks.begin()->first == ticket) {
+                return;
+            }
+        }
         if (!free || *free >= AnalysisMemoryMargin) {
             return;
         }
@@ -266,6 +292,7 @@ void AnalysisMemoryGate::noteRead(int ticket, double seconds, int sampleRateHz,
         // looked at again a few times a second for memory given back and
         // a cancel.
         m_left.wait_for(lock, std::chrono::milliseconds(200));
+        waited = true;
     }
 }
 

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -26,7 +27,7 @@
 // Format version 1: gzip (so `zcat` reads it) around tab-separated text:
 //
 //   seabass-analysis<TAB>1
-//   t<TAB>pathKey<TAB>fileSize<TAB>fileMtimeUnix<TAB>inputRev<TAB>gridRev<TAB>keyRev<TAB>waveformRev<TAB>libraryVersion<TAB>tempoMin<TAB>tempoMax<TAB>rekordboxGrid|-<TAB>engineGrid|-<TAB>key|-<TAB>keyWritten(0|1)<TAB>analysedAtUnix
+//   t<TAB>pathKey<TAB>fileSize<TAB>fileMtimeUnix<TAB>inputRev<TAB>gridRev<TAB>keyRev<TAB>waveformRev<TAB>libraryVersion<TAB>tempoMin<TAB>tempoMax<TAB>rekordboxGrid|-<TAB>engineGrid|-<TAB>key|-<TAB>keyWritten(0|1)<TAB>analysedAtUnix<TAB>gridConfidence|-<TAB>gridFollowsTempo(0|1)|-<TAB>keyMargin|-
 //   #sha256<TAB>hex-of-everything-above
 //
 // - pathKey: the audio file's stick-relative path through
@@ -54,6 +55,18 @@
 //   none; keyWritten: 1 when it went into a library row (only a row that
 //   named no key takes it), 0 otherwise. Never 1 beside "-".
 // - analysedAtUnix: when the save that wrote the analysis recorded it.
+// - gridConfidence: the analyser's confidence in its grid
+//   (musicanalyze::GridAnalysis::confidence), 0 to 1 with exactly three
+//   decimals ("0.875", formatGridConfidence()); gridFollowsTempo: 1 for a
+//   grid whose spacing follows a moving tempo
+//   (GridAnalysis::followsTempo), 0 for one tempo. Both "-" where the
+//   analysis made no grid; never one without the other.
+// - keyMargin: how far the key heard scored above the next
+//   (musicanalyze::KeyAnalysis::margin), 0 or more with exactly two
+//   decimals ("4.20", formatKeyMargin()); "-" where no key was heard.
+//   These three are stored only: nothing reads a threshold or a class
+//   from them. Each is built from an integer, so no locale changes the
+//   text, and is kept as the text, never read back as a number.
 //
 // Text fields (the key, libraryVersion, the pathKey) escape tab, newline
 // and backslash as \t \n \\, BackupManifest's rule and helpers. Every
@@ -85,6 +98,11 @@ struct AnalysisLedgerEntry
     std::string key;
     bool keyWritten = false;
     std::int64_t analysedAtUnix = 0;
+    // As written (formatGridConfidence(), "0" or "1", formatKeyMargin()),
+    // or empty for "-".
+    std::string gridConfidence;
+    std::string gridFollowsTempo;
+    std::string keyMargin;
 
     bool operator==(const AnalysisLedgerEntry &other) const = default;
 };
@@ -96,6 +114,15 @@ using AnalysisLedger = std::map<std::string, AnalysisLedgerEntry>;
 // sign and no exponent ("70.00", "175.00"). Empty for a tempo that is not
 // a finite number from 0 to 1000.
 std::string formatTempoBpm(double bpm);
+
+// A grid's confidence as the ledger writes it: exactly three decimals, a
+// point, no sign ("0.875", "1.000"). Empty for one that is not a finite
+// number from 0 to 1.
+std::string formatGridConfidence(double confidence);
+
+// A key's margin as the ledger writes it: exactly two decimals, a point,
+// no sign ("4.20"). Empty for one that is not a finite number from 0.
+std::string formatKeyMargin(double margin);
 
 // Why a ledger on the stick was not read.
 enum class AnalysisLedgerFault {
@@ -113,7 +140,9 @@ enum class AnalysisLedgerFault {
 // The stick's ledger. A missing file is an empty ledger, `error` empty:
 // a stick Seabass has written no analysis to. A file that exists and
 // cannot be opened or read is ALSO an empty ledger, with `error` naming
-// the file and why, and `fault` (when given) Unreadable. One that was read
+// the file and why, and `fault` (when given) Unreadable; so is one of
+// which fewer bytes were read than its size says, as a failed read can
+// look like the end of the file. One that was read
 // and is not this format to the letter (not gzip, cut short, a #sha256
 // line missing or not matching, another version, an unknown line kind, a
 // line with the wrong number of fields, a field that does not parse, keys
@@ -139,6 +168,11 @@ AnalysisLedger writableAnalysisLedger(const AnalysisLedger &ledger, std::vector<
 // `problem` set when an entry cannot be written as it is (below).
 std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger, std::string *problem);
 
+// For a test: called with the bytes readAnalysisLedger() read, before
+// they are counted against the file's size, so a test can stand in for a
+// read that stopped short. Empty: nothing is called.
+void setAfterAnalysisLedgerReadForTesting(std::function<void(std::string &bytes)> hook);
+
 // Serialises `ledger`, compresses it, calls `beforeWrite` with the file's
 // path (UTF-8) before anything on the stick changes, so a save can back
 // the old file up, creates the Seabass directory if absent, and replaces
@@ -154,5 +188,17 @@ std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger,
 // std::invalid_argument.
 bool writeAnalysisLedger(const std::filesystem::path &stickRoot, const AnalysisLedger &ledger,
                          const std::function<void(const std::string &)> &beforeWrite, std::string *error);
+
+// The way out for a ledger that cannot be used (one that cannot be read
+// stays so, and every save warns): the file, or whatever is in its place,
+// renamed in its folder to analysis.tsv.gz.unreadable-<UTC time>
+// ("analysis.tsv.gz.unreadable-20261126T140300Z", a number added when
+// that name is taken), never deleted. The next save that writes an
+// analysis starts a new ledger. Returns the new path; nullopt with
+// `error` set when there is no ledger or it cannot be moved. `error` is
+// required; a null pointer throws std::invalid_argument.
+std::optional<std::filesystem::path> moveAnalysisLedgerAside(const std::filesystem::path &stickRoot,
+                                                             std::chrono::system_clock::time_point now,
+                                                             std::string *error);
 
 }  // namespace seabass::infrastructure::local

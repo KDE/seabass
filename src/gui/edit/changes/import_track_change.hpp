@@ -157,6 +157,9 @@ struct ImportAnalysis
     // no key: a tag is somebody's choice, the analysis is right on about
     // two tracks in three.
     std::string key;
+    // How far that key scored above the next (KeyAnalysis::margin),
+    // larger is surer; 0 without a key. Stored in the ledger only.
+    double keyMargin = 0.0;
 
     // What made the analysis, and of which file, for the stick's analysis
     // ledger (infrastructure/local/analysis_ledger_file.hpp).
@@ -178,6 +181,13 @@ struct ImportAnalysis
         // The file analysed, the same before and after it was decoded.
         std::uint64_t fileSize = 0;
         std::int64_t fileMtimeUnix = 0;
+        // How sure the analyser was, as the ledger writes it: the grid's
+        // confidence (formatGridConfidence()) and whether it follows the
+        // tempo ("0", "1"), both empty without a grid; the key's margin
+        // (formatKeyMargin()), empty without a key. Stored only.
+        std::string gridConfidence;
+        std::string gridFollowsTempo;
+        std::string keyMargin;
     };
     // Set by analyseForImport() for a file decoded whole that did not
     // change while it was read. An analysis without it is written to the

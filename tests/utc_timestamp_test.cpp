@@ -38,5 +38,18 @@ int main()
     assert(!utcTimestampOfUnixSeconds(std::numeric_limits<std::int64_t>::max(), "%Y"));
     assert(!utcTimestampOfUnixSeconds(std::numeric_limits<std::int64_t>::min(), "%Y"));
     std::cout << "utcTimestampOfUnixSeconds refuses a number that is no time\n";
+
+    // The last second MSVC's gmtime_s converts is the last on every
+    // platform: 3000-12-31 23:59:59 UTC is shown, a second later is not,
+    // and neither is the year 9999.
+    const std::int64_t lastSecond = 32535215999;
+    assert(utcTimestampOfUnixSeconds(lastSecond, "%Y-%m-%d %H:%M:%S") == "3000-12-31 23:59:59");
+    assert(!utcTimestampOfUnixSeconds(lastSecond + 1, "%Y"));
+    assert(!utcTimestampOfUnixSeconds(253402300799, "%Y"));
+    // Not through the system clock: on Linux its nanoseconds end in 2262.
+    assert(utcTimestampOfUnixSeconds(9223372037LL, "%Y") == "2262");
+    // Before 1970 neither function gives a text (gmtime_s converts none).
+    assert(utcTimestamp(system_clock::time_point{} - seconds{1}, "%Y").empty());
+    std::cout << "times past 3000-12-31 23:59:59, and before 1970, have no text on any platform\n";
     return 0;
 }

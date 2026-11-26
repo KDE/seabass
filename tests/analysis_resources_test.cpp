@@ -21,6 +21,9 @@
 //    not even asked about memory); the oldest leaving releases the
 //    younger, and so does memory coming back; a cancel ends the wait;
 //    memory that cannot be read never makes a track wait.
+// 6. Free memory is read for a piece at most once a second (the gate
+//    keeps its last reading; the clock is the test's), at every look
+//    while a track waits, and never while the gate's lock is held.
 //
 // A wait is proved by the gate asking for free memory again (the Reader
 // counts the questions), never by a sleep.
@@ -29,7 +32,10 @@
 #include <cassert>
 #include <chrono>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 #include "gui/analysis_resources.hpp"
 
@@ -174,10 +180,15 @@ int main()
         std::atomic<std::uint64_t> free{100 * GB};
         std::atomic<bool> unknown{false};
         std::atomic<int> asked{0};
-        AnalysisMemoryGate gate([&]() {
-            ++asked;
-            return unknown ? std::nullopt : std::optional<std::uint64_t>(free.load());
-        });
+        // A clock two seconds on at every look: no reading is ever young
+        // enough to go by, so each look asks (case 6 has the reading kept).
+        std::atomic<long long> clockMs{0};
+        AnalysisMemoryGate gate(
+            [&]() {
+                ++asked;
+                return unknown ? std::nullopt : std::optional<std::uint64_t>(free.load());
+            },
+            [&]() { return std::chrono::steady_clock::time_point(std::chrono::milliseconds(clockMs += 2000)); });
         const application::CancellationToken cancel;
         const int older = gate.enter(cancel);
         const int younger = gate.enter(cancel);
@@ -267,6 +278,87 @@ int main()
         assert(gate.inHand() == 0);
         std::cout << "case 5 (the gate while tracks read: the younger waits while memory is short, the oldest "
                      "never) OK\n";
+    }
+    {
+        // The clock stands still unless the test moves it.
+        std::atomic<long long> clockMs{0};
+        std::atomic<std::uint64_t> free{100 * GB};
+        std::atomic<int> asked{0};
+        std::atomic<bool> readWithoutTheLock{true};
+        std::vector<std::thread> lookers;
+        std::mutex lookersMutex;
+        AnalysisMemoryGate *gatePointer = nullptr;
+        AnalysisMemoryGate gate(
+            [&]() {
+                ++asked;
+                // Another thread asks the gate while it reads: it answers
+                // only if the gate's lock is not held.
+                auto answered = std::make_shared<std::atomic<bool>>(false);
+                {
+                    const std::lock_guard<std::mutex> lock(lookersMutex);
+                    lookers.emplace_back([gatePointer, answered]() {
+                        (void)gatePointer->inHand();
+                        *answered = true;
+                    });
+                }
+                if (!within([&] { return answered->load(); })) {
+                    readWithoutTheLock = false;
+                }
+                return std::optional<std::uint64_t>(free.load());
+            },
+            [&]() { return std::chrono::steady_clock::time_point(std::chrono::milliseconds(clockMs.load())); });
+        gatePointer = &gate;
+        const application::CancellationToken cancel;
+        const int older = gate.enter(cancel);
+        const int younger = gate.enter(cancel);
+        assert(asked == 2 && "enter() reads every time");
+        assert(readWithoutTheLock && "enter() reads free memory without the gate's lock");
+
+        // Many pieces within a second: the reading enter() made is used.
+        for (int piece = 1; piece <= 50; ++piece) {
+            gate.noteRead(younger, piece * 1.5, 44100, cancel);
+        }
+        assert(asked == 2 && "pieces within a second of the last reading do not read again");
+        clockMs = 999;
+        gate.noteRead(younger, 80.0, 44100, cancel);
+        assert(asked == 2);
+        // A second on: one reading, and the pieces after it go by it.
+        clockMs = 1000;
+        for (int piece = 0; piece < 50; ++piece) {
+            gate.noteRead(younger, 90.0 + piece, 44100, cancel);
+        }
+        assert(asked == 3 && "once a second at most");
+        assert(readWithoutTheLock && "noteRead() reads free memory without the gate's lock");
+        // The oldest is never asked about memory.
+        clockMs = 5000;
+        gate.noteRead(older, 100.0, 44100, cancel);
+        assert(asked == 3);
+
+        // Short of memory: a waiting track reads again at every look,
+        // the clock standing still.
+        free = AnalysisMemoryMargin - 1;
+        std::atomic<bool> done{false};
+        std::thread waiting([&]() {
+            gate.noteRead(younger, 200.0, 44100, cancel);
+            done = true;
+        });
+        assert(within([&] { return asked >= 3 + 3; }) && "a waiting track looks again at each tick");
+        assert(!done);
+        free = AnalysisMemoryMargin;
+        assert(within([&] { return done.load(); }));
+        waiting.join();
+        gate.leave(younger);
+        gate.leave(older);
+        assert(gate.inHand() == 0);
+        {
+            const std::lock_guard<std::mutex> lock(lookersMutex);
+            for (std::thread &looker : lookers) {
+                looker.join();
+            }
+        }
+        assert(readWithoutTheLock && "free memory is never read under the gate's lock");
+        std::cout << "case 6 (free memory read once a second at most, at every look while a track waits, and "
+                     "never under the lock) OK\n";
     }
     std::cout << "analysis_resources_test: all cases passed\n";
     return 0;

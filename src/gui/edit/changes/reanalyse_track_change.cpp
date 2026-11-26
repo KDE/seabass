@@ -382,6 +382,80 @@ void ReanalyseTrackChange::setStepHookForTesting(StepHook hook)
     stepHook() = std::move(hook);
 }
 
+namespace
+{
+
+using application::CueGridMove;
+using SameCue = std::function<bool(const CueGridMove &shown, const CueGridMove &move)>;
+
+// One cue as two plans of the track see it: the same kind and loop-ness,
+// on the same beat of the old grid going to the same beat of the new one
+// (a loop's end too), its places within `toleranceMs`. `withPad`: a hot
+// cue's pad must be the same too.
+bool sameCueMove(const CueGridMove &shown, const CueGridMove &move, double toleranceMs, bool withPad)
+{
+    const auto near = [&](double a, double b) { return std::abs(a - b) < toleranceMs; };
+    return move.kind == shown.kind && move.isLoop == shown.isLoop
+           && (!withPad || move.kind != domain::CuePoint::Kind::Hot || move.hotCueNumber == shown.hotCueNumber)
+           && move.beat == shown.beat && near(move.oldMs, shown.oldMs) && near(move.newMs, shown.newMs)
+           && (!move.isLoop
+               || (move.endBeat == shown.endBeat && near(move.oldEndMs, shown.oldEndMs)
+                   && near(move.newEndMs, shown.newEndMs)));
+}
+
+// Whether every one of `shown` (the review's moves) is one of `plan`'s
+// cues, moved or stayed, and every one of `plan`'s moves is one of the
+// review's, moved or stayed; each cue matched once. A cue the hold at the
+// track's start made a move under CueMoveMinimumMs in one plan and over
+// it in the other is the same cue: its beat decides, not its amount.
+// `shownMoves` may be a part of the review's moves (Engine's pads);
+// `planMovesMatched` says which of the plan's moves it matched, so the
+// rest can be asked about by the caller.
+bool matchedAcross(const std::vector<CueGridMove> &shownMoves, const application::CueGridPlan &plan,
+                   const SameCue &same, std::vector<bool> &planMovesMatched)
+{
+    planMovesMatched.assign(plan.moves.size(), false);
+    std::vector<bool> stayedTaken(plan.stayed.size(), false);
+    for (const CueGridMove &shown : shownMoves) {
+        bool found = false;
+        for (std::size_t i = 0; i < plan.moves.size() && !found; ++i) {
+            if (!planMovesMatched[i] && same(shown, plan.moves[i])) {
+                planMovesMatched[i] = found = true;
+            }
+        }
+        for (std::size_t i = 0; i < plan.stayed.size() && !found; ++i) {
+            if (!stayedTaken[i] && same(shown, plan.stayed[i])) {
+                stayedTaken[i] = found = true;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The moves of `plan` not yet matched, each matched to one of `shown`
+// (the review's cues that stayed) not taken yet.
+bool restStayedInTheReview(const application::CueGridPlan &plan, std::vector<bool> &planMovesMatched,
+                           const std::vector<CueGridMove> &shown, const SameCue &same)
+{
+    std::vector<bool> taken(shown.size(), false);
+    for (std::size_t i = 0; i < plan.moves.size(); ++i) {
+        if (planMovesMatched[i]) {
+            continue;
+        }
+        for (std::size_t j = 0; j < shown.size() && !planMovesMatched[i]; ++j) {
+            if (!taken[j] && same(shown[j], plan.moves[i])) {
+                taken[j] = planMovesMatched[i] = true;
+            }
+        }
+    }
+    return std::find(planMovesMatched.begin(), planMovesMatched.end(), false) == planMovesMatched.end();
+}
+
+}  // namespace
+
 std::optional<std::vector<domain::CuePoint>> ReanalyseTrackChange::engineCuesOntoNewGrid(
     const application::CueGridPlan &review, const std::vector<domain::CuePoint> &cues, const std::vector<double> &oldBeats,
     const std::vector<double> &newBeats, double toleranceMs)
@@ -401,41 +475,43 @@ std::optional<std::vector<domain::CuePoint>> ReanalyseTrackChange::engineCuesOnt
     if (plan.verdict == application::CueGridPlan::Verdict::GridChangedTooMuch) {
         return std::nullopt;
     }
-    std::vector<bool> taken(plan.moves.size(), false);
     // Every pad the review moves, on the same pad in Engine (an Engine
     // row that lacks it holds other cue points than the review showed).
-    for (const application::CueGridMove &shown : review.moves) {
-        if (shown.kind != domain::CuePoint::Kind::Hot) {
-            continue;
-        }
-        bool found = false;
-        for (std::size_t i = 0; i < plan.moves.size() && !found; ++i) {
-            const application::CueGridMove &move = plan.moves[i];
-            if (!taken[i] && move.hotCueNumber == shown.hotCueNumber && move.isLoop == shown.isLoop
-                && move.beat == shown.beat && near(move.oldMs, shown.oldMs) && near(move.newMs, shown.newMs)
-                && (!move.isLoop || (move.endBeat == shown.endBeat && near(move.newEndMs, shown.newEndMs)))) {
-                taken[i] = true;
-                found = true;
+    const auto byPad = [&](const CueGridMove &shown, const CueGridMove &move) {
+        return sameCueMove(shown, move, toleranceMs, true);
+    };
+    const auto hotOf = [](const std::vector<CueGridMove> &moves) {
+        std::vector<CueGridMove> hot;
+        for (const CueGridMove &move : moves) {
+            if (move.kind == domain::CuePoint::Kind::Hot) {
+                hot.push_back(move);
             }
         }
-        if (!found) {
-            return std::nullopt;
-        }
+        return hot;
+    };
+    std::vector<bool> matched;
+    if (!matchedAcross(hotOf(review.moves), plan, byPad, matched)) {
+        return std::nullopt;
     }
+    // A pad of Engine's the review leaves where it is, by the same pad:
+    // the hold at the track's start made it a move here and none there.
+    restStayedInTheReview(plan, matched, hotOf(review.stayed), byPad);
     // Any other pad of Engine's that would move is a rekordbox memory cue
     // (or loop) Engine DJ's import put on a free pad, as the sync reads
     // it (domain/engine_cue_translation.hpp): it has to be one the review
-    // moves, at the same place.
+    // moves, or leaves where it is, at the same place.
     for (std::size_t i = 0; i < plan.moves.size(); ++i) {
-        if (taken[i]) {
+        if (matched[i]) {
             continue;
         }
-        const application::CueGridMove &move = plan.moves[i];
+        const CueGridMove &move = plan.moves[i];
         bool found = false;
-        for (const application::CueGridMove &shown : review.moves) {
-            found = found
-                    || (shown.kind == domain::CuePoint::Kind::Memory && shown.isLoop == move.isLoop
-                        && near(move.oldMs, shown.oldMs) && near(move.newMs, shown.newMs));
+        for (const auto *shownList : {&review.moves, &review.stayed}) {
+            for (const CueGridMove &shown : *shownList) {
+                found = found
+                        || (shown.kind == domain::CuePoint::Kind::Memory && shown.isLoop == move.isLoop
+                            && near(move.oldMs, shown.oldMs) && near(move.newMs, shown.newMs));
+            }
         }
         if (!found) {
             return std::nullopt;
@@ -447,15 +523,17 @@ std::optional<std::vector<domain::CuePoint>> ReanalyseTrackChange::engineCuesOnt
         moved[padAt[i]] = movedPads[i];
     }
     // Engine's one main cue follows a memory cue the review moves from
-    // its place; at any other place it stays, and is no reason to refuse:
-    // rekordbox's several memory cues have one main cue in Engine.
+    // its place, by what the grid moved at that beat and never before the
+    // track's start; at any other place it stays, and is no reason to
+    // refuse: rekordbox's several memory cues have one main cue in Engine.
     for (domain::CuePoint &cue : moved) {
         if (cue.kind != domain::CuePoint::Kind::Memory || cue.isLoop) {
             continue;
         }
-        for (const application::CueGridMove &shown : review.moves) {
-            if (shown.kind == domain::CuePoint::Kind::Memory && !shown.isLoop && near(cue.positionMs, shown.oldMs)) {
-                cue.positionMs += shown.newMs - shown.oldMs;
+        for (const CueGridMove &shown : review.moves) {
+            if (shown.kind == domain::CuePoint::Kind::Memory && !shown.isLoop && near(cue.positionMs, shown.oldMs)
+                && shown.beat < oldBeats.size() && shown.beat < newBeats.size()) {
+                cue.positionMs = std::max(0.0, cue.positionMs + newBeats[shown.beat] - oldBeats[shown.beat]);
                 break;
             }
         }
@@ -466,31 +544,15 @@ std::optional<std::vector<domain::CuePoint>> ReanalyseTrackChange::engineCuesOnt
 bool ReanalyseTrackChange::cuesMatchTheReview(const application::CueGridPlan &review,
                                               const application::CueGridPlan &plan, double toleranceMs)
 {
-    if (plan.verdict != application::CueGridPlan::Verdict::Moves || plan.moves.size() != review.moves.size()) {
+    using Verdict = application::CueGridPlan::Verdict;
+    if (plan.verdict != Verdict::Moves && plan.verdict != Verdict::NothingMoves) {
         return false;
     }
-    std::vector<bool> taken(plan.moves.size(), false);
-    const auto near = [&](double a, double b) { return std::abs(a - b) < toleranceMs; };
-    for (const application::CueGridMove &shown : review.moves) {
-        bool found = false;
-        for (std::size_t i = 0; i < plan.moves.size() && !found; ++i) {
-            const application::CueGridMove &move = plan.moves[i];
-            const bool same = !taken[i] && move.kind == shown.kind && move.isLoop == shown.isLoop
-                              && (move.kind != domain::CuePoint::Kind::Hot || move.hotCueNumber == shown.hotCueNumber)
-                              && move.beat == shown.beat && near(move.oldMs, shown.oldMs) && near(move.newMs, shown.newMs)
-                              && (!move.isLoop
-                                  || (move.endBeat == shown.endBeat && near(move.oldEndMs, shown.oldEndMs)
-                                      && near(move.newEndMs, shown.newEndMs)));
-            if (same) {
-                taken[i] = true;
-                found = true;
-            }
-        }
-        if (!found) {
-            return false;
-        }
-    }
-    return true;
+    const auto same = [&](const CueGridMove &shown, const CueGridMove &move) {
+        return sameCueMove(shown, move, toleranceMs, true);
+    };
+    std::vector<bool> matched;
+    return matchedAcross(review.moves, plan, same, matched) && restStayedInTheReview(plan, matched, review.stayed, same);
 }
 
 std::vector<RekordboxWrite> ReanalyseTrackChange::rekordboxWrites() const
@@ -792,6 +854,11 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                     application::planCueGridMoves(track.cues, m_cueReview.oldBeats, m_cueReview.newBeats);
                 if (!cuesMatchTheReview(m_cueReview.plan, plan, tolerance)) {
                     refuse(library + " holds other cue points than the review showed");
+                    return std::nullopt;
+                }
+                if (plan.moves.empty()) {
+                    // Each cue the review moves is within a millisecond of
+                    // its new place here already.
                     return std::nullopt;
                 }
                 if (movedForLog.empty()) {
