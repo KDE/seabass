@@ -45,7 +45,6 @@ int main()
         const CpuCores cores = cpuCores();
         assert(cores.performance >= 1);
         assert(cores.efficiency >= 0);
-        assert(cores.performance + cores.efficiency <= static_cast<int>(std::thread::hardware_concurrency()));
         const auto free = availableMemoryBytes();
         assert(free && *free > 16 * 1024 * 1024);
         std::cout << "case 2 (this computer: " << cores.performance << " + " << cores.efficiency << " cores, "

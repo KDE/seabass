@@ -692,7 +692,11 @@ TestCase {
         }
         const firstStrip = findChild(sections[0], "cueReviewStrip");
         const switchOf = t => findChild(sections[t], "moveCuesSwitch");
-        fake.setMoveCues("track2", true);
+        // Turned by hand (the keyboard: it may sit outside the scrolled
+        // view), as onToggled sends it on.
+        switchOf(2).forceActiveFocus();
+        keyClick(Qt.Key_Space);
+        compare(JSON.stringify(fake.calls), JSON.stringify([["moveCues", "track2", true]]));
         compare(switchOf(2).checked, true);
         compare(switchOf(1).checked, false);
         fake.setMoveCuesForAll(true);

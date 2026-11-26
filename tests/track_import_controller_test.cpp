@@ -66,6 +66,8 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
+#include <djinterop/engine/v3/track_data_blob.hpp>
+
 #include "engine_change_fixture.hpp"
 #include "rekordbox_baseline_fixture.hpp"
 
@@ -1305,7 +1307,19 @@ int main(int argc, char **argv)
         assert(switches().size() == 2);
         controller.setMoveCuesForAll(false);
         assert(switches().isEmpty());
-        controller.setMoveCues(onId, true);
+        {
+            // One switch turned is that one switch: the review is not
+            // rebuilt (the QML follows moveCuesChanged alone).
+            QSignalSpy rebuilt(&controller, &TrackImportController::cueReviewChanged);
+            QSignalSpy choice(&controller, &TrackImportController::moveCuesChanged);
+            controller.setMoveCues(onId, true);
+            assert(choice.count() == 1 && choice.at(0).at(0).toString() == onId && choice.at(0).at(1).toBool());
+            controller.setMoveCuesForAll(false);
+            controller.setMoveCuesForAll(true);
+            assert(choice.count() == 1 + 1 + 2 && rebuilt.count() == 0);
+            controller.setMoveCuesForAll(false);
+            controller.setMoveCues(onId, true);
+        }
         assert(switches() == QStringList{onId});
         // A second Analyse again that stages nothing leaves the review of
         // the changes that still wait, switches and all.
@@ -1420,6 +1434,17 @@ int main(int argc, char **argv)
             const std::string all((std::istreambuf_iterator<char>(in)), {});
             return all.size() > from ? all.substr(from) : std::string();
         };
+        // Whether the log, from `text` on, says that a save's Engine
+        // session opened by `label` put m.db behind a scratch copy.
+        const auto scratchBy = [](const std::string &text, const std::string &label) {
+            const auto at = text.find(label + ": applying up to ");
+            if (at == std::string::npos) {
+                return false;
+            }
+            const std::string line = text.substr(at, text.find('\n', at) - at);
+            std::cerr << "  " << line.substr(0, 90) << std::endl;
+            return line.find(" engine update(s) to a local scratch copy") != std::string::npos;
+        };
         const auto logSize = [&]() {
             std::error_code ec;
             return static_cast<std::size_t>(fs::file_size(stick.root / "Seabass" / "seabass.log", ec));
@@ -1498,8 +1523,7 @@ int main(int argc, char **argv)
             controller.setMoveCuesForAll(true);
             const std::size_t from = logSize();
             assert(saveNow().value("written").toInt() == 18);
-            assert(logSince(from).find("track-reanalysis: applying up to 15 engine update(s) to a local scratch copy")
-                   != std::string::npos);
+            assert(scratchBy(logSince(from), "track-reanalysis"));
             for (const domain::Track &row : rowsOf("z last.wav")) {
                 std::cerr << "  z last " << row.format << ": hot " << cueAt(row, true) << ", memory " << cueAt(row, false)
                           << std::endl;
@@ -1592,8 +1616,12 @@ int main(int argc, char **argv)
                 std::string(), QStringLiteral("t extra"), QString(), 1);
             const QString changeId = change->id();
             assert(session->stage(std::move(change)));
+            const std::size_t from = logSize();
             const QVariantMap summary = saveNow();
             assert(summary.value("written").toInt() == 0 && session->lastSkippedIds().contains(changeId));
+            // Skipped for the lock, not for want of a row.
+            assert(logSince(from).find("nothing written: Engine id " + row.sourceId + ": grid locked on the player")
+                   != std::string::npos);
             assert(infrastructure::engine::readBeatGrid(stick.engineUtf8(), row.sourceId).front().timeMs
                    == engineGridBefore.front().timeMs);
             analyseAgainOn(QStringLiteral("Differ"));
@@ -1709,6 +1737,193 @@ int main(int argc, char **argv)
             assert(differs(beforeSave, snapshot()).empty() && "Undo puts every file back");
             std::cout << "case 16g (a failed save, and Undo Last Save after one with cues moved: every library and "
                          "analysis file as it was; the move recorded as Seabass's in the rekordbox baseline) OK\n";
+
+            // 16h. A refusal inside the change after its first cue write (a
+            //      step the test fails there): the save goes back whole.
+            {
+                // The audio 40 ms later than the grid Undo brought back.
+                writeBeatChordWav(onStick / "s same.wav", 36, 120.0, aMinor, 0.33);
+                analyseAgainOn(QStringLiteral("Same"));
+                assert(controller.lastReanalysis().value("cuesToMove").toInt() == 1);
+                controller.setMoveCuesForAll(true);
+                const auto before = snapshot();
+                bool reachedCues = false;
+                ReanalyseTrackChange::setStepHookForTesting([&](const std::string &step) {
+                    if (step.rfind("rekordbox-cues:", 0) == 0) {
+                        reachedCues = true;
+                        throw std::runtime_error("refused after the first cue write");
+                    }
+                });
+                const QVariantMap failed = saveNow();
+                ReanalyseTrackChange::setStepHookForTesting({});
+                assert(reachedCues && failed.value("error").toString().contains(QLatin1String("refused after the first cue write")));
+                assert(differs(before, snapshot()).empty() && "the save went back whole");
+                std::cout << "case 16h (a refusal after the first cue write: every library and analysis file as it "
+                             "was) OK\n";
+            }
+
+            // 16i. An Engine row the plan moved cues on that does not take
+            //      the new grid when the save writes it (its grid locked
+            //      between the preview and the write): the change fails,
+            //      and the save goes back whole.
+            {
+                const domain::Track row = rowsOf("s same.wav")[2];
+                const std::string mdb = pathToUtf8(stick.engine / "Database2" / "m.db");
+                const auto before = snapshot();
+                bool locked = false;
+                ReanalyseTrackChange::setStepHookForTesting([&](const std::string &step) {
+                    if (step == "engine-grid:" + row.sourceId) {
+                        locked = testing::sqlExec(mdb, "UPDATE Track SET isBeatGridLocked = 1 WHERE id = " + row.sourceId);
+                    }
+                });
+                const QVariantMap failed = saveNow();
+                ReanalyseTrackChange::setStepHookForTesting({});
+                std::cerr << "  failed: " << failed.value("error").toString().toStdString() << std::endl;
+                assert(locked && failed.value("error").toString().contains(QLatin1String("did not take the new grid")));
+                // The lock was the test's own write, made inside the save:
+                // the save puts m.db back as it was before it, without it.
+                assert(differs(before, snapshot()).empty() && "the save went back whole");
+                controller.dropReanalysis(QStringLiteral("Same"));
+                std::cout << "case 16i (an Engine row that does not take the grid the plan counted on: the change fails "
+                             "and the save goes back whole) OK\n";
+            }
+        }
+
+        // 16j. Each library compared for the kinds it holds. A track with a
+        //      hot cue, two memory cues and a memory loop on beats in
+        //      rekordbox's libraries, the hot cue in Engine too, and
+        //      Engine's main cue on a beat rekordbox has no memory cue at:
+        //      everything moves but Engine's main cue, which stays and is
+        //      no reason to refuse. Another track whose Engine hot cue sits
+        //      on another beat than rekordbox's, and one whose Engine row
+        //      lacks a pad rekordbox moves: nothing of theirs moves.
+        {
+            auto onBeat = cuedTracks({{"k all.wav", 40}}, QStringLiteral("Kinds"));
+            writeBeatChordWav(computer / "k differ.wav", 41, 120.0, aMinor);
+            writeBeatChordWav(computer / "k missing.wav", 43, 120.0, aMinor);
+            assert(offer(QVariantList{pathToQString(computer / "k differ.wav"), pathToQString(computer / "k missing.wav")},
+                         QStringLiteral("Kinds"), false));
+            assert(saveNow().value("error").toString().isEmpty());
+            const std::vector<domain::Track> all = rowsOf("k all.wav");
+            const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), all[0].sourceId);
+            const auto beatAt = [&](int i) { return std::round(grid[static_cast<std::size_t>(i)].timeMs); };
+            stageCue(QStringLiteral("rekordbox"), all[0], beatAt(10), false, 0);
+            stageCue(QStringLiteral("rekordbox"), all[0], beatAt(12), false, 0);
+            assert(session->stage(std::make_unique<AddCueChange>(QStringLiteral("rekordbox"), pioneer,
+                                                                 QString::fromStdString(all[0].sourceId), beatAt(14),
+                                                                 QStringLiteral("memory"), 0, QString(), QString(), true,
+                                                                 beatAt(16), QStringLiteral("k"))));
+            stageCue(QStringLiteral("engine"), all[2], beatAt(20), false, 0);  // Engine's main cue
+            const std::vector<domain::Track> differ = rowsOf("k differ.wav");
+            const auto differGrid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), differ[0].sourceId);
+            onBeat["k differ.wav"] = std::round(differGrid[8].timeMs);
+            stageCue(QStringLiteral("rekordbox"), differ[0], onBeat["k differ.wav"], true, 1);
+            stageCue(QStringLiteral("engine"), differ[2], std::round(differGrid[9].timeMs), true, 1);
+            // Pads 1 and 2 in rekordbox, only pad 1 in Engine.
+            const std::vector<domain::Track> missing = rowsOf("k missing.wav");
+            const auto missingGrid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), missing[0].sourceId);
+            stageCue(QStringLiteral("rekordbox"), missing[0], std::round(missingGrid[8].timeMs), true, 1);
+            stageCue(QStringLiteral("rekordbox"), missing[0], std::round(missingGrid[12].timeMs), true, 2);
+            stageCue(QStringLiteral("engine"), missing[2], std::round(missingGrid[8].timeMs), true, 1);
+            assert(saveNow().value("written").toInt() == 9);
+            const auto cuesBefore = [&](const std::string &name) {
+                std::vector<std::vector<domain::CuePoint>> rows;
+                for (const domain::Track &row : rowsOf(name)) {
+                    rows.push_back(row.cues);
+                }
+                return rows;
+            };
+            const auto allBefore = cuesBefore("k all.wav");
+            const auto differBefore = cuesBefore("k differ.wav");
+            const auto missingBefore = cuesBefore("k missing.wav");
+            assert(allBefore[0].size() == 4 && allBefore[1].size() == 4 && allBefore[2].size() == 2);
+            writeBeatChordWav(onStick / "k all.wav", 40, 120.0, aMinor, 0.29);
+            writeBeatChordWav(onStick / "k differ.wav", 41, 120.0, aMinor, 0.29);
+            writeBeatChordWav(onStick / "k missing.wav", 43, 120.0, aMinor, 0.29);
+            analyseAgainOn(QStringLiteral("Kinds"));
+            controller.setMoveCuesForAll(true);
+            const QVariantMap summary = saveNow();
+            std::cerr << "  notes: " << summary.value("notes").toString().toStdString() << std::endl;
+            assert(summary.value("written").toInt() == 3);
+            const std::vector<domain::Track> after = rowsOf("k all.wav");
+            for (std::size_t library = 0; library < after.size(); ++library) {
+                for (const domain::CuePoint &was : allBefore[library]) {
+                    bool found = false;
+                    const bool stays = library == 2 && was.kind == domain::CuePoint::Kind::Memory;
+                    for (const domain::CuePoint &now : after[library].cues) {
+                        if (now.kind == was.kind && now.hotCueNumber == was.hotCueNumber && now.isLoop == was.isLoop) {
+                            const double by = now.positionMs - was.positionMs;
+                            std::cerr << "  k all " << after[library].format << ": " << (was.isLoop ? "loop " : "cue ")
+                                      << was.positionMs << " to " << now.positionMs << std::endl;
+                            found = found || (stays ? std::abs(by) < 1.0 : std::abs(by - 40.0) < 4.0);
+                        }
+                    }
+                    assert(found);
+                }
+            }
+            assert(cuesBefore("k differ.wav").size() == 3);
+            for (const auto &[name, wasBefore] :
+                 {std::pair{std::string("k differ.wav"), differBefore}, std::pair{std::string("k missing.wav"), missingBefore}}) {
+                const auto now = cuesBefore(name);
+                for (std::size_t library = 0; library < now.size(); ++library) {
+                    assert(now[library].size() == wasBefore[library].size());
+                    for (std::size_t i = 0; i < now[library].size(); ++i) {
+                        assert(std::abs(now[library][i].positionMs - wasBefore[library][i].positionMs) < 1.0);
+                    }
+                }
+            }
+            assert(summary.value("notes").toString().contains(
+                QLatin1String("The cue points of 2 tracks analysed again were left where they are")));
+            std::cout << "case 16j (memory cues and a memory loop move beside Engine's pads; Engine's own main cue "
+                         "stays and blocks nothing; a differing hot cue still blocks) OK\n";
+        }
+
+        // 16k. A cue change asking first, with hint 0, does not decide for
+        //      the bulk Engine write behind it in the same save: m.db goes
+        //      behind a scratch copy all the same.
+        {
+            stageCue(QStringLiteral("engine"), rowsOf("m 00.wav")[2], 1000.0, false, 0);
+            analyseAgainOn(QStringLiteral("Many"));
+            const std::size_t from = logSize();
+            assert(saveNow().value("error").toString().isEmpty());
+            assert(scratchBy(logSince(from), "add-cue"));
+            std::cout << "case 16k (a cue first, fifteen analyses behind it: m.db behind a scratch copy) OK\n";
+        }
+
+        // 16l. An Engine row the player never analysed that names a key: the
+        //      completed row's analysis record carries that key.
+        {
+            writeBeatChordWav(computer / "n unanalysed.wav", 42, 120.0, aMinor);
+            appendId3Frame(computer / "n unanalysed.wav", "TKEY", std::string(1, '\0') + "Dm");
+            ImportRequest request;
+            request.offered = {pathToUtf8(computer / "n unanalysed.wav")};
+            request.rekordboxPath = pioneer;
+            request.enginePath = engine;
+            request.playlist = ImportPlaylist{"Unanalysed", true, std::nullopt};
+            request.date = "2026-11-26";
+            const PreparedImport prepared = prepareTrackImport(request, application::CancellationToken{});
+            assert(prepared.refusal.empty() && prepared.analysed == 0);
+            assert(session->stageAll(prepared.staged.changes));
+            assert(saveNow().value("error").toString().isEmpty());
+            const std::string id = rowsOf("n unanalysed.wav")[2].sourceId;
+            const std::string mdb = pathToUtf8(stick.engine / "Database2" / "m.db");
+            assert(testing::sqlScalar(mdb, "SELECT isAnalyzed FROM Track WHERE id = " + id) == 0);
+            const std::int64_t column = testing::sqlScalar(mdb, "SELECT key FROM Track WHERE id = " + id);
+            assert(column > 0);
+            analyseAgainOn(QStringLiteral("Unanalysed"));
+            assert(saveNow().value("written").toInt() == 1);
+            assert(testing::sqlScalar(mdb, "SELECT isAnalyzed FROM Track WHERE id = " + id) == 1);
+            const auto rows = testing::sqlRows(mdb, "SELECT trackData FROM PerformanceData WHERE trackId = " + id);
+            const std::string &hex = rows.at(0).at(0);  // x'...', as sqlRows gives a blob
+            assert(hex.size() > 3 && hex.rfind("x'", 0) == 0);
+            std::vector<std::byte> blob;
+            for (std::size_t i = 2; i + 1 < hex.size() - 1; i += 2) {
+                blob.push_back(static_cast<std::byte>(std::stoi(hex.substr(i, 2), nullptr, 16)));
+            }
+            const auto record = djinterop::engine::v3::track_data_blob::from_blob(blob);
+            std::cerr << "  key column " << column << ", record " << record.key << std::endl;
+            assert(record.key == column && testing::sqlScalar(mdb, "SELECT key FROM Track WHERE id = " + id) == column);
+            std::cout << "case 16l (a completed row keeps its key in the column and the analysis record alike) OK\n";
         }
     }
 

@@ -151,12 +151,6 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
     SaveContext &ctx, const std::string &pioneerRoot,
     const std::optional<std::string> &realStickRoot = std::nullopt);
 
-// The save's one Engine cue writer for this library, for the call sites
-// that would otherwise build one per item. Opening an Engine library is a
-// full SQLite open plus schema detection, about 151 ms against a stick.
-infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveContext &ctx,
-                                                                           const std::string &engineLibraryPath);
-
 // Gives `writer` the save's lead-in source for the stick that holds the
 // Engine library at `realEngineLibraryPath` (the real folder, never a
 // scratch copy) (#50): one metadata cache per stick and save, checked
@@ -202,7 +196,10 @@ QString quotedPath(const std::string &path);
 // the scratch decision is made once, at construction. That makes the
 // hint a lower bound rather than a total, which only ever costs speed:
 // too low a hint writes directly to a database that would have been
-// faster to scratch. Correctness does not depend on it.
+// faster to scratch. Correctness does not depend on it. For Engine the
+// session plans for at least the save's count of changes writing m.db
+// (SaveContext::changesWriting()), so a cue change that asks first with
+// hint 0 does not decide for a bulk write behind it.
 FormatWriteSession &sharedFormatWriteSession(SaveContext &ctx, const std::string &format,
                                               const std::string &catalogPath, int itemCountHint,
                                               const std::string &label);

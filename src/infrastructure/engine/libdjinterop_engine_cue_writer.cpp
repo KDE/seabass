@@ -1695,12 +1695,14 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     TrackDataBlob record{};
     record.sample_rate = rate;
     record.samples = static_cast<std::int64_t>(sampleCount);
-    // With no key from rekordbox a row Engine marked analysed keeps its own,
-    // and the record says the same; otherwise 0, as libdjinterop writes.
+    // The key the row already names, where the analysis brings none: the
+    // record carries the key as the column does (libdjinterop writes the
+    // same number into both), so a completed row does not hold a key in
+    // one place and none in the other.
     record.key = analysis.key ? *analysis.key
-        : flags.analysedNothingStored && now.columns.key.type == EngineSqlValue::Type::Integer
-        ? static_cast<int>(now.columns.key.integer)
-        : 0;
+                 : now.columns.key.type == EngineSqlValue::Type::Integer
+                     ? static_cast<std::int32_t>(now.columns.key.integer)
+                     : 0;
     const std::array<double, 3> loudness =
         options.zeroLoudness ? std::array<double, 3>{0.0, 0.0, 0.0} : domain::loudnessFromOverview(overview);
     record.average_loudness_low = loudness[0];

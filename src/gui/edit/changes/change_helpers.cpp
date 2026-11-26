@@ -250,20 +250,6 @@ infrastructure::onelibrary::OneLibraryCueWriter &sharedOneLibraryWriter(
     return writer;
 }
 
-infrastructure::engine::LibdjinteropEngineCueWriter &sharedEngineCueWriter(SaveContext &ctx,
-                                                                           const std::string &engineLibraryPath)
-{
-    // Keyed by the normalised path, like the write session below: the
-    // callers hand this path in from a page, a change's own member and a
-    // derived sibling, and on Windows those spell separators differently.
-    const std::string key = "engine-cue-writer:" + application::normalizedPathKey(engineLibraryPath);
-    return ctx.shared<infrastructure::engine::LibdjinteropEngineCueWriter>(key, [&]() {
-        auto writer = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(engineLibraryPath);
-        useSaveLeadIns(ctx, *writer, engineLibraryPath);
-        return writer;
-    });
-}
-
 namespace
 {
 
@@ -404,7 +390,18 @@ FormatWriteSession &sharedFormatWriteSession(SaveContext &ctx, const std::string
     // it is the honest answer here: the optimisation was never
     // available for this format, it only looked available. Engine's
     // m.db is a rollback-journal database and keeps its scratch copy.
-    const int hint = format == "onelibrary" ? 0 : itemCountHint;
+    //
+    // For Engine the session plans for no fewer items than the save has
+    // changes writing m.db: a cue change asks with hint 0 (it never wants
+    // a scratch copy for itself), and asking first it would otherwise
+    // make a bulk change later in the same save write the stick's m.db
+    // item by item. Every Engine writer of a save goes through this
+    // session's writeRoot(), so a scratch copy is safe for all of them.
+    // Not export.pdb: changes writing rekordbox include every cue write,
+    // which lands in the analysis files and never in export.pdb.
+    const int hint = format == "onelibrary" ? 0
+                   : format == "engine"     ? std::max(itemCountHint, ctx.changesWriting("engine"))
+                                            : itemCountHint;
     // For the whole save: a failed change is rolled back, and the session
     // still has to commit what the changes before it wrote.
     return ctx.sharedForWholeSave<FormatWriteSession>(key, [&]() {

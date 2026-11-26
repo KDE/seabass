@@ -836,7 +836,11 @@ int main(int argc, char **argv)
         check(record.average_loudness_low == 0.0 && record.average_loudness_mid == 0.0
                   && record.average_loudness_high == 0.0,
               "zero loudness");
-        check(record.key == 0, "and key 0 when rekordbox has none");
+        // No key from rekordbox: the record carries the key the row names
+        // (quote() gives NULL for none), as the column keeps it.
+        const int rowKey = keyBefore == "NULL" ? 0 : std::stoi(keyBefore);
+        std::cout << "  the row's key " << keyBefore << ", the record's " << record.key << "\n";
+        check(record.key == rowKey, "and the record's key the row's own when rekordbox has none");
         check(column(copy.mdb, "Track", "id", kUnanalysed, "bpmAnalyzed") == bpmBefore
                   && column(copy.mdb, "Track", "id", kUnanalysed, "key") == keyBefore,
               "no tempo or key given leaves the row's");

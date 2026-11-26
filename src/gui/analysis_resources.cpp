@@ -19,6 +19,12 @@
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #endif
 
@@ -152,9 +158,14 @@ std::optional<std::uint64_t> availableMemoryBytes()
     vm_statistics64_data_t stats{};
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
     vm_size_t page = 0;
+    // Asked a few times a second while a track waits: the port is given
+    // back each time, or its references pile up.
     const mach_port_t host = mach_host_self();
-    if (host_page_size(host, &page) != KERN_SUCCESS
-        || host_statistics64(host, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&stats), &count) != KERN_SUCCESS) {
+    const bool read = host_page_size(host, &page) == KERN_SUCCESS
+                      && host_statistics64(host, HOST_VM_INFO64, reinterpret_cast<host_info64_t>(&stats), &count)
+                             == KERN_SUCCESS;
+    mach_port_deallocate(mach_task_self(), host);
+    if (!read) {
         return std::nullopt;
     }
     return (static_cast<std::uint64_t>(stats.free_count) + stats.inactive_count + stats.purgeable_count)

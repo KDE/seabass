@@ -9,6 +9,7 @@
 #include <QVariantMap>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -63,16 +64,27 @@ namespace seabass::gui
 // for this track (setMoveCues(), off until then, settable until the
 // save). At the save, before anything is written, every library's cues
 // for the file are read as they are then (Engine's from the save's own
-// copy of m.db) and planned against the two grids the review showed. The
-// cues move only if every library that holds cues for the track plans
-// exactly the moves the review showed (cuesMatchTheReview()), and only
-// where every Engine row takes the new grid; otherwise no cue of the
-// track moves anywhere, the grid part still applies, and the log and the
-// save's summary say why. Those that move are written through each
-// library's own cue writer (rekordbox's analysis files of every row with
-// OneLibrary kept in step, Engine's rows), the whole set as every cue
-// change writes it, and reported as Seabass's write for the rekordbox
-// baseline (rekordboxWrites()).
+// copy of m.db) and planned against the two grids the review showed, each
+// library for the kinds it holds: rekordbox's two exactly as the review
+// (cuesMatchTheReview()), Engine by its pads, with its one main cue
+// following a memory cue the review moves and otherwise staying
+// (engineCuesOntoNewGrid()). The cues move only if every library that
+// holds cues for the track agrees, its rows hold one set, and every
+// library holding cues takes the new grid; otherwise no cue of the track
+// moves anywhere, the grid part still applies, and the log and the
+// save's summary say why. A track whose rows name an analysis file that
+// was not the track's when it was analysed (so not declared for backup)
+// is left alone whole.
+//
+// Every grid of every library is written before any cue. An Engine row
+// the plan moved cues on that does not take the new grid when it is
+// written fails the change, and the save goes back whole: the others'
+// grids are written by then, and its cues would stay on the old one.
+// Those that move are written through each library's own cue writer
+// (rekordbox's analysis files of every row with OneLibrary kept in step,
+// Engine's rows), the whole set as every cue change writes it, and
+// reported as Seabass's write for the rekordbox baseline
+// (rekordboxWrites()).
 //
 // After each library's write the catalog cache is told, so a cue change
 // later in the same save reads the track as this one left it.
@@ -133,6 +145,29 @@ public:
     // track's tempo, the app's cue comparison). And a plan that moves.
     static bool cuesMatchTheReview(const application::CueGridPlan &review, const application::CueGridPlan &plan,
                                    double toleranceMs);
+
+    // Engine's cues moved onto the new grid, compared with the review for
+    // the kinds Engine holds: its pads (hot cues and hot loops) must move
+    // exactly as the review moves the same pads, and a pad the review
+    // does not move by number may only be a memory cue (or loop) the
+    // review moves from the same place, as Engine DJ's import puts those
+    // on free pads. Engine's one main cue follows a memory cue the review
+    // moves from its place, and otherwise stays where it is without
+    // refusing. nullopt when Engine holds other cue points than the
+    // review showed. The cues as given when nothing of Engine's moves.
+    static std::optional<std::vector<domain::CuePoint>> engineCuesOntoNewGrid(const application::CueGridPlan &review,
+                                                                             const std::vector<domain::CuePoint> &cues,
+                                                                             const std::vector<double> &oldBeats,
+                                                                             const std::vector<double> &newBeats,
+                                                                             double toleranceMs);
+
+    // Test seam: called at each step of apply() named here, with the step
+    // ("engine-grid:<id>" before an Engine row's grid write,
+    // "rekordbox-cues:<id>" and "engine-cues:<id>" after a row's cue
+    // write), so a test can change the stick between a plan and its
+    // write, or fail the change in the middle. Never set in the app.
+    using StepHook = std::function<void(const std::string &step)>;
+    static void setStepHookForTesting(StepHook hook);
 
     // What the review shows of the track's cues, made when the analysis
     // was: both grids and the cues on rekordbox's timeline (where every

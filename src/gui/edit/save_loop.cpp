@@ -247,6 +247,20 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // Before the first change, for every change: a record of what the save
     // did registers here, so a save stopped before it still records what
     // landed (PendingChange::beforeSave).
+    // What each format's write session plans for: every change of the
+    // save that writes it, whichever asks first (SaveContext::
+    // changesWriting()).
+    {
+        std::map<std::string, int> writing;
+        for (const auto &change : changes) {
+            for (const QString &format : change->formatsTouched()) {
+                ++writing[format.toStdString()];
+            }
+        }
+        for (const auto &[format, count] : writing) {
+            ctx.setChangesWriting(format, count);
+        }
+    }
     for (const auto &change : changes) {
         change->beforeSave(ctx);
     }

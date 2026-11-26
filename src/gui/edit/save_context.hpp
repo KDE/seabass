@@ -343,6 +343,20 @@ public:
     // in the summary dialog, even when the page would have said a whole
     // save with its toast.
     void addSummaryNote(const QString &note) { m_summaryNotes << note; }
+
+    // How many of this save's changes write `format` (PendingChange::
+    // formatsTouched()), set by the save loop before the first change. A
+    // format's write session decides once, for the whole save, whether
+    // the database goes behind a scratch copy, and the change that asks
+    // first may be one that asks for none (a cue, hint 0) ahead of a bulk
+    // write: the session takes this count as the least it plans for
+    // (sharedFormatWriteSession()).
+    void setChangesWriting(const std::string &format, int count) { m_changesWriting[format] = count; }
+    int changesWriting(const std::string &format) const
+    {
+        const auto it = m_changesWriting.find(format);
+        return it == m_changesWriting.end() ? 0 : it->second;
+    }
     const QStringList &summaryNotes() const { return m_summaryNotes; }
     // Informational, not something to act on (the unused cover rows a
     // Cover Art repair removed): `sentence` for the summary dialog when it
@@ -422,6 +436,7 @@ private:
     QStringList m_summaryNotes;
     QStringList m_summaryInfo;
     QStringList m_summaryInfoClauses;
+    std::map<std::string, int> m_changesWriting;
 
     // Whether this save has a stick to log to; tests run without one.
     bool hasStick() const { return !m_rekordboxPath.isEmpty() || !m_enginePath.isEmpty(); }
