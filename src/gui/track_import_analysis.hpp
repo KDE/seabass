@@ -36,9 +36,10 @@ constexpr int ImportAnalysisMaxSeconds = 90 * 60;
 // their turn, so that several mixes do not take several GB each together.
 constexpr int ImportAnalysisLongSeconds = 20 * 60;
 
-// How many files an import analyses at once on this computer: half its
-// threads (a laptop's eight cores report sixteen), two at least, eight at
-// most. A track of six minutes takes about 250 MB while it is analysed.
+// How many files an import analyses at once on this computer
+// (analysisJobsFor: by its cores and their strength, two at least, eight
+// at most). Whether the next file may start is asked of the memory that
+// is free at that moment (AnalysisMemoryGate), file by file.
 int importAnalysisJobs();
 
 //

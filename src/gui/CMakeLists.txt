@@ -240,6 +240,8 @@ set(SEABASS_GUI_SOURCES
     track_import_controller.hpp
     track_import_controller.cpp
     track_import_analysis.cpp
+    analysis_resources.hpp
+    analysis_resources.cpp
     track_import_cover.cpp
     edit/track_import_prepare.hpp
     edit/track_import_prepare.cpp

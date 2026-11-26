@@ -2480,6 +2480,13 @@ target_include_directories(carry_cues_to_new_grid_test PRIVATE src tests)
 target_link_libraries(carry_cues_to_new_grid_test PRIVATE seabass_core)
 add_test(NAME carry_cues_to_new_grid_test COMMAND carry_cues_to_new_grid_test)
 
+# How many tracks are analysed at once (cores by strength), and the gate
+# that asks the free memory before each track starts.
+add_executable(analysis_resources_test tests/analysis_resources_test.cpp src/gui/analysis_resources.cpp)
+target_include_directories(analysis_resources_test PRIVATE src tests)
+target_link_libraries(analysis_resources_test PRIVATE seabass_core Threads::Threads)
+add_test(NAME analysis_resources_test COMMAND analysis_resources_test)
+
 # Issue #38: how many tracks an Engine player will have to analyse. Takes
 # the fixture path, because its real distribution (1214 of 1564) is what
 # makes the count mean anything.
@@ -3971,6 +3978,7 @@ if(TARGET seabass_edit)
             src/gui/track_import_controller.hpp
             src/gui/track_import_controller.cpp
             src/gui/track_import_analysis.cpp
+            src/gui/analysis_resources.cpp
             src/gui/track_import_cover.cpp
             src/gui/edit/track_import_prepare.cpp
             src/gui/edit/track_reanalysis_prepare.cpp
@@ -3989,6 +3997,7 @@ if(TARGET seabass_edit)
             add_executable(track_import_tool
                 tools/track_import_tool.cpp
                 src/gui/track_import_analysis.cpp
+                src/gui/analysis_resources.cpp
                 src/gui/track_import_cover.cpp
                 src/gui/edit/track_import_prepare.cpp
                 src/gui/stick_catalogs.cpp

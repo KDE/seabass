@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "analysis_resources.hpp"
 #include "domain/audio_analysis.hpp"
 
 #ifdef SEABASS_HAVE_QT_AUDIO
@@ -23,7 +24,7 @@ namespace seabass::gui
 
 int importAnalysisJobs()
 {
-    return std::clamp(QThread::idealThreadCount() / 2, 2, 8);
+    return analysisJobsFor(cpuCores(), QThread::idealThreadCount());
 }
 
 std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioFile,
@@ -32,6 +33,17 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
 {
 #ifdef SEABASS_HAVE_QT_AUDIO
     cancel.throwIfCancelled();
+    markAnalysisThread();
+    // Asked before every file: whether the computer has the memory for
+    // one more now. Given back when this call ends, however it ends.
+    struct Turn
+    {
+        AnalysisMemoryGate &gate;
+        int ticket;
+        ~Turn() { gate.leave(ticket); }
+    };
+    AnalysisMemoryGate &gate = AnalysisMemoryGate::shared();
+    const Turn turn{gate, gate.enter(cancel)};
     std::vector<float> samples;
     int rate = 0;
     // Held from the moment this file turns out to be a long one until its
@@ -52,6 +64,7 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
                 break;
             }
             samples.insert(samples.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(got));
+            gate.noteRead(turn.ticket, static_cast<double>(samples.size()) / rate, samples.capacity() * sizeof(float));
             if (samples.size() > static_cast<std::size_t>(rate) * ImportAnalysisMaxSeconds) {
                 return nullptr;
             }
