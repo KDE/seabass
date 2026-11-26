@@ -167,8 +167,24 @@ int main()
         assert(source.readSection(TwoExPath, "PWV7") == rekordbox::anlzSectionOf(file, "PWV7"));
         assert(!source.readSection(TwoExPath, "PWV5"));
         assert(!source.readSection("USBANLZ/P001/00000001/ANLZ0001.2EX", "PWV6") && "no such file");
+        // A PWV7 of 60 KB, as a real track's: PWV6 is found in the file's
+        // last 16 KB, PWV7 only by the walk from the start; both whole.
+        const std::string big = anlzFile({section("PPTH", {8}, std::string(8, 'p')),
+                                          section("PWV7", {3, 20000, 0x960000}, threeBand(20000, 9, 8, 7)),
+                                          section("PWV6", {3, 1200}, threeBand(1200, 127, 63, 0)),
+                                          section("PWVC", {0, 0}, "")});
+        std::ofstream(root / seabass::pathFromUtf8(TwoExPath), std::ios::binary | std::ios::trunc) << big;
+        assert(source.readSection(TwoExPath, "PWV6") == rekordbox::anlzSectionOf(big, "PWV6"));
+        assert(source.readSection(TwoExPath, "PWV7") == rekordbox::anlzSectionOf(big, "PWV7"));
+        assert(source.readSection(TwoExPath, "PWVC") == rekordbox::anlzSectionOf(big, "PWVC"));
+        // A "PWV6" inside the waveform's own bytes is not taken for the
+        // section: it does not chain to the end of the file.
+        std::string decoy = anlzFile({section("PWV7", {3, 20}, "xxPWV6" + std::string(54, '\x05')),
+                                      section("PWV6", {3, 1200}, threeBand(1200, 1, 2, 3))});
+        std::ofstream(root / seabass::pathFromUtf8(TwoExPath), std::ios::binary | std::ios::trunc) << decoy;
+        assert(source.readSection(TwoExPath, "PWV6") == rekordbox::anlzSectionOf(decoy, "PWV6"));
         fs::remove_all(root.parent_path());
-        std::cout << "case 3 (a file on disk gives the same section by seeking) OK\n";
+        std::cout << "case 3 (a file on disk gives the same section, from its end or by the walk) OK\n";
     }
 
     // ---- 4. the overview's look -----------------------------------------

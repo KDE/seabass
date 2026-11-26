@@ -3578,6 +3578,16 @@ if(TARGET seabass_edit)
     target_include_directories(cover_cache_test PRIVATE src)
     target_link_libraries(cover_cache_test PRIVATE seabass_core Qt6::Core Qt6::Gui)
     add_test(NAME cover_cache_test COMMAND cover_cache_test)
+    # A rekordbox row's analysis kept on the computer (TrackAnalysisCache):
+    # read once, kept across runs, read again when its files change.
+    add_executable(track_analysis_cache_test
+        src/gui/track_analysis_cache.cpp
+        tests/track_analysis_cache_test.cpp
+    )
+    target_include_directories(track_analysis_cache_test PRIVATE src tests)
+    target_link_libraries(track_analysis_cache_test PRIVATE seabass_core seabass_core_testing Qt6::Core)
+    add_test(NAME track_analysis_cache_test COMMAND track_analysis_cache_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73/stick/PIONEER)
     # A playlist's thumbnail: composed from the covers through the cache,
     # kept, read back, trimmed with the rest.
     add_executable(playlist_thumbnail_test

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "gui/beat_grids_controller.hpp"
+#include "gui/track_analysis_cache.hpp"
 #include "infrastructure/database_read_copy.hpp"
 
 #include <QCryptographicHash>
@@ -853,9 +854,8 @@ void BeatGridsController::pumpRowReads()
         if (cancel.cancelled()) {
             return out;
         }
-        domain::TrackAnalysis analysis = infrastructure::rekordbox::readTrackAnalysis(
-            library->rekordboxPath.toStdString(), sourceId, nullptr, library->anlzIndex.get(),
-            /*threeBandOverview=*/true);
+        domain::TrackAnalysis analysis = TrackAnalysisCache::shared().rekordboxAnalysis(
+            library->rekordboxPath.toStdString(), sourceId, library->anlzIndex.get());
         out->look = QString::fromLatin1(domain::waveformLookName(analysis.waveformLook));
         out->columns.reserve(static_cast<qsizetype>(analysis.waveform.size() * 3));
         const auto byte = [](double v) {

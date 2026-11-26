@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
 #include "playback_controller.hpp"
+#include "gui/track_analysis_cache.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -102,9 +103,11 @@ domain::TrackAnalysis readAnalysis(const QString &format, const QString &library
 {
     try {
         if (format == "rekordbox") {
-            // Drawn, so rekordbox's 3Band overview where the stick has it.
-            return infrastructure::rekordbox::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
-                                                                nullptr, pathIndex, /*threeBandOverview=*/true);
+            // Drawn, so rekordbox's 3Band overview where the stick has it;
+            // from the computer's cache where the analysis files are as
+            // they were (TrackAnalysisCache), so a row costs no stick read.
+            return TrackAnalysisCache::shared().rekordboxAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
+                                                                  pathIndex);
         }
         if (format == "engine") {
             return infrastructure::engine::readTrackAnalysis(libraryPath.toStdString(), sourceId.toStdString(),
