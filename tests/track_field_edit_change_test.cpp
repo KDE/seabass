@@ -421,7 +421,8 @@ int main(int argc, char **argv)
             // The origin ledger hears of it: Sync after Rekordbox Export
             // then knows Seabass wrote this rating.
             const auto writes = change->rekordboxWrites();
-            assert(writes.size() == 1 && writes[0].rating == stars.value_or(0) && !writes[0].cues);
+            assert(writes.size() == 1 && writes[0].rating == stars.value_or(0) && !writes[0].cues
+                   && !writes[0].comment);
         }
         std::cout << "case 1 (rating set, changed, cleared in all three catalogs) OK\n";
     }
@@ -449,6 +450,21 @@ int main(int argc, char **argv)
             }
             assert(result.error.isEmpty());
             expectCommentEverywhere(s, file, text);
+        }
+        // The origin ledger hears of the comment as written (#108), so the
+        // rekordbox baseline records it and Sync after Rekordbox Export asks
+        // when an export brings back rekordbox's older one.
+        {
+            const auto noted = commentChange(s, file, "noted");
+            assert(saveChanges({noted}, s.pioneerQ(), s.engineQ()).error.isEmpty());
+            const auto writes = noted->rekordboxWrites();
+            assert(writes.size() == 1 && writes[0].comment == std::optional<std::string>("noted"));
+            assert(!writes[0].rating && !writes[0].cues && writes[0].filePath == file);
+            const auto cleared = commentChange(s, file, "");
+            assert(saveChanges({cleared}, s.pioneerQ(), s.engineQ()).error.isEmpty());
+            assert(cleared->rekordboxWrites().size() == 1
+                   && cleared->rekordboxWrites()[0].comment == std::optional<std::string>(""));
+            expectCommentEverywhere(s, file, "");
         }
         const std::string pdbBefore = fileBytes(s.pdb());
         const std::string engineBefore = fileBytes(s.mdb());

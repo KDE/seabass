@@ -530,17 +530,24 @@ std::vector<BackupTarget> TrackFieldEditChange::filesToBackup(SaveContext &ctx) 
     return targets;
 }
 
-// The rating, for the rekordbox baseline's origin ledger: Sync after
-// Rekordbox Export then knows Seabass wrote it. 0 is "no stars". A
-// comment has no place in that record (RekordboxWrite carries none).
+// The rating or the comment, for the rekordbox baseline's origin ledger.
+// A rating is recorded as Seabass's, so Sync after Rekordbox Export knows
+// who wrote it; 0 is "no stars". A comment is recorded as the value
+// rekordbox's side now holds (the record keeps no origin for comments),
+// so a later export that brings back rekordbox's older comment differs
+// from it and Sync asks rather than copying it over the edit (#108).
 std::vector<RekordboxWrite> TrackFieldEditChange::rekordboxWrites() const
 {
-    if (m_value.field != TrackField::Rating || !m_wroteRekordboxSide) {
+    if (!m_wroteRekordboxSide) {
         return {};
     }
     RekordboxWrite write;
     write.filePath = m_filePath;
-    write.rating = m_value.rating.value_or(0);
+    if (m_value.field == TrackField::Rating) {
+        write.rating = m_value.rating.value_or(0);
+    } else {
+        write.comment = m_value.text;
+    }
     return {std::move(write)};
 }
 
@@ -707,9 +714,9 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
                 return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb."));
             }
             session.noteItemApplied();
-            // The origin ledger records export.pdb's ratings (the
-            // rekordbox baseline is read from it), so only a rating that
-            // reached export.pdb is reported as Seabass's.
+            // The origin ledger records export.pdb's ratings and comments
+            // (the rekordbox baseline is read from it), so only a value
+            // that reached export.pdb is reported.
             m_wroteRekordboxSide = true;
             written << QStringLiteral("export.pdb");
         } else if (hasPdb(pioneer)) {

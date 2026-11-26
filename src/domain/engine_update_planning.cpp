@@ -2388,6 +2388,26 @@ private:
                                                                     "Put " + starsText(ev) + " back on rekordbox"));
                             out.conflicts.push_back(std::move(c));
                         }
+                    } else if (bv == ev && b->ratingOrigin == ValueOrigin::Seabass) {
+                        // Seabass wrote the recorded rating and rekordbox now
+                        // has another: rekordbox's export writes master.db's
+                        // ratings, which never saw Seabass's, so this is as
+                        // likely the export bringing back the old one as a
+                        // change in rekordbox. It asks.
+                        auto c = conflictOf(EngineUpdateReason::OriginUnknown,
+                                            "rekordbox has " + starsText(rv) + " where Seabass wrote " + starsText(bv)
+                                                + ", which " + engineName
+                                                + " still has: nothing recorded whether rekordbox changed it or an "
+                                                  "export brought back an older one");
+                        c.rekordboxChoice.emplace_back(toEngine(rv, true, EngineUpdateReason::OriginUnknown,
+                                                                c.rekordboxSide));
+                        c.engineSide = "Keep " + engineName + "'s " + starsText(ev)
+                            + " and write the rating back onto rekordbox";
+                        auto back = toRekordbox(ev, true, EngineUpdateReason::OriginUnknown,
+                                                "Put " + starsText(ev) + " back on rekordbox");
+                        back.restoresSeabassWrite = true;  // the record says Seabass wrote it
+                        c.engineChoice.emplace_back(std::move(back));
+                        out.conflicts.push_back(std::move(c));
                     } else if (bv == ev) {
                         out.metadataToEngine.push_back(toEngine(rv, true, EngineUpdateReason::RekordboxChanged,
                                                                 "rekordbox changed the rating from " + starsText(bv)
@@ -2439,8 +2459,14 @@ private:
                 }
             }
 
-            // Comment. No origin is recorded for comments, so a comment
-            // rekordbox lacks is never assumed dropped or deleted.
+            // Comment. No origin is recorded for comments (the record's
+            // format has no place for one), so where rekordbox's differs
+            // from the recorded one and Engine's does not, nothing says
+            // whether rekordbox changed it or an export brought back the
+            // comment rekordbox had before Seabass edited it (#108: Seabass
+            // records its comment edits, rekordbox's master.db never sees
+            // them). That asks, every time, and is never assumed either
+            // way. A comment rekordbox lacks is never assumed dropped.
             if (r->comment != e->comment) {
                 const std::string itemKeyText = commentItemKey(key);
                 const std::string state = "comment:" + r->comment;
@@ -2463,8 +2489,15 @@ private:
                     return c;
                 };
                 if (b && b->comment == e->comment && !r->comment.empty()) {
-                    out.metadataToEngine.push_back(
-                        toEngine(true, EngineUpdateReason::RekordboxChanged, "rekordbox changed the comment" + since()));
+                    out.conflicts.push_back(conflictOf(
+                        EngineUpdateReason::OriginUnknown,
+                        b->comment.empty()
+                            ? "rekordbox has a comment " + engineName
+                                  + " does not, and nothing recorded whether it is new in rekordbox or one an "
+                                    "export brought back"
+                            : "rekordbox's comment is not the one Seabass last recorded, which " + engineName
+                                  + " still has: nothing recorded whether rekordbox changed it or an export "
+                                    "brought back an older one"));
                 } else if (b && b->comment == e->comment) {
                     out.conflicts.push_back(conflictOf(EngineUpdateReason::OriginUnknown,
                                                        "rekordbox no longer has the comment " + engineName

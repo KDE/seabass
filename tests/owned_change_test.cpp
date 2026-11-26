@@ -89,7 +89,7 @@ bool sameWrites(const std::vector<RekordboxWrite> &a, const std::vector<Rekordbo
         return false;
     }
     for (size_t i = 0; i < a.size(); ++i) {
-        if (a[i].filePath != b[i].filePath || a[i].rating != b[i].rating || a[i].cues.has_value() != b[i].cues.has_value()) {
+        if (a[i].filePath != b[i].filePath || a[i].rating != b[i].rating || a[i].comment != b[i].comment || a[i].cues.has_value() != b[i].cues.has_value()) {
             return false;
         }
         if (a[i].cues && (a[i].cues->size() != b[i].cues->size()

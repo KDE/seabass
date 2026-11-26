@@ -301,11 +301,15 @@ struct SeabassWrite
     std::optional<std::vector<CuePoint>> cues;
     // The stars written, 0 to 5; nullopt when no rating was.
     std::optional<int> rating;
+    // The comment written; nullopt when none was, "" when one was cleared.
+    std::optional<std::string> comment;
 };
 
 // The origin ledger: each written track's cues become the written set,
 // every cue of Seabass origin, and its rating the written one (0 stars
-// recorded as unrated, as the readers give it), of Seabass origin. Every
+// recorded as unrated, as the readers give it), of Seabass origin, and its
+// comment the written one (no origin: the record has no place for a
+// comment's, and the planner asks wherever rekordbox's differs). Every
 // row of the track's pathKey is updated. The written values are what the
 // rekordbox side holds for those items now, so they are a valid base for
 // them whether or not the baseline is current. Returns the pathKeys of

@@ -52,6 +52,9 @@ struct RekordboxWrite
     std::optional<std::vector<domain::CuePoint>> cues;
     // The rating written, 0 to 5 stars; nullopt when none was.
     std::optional<int> rating;
+    // The comment written into export.pdb; nullopt when none was. An
+    // empty string is a comment cleared.
+    std::optional<std::string> comment;
 };
 
 struct ChangeOutcome

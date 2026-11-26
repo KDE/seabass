@@ -605,6 +605,9 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
                 row.rating = *write.rating > 0 ? write.rating : std::nullopt;
                 row.ratingOrigin = ValueOrigin::Seabass;
             }
+            if (write.comment) {
+                row.comment = *write.comment;
+            }
         }
         if (!found) {
             unlisted.push_back(write.pathKey);

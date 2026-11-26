@@ -38,7 +38,7 @@ std::vector<domain::SeabassWrite> seabassWritesFor(const std::string &stickRoot,
     for (const auto &write : writes) {
         const std::string key = baselinePathKey(baselineStickRelativePath(stickRoot, write.filePath));
         if (!key.empty()) {
-            out.push_back({key, write.cues, write.rating});
+            out.push_back({key, write.cues, write.rating, write.comment});
         }
     }
     return out;
@@ -79,7 +79,7 @@ QString recordOriginLedger(SaveContext &ctx, const BaselineAtSaveStart &start, c
         return {};
     }
     const QString failed = QStringLiteral(
-        "This save's cue and rating writes onto rekordbox could not be recorded in the stick's rekordbox baseline "
+        "This save's cue, rating and comment writes onto rekordbox could not be recorded in the stick's rekordbox baseline "
         "(%1). Sync after Rekordbox Export will not know Seabass wrote them, and asks rather than restores.");
     const std::string stickRoot = ctx.stickRoot();
     std::string error;

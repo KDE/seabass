@@ -599,6 +599,7 @@ void testRecordSeabassWrites()
     const auto unlisted = seabass::domain::recordSeabassWrites(
         b, {{One, std::vector<CuePoint>{CuePoint{CuePoint::Kind::Hot, 3, 3000.0, "", ""}}, 0},
             {Two, std::nullopt, 4},
+            {Three, std::nullopt, std::nullopt, std::string("edited in Seabass")},
             {"contents/x/none.mp3", std::vector<CuePoint>{}, std::nullopt}});
     assert((unlisted == std::vector<std::string>{"contents/x/none.mp3"}));
     const auto &one = *b.findTrack(One);
@@ -607,8 +608,14 @@ void testRecordSeabassWrites()
     const auto &two = *b.findTrack(Two);
     assert(two.rating == 4 && two.ratingOrigin == ValueOrigin::Seabass);
     assert(two.cues.empty() && "no cues written, none touched");
-    assert(b.findTrack(Three)->ratingOrigin == ValueOrigin::Unknown && "a track not written is left alone");
-    std::cout << "recordSeabassWrites (cues and rating of Seabass origin, unlisted reported) OK\n";
+    assert(one.comment == "new" && "cues and a rating written, the comment untouched");
+    const auto &three = *b.findTrack(Three);
+    assert(three.comment == "edited in Seabass" && "a comment written is the recorded one (#108)");
+    assert(three.ratingOrigin == ValueOrigin::Unknown && "a comment alone leaves the rating's origin");
+    RekordboxBaseline cleared = b;
+    seabass::domain::recordSeabassWrites(cleared, {{Three, std::nullopt, std::nullopt, std::string()}});
+    assert(cleared.findTrack(Three)->comment.empty() && "a comment cleared is recorded cleared");
+    std::cout << "recordSeabassWrites (cues and rating of Seabass origin, comments as written, unlisted reported) OK\n";
 }
 
 }  // namespace
