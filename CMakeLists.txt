@@ -1117,6 +1117,24 @@ if(TARGET Qt6::Multimedia)
     target_link_libraries(seabass-cli PRIVATE seabass_audio_qt)
 endif()
 
+# Keeping a recording (Own Recordings): a WAV encoded to FLAC through Qt
+# Multimedia and checked by decoding it again, its tags and cover written
+# with TagLib, the cover scaled with QImage. Its own target, beside
+# seabass_audio_qt and not in it: it needs seabass_core (durable writes,
+# hashing) and TagLib, which that library stays free of. The ports it
+# implements are in src/application/ports, so callers and their tests
+# need no Qt.
+if(TARGET Qt6::Multimedia AND TARGET Qt6::Gui AND TARGET seabass_taglib)
+    add_library(seabass_recording_qt STATIC
+        src/infrastructure/audio/wav_pcm_file.cpp
+        src/infrastructure/audio/flac_stream_info.cpp
+        src/infrastructure/audio/qt_flac_recording_encoder.cpp
+        src/infrastructure/audio/taglib_recording_tag_writer.cpp
+        src/infrastructure/audio/qt_cover_art_preparer.cpp)
+    target_include_directories(seabass_recording_qt PUBLIC src)
+    target_link_libraries(seabass_recording_qt PUBLIC seabass_core seabass_taglib Qt6::Core Qt6::Gui Qt6::Multimedia)
+endif()
+
 # Diagnostic, not a test, so built with tests off too: what the audio
 # alignment makes of each pair of copies, window by window, and which rule
 # made a pair unknown (real files, or tests/fixtures/alignment).
@@ -5731,6 +5749,29 @@ if(TARGET seabass_audio_qt)
         ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment
         ${CMAKE_BINARY_DIR}/test-scratch)
     set_tests_properties(qt_multimedia_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+# Keeping a recording: WAVs the test writes (tones and noise, 16 and 24
+# bit, mono and stereo, four rates) encoded to FLAC and decoded back, the
+# refusals (cut short, not a WAV, a target that exists, a folder in the
+# way, a cancel), and the tags and cover written and read back. No
+# encoding backend is a FAIL, not a skip. The long run encodes a WAV of
+# several minutes in a process of its own, so that its peak memory is the
+# encoder's.
+if(TARGET seabass_recording_qt)
+    add_executable(recording_encoder_test tests/recording_encoder_test.cpp)
+    target_include_directories(recording_encoder_test PRIVATE src)
+    target_link_libraries(recording_encoder_test PRIVATE seabass_recording_qt Qt6::Core)
+    add_test(NAME recording_encoder_test COMMAND recording_encoder_test ${CMAKE_BINARY_DIR}/test-scratch)
+    add_test(NAME recording_encoder_long_test COMMAND recording_encoder_test ${CMAKE_BINARY_DIR}/test-scratch --long)
+    set_tests_properties(recording_encoder_test recording_encoder_long_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
+
+    add_executable(recording_tag_writer_test tests/recording_tag_writer_test.cpp)
+    target_include_directories(recording_tag_writer_test PRIVATE src)
+    target_link_libraries(recording_tag_writer_test PRIVATE seabass_recording_qt Qt6::Core Qt6::Gui)
+    add_test(NAME recording_tag_writer_test COMMAND recording_tag_writer_test ${CMAKE_BINARY_DIR}/test-scratch)
+    set_tests_properties(recording_tag_writer_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 # Phase 2's baseline: Mixxx's beat and key analysis on qm-dsp, fetched at
