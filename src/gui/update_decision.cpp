@@ -138,6 +138,19 @@ bool tapsWouldEnableTesting(const QString &buildChannel, bool includeTestingNow)
     return feedChannelFor(buildChannel) == QLatin1String("stable") && !includeTestingNow;
 }
 
+UseDays countUseDay(UseDays before, const QString &today)
+{
+    if (today.isEmpty() || before.lastDay == today) {
+        return before;
+    }
+    return UseDays{before.count + 1, today};
+}
+
+bool shouldAskAboutAutomaticChecks(bool isRelease, bool automatic, bool answered, int useDays)
+{
+    return isRelease && !automatic && !answered && useDays >= UseDaysBeforeAsking;
+}
+
 bool TapSequence::tap(qint64 nowMs)
 {
     m_taps.erase(std::remove_if(m_taps.begin(), m_taps.end(),

@@ -1424,6 +1424,48 @@ TestCase {
         return c;
     }
 
+    // The question about checking for updates: there when the checker
+    // says to ask, says why the setting is off, and each button hands the
+    // answer to the checker, which is what remembers it.
+    function test_theUpdateQuestionIsAskedOnlyWhenTheCheckerSaysSo() {
+        const quiet = makePage([], {}, {updateChecker: fakeUpdateChecker()});
+        const hidden = findByName(quiet, "askUpdatesBanner");
+        verify(hidden !== null, "the question must exist on the page");
+        verify(!hidden.visible, "a checker that does not ask shows no question");
+        compare(hidden.implicitHeight, 0, "an invisible question must not hold its space in the column");
+        verify(!findByName(makePage([], {}), "askUpdatesBanner").visible, "no checker, no question");
+
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({askAboutAutomatic: true})});
+        const banner = findByName(page, "askUpdatesBanner");
+        verify(banner.visible, "the checker asks, so the page does");
+        verify(banner.implicitHeight > 0);
+        const text = findByName(page, "askUpdatesText").text;
+        verify(text.indexOf("switched off by default") >= 0, "it says the setting is off unless allowed: " + text);
+        verify(text.indexOf("Preferences") >= 0, "it says where to change it later: " + text);
+        const said = findByName(page, "askUpdatesTitle").text + " " + text;
+        verify(said.indexOf("\u2014") < 0 && said.indexOf("--") < 0, "no dashes on screen: " + said);
+    }
+
+    function test_theUpdateQuestionHandsEachAnswerToTheChecker() {
+        const answers = [];
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({
+            askAboutAutomatic: true, answerAutomaticQuestion: function(allow) { answers.push(allow); }})});
+        const yes = findByName(page, "askUpdatesYes");
+        const no = findByName(page, "askUpdatesNo");
+        verify(yes.visible && no.visible);
+        mouseClick(yes);
+        compare(answers, [true]);
+        mouseClick(no);
+        compare(answers, [true, false]);
+    }
+
+    function test_aNewReleaseOutranksTheUpdateQuestion() {
+        const page = makePage([], {}, {updateChecker: fakeUpdateChecker({
+            askAboutAutomatic: true, updateAvailable: true, latestVersion: "0.8.0"})});
+        verify(findByName(page, "updateBanner").visible);
+        verify(!findByName(page, "askUpdatesBanner").visible, "one band at a time, and the release is the news");
+    }
+
     function test_theBannerTakesNoRoomWhileThereIsNothingToSay() {
         const page = makePage([], {}, {updateChecker: fakeUpdateChecker()});
         const banner = findByName(page, "updateBanner");

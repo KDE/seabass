@@ -534,6 +534,137 @@ int main(int argc, char **argv)
         std::cout << "case 11 (automatic checks: off is silent, on is daily) OK\n";
     }
 
+    // The question on the home page: after a few different days of use,
+    // while the setting is off, until it has been answered; remembered
+    // across restarts; and nothing is fetched before a yes.
+    {
+        const QDate first(2026, 11, 20);
+        const auto key = [](const char *name) { return QStringLiteral("updates/") + QLatin1String(name); };
+        forgetSettings();
+        {
+            // The constructor counted the real today; start from a known day.
+            UpdateChecker checker(build("1.0.1", "stable"));
+            assert(!checker.askAboutAutomatic() && "not on the first day");
+        }
+        forgetSettings();
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            settings.setValue(key("useDays"), 1);
+            settings.setValue(key("lastUseDay"), first.toString(Qt::ISODate));
+        }
+        {
+            // The constructor adds the real today: two days so far.
+            UpdateChecker checker(build("1.0.1", "stable"));
+            assert(!checker.askAboutAutomatic() && "two days are not a few");
+            int changes = 0;
+            QObject::connect(&checker, &UpdateChecker::askAboutAutomaticChanged, [&] { ++changes; });
+            checker.countUseDay(QDate::currentDate());
+            assert(!checker.askAboutAutomatic() && changes == 0 && "the same day again adds nothing");
+            checker.countUseDay(QDate::currentDate().addDays(1));
+            assert(checker.askAboutAutomatic() && changes == 1 && "the third day asks");
+            assert(checker.state() == QStringLiteral("idle") && "asking fetches nothing");
+            assert(!checker.automatic());
+        }
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            assert(settings.value(key("useDays")).toInt() == 3);
+            assert(!settings.value(key("automaticAnswered")).toBool());
+        }
+        {
+            // Restarted: still asking. No is remembered and changes nothing else.
+            UpdateChecker checker(build("1.0.1", "stable"));
+            assert(checker.askAboutAutomatic());
+            int changes = 0;
+            QObject::connect(&checker, &UpdateChecker::askAboutAutomaticChanged, [&] { ++changes; });
+            checker.answerAutomaticQuestion(false);
+            assert(!checker.askAboutAutomatic() && changes == 1);
+            assert(!checker.automatic());
+            assert(checker.state() == QStringLiteral("idle") && "a no fetches nothing");
+        }
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            assert(settings.value(key("automaticAnswered")).toBool());
+            assert(!settings.value(key("automatic")).toBool());
+            const int counted = settings.value(key("useDays")).toInt();
+            UpdateChecker checker(build("1.0.1", "stable"));
+            assert(!checker.askAboutAutomatic() && "answered once, never asked again");
+            checker.countUseDay(QDate::currentDate().addDays(9));
+            assert(!checker.askAboutAutomatic());
+            QSettings after = seabass::gui::openSeabassSettings();
+            assert(after.value(key("useDays")).toInt() == counted && "nothing is counted once it is settled");
+        }
+
+        // Yes turns the setting on, which checks at once, and is remembered.
+        forgetSettings();
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            settings.setValue(key("useDays"), 5);
+            settings.setValue(key("lastUseDay"), first.toString(Qt::ISODate));
+        }
+        {
+            UpdateChecker checker(build("1.0.1", "stable"));
+            assert(checker.askAboutAutomatic());
+            checker.setFeedUrl(feed(channels(entry("1.0.2", "stable", true), "")));
+            checker.answerAutomaticQuestion(true);
+            assert(checker.automatic() && !checker.askAboutAutomatic());
+            assert(checker.state() == QStringLiteral("checking") && "a yes checks now");
+            QEventLoop loop;
+            QObject::connect(&checker, &UpdateChecker::stateChanged, &loop, &QEventLoop::quit);
+            QTimer::singleShot(10000, &loop, &QEventLoop::quit);
+            loop.exec();
+            assert(checker.state() == QStringLiteral("updateAvailable"));
+        }
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            assert(settings.value(key("automatic")).toBool());
+            assert(settings.value(key("automaticAnswered")).toBool());
+        }
+
+        // A checkbox set before this question existed is an answer: the
+        // setting's key is there, off, and nothing is asked.
+        forgetSettings();
+        {
+            QSettings settings = seabass::gui::openSeabassSettings();
+            settings.setValue(key("automatic"), false);
+            settings.setValue(key("useDays"), 5);
+            settings.setValue(key("lastUseDay"), first.toString(Qt::ISODate));
+        }
+        {
+            UpdateChecker checker(build("1.0.1", "stable"));
+            assert(!checker.askAboutAutomatic() && "the setting was chosen already");
+        }
+
+        // Switching it on in Preferences before the question came up
+        // settles it, even when it is switched off again later.
+        forgetSettings();
+        {
+            UpdateChecker checker(build("1.0.1", "stable"));
+            checker.setFeedUrl(feed(channels("", "")));
+            checker.setAutomatic(true);
+            checker.setAutomatic(false);
+            checker.countUseDay(QDate::currentDate().addDays(1));
+            checker.countUseDay(QDate::currentDate().addDays(2));
+            checker.countUseDay(QDate::currentDate().addDays(3));
+            assert(!checker.askAboutAutomatic());
+        }
+
+        // A build from a working tree never checks, so it neither counts
+        // nor asks, and writes nothing.
+        forgetSettings();
+        {
+            UpdateChecker checker(build("1.0.1", "dev", "v1.0.1-3-gabc"));
+            for (int day = 1; day <= 5; ++day) {
+                checker.countUseDay(QDate::currentDate().addDays(day));
+            }
+            assert(!checker.askAboutAutomatic());
+            checker.answerAutomaticQuestion(false);
+            QSettings settings = seabass::gui::openSeabassSettings();
+            assert(!settings.contains(key("useDays")));
+            assert(!settings.contains(key("automaticAnswered")));
+        }
+        std::cout << "case (the question about automatic checks) OK\n";
+    }
+
     // The hidden switch on a stable build: the tenth quick tap turns the
     // opt-in on and says so once; more taps claim nothing.
     {

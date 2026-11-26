@@ -345,6 +345,33 @@ private Q_SLOTS:
         QVERIFY(running->withdrawn);
     }
 
+    // The days of use that lead up to the question about checking.
+    void aDayOfUseCountsOnce()
+    {
+        UseDays days;
+        days = countUseDay(days, QStringLiteral("2026-11-26"));
+        QCOMPARE(days.count, 1);
+        days = countUseDay(days, QStringLiteral("2026-11-26"));
+        QCOMPARE(days.count, 1);
+        days = countUseDay(days, QStringLiteral("2026-11-27"));
+        QCOMPARE(days.count, 2);
+        QCOMPARE(days.lastDay, QStringLiteral("2026-11-27"));
+        // No date at all is not a day.
+        QCOMPARE(countUseDay(days, QString()).count, 2);
+    }
+
+    void theQuestionWaitsForAFewDaysAndIsAskedOnce()
+    {
+        QVERIFY(!shouldAskAboutAutomaticChecks(true, false, false, UseDaysBeforeAsking - 1));
+        QVERIFY(shouldAskAboutAutomaticChecks(true, false, false, UseDaysBeforeAsking));
+        QVERIFY(shouldAskAboutAutomaticChecks(true, false, false, UseDaysBeforeAsking + 40));
+        // Already on: nothing to ask. Answered: not again.
+        QVERIFY(!shouldAskAboutAutomaticChecks(true, true, false, UseDaysBeforeAsking));
+        QVERIFY(!shouldAskAboutAutomaticChecks(true, false, true, UseDaysBeforeAsking));
+        // A build from a working tree never checks, so it never asks.
+        QVERIFY(!shouldAskAboutAutomaticChecks(false, false, false, UseDaysBeforeAsking));
+    }
+
     void withdrawnAndNothingNewerIsStillWorthSaying()
     {
         const QVector<ReleaseInfo> feed{make(QStringLiteral("0.2.0"), QStringLiteral("stable"), true)};

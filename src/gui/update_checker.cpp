@@ -33,6 +33,12 @@ constexpr qint64 DaySeconds = 24 * 60 * 60;
 
 const auto AutomaticKey = QStringLiteral("updates/automatic");
 const auto LastCheckedKey = QStringLiteral("updates/lastChecked");
+// The question on the home page: whether it has been answered, and the
+// days of use counted towards asking it. See askAboutAutomatic.
+const auto AutomaticAnsweredKey = QStringLiteral("updates/automaticAnswered");
+const auto UseDaysKey = QStringLiteral("updates/useDays");
+const auto LastUseDayKey = QStringLiteral("updates/lastUseDay");
+constexpr int HourMs = 60 * 60 * 1000;
 // Whether alphas and betas count here, and whether the checkbox for
 // that is shown. See UpdateChecker::includeTesting.
 const auto IncludeTestingKey = QStringLiteral("updates/includeTesting");
@@ -58,6 +64,11 @@ UpdateChecker::UpdateChecker(RunningBuild build, QObject *parent)
     QSettings settings = openSeabassSettings();
     m_automatic = settings.value(AutomaticKey, false).toBool();
     m_lastChecked = settings.value(LastCheckedKey).toDateTime();
+    // Somebody who set the checkbox before this question existed has
+    // answered it too: the setting's own key is only ever written by a
+    // change to it.
+    m_automaticAnswered = settings.value(AutomaticAnsweredKey, false).toBool() || settings.contains(AutomaticKey);
+    m_useDays = UseDays{settings.value(UseDaysKey, 0).toInt(), settings.value(LastUseDayKey).toString()};
     m_includeTesting = settings.value(IncludeTestingKey, false).toBool();
     m_testingOptionRevealed = settings.value(TestingRevealedKey, false).toBool();
     if (runningPreRelease() && !(m_includeTesting && m_testingOptionRevealed)) {
@@ -76,6 +87,15 @@ UpdateChecker::UpdateChecker(RunningBuild build, QObject *parent)
     connect(&m_daily, &QTimer::timeout, this, &UpdateChecker::checkNow);
     if (m_automatic) {
         startTimer();
+    }
+
+    // Counting stops mattering once the question is settled, so the timer
+    // only runs while it could still be asked.
+    countUseDay(QDate::currentDate());
+    m_useDayTick.setInterval(HourMs);
+    connect(&m_useDayTick, &QTimer::timeout, this, [this] { countUseDay(QDate::currentDate()); });
+    if (m_build.isRelease() && !m_automatic && !m_automaticAnswered && m_useDays.count < UseDaysBeforeAsking) {
+        m_useDayTick.start();
     }
 }
 
@@ -164,11 +184,71 @@ void UpdateChecker::rememberTesting(bool include, bool revealed)
     }
 }
 
+bool UpdateChecker::askAboutAutomatic() const
+{
+    return shouldAskAboutAutomaticChecks(m_build.isRelease(), m_automatic, m_automaticAnswered, m_useDays.count);
+}
+
+void UpdateChecker::countUseDay(const QDate &today)
+{
+    // Enough days is enough: past that the count decides nothing, so it
+    // is not written again.
+    if (!m_build.isRelease() || m_automatic || m_automaticAnswered || !today.isValid()
+        || m_useDays.count >= UseDaysBeforeAsking) {
+        return;
+    }
+    const UseDays counted = seabass::gui::countUseDay(m_useDays, today.toString(Qt::ISODate));
+    if (counted.count == m_useDays.count) {
+        return;
+    }
+    const bool askedBefore = askAboutAutomatic();
+    m_useDays = counted;
+    QSettings settings = openSeabassSettings();
+    settings.setValue(UseDaysKey, m_useDays.count);
+    settings.setValue(LastUseDayKey, m_useDays.lastDay);
+    if (m_useDays.count >= UseDaysBeforeAsking) {
+        m_useDayTick.stop();
+    }
+    if (askAboutAutomatic() != askedBefore) {
+        Q_EMIT askAboutAutomaticChanged();
+    }
+}
+
+void UpdateChecker::answerAutomaticQuestion(bool allow)
+{
+    // Remembered first, so that a no is kept even though nothing else
+    // changes with it.
+    rememberAnswered();
+    setAutomatic(allow);
+}
+
+void UpdateChecker::rememberAnswered()
+{
+    // A build from a working tree never asks, so it records no answer
+    // of its own. (Its checkbox still writes the setting itself, as it
+    // always has, and a setting somebody chose is an answer wherever it
+    // was chosen.)
+    if (m_automaticAnswered || !m_build.isRelease()) {
+        return;
+    }
+    const bool askedBefore = askAboutAutomatic();
+    m_automaticAnswered = true;
+    m_useDayTick.stop();
+    QSettings settings = openSeabassSettings();
+    settings.setValue(AutomaticAnsweredKey, true);
+    if (askAboutAutomatic() != askedBefore) {
+        Q_EMIT askAboutAutomaticChanged();
+    }
+}
+
 void UpdateChecker::setAutomatic(bool on)
 {
     if (m_automatic == on) {
         return;
     }
+    // Somebody who changes the setting, here or in Preferences, has
+    // answered the question on the home page.
+    rememberAnswered();
     m_automatic = on;
     QSettings settings = openSeabassSettings();
     settings.setValue(AutomaticKey, on);

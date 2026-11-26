@@ -64,6 +64,13 @@ class UpdateChecker : public QObject
     // daily timer; turning it off stops it immediately.
     Q_PROPERTY(bool automatic READ automatic WRITE setAutomatic NOTIFY automaticChanged)
 
+    // True while the home page should ask whether Seabass may check for
+    // new versions: the setting is off (it always starts off, so that
+    // nothing goes online unasked), Seabass has been used on a few
+    // different days, and nobody has answered yet. Answering either way,
+    // or touching the setting in Preferences, ends it for good.
+    Q_PROPERTY(bool askAboutAutomatic READ askAboutAutomatic NOTIFY askAboutAutomaticChanged)
+
     // Whether alphas and betas count on this machine. A pre-release or
     // published dev build follows every channel whatever this says, and
     // turns it on for good the first time it runs, so that a beta user who moves to
@@ -111,6 +118,16 @@ public:
 
     bool automatic() const { return m_automatic; }
     void setAutomatic(bool on);
+    bool askAboutAutomatic() const;
+    // The two buttons under the question. Yes turns the setting on, which
+    // checks straight away; no leaves it off. Either is remembered, and
+    // the question is not asked again.
+    Q_INVOKABLE void answerAutomaticQuestion(bool allow);
+    // Counts today as a day Seabass was used on, once. The constructor
+    // does this for the real date and an hourly timer repeats it, for an
+    // app left open over midnight; a test hands it the days it wants.
+    // Does nothing on a build from a working tree, which writes no setting.
+    void countUseDay(const QDate &today);
     bool includeTesting() const { return m_includeTesting; }
     void setIncludeTesting(bool on);
     bool testingOptionRevealed() const { return m_testingOptionRevealed; }
@@ -153,6 +170,7 @@ public:
 
 Q_SIGNALS:
     void automaticChanged();
+    void askAboutAutomaticChanged();
     void includeTestingChanged();
     void stateChanged();
 
@@ -166,10 +184,13 @@ private:
     void decide();
     void setState(const QString &state);
     void rememberTesting(bool include, bool revealed);
+    // Remembers that the question about automatic checks is settled.
+    void rememberAnswered();
 
     RunningBuild m_build;
     QNetworkAccessManager *m_network = nullptr;
     QTimer m_daily;
+    QTimer m_useDayTick;
     QString m_feedUrl;
     QString m_state = QStringLiteral("idle");
     QString m_failure;
@@ -183,6 +204,8 @@ private:
     QString m_runningWithdrawnReason;
     QDateTime m_lastChecked;
     bool m_automatic = false;
+    bool m_automaticAnswered = false;
+    UseDays m_useDays;
     bool m_includeTesting = false;
     bool m_testingOptionRevealed = false;
 };

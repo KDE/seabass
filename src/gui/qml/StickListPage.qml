@@ -641,6 +641,68 @@ Page {
                 }
             }
         }
+        // After a few days of use: may Seabass check for new versions?
+        // The setting is off until somebody says yes, here or in
+        // Preferences (UpdateChecker::askAboutAutomatic), and nothing is
+        // fetched before that. A band in the page, not a dialog: it waits
+        // for an answer without being in the way, and gives room to the
+        // update banner when that has something to say.
+        Rectangle {
+            id: askUpdatesBanner
+            objectName: "askUpdatesBanner"
+            visible: root.updateChecker !== null && root.updateChecker.askAboutAutomatic === true
+                && !updateBanner.visible
+            Layout.fillWidth: true
+            implicitHeight: visible ? askUpdatesColumn.implicitHeight + 2 * Theme.cardPadding : 0
+            radius: Theme.cornerRadius
+            color: Theme.surface
+            border.width: 1
+            border.color: Theme.accent
+
+            ColumnLayout {
+                id: askUpdatesColumn
+                anchors.fill: parent
+                anchors.margins: Theme.cardPadding
+                spacing: Theme.tightSpacing
+
+                Label {
+                    objectName: "askUpdatesTitle"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    font.weight: Theme.cardTitleWeight
+                    font.pointSize: Theme.cardTitleSize
+                    color: Theme.text
+                    text: "Check for new versions of Seabass once in a while?"
+                }
+                Label {
+                    objectName: "askUpdatesText"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.text
+                    text: "This is switched off by default: Seabass does not go online unless you allow it. "
+                        + "If you say yes, it downloads one small file from vizzzion.org once a day and "
+                        + "compares version numbers on this computer. Nothing about you, your sticks or "
+                        + "your library is sent. You can change your mind in Preferences at any time."
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: Theme.tightSpacing
+                    spacing: Theme.rowSpacing
+                    Button {
+                        objectName: "askUpdatesYes"
+                        text: "Yes, Check for Updates"
+                        highlighted: true
+                        onClicked: root.updateChecker.answerAutomaticQuestion(true)
+                    }
+                    Button {
+                        objectName: "askUpdatesNo"
+                        text: "No, Thanks"
+                        onClicked: root.updateChecker.answerAutomaticQuestion(false)
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+            }
+        }
         Label {
             visible: root.mediaController.errorMessage.length > 0
             text: root.mediaController.errorMessage

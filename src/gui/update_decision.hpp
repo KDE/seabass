@@ -109,6 +109,32 @@ bool mayRedecideFrom(const QString &state);
 // taps must neither claim a change nor pop anything up.
 bool tapsWouldEnableTesting(const QString &buildChannel, bool includeTestingNow);
 
+// How many different days Seabass has to have been started on before it
+// asks whether it may check for new versions. Not on the first day:
+// somebody trying it out for ten minutes has not decided to keep it.
+inline constexpr int UseDaysBeforeAsking = 3;
+
+// The days Seabass was started on, as far as the question needs them: a
+// count, and the last day counted (ISO date), so a second start on the
+// same day adds nothing.
+struct UseDays
+{
+    int count = 0;
+    QString lastDay;
+};
+
+// before, with today counted if it is a day not counted yet. A clock set
+// back counts as a new day too: all this needs is "used on several
+// occasions", and a wrong count costs one question asked a day early.
+UseDays countUseDay(UseDays before, const QString &today);
+
+// Whether to ask, on the home page, if Seabass may check for new
+// versions. Only a build that could check at all (a working-tree build
+// never does), only while the setting is off, only after a few days of
+// use, and only until the question has been answered once, either on the
+// banner or by touching the setting in Preferences.
+bool shouldAskAboutAutomaticChecks(bool isRelease, bool automatic, bool answered, int useDays);
+
 // The hidden switch for hearing about test builds on a stable build: ten
 // taps on the version line within five seconds. Not in the user
 // interface anywhere, on purpose: it is for people who know, and once it
