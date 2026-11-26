@@ -850,6 +850,27 @@ std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::s
     return contentPathsIn(opened);
 }
 
+std::vector<OneLibraryContentRow> oneLibraryContentRows(const std::string &pioneerRoot)
+{
+    const StickDatabaseRead read = oneLibraryDatabaseRead(pioneerRoot);
+    SqlCipherLibrary lib;
+    SqlCipherDb opened(lib, read.pathUtf8(), /*readOnly=*/true);
+    opened.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    bool hasComment = false;
+    {
+        SqlCipherStatement probe(opened, "SELECT count(*) FROM pragma_table_info('content') WHERE name = 'djComment'");
+        hasComment = probe.step() && probe.columnInt64(0) > 0;
+    }
+    std::vector<OneLibraryContentRow> rows;
+    SqlCipherStatement scan(opened, std::string("SELECT content_id, path, ")
+                                        + (hasComment ? "djComment" : "NULL")
+                                        + " FROM content WHERE path IS NOT NULL ORDER BY content_id");
+    while (scan.step()) {
+        rows.push_back({scan.columnInt64(0), scan.columnText(1), scan.columnText(2)});
+    }
+    return rows;
+}
+
 std::vector<std::pair<int64_t, std::string>> OneLibraryCueWriter::contentPaths()
 {
     checkNotStale();

@@ -134,6 +134,17 @@ std::vector<std::pair<std::int64_t, std::string>> enginePathsUntouched(const std
     return infrastructure::engine::engineTrackPaths(engineRoot);
 }
 
+// As enginePathsUntouched(), with each row's comment, for the index.
+std::vector<infrastructure::engine::EngineTrackRow> engineRowsUntouched(const std::string &engineRoot)
+{
+    const fs::path db = pathFromUtf8(engineRoot) / "Database2" / "m.db";
+    if (infrastructure::isWalModeSqlite(db)) {
+        const infrastructure::DatabaseReadCopy copy(db, fs::path("Database2") / "m.db");
+        return infrastructure::engine::engineTrackRows(pathToUtf8(copy.root()));
+    }
+    return infrastructure::engine::engineTrackRows(engineRoot);
+}
+
 std::vector<std::pair<std::int64_t, std::string>> pdbPaths(const infrastructure::rekordbox::PdbRowWriter &pdb)
 {
     std::vector<std::pair<std::int64_t, std::string>> paths;
@@ -216,6 +227,23 @@ bool TrackRows::listedAnywhere() const
     return rekordbox.state == State::Listed || oneLibrary.state == State::Listed || engine.state == State::Listed;
 }
 
+bool TrackRows::commentsDisagree() const
+{
+    std::set<std::string> held;
+    for (const CatalogRows *rows : {&rekordbox, &oneLibrary, &engine}) {
+        if (rows->state != CatalogRows::State::Listed) {
+            continue;
+        }
+        for (const auto &comment : rows->comments) {
+            const auto first = comment.find_first_not_of(" \t\r\n");
+            held.insert(first == std::string::npos
+                            ? std::string()
+                            : comment.substr(first, comment.find_last_not_of(" \t\r\n") - first + 1));
+        }
+    }
+    return held.size() > 1;
+}
+
 std::string TrackRows::refusal() const
 {
     using State = CatalogRows::State;
@@ -248,15 +276,18 @@ struct IndexedCatalog
 {
     bool present = false;
     std::vector<std::pair<std::int64_t, std::string>> rows;
+    std::vector<std::string> comments;
     std::unordered_map<std::string, std::vector<std::size_t>> byKey;
 
-    void add(std::int64_t id, const std::string &stored, const std::function<std::string(const std::string &)> &join)
+    void add(std::int64_t id, const std::string &stored, const std::function<std::string(const std::string &)> &join,
+             const std::string &comment)
     {
         if (stored.empty()) {
             return;
         }
         byKey[keyOf(join(stored))].push_back(rows.size());
         rows.emplace_back(id, stored);
+        comments.push_back(comment);
     }
 
     CatalogRows find(const std::string &wanted) const
@@ -274,12 +305,14 @@ struct IndexedCatalog
         for (const std::size_t i : it->second) {
             spellings.insert(rows[i].second);
             out.ids.push_back(rows[i].first);
+            out.comments.push_back(comments[i]);
             out.spelling = rows[i].second;
         }
         if (spellings.size() > 1) {
             out.state = CatalogRows::State::Ambiguous;
             out.spellings.assign(spellings.begin(), spellings.end());
             out.ids.clear();
+            out.comments.clear();
             out.spelling.clear();
         } else {
             out.state = CatalogRows::State::Listed;
@@ -325,7 +358,7 @@ StickPathIndex buildStickPathIndex(const QString &pioneerRoot, const QString &en
             data.rekordbox.present = true;
             const infrastructure::rekordbox::PdbRowWriter pdb(exportPdbOf(pioneer));
             for (const auto &row : pdb.trackPathRows()) {
-                data.rekordbox.add(row.id, row.filePath, join);
+                data.rekordbox.add(row.id, row.filePath, join, row.commentText);
                 data.comments[row.id] = row.comment;
             }
         });
@@ -333,8 +366,8 @@ StickPathIndex buildStickPathIndex(const QString &pioneerRoot, const QString &en
     if (hasOneLibrary(pioneer)) {
         reading("OneLibrary database", [&] {
             data.oneLibrary.present = true;
-            for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pioneer)) {
-                data.oneLibrary.add(id, path, join);
+            for (const auto &row : infrastructure::onelibrary::oneLibraryContentRows(pioneer)) {
+                data.oneLibrary.add(row.id, row.path, join, row.comment);
             }
         });
     }
@@ -342,8 +375,8 @@ StickPathIndex buildStickPathIndex(const QString &pioneerRoot, const QString &en
         reading("Engine library", [&] {
             data.engine.present = true;
             const auto engineJoined = engineJoin(engine);
-            for (const auto &[id, path] : enginePathsUntouched(engine)) {
-                data.engine.add(id, path, engineJoined);
+            for (const auto &row : engineRowsUntouched(engine)) {
+                data.engine.add(row.id, row.path, engineJoined, row.comment);
             }
         });
     }
@@ -523,6 +556,11 @@ struct OneLibraryPathsRead
     std::vector<std::pair<int64_t, std::string>> rows;
 };
 constexpr const char *OneLibraryPathsKey = "track-edit:onelibrary-paths";
+struct EnginePathsRead
+{
+    std::vector<std::pair<std::int64_t, std::string>> rows;
+};
+constexpr const char *EnginePathsKey = "track-edit:engine-paths:";
 }  // namespace
 
 void TrackFieldEditChange::beforeSave(SaveContext &ctx)
@@ -618,9 +656,23 @@ ChangeOutcome TrackFieldEditChange::apply(SaveContext &ctx)
             session.noteItemApplied();
             written << QStringLiteral("Engine");
         } else if (hasEngine(engine)) {
+            // Engine untouched by this save so far is read once for the
+            // whole save, as OneLibrary is above: a WAL-mode m.db is copied
+            // for each read (#108). Once a change of this save writes
+            // Engine, its session's copy is what is read, afresh.
             const FormatWriteSession *existing = existingFormatWriteSession(ctx, "engine", engine);
-            const CatalogRows now = match(enginePathsUntouched(existing ? existing->writeRoot() : engine),
-                                          keyOf(m_filePath), engineJoin(engine));
+            const auto untouched = [&]() -> const std::vector<std::pair<std::int64_t, std::string>> & {
+                return ctx
+                    .sharedForWholeSave<EnginePathsRead>(std::string(EnginePathsKey) + engine, [&] {
+                        auto read = std::make_unique<EnginePathsRead>();
+                        read->rows = enginePathsUntouched(engine);
+                        return read;
+                    })
+                    .rows;
+            };
+            const CatalogRows now = existing
+                ? match(enginePathsUntouched(existing->writeRoot()), keyOf(m_filePath), engineJoin(engine))
+                : match(untouched(), keyOf(m_filePath), engineJoin(engine));
             if (const QString why = drifted("Engine", m_rows.engine, now, title); !why.isEmpty()) {
                 return ChangeOutcome::failure(why);
             }

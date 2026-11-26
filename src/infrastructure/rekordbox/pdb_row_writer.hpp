@@ -193,6 +193,8 @@ public:
         uint32_t id = 0;
         std::string filePath;
         std::optional<TrackCommentCapacity> comment;
+        // The comment it holds, padding trimmed.
+        std::string commentText;
     };
     std::vector<TrackPathRow> trackPathRows() const;
 

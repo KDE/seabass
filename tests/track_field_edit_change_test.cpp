@@ -1136,5 +1136,29 @@ int main(int argc, char **argv)
         std::cout << "case 18 (reading the stick's index changes no file on it) OK\n";
     }
 
+    // 19. The index tells whether the catalogs agree on a track's comment
+    //     (#108): all three the same, they do; OneLibrary's another, they
+    //     do not, and the comment shown, staged, goes to all three. Blanks
+    //     at either end are no disagreement.
+    if (runs(19)) {
+        FixtureStick s(fixture, "seabass_track_edit_disagree");
+        const auto [track, capacity] = commentTrack(s);
+        const std::string file = track.filePath;
+        assert(saveChanges({commentChange(s, file, "agreed")}, s.pioneerQ(), s.engineQ()).error.isEmpty());
+        assert(!buildStickPathIndex(s.pioneerQ(), s.engineQ()).rowsFor(file).commentsDisagree());
+        const std::string stored = oneLibraryPathOf(s, file);
+        oneLibraryExec(s, "UPDATE content SET djComment = ? WHERE path = ?", {"  agreed ", stored});
+        assert(!buildStickPathIndex(s.pioneerQ(), s.engineQ()).rowsFor(file).commentsDisagree()
+               && "blanks at either end are no disagreement");
+        oneLibraryExec(s, "UPDATE content SET djComment = ? WHERE path = ?", {"something else", stored});
+        const TrackRows rows = buildStickPathIndex(s.pioneerQ(), s.engineQ()).rowsFor(file);
+        assert(rows.commentsDisagree());
+        assert(rows.oneLibrary.comments == std::vector<std::string>{"something else"});
+        assert(saveChanges({commentChange(s, file, "agreed")}, s.pioneerQ(), s.engineQ()).error.isEmpty());
+        expectCommentEverywhere(s, file, "agreed");
+        assert(!buildStickPathIndex(s.pioneerQ(), s.engineQ()).rowsFor(file).commentsDisagree());
+        std::cout << "case 19 (the index tells when the catalogs disagree on a comment) OK\n";
+    }
+
     return 0;
 }

@@ -125,6 +125,8 @@ QVariantMap TrackEditController::trackInfo(const QString &filePath) const
     map.insert(QStringLiteral("units"), static_cast<int>(limit.units));
     map.insert(QStringLiteral("asciiOnly"), limit.asciiOnly);
     map.insert(QStringLiteral("reason"), QString::fromStdString(limit.reason));
+    // The catalogs hold different comments for the track (#108).
+    map.insert(QStringLiteral("commentsDiffer"), rows.commentsDisagree());
     return map;
 }
 
@@ -411,7 +413,12 @@ bool TrackEditController::setComment(const QString &rekordboxPath, const QString
     setErrorMessage({});
     m_lastRefusal.clear();
     const QString comment = cleanComment(text);
-    if (comment == original) {
+    // The comment shown taken again is no edit, unless the catalogs hold
+    // different comments: choosing the one shown then writes it to all of
+    // them (#108). Answered from the index when it is there; never a read.
+    const bool disagree = m_indexState == IndexState::Ready
+                          && m_index.rowsFor(filePath.toStdString()).commentsDisagree();
+    if (comment == original && !disagree) {
         unstage(TrackField::Comment, filePath);
         return true;
     }

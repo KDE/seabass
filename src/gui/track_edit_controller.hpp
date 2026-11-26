@@ -48,7 +48,7 @@ class TrackEditController : public QObject
     Q_PROPERTY(int pendingRevision READ pendingRevision NOTIFY pendingChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     // The track shown (lookUpTrack), as {filePath, known, reading, failed,
-    // editable, refusal, limited, units, asciiOnly, reason}: `known` once
+    // editable, refusal, limited, units, asciiOnly, reason, commentsDiffer}: `known` once
     // the index answers, `reading` while it is being built, `failed` when
     // the read failed (`refusal` says why), `editable` false when the
     // track cannot be edited (`refusal` says why), the rest its

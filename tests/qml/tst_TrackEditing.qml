@@ -144,9 +144,19 @@ TestCase {
     // the row is rebuilt and moved, so its room is far beyond any comment
     // typed here), shown.
     function commented(env) {
-        const found = tracks(env).find(t => t.filePath && t.comment.length > 0);
-        verify(found !== undefined, "the fixture has a track with a comment");
-        show(env, found);
+        // One the catalogs agree on: in the fixture most do not, export.pdb
+        // having no comment where OneLibrary and Engine have one.
+        let found = undefined;
+        for (const t of tracks(env)) {
+            if (t.filePath && t.comment.length > 0) {
+                show(env, t);
+                if (env.panel.commentLimit.commentsDiffer === false) {
+                    found = t;
+                    break;
+                }
+            }
+        }
+        verify(found !== undefined, "the fixture has a track with a comment all its catalogs hold");
         verify(env.panel.commentLimit.limited && env.panel.commentLimit.units > 1000,
                "export.pdb's row takes a long comment: " + JSON.stringify(env.panel.commentLimit));
         return found;

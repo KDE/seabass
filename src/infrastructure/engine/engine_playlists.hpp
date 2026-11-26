@@ -107,6 +107,16 @@ bool enginePlaylistExists(const std::string &engineLibraryPath, const std::strin
 // path are left out. Throws when the database cannot be read.
 std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::string &databaseRoot);
 
+// As engineTrackPaths(), with each row's comment (empty when it has none,
+// or the schema has no such column).
+struct EngineTrackRow
+{
+    std::int64_t id = 0;
+    std::string path;
+    std::string comment;
+};
+std::vector<EngineTrackRow> engineTrackRows(const std::string &databaseRoot);
+
 // Read live by default (ReadFor::Writing): a save looks up the rows it is
 // writing. A look that only reads the stick passes ReadFor::Reading and
 // reads its shared read copy (#110).

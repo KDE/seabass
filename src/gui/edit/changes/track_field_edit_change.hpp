@@ -68,6 +68,9 @@ struct CatalogRows
     std::vector<std::int64_t> ids;
     // The spellings found (Ambiguous).
     std::vector<std::string> spellings;
+    // Each listed row's comment, as the catalog holds it (Listed, when
+    // read through the stick's index).
+    std::vector<std::string> comments;
 };
 
 // The file's rows in each catalog of the stick.
@@ -77,6 +80,10 @@ struct TrackRows
     CatalogRows oneLibrary;  // exportLibrary.db
     CatalogRows engine;      // m.db
     bool listedAnywhere() const;
+    // The catalogs listing the file hold more than one comment for it,
+    // blanks at either end aside: choosing any one of them is then an
+    // edit, though it is the one shown (#108).
+    bool commentsDisagree() const;
     // Why an edit of this track cannot be staged, one plain sentence; empty
     // when it can.
     std::string refusal() const;

@@ -181,7 +181,7 @@ std::vector<djinterop::track> tracksForFile(const djinterop::database &db, const
 
 }  // namespace
 
-std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::string &databaseRoot)
+std::vector<EngineTrackRow> engineTrackRows(const std::string &databaseRoot)
 {
     const std::string file = pathToUtf8(pathFromUtf8(databaseRoot) / "Database2" / "m.db");
     sqlite3 *db = nullptr;
@@ -191,17 +191,29 @@ std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::st
         throw std::runtime_error("engine: could not open " + file + ": " + why);
     }
     sqlite3_busy_timeout(db, 5000);
-    std::vector<std::pair<std::int64_t, std::string>> rows;
+    std::vector<EngineTrackRow> rows;
     sqlite3_stmt *stmt = nullptr;
     std::string failure;
-    if (sqlite3_prepare_v2(db, "SELECT id, path FROM Track WHERE path IS NOT NULL AND path <> ''", -1, &stmt, nullptr)
-        != SQLITE_OK) {
+    bool hasComment = false;
+    if (sqlite3_prepare_v2(db, "SELECT count(*) FROM pragma_table_info('Track') WHERE name = 'comment'", -1, &stmt,
+                           nullptr)
+        == SQLITE_OK) {
+        hasComment = sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int64(stmt, 0) > 0;
+    }
+    sqlite3_finalize(stmt);
+    stmt = nullptr;
+    const std::string query = std::string("SELECT id, path, ") + (hasComment ? "comment" : "NULL")
+                              + " FROM Track WHERE path IS NOT NULL AND path <> ''";
+    if (sqlite3_prepare_v2(db, query.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         failure = sqlite3_errmsg(db);
     } else {
         int rc = SQLITE_ROW;
         while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-            const auto *text = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
-            rows.emplace_back(sqlite3_column_int64(stmt, 0), text ? std::string(text) : std::string());
+            const auto text = [&](int column) {
+                const auto *t = reinterpret_cast<const char *>(sqlite3_column_text(stmt, column));
+                return t ? std::string(t) : std::string();
+            };
+            rows.push_back({sqlite3_column_int64(stmt, 0), text(1), text(2)});
         }
         if (rc != SQLITE_DONE) {
             failure = sqlite3_errmsg(db);
@@ -213,6 +225,15 @@ std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::st
         throw std::runtime_error("engine: could not read the tracks' paths in " + file + ": " + failure);
     }
     return rows;
+}
+
+std::vector<std::pair<std::int64_t, std::string>> engineTrackPaths(const std::string &databaseRoot)
+{
+    std::vector<std::pair<std::int64_t, std::string>> paths;
+    for (auto &row : engineTrackRows(databaseRoot)) {
+        paths.emplace_back(row.id, std::move(row.path));
+    }
+    return paths;
 }
 
 std::vector<std::int64_t> engineTrackIdsForFile(const std::string &databaseRoot, const std::string &realLibraryPath,

@@ -13,6 +13,8 @@
 //    a field can be staged before anything is written.
 // 3. A change the save reached and skipped is taken off the list but not
 //    reported as saved: the pane must not show a value never written.
+// 8. The comment shown, taken again, stages nothing while the catalogs
+//    agree on it, and stages it while they do not (#108).
 
 #include <QCoreApplication>
 #include <QSignalSpy>
@@ -32,6 +34,7 @@
 #include "application/use_cases/scan_library.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
+#include "gui/edit/changes/track_field_edit_change.hpp"
 #include "gui/edit/pending_change.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/track_edit_controller.hpp"
@@ -269,6 +272,39 @@ int main(int argc, char **argv)
         assert(!switching.commentLimit().value(QStringLiteral("reading")).toBool());
         QThreadPool::globalInstance()->waitForDone();
         std::cout << "case 7 (a switch to no paths mid-read is answered once the read lands) OK\n";
+    }
+
+    // 8.
+    {
+        registry->discardAll();
+        TrackEditController agreeing;
+        const auto ready = [&] {
+            agreeing.lookUpTrack(pioneer, engine, file);
+            assert(waitFor(&agreeing, &TrackEditController::commentLimitChanged,
+                           [&] { return agreeing.commentLimit().value(QStringLiteral("known")).toBool(); }));
+        };
+        ready();
+        const QString shown = QString::fromStdString(track.comment);
+        // As the fixture came: export.pdb has no comment for the track (the
+        // anonymizer could not fit its placeholder), OneLibrary and Engine
+        // have one.
+        assert(buildStickPathIndex(pioneer, engine).rowsFor(file.toStdString()).commentsDisagree());
+        assert(agreeing.commentLimit().value(QStringLiteral("commentsDiffer")).toBool());
+        assert(agreeing.setComment(pioneer, engine, file, QStringLiteral("T"), shown, shown));
+        assert(agreeing.hasStagedComment(file) && "disagreeing: the comment shown is staged for all of them");
+        QSignalSpy wrote(session, &LibraryEditSession::saveFinished);
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !wrote.isEmpty(); }));
+        assert(wrote.takeFirst().at(0).toMap().value(QStringLiteral("error")).toString().isEmpty());
+        assert(!buildStickPathIndex(pioneer, engine).rowsFor(file.toStdString()).commentsDisagree()
+               && "the save made them agree");
+        ready();
+        assert(!agreeing.commentLimit().value(QStringLiteral("commentsDiffer")).toBool());
+        assert(agreeing.setComment(pioneer, engine, file, QStringLiteral("T"), shown, shown));
+        assert(!agreeing.hasStagedComment(file) && session->pendingCount() == 0 && "agreeing: no edit");
+        registry->discardAll();
+        QThreadPool::globalInstance()->waitForDone();
+        std::cout << "case 8 (the comment shown stages only where the catalogs disagree) OK\n";
     }
 
     return 0;

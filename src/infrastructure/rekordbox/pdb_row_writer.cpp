@@ -2507,7 +2507,8 @@ std::vector<PdbRowWriter::TrackPathRow> PdbRowWriter::trackPathRows() const
                     if (auto *t = dynamic_cast<Pdb::track_row_t *>(row->body())) {
                         const size_t body = static_cast<size_t>(pdb.len_page()) * page->page_index()
                                             + static_cast<size_t>(row->row_base());
-                        rows.push_back({t->id(), sqlText(t->file_path()), commentCapacityOfRow(body, newPagePossible)});
+                        rows.push_back({t->id(), sqlText(t->file_path()), commentCapacityOfRow(body, newPagePossible),
+                                        sqlText(t->comment())});
                     }
                 }
             }

@@ -141,6 +141,17 @@ StickDatabaseRead oneLibraryDatabaseRead(const std::string &pioneerRoot, ReadFor
 // read.
 std::vector<std::pair<int64_t, std::string>> oneLibraryContentPaths(const std::string &pioneerRoot);
 
+// As oneLibraryContentPaths(), with each row's djComment (empty when the
+// row has none, or the schema has no such column): the index of the stick
+// tells from it whether the catalogs agree on a track's comment.
+struct OneLibraryContentRow
+{
+    int64_t id = 0;
+    std::string path;
+    std::string comment;
+};
+std::vector<OneLibraryContentRow> oneLibraryContentRows(const std::string &pioneerRoot);
+
 class OneLibraryCueWriter
 {
 public:
