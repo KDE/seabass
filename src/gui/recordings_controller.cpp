@@ -70,6 +70,10 @@ QVariant RecordingListModel::data(const QModelIndex &index, int role) const
             return m_states[static_cast<std::size_t>(index.row())].heldSeconds;
         case DeclaredSecondsRole:
             return m_states[static_cast<std::size_t>(index.row())].declaredSeconds;
+        case DeclaredUnusableRole:
+            return m_states[static_cast<std::size_t>(index.row())].declaredUnusable;
+        case MissingBytesRole:
+            return m_states[static_cast<std::size_t>(index.row())].missingBytes;
         case HoldsNoAudioRole:
             return m_states[static_cast<std::size_t>(index.row())].holdsNoAudio;
         default:
@@ -101,6 +105,8 @@ QHash<int, QByteArray> RecordingListModel::roleNames() const
         {UnfinishedRole, "unfinished"},
         {HeldSecondsRole, "heldSeconds"},
         {DeclaredSecondsRole, "declaredSeconds"},
+        {DeclaredUnusableRole, "declaredUnusable"},
+        {MissingBytesRole, "missingBytes"},
         {HoldsNoAudioRole, "holdsNoAudio"},
     };
 }
@@ -187,7 +193,11 @@ std::vector<RecordingListModel::HeaderState> headerStates(const std::vector<appl
             states[i].unfinished = true;
             states[i].heldSeconds = static_cast<double>(unfinished->framesHeld) / rate;
             if (unfinished->kind != infrastructure::audio::WavUnfinished::Kind::NoSize) {
-                states[i].declaredSeconds = static_cast<double>(unfinished->framesDeclared) / rate;
+                states[i].declaredUnusable = !unfinished->declaredUsable;
+                states[i].missingBytes = static_cast<double>(unfinished->bytesMissing);
+                if (unfinished->declaredUsable) {
+                    states[i].declaredSeconds = static_cast<double>(unfinished->framesDeclared) / rate;
+                }
             }
         }
     }

@@ -59,9 +59,10 @@ public:
 class NoTags : public application::RecordingTagWriter
 {
 public:
-    application::RecordingTagWriteResult write(const std::string &, const application::RecordingTags &) override
+    application::RecordingTagWriteResult tagInPlace(const application::VerifiedFlac &,
+                                                    const application::RecordingTags &) override
     {
-        return {false, "this build of Seabass cannot write tags"};
+        return {false, "this build of Seabass cannot write tags", {}};
     }
 };
 
@@ -247,8 +248,8 @@ KeepRecordingController::~KeepRecordingController()
     }
     m_cancel.cancel();
     if (!m_jobEnd->waitUntil(QDeadlineTimer(KeepRecordingStopWaitMs))) {
-        // In the tag writer's copy, which cannot be interrupted: the worker
-        // owns all it uses and removes its FLAC when the copy returns. The
+        // In the tag writer, which cannot be interrupted: the worker owns
+        // all it uses and removes its temporary file when it returns. The
         // application knows a write is still out (DetachedWrites) and the
         // global pool is waited for at exit.
         whenWriteEnds(m_future, {});

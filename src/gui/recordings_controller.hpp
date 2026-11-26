@@ -48,8 +48,15 @@ public:
         // when it declares no length).
         UnfinishedRole,
         HeldSecondsRole,      // -1 unless unfinished
-        DeclaredSecondsRole,  // -1 unless unfinished and declared
-        // Not one whole frame of audio in the file: not offered to keep.
+        DeclaredSecondsRole,  // -1 unless unfinished and declared, and usable
+        // The header declares a length no recording has (see
+        // infrastructure::audio::declaredLengthUsable()): not said as one.
+        DeclaredUnusableRole,
+        // How many bytes less the file holds than its header declares; -1
+        // unless the header declares more than the file holds.
+        MissingBytesRole,
+        // Not one whole frame of audio in the file, or no data chunk: not
+        // offered to keep.
         HoldsNoAudioRole,
     };
 
@@ -66,6 +73,8 @@ public:
         bool unfinished = false;
         double heldSeconds = -1.0;
         double declaredSeconds = -1.0;
+        bool declaredUnusable = false;
+        double missingBytes = -1.0;
         bool holdsNoAudio = false;
     };
     void setRecordings(std::vector<application::Recording> recordings, std::vector<HeaderState> states = {});

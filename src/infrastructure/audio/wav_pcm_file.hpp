@@ -71,7 +71,32 @@ struct WavUnfinished
     std::uint64_t partialFrameBytes = 0;
     // What the header declares, in whole frames (0 for NoSize).
     std::uint64_t framesDeclared = 0;
+    // PastEnd: how many bytes less the file holds than the header
+    // declares, and whether the declared length is one a recording can
+    // have (declaredLengthUsable()). 0 and true for NoSize.
+    std::uint64_t bytesMissing = 0;
+    bool declaredUsable = true;
 };
+
+// A declared length longer than this is not one a recording has: it is
+// not said as a length ("the header's length is not usable").
+inline constexpr std::uint64_t MaxUsableDeclaredSeconds = 100ULL * 3600;
+// Nor is an RF64 or BW64 data size (its ds64 chunk's, 64 bits) of more
+// than this many times what the file holds: a recording cut to a
+// thousandth of its length is not one, a garbled 64 bit size is.
+inline constexpr std::uint64_t MaxUsableRf64DeclaredFactor = 1000;
+
+// Whether a header that declares `bytesDeclared` (`framesDeclared` whole
+// frames at `sampleRate`) for a file holding `bytesHeld` declares a usable
+// length: at most MaxUsableDeclaredSeconds, and for RF64 at most
+// MaxUsableRf64DeclaredFactor times what is held.
+bool declaredLengthUsable(std::uint64_t framesDeclared, int sampleRate, std::uint64_t bytesDeclared,
+                          std::uint64_t bytesHeld, bool rf64);
+
+// "it declares 1:00:00 of audio, and the file holds 42:10", with the
+// bytes missing in words when the two lengths print the same, or "the
+// header's length is not usable, and the file holds 42:10". For PastEnd.
+std::string declaredAgainstHeld(const WavUnfinished &unfinished, int sampleRate);
 
 // A PCM WAV as DJ hardware records it, read piece by piece: the header is
 // read when the file is opened, the samples only as asked for, so a
@@ -95,8 +120,12 @@ struct WavUnfinished
 // unfinished() is set either way, unless the file holds no whole frame
 // (then refused, holdsNoAudio()).
 //
+// A plain RIFF over 4 GB is unfinished (NoSize) when its data size is 0
+// or 0xFFFFFFFF, a recording of hours the player never finished.
+//
 // Refused, with the reason in error(): a file that is not a WAV, another
-// sample format (float, 8 or 32 bit, compressed), a plain RIFF over 4 GB,
+// sample format (float, 8 or 32 bit, compressed), a plain RIFF over 4 GB
+// with any other data size,
 // an RF64 or BW64 whose ds64 chunk is missing or gives a data size of 0,
 // and a file that holds more than its header describes in any other way,
 // zero bytes of more than a second included (the reason then gives the
@@ -127,7 +156,8 @@ public:
     // Set whenever the header is unfinished, read to the end or not. The
     // sample format is in layout() then too.
     const std::optional<WavUnfinished> &unfinished() const { return m_unfinished; }
-    // Refused because there is not one whole frame of audio in it.
+    // Refused because there is not one whole frame of audio in it, or no
+    // data chunk at all.
     bool holdsNoAudio() const { return m_noAudio; }
     // When open: what is read. With WavReading::ToEndOfFile and an
     // unfinished header, `frames` is unfinished()->framesHeld.
@@ -155,7 +185,8 @@ private:
     std::string m_error;
 };
 
-// A number of frames as a length a person reads: "1:02:03" or "2:03".
+// A number of frames as a length a person reads: "1:02:03" or "2:03",
+// cut to whole seconds as a clock shows them (never rounded up).
 std::string wavDuration(std::uint64_t frames, int sampleRate);
 
 }  // namespace seabass::infrastructure::audio

@@ -45,7 +45,8 @@ namespace seabass::infrastructure::audio
 // that last block (or has been quiet for a while), and the end of the job
 // is the decoded check, which also proves the stop lost nothing.
 //
-// The checked file is then flushed without being created (a temporary
+// The checked file is then (in encode(), or later in placeVerified() for
+// one left unplaced) flushed without being created (a temporary
 // file that went away is a failure, never an empty FLAC), looked at again
 // (its size and its STREAMINFO block, with the MD5 of the samples, must be
 // those that were checked), and renamed to the target by a rename that
@@ -69,14 +70,17 @@ public:
 
     application::RecordingEncodeResult encode(const std::string &wavPath, const std::string &flacPath,
                                               const application::RecordingEncodeOptions &options) override;
+    application::RecordingPlaceResult placeVerified(const application::VerifiedFlac &file,
+                                                    const std::string &flacPath) override;
 
     // For tests: called with the path of the temporary file at three
-    // points, to change the world there and see the encoder refuse.
+    // points, to change the world there and see the encoder refuse. The
+    // last two in placeVerified() too.
     struct TestHooks
     {
         // Before the check: to damage the file.
         std::function<void(const std::string &)> beforeCheck;
-        // After the check, before the file is flushed and looked at again.
+        // Before the file is flushed and looked at again for placing.
         std::function<void(const std::string &)> beforePlace;
         // After the last look at the target, right before the rename.
         std::function<void(const std::string &)> beforeRename;

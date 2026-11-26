@@ -107,8 +107,22 @@ public:
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        write(seabass::pathFromUtf8(flacPath), "fLaC stand-in");
+        // Left unplaced, as the keep job asks: under a temporary name.
+        const std::string temp = flacPath + ".0000000000000000.seabass-encode-tmp";
+        write(seabass::pathFromUtf8(temp), "fLaC stand-in");
         result.encoded = true;
+        result.unplaced.path = temp;
+        result.unplaced.size = 13;
+        return result;
+    }
+    seabass::application::RecordingPlaceResult placeVerified(const seabass::application::VerifiedFlac &file,
+                                                             const std::string &flacPath) override
+    {
+        seabass::application::RecordingPlaceResult result;
+        std::error_code ec;
+        std::filesystem::rename(seabass::pathFromUtf8(file.path), seabass::pathFromUtf8(flacPath), ec);
+        result.placed = !ec;
+        result.error = ec.message();
         return result;
     }
 
@@ -125,9 +139,10 @@ public:
 class PassingTags : public seabass::application::RecordingTagWriter
 {
 public:
-    seabass::application::RecordingTagWriteResult write(const std::string &, const seabass::application::RecordingTags &) override
+    seabass::application::RecordingTagWriteResult tagInPlace(const seabass::application::VerifiedFlac &file,
+                                                             const seabass::application::RecordingTags &) override
     {
-        return {true, {}};
+        return {true, {}, file};
     }
 };
 
@@ -432,6 +447,9 @@ int main(int argc, char **argv)
         std::string empty = wav(0, 'e');
         empty.replace(40, 4, std::string(4, '\0'));
         write(stick / "Sessions" / "E1.wav", empty);
+        // Cut before its data chunk: the header and the format, nothing
+        // after. It holds no audio too, and is not offered to keep.
+        write(stick / "Sessions" / "N1.wav", wav(44100, 'n').substr(0, 36));
         write(stick / "Sessions" / "F1.wav", wav(44100, 'f'));
         const int listedBefore = listed.count();
         controller.load(QStringLiteral("STICK"), QString(), pathToQString(engine));
@@ -441,6 +459,7 @@ int main(int argc, char **argv)
         bool sawUnfinished = false;
         bool sawCutShort = false;
         bool sawEmpty = false;
+        bool sawNoDataChunk = false;
         bool sawFinished = false;
         for (int i = 0; i < model->rowCount(); ++i) {
             const QModelIndex index = model->index(i);
@@ -449,22 +468,28 @@ int main(int argc, char **argv)
             const double held = model->data(index, Model::HeldSecondsRole).toDouble();
             const double declaredSeconds = model->data(index, Model::DeclaredSecondsRole).toDouble();
             const bool noAudio = model->data(index, Model::HoldsNoAudioRole).toBool();
+            const double missing = model->data(index, Model::MissingBytesRole).toDouble();
+            const bool unusable = model->data(index, Model::DeclaredUnusableRole).toBool();
             if (name == QStringLiteral("U1.wav")) {
                 sawUnfinished = rowUnfinished && held > 1.99 && held < 2.01 && declaredSeconds < 0 && !noAudio;
             } else if (name == QStringLiteral("C1.wav")) {
                 sawCutShort = rowUnfinished && held > 1.99 && held < 2.01 && declaredSeconds > 3.99
-                    && declaredSeconds < 4.01 && !noAudio;
+                    && declaredSeconds < 4.01 && !noAudio && missing == 44100.0 * 4 * 2 - 2 && !unusable;
             } else if (name == QStringLiteral("E1.wav")) {
                 sawEmpty = noAudio && !rowUnfinished;
+            } else if (name == QStringLiteral("N1.wav")) {
+                sawNoDataChunk = noAudio && !rowUnfinished;
             } else if (name == QStringLiteral("F1.wav")) {
-                sawFinished = !rowUnfinished && held < 0 && declaredSeconds < 0 && !noAudio;
+                sawFinished = !rowUnfinished && held < 0 && declaredSeconds < 0 && !noAudio && missing < 0 && !unusable;
             }
         }
         assert(sawUnfinished);
         assert(sawCutShort);
-        std::cout << "ok: a recording cut short is marked with both lengths\n";
+        std::cout << "ok: a recording cut short is marked with both lengths and the bytes missing\n";
         assert(sawEmpty);
         std::cout << "ok: a recording without a whole frame holds no audio\n";
+        assert(sawNoDataChunk);
+        std::cout << "ok: a recording cut before its data chunk holds no audio\n";
         assert(sawFinished);
         std::cout << "ok: a recording whose header was not completed is marked, with the audio the file holds\n";
     }

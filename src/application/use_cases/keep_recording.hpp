@@ -25,16 +25,20 @@ namespace seabass::application
 // on the computer.
 //
 // The order is fixed: the free space on the target's volume, the
-// encoding (with the encoder's own check, sample for sample), the cover,
-// the tags. The recording on the stick is only ever read: by the encoder,
-// and here for its size. A failure or a cancel before the tags were
-// written and read back leaves no file of this job in the target folder,
-// with one exception that is always said (KeepRecordingResult::leftBehind):
-// a file under the target's name that the job cannot prove is its own
-// unfinished FLAC is left where it is. A cancel that comes after the tags
-// were written and read back changes nothing: the job is done, and the
-// FLAC is kept. The folder itself stays when it was made for the job. A
-// file under the target's name is never replaced. A job for a recording
+// encoding to a temporary file beside the target (with the encoder's own
+// check, sample for sample), the cover, the tags and the cover written
+// into that temporary file and read back (its audio proven unchanged),
+// and only then the placing: the file gets the FLAC's name by a rename
+// that never replaces. Until the placing the temporary file is the job's
+// only file, and a failure or a cancel takes it away again: nothing ever
+// had the FLAC's name. Once placed the job is done, and a cancel that
+// comes then changes nothing. Something is left in the folder only when
+// it is said (KeepRecordingResult::leftBehind): a temporary file that
+// could not be removed, or a file under the FLAC's name that does not
+// have the size of the checked file after the rename. The recording on
+// the stick is only ever read: by the encoder, and here for its size. The
+// folder itself stays when it was made for the job. A file under the
+// target's name is never replaced. A job for a recording
 // or a FLAC that another job in this process has in hand is refused
 // before it touches anything.
 //
@@ -79,12 +83,12 @@ public:
     // Removes one file this job made.
     virtual std::string removeFile(const std::string &path) = 0;
     // Removes Seabass's own leftover temporary files in `folder` (not
-    // below it, links never followed): regular files named as the
-    // encoder and the tag writer name theirs, older than a day, whose
-    // FLAC's name `inHand` does not claim for a job of this process. A tag
-    // writer's copy whose FLAC is not beside it is never removed (after an
-    // interrupted replace it can be the only copy of a kept FLAC): it is
-    // named instead. Answers a sentence per file removed, found and not
+    // below it, links never followed): regular files named as the encoder
+    // names its file, or as the tag writer of earlier builds named its
+    // copy, older than a day, whose FLAC's name `inHand` does not claim
+    // for a job of this process. Such a tag copy whose FLAC is not beside
+    // it is never removed (an earlier build's interrupted replace can have
+    // left it as the only copy of a kept FLAC): it is named instead. Answers a sentence per file removed, found and not
     // removable, or left for that reason.
     virtual std::vector<std::string>
     sweepLeftovers(const std::string &folder, const std::function<bool(const std::string &flacName)> &inHand) = 0;
@@ -108,9 +112,8 @@ struct KeepRecordingRequest
     // The root of the stick the recording is on: the folder must not be
     // on it. Required.
     std::string stickRoot;
-    // How many bytes the longest temporary name the encoder and the tag
-    // writer give beside the FLAC adds to its name: the name and that
-    // must fit the filesystem's longest name.
+    // How many bytes the encoder's temporary name beside the FLAC adds to
+    // its name: the name and that must fit the filesystem's longest name.
     std::size_t tempNameExtraBytes = 0;
     // The person chose to keep the audio of a recording the player did
     // not finish (RecordingEncodeOptions::keepUnfinished). Without it such
@@ -124,9 +127,11 @@ enum class KeepRecordingStep
     Encoding,  // the encoder writing the FLAC
     Checking,  // the encoder decoding it again and comparing
     Tagging,   // the cover prepared, the tags and the cover written
+    Placing,   // the tagged file given the FLAC's name
 };
 
-// "space", "encoding", "checking", "tags": the key the GUI turns into words.
+// "space", "encoding", "checking", "tags", "placing": the key the GUI
+// turns into words.
 const char *keepRecordingStepKey(KeepRecordingStep step);
 
 struct KeepRecordingProgress
@@ -151,10 +156,10 @@ struct KeepRecordingResult
     // cancelled, unless a file was left in the folder, which is then said
     // here too, with its path.
     std::string message;
-    // When not kept: a file under the FLAC's name that was left in the
-    // folder (one that could not be removed, or one that is not provably
-    // the job's own unfinished FLAC). Empty when nothing is there; the
-    // message says so when that could not be told.
+    // When not kept: a file this job left in the folder, the path of its
+    // temporary file that could not be removed or of a file under the
+    // FLAC's name that does not have the checked size after the rename.
+    // Empty when nothing was left.
     std::string leftBehind;
     // Things to know about the job, kept or not, a sentence each: the
     // recording's header was not completed and how much of it was kept,
@@ -177,9 +182,9 @@ inline constexpr std::size_t MaxFileNameBytes = 255;
 bool hasControlCharacter(std::string_view text);
 
 // Room asked for on the target's volume: the FLAC can be as large as the
-// recording (noise does not compress), and the tag writer writes a copy
-// of it beside it for the time of the write, so twice the recording, and
-// a margin for the filesystem.
+// recording (noise does not compress), and it is the only file the job
+// writes (the tags go into it), so the recording's size and a margin for
+// the filesystem and the tags.
 std::uint64_t keepRecordingSpaceNeeded(std::uint64_t wavBytes);
 inline constexpr std::uint64_t KeepRecordingSpaceMargin = 64ULL * 1024 * 1024;
 
@@ -204,7 +209,7 @@ std::string keptRecordingFileName(std::string_view artist, std::string_view titl
                                   const GraphemeCut &cut);
 
 // The room for the part before ".flac" in a folder whose filesystem takes
-// names of up to `maxNameBytes`, when temporary names add
+// names of up to `maxNameBytes`, when the temporary name adds
 // `tempNameExtraBytes` to the FLAC's name. 0 when there is none.
 std::size_t keptRecordingStemBytes(std::size_t maxNameBytes, std::size_t tempNameExtraBytes);
 

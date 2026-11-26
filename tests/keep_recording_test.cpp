@@ -45,10 +45,10 @@ const std::string FileName = "DJ Kelp - Late Set.flac";
 const std::string Flac = Folder + "/" + FileName;
 const std::string Picture = "/home/dj/Pictures/cover.png";
 const std::string Stick = "/stick";
-// What the temporary names add to the FLAC's name, as the GUI hands it in:
-// "." and 16 hex digits and ".seabass-encode-tmp", the longer suffix.
+// What the temporary name adds to the FLAC's name, as the GUI hands it in:
+// "." and 16 hex digits and ".seabass-encode-tmp", the only one a job writes.
 constexpr std::size_t TempExtra = seabass::infrastructure::audio::recordingTempNameExtraBytes();
-static_assert(TempExtra == 1 + 16 + 19, "the temporary names' extra follows the suffix constants");
+static_assert(TempExtra == 1 + 16 + 19, "the temporary name's extra follows the encoder's suffix");
 constexpr std::uint64_t WavBytes = 500ULL * 1024 * 1024;
 
 // Everything the fakes did, in order: "read ...", "write ...", and the
@@ -146,6 +146,8 @@ public:
 };
 
 constexpr std::uint64_t EncodedBytes = 300ULL * 1024 * 1024;
+// The encoder's temporary file, where the FLAC is until it is placed.
+const std::string Temp = Flac + ".0123456789abcdef.seabass-encode-tmp";
 
 class FakeEncoder : public RecordingEncoder
 {
@@ -159,11 +161,10 @@ public:
     CancellationToken *token = nullptr;
     // Called while the encoder runs: another job asked for meanwhile.
     std::function<void()> during;
-    // With `error`: a file is left under the target's name, as the real
-    // encoder leaves one whose size is wrong after the rename.
-    bool leavesTarget = false;
-    // Throws after putting a file under the target's name.
-    bool throwsAfterTarget = false;
+    // Throws while encoding, its own temporary file taken away.
+    bool throws = false;
+    // Answers encoded without saying where its file is.
+    bool noPath = false;
     // The recording's header is unfinished: refused without the choice,
     // and with it kept with `heldFrames` and `partialBytes` left out.
     bool unfinished = false;
@@ -171,22 +172,37 @@ public:
     std::uint64_t partialBytes = 0;
     // What the header declares; nullopt when it declares no size.
     std::optional<std::uint64_t> declaredFrames;
+    std::uint64_t bytesMissing = 0;
+    bool declaredUnusable = false;
     std::vector<std::string> notes;
-    // The option the job was given.
+    // The options the job was given.
     bool keepUnfinishedGiven = false;
+    bool leaveUnplacedGiven = false;
+
+    // The placing: refused before the rename with `placeError`; renamed
+    // and then another size under the name (`placeLeavesTarget`); renamed
+    // and then cancelled by the person (`cancelAfterPlacing`); throwing
+    // before or after the rename.
+    std::string placeError;
+    bool placeLeavesTarget = false;
+    bool cancelAfterPlacing = false;
+    bool throwsBeforeRename = false;
+    bool throwsAfterRename = false;
+    std::vector<std::string> placeNotes;
+    // What placeVerified() was handed.
+    VerifiedFlac placedFile;
 
     RecordingEncodeResult encode(const std::string &wavPath, const std::string &flacPath,
                                  const RecordingEncodeOptions &options) override
     {
         journal.push_back("encode " + wavPath + " -> " + flacPath);
         keepUnfinishedGiven = options.keepUnfinished;
+        leaveUnplacedGiven = options.leaveUnplaced;
         if (during) {
             during();
         }
         RecordingEncodeResult result;
-        if (throwsAfterTarget) {
-            m_files.present.insert(flacPath);
-            m_files.sizes[flacPath] = 12;
+        if (throws) {
             throw std::runtime_error("the encoder broke down");
         }
         if (unfinished) {
@@ -195,12 +211,14 @@ public:
             result.framesInWav = heldFrames;
             result.partialFrameBytesDropped = partialBytes;
             result.framesDeclared = declaredFrames;
+            result.bytesMissing = bytesMissing;
+            result.declaredUnusable = declaredUnusable;
             if (!options.keepUnfinished) {
                 result.error = "Session-0001.wav cannot be encoded: its header was not completed";
                 return result;
             }
         }
-        for (double f : {0.0, 0.3, 0.59, 0.6, 0.8, 1.0}) {
+        for (double f : {0.0, 0.3, 0.59, 0.6, 0.8, 0.999}) {
             if (cancelAt && f >= *cancelAt && token != nullptr) {
                 token->cancel();
             }
@@ -213,17 +231,52 @@ public:
             }
         }
         if (!error.empty()) {
-            if (leavesTarget) {
-                m_files.present.insert(flacPath);
-                m_files.sizes[flacPath] = 999;
-            }
             result.error = error;
             return result;
         }
-        m_files.present.insert(flacPath);
-        m_files.sizes[flacPath] = EncodedBytes;
+        m_files.present.insert(Temp);
+        m_files.sizes[Temp] = EncodedBytes;
         result.encoded = true;
         result.notes = notes;
+        if (!noPath) {
+            result.unplaced.path = Temp;
+            result.unplaced.size = EncodedBytes;
+            result.unplaced.streamInfo[0] = 0x12;
+        }
+        return result;
+    }
+
+    RecordingPlaceResult placeVerified(const VerifiedFlac &file, const std::string &flacPath) override
+    {
+        journal.push_back("place " + file.path + " -> " + flacPath);
+        placedFile = file;
+        RecordingPlaceResult result;
+        result.notes = placeNotes;
+        if (throwsBeforeRename) {
+            throw std::runtime_error("the placing broke down");
+        }
+        if (!placeError.empty()) {
+            result.error = placeError;
+            return result;
+        }
+        m_files.present.erase(file.path);
+        m_files.sizes.erase(file.path);
+        m_files.present.insert(flacPath);
+        m_files.sizes[flacPath] = file.size;
+        if (throwsAfterRename) {
+            throw std::runtime_error("the placing broke down after the rename");
+        }
+        if (placeLeavesTarget) {
+            m_files.sizes[flacPath] = file.size + 77;
+            result.error = "the FLAC was not given its name: DJ Kelp - Late Set.flac does not have the size of the "
+                           "checked file after it was given its name; it was left as it is and does not count as kept";
+            result.leftUnderTargetName = true;
+            return result;
+        }
+        if (cancelAfterPlacing && token != nullptr) {
+            token->cancel();
+        }
+        result.placed = true;
         return result;
     }
 
@@ -251,16 +304,16 @@ public:
     explicit FakeTags(FakeFiles &files) : m_files(files) {}
 
     std::string error;
-    // With `error`: another file stands under the FLAC's name afterwards,
-    // as when the real writer finds the size wrong after its rename.
-    bool replacesFile = false;
     bool throws = false;
     CancellationToken *cancelDuring = nullptr;
     RecordingTags written;
-    RecordingTagWriteResult write(const std::string &flacPath, const RecordingTags &tags) override
+    // What tagInPlace() was handed.
+    VerifiedFlac given;
+    RecordingTagWriteResult tagInPlace(const VerifiedFlac &file, const RecordingTags &tags) override
     {
-        journal.push_back("tags " + flacPath);
+        journal.push_back("tags " + file.path);
         written = tags;
+        given = file;
         if (cancelDuring != nullptr) {
             cancelDuring->cancel();
         }
@@ -268,13 +321,13 @@ public:
             throw std::runtime_error("the tag writer broke its word");
         }
         if (!error.empty()) {
-            if (replacesFile) {
-                m_files.sizes[flacPath] = EncodedBytes + 77;
-            }
-            return {false, error};
+            m_files.sizes[file.path] = file.size + 13;  // changed half way
+            return {false, error, {}};
         }
-        m_files.sizes[flacPath] = EncodedBytes + 4096;  // the tags and the cover
-        return {true, {}};
+        VerifiedFlac tagged = file;
+        tagged.size = file.size + 4096;  // the tags and the cover
+        m_files.sizes[file.path] = tagged.size;
+        return {true, {}, tagged};
     }
 
 private:
@@ -333,8 +386,8 @@ struct Run
         return false;
     }
 
-    // Nothing of the job's in the folder: no FLAC.
-    bool nothingLeft() const { return files.present.count(Flac) == 0; }
+    // Nothing of the job's in the folder: no FLAC, no temporary file.
+    bool nothingLeft() const { return files.present.count(Flac) == 0 && files.present.count(Temp) == 0; }
 
     // The WAV is named only in reads and in the encoder's input.
     bool wavOnlyRead() const
@@ -382,12 +435,13 @@ void testTheWholeJobInOrder()
         "read exists " + Flac,
         "read free " + Folder,
         "encode " + Wav + " -> " + Flac,
-        "read size " + Flac,
         "read file " + Picture,
         "cover PNG bytes",
-        "tags " + Flac,
+        "tags " + Temp,
+        "place " + Temp + " -> " + Flac,
     };
-    check(journal == expected, "space, then the encoding, then the cover, then the tags");
+    check(journal == expected,
+          "space, then the encoding, then the cover, then the tags into the temporary file, then the placing");
     if (journal != expected) {
         for (const auto &line : journal) {
             std::cout << "    " << line << "\n";
@@ -398,6 +452,13 @@ void testTheWholeJobInOrder()
               && run.tags.written.year == 2026,
           "every field reaches the tag writer");
     check(run.tags.written.cover.jpeg == "JPEG" && run.tags.written.cover.width == 600, "the prepared cover too");
+    check(run.encoder.leaveUnplacedGiven, "the encoder is asked to leave its proven file unplaced");
+    check(run.tags.given.path == Temp && run.tags.given.size == EncodedBytes && run.tags.given.streamInfo[0] == 0x12,
+          "the tag writer is handed the encoder's proven file as the encoder described it");
+    check(run.encoder.placedFile.path == Temp && run.encoder.placedFile.size == EncodedBytes + 4096,
+          "the placing is handed the tagged file as the tag writer described it");
+    check(run.files.present.count(Flac) == 1 && run.files.present.count(Temp) == 0,
+          "the FLAC is there, the temporary file is not");
     check(run.wavOnlyRead(), "the recording is only read");
     check(run.progressNeverBack(), "the bar never goes back");
     check(!run.progress.empty() && run.progress.back().fraction == 1.0, "the bar ends full");
@@ -409,8 +470,10 @@ void testTheWholeJobInOrder()
     }
     check(steps
               == std::vector<KeepRecordingStep>{KeepRecordingStep::Space, KeepRecordingStep::Encoding,
-                                                KeepRecordingStep::Checking, KeepRecordingStep::Tagging},
-          "the steps come in order: space, encoding, checking, tags and cover");
+                                                KeepRecordingStep::Checking, KeepRecordingStep::Tagging,
+                                                KeepRecordingStep::Placing},
+          "the steps come in order: space, encoding, checking, tags and cover, placing");
+    check(std::string(keepRecordingStepKey(KeepRecordingStep::Placing)) == "placing", "the placing's key");
 }
 
 void testWithoutCover()
@@ -478,7 +541,7 @@ void testRefusedBeforeAnything()
 void testFreeSpace()
 {
     const std::uint64_t needed = keepRecordingSpaceNeeded(WavBytes);
-    check(needed == 2 * WavBytes + KeepRecordingSpaceMargin, "room for twice the recording and a margin");
+    check(needed == WavBytes + KeepRecordingSpaceMargin, "room for the recording once and a margin, no second copy");
     {
         Run run;
         run.files.free = needed - 1;
@@ -546,7 +609,10 @@ void testEncoderFailsOrIsCancelled()
     }
 }
 
-void testFailuresAfterTheEncodingRemoveTheFlac()
+// Until the FLAC is placed the job's only file is the encoder's temporary
+// file: every failure and every cancel takes it away, and nothing ever had
+// the FLAC's name.
+void testFailuresBeforeThePlacingRemoveTheTemp()
 {
     {
         Run run;
@@ -555,8 +621,9 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
         check(run.result.status == KeepRecordingResult::Status::Failed
                   && run.result.message.find("cover") != std::string::npos,
               "a cover that cannot be read: failed, saying so");
-        check(run.called("write remove " + Flac) && run.nothingLeft(), "a cover that cannot be read: the FLAC is removed");
-        check(!run.called("tags"), "a cover that cannot be read: no tags written");
+        check(run.called("write remove " + Temp) && run.nothingLeft(),
+              "a cover that cannot be read: the temporary file is removed");
+        check(!run.called("tags") && !run.called("place"), "a cover that cannot be read: no tags, no placing");
     }
     {
         Run run;
@@ -565,39 +632,41 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
         check(run.result.status == KeepRecordingResult::Status::Failed
                   && run.result.message.find("not a picture") != std::string::npos,
               "a cover that cannot be prepared: failed, in the preparer's words");
-        check(run.nothingLeft(), "a cover that cannot be prepared: the FLAC is removed");
+        check(run.nothingLeft(), "a cover that cannot be prepared: the temporary file is removed");
     }
     {
         Run run;
-        run.tags.error = "the copy's audio differs";
+        run.tags.error = "the audio did not stay as it was";
         run.go();
         check(run.result.status == KeepRecordingResult::Status::Failed
                   && run.result.message.find("tags could not be written") != std::string::npos
-                  && run.result.message.find("the copy's audio differs") != std::string::npos,
+                  && run.result.message.find("the audio did not stay as it was") != std::string::npos,
               "tags that cannot be written: failed, in the writer's words");
-        check(run.nothingLeft() && run.wavOnlyRead(), "tags that cannot be written: the FLAC is removed, the recording untouched");
+        check(run.nothingLeft() && run.wavOnlyRead() && !run.called("place"),
+              "tags that cannot be written: the temporary file is removed, never placed, the recording untouched");
     }
     {
-        // The tags were written and read back before the cancel was seen:
-        // the job is done, and the FLAC is kept.
+        // A cancel while the tags are written: seen before the placing,
+        // so nothing is kept.
         Run run;
         run.tags.cancelDuring = &run.cancel;
         run.go();
-        check(run.result.status == KeepRecordingResult::Status::Kept && run.result.flacPath == Flac,
-              "cancelled while the tags are written, and they were: kept");
-        check(!run.nothingLeft() && !run.called("write remove"), "cancelled after the tags: the FLAC stays");
+        check(run.result.status == KeepRecordingResult::Status::Cancelled && !run.called("place"),
+              "cancelled while the tags are written: cancelled, never placed");
+        check(run.nothingLeft() && run.result.leftBehind.empty(), "cancelled while the tags are written: nothing left");
     }
-    {
+    for (const KeepRecordingStep at : {KeepRecordingStep::Tagging, KeepRecordingStep::Placing}) {
         Run run;
-        run.onProgress = [&run](const KeepRecordingProgress &p) {
-            if (p.step == KeepRecordingStep::Tagging) {
+        run.onProgress = [&run, at](const KeepRecordingProgress &p) {
+            if (p.step == at) {
                 run.cancel.cancel();
             }
         };
         run.go();
-        check(run.result.status == KeepRecordingResult::Status::Cancelled && !run.called("tags"),
-              "cancelled between the encoding and the tags: no tags written");
-        check(run.nothingLeft(), "cancelled between the encoding and the tags: the FLAC is removed");
+        const std::string where = at == KeepRecordingStep::Tagging ? "before the tags" : "right before the placing";
+        check(run.result.status == KeepRecordingResult::Status::Cancelled && !run.called("place"),
+              "cancelled " + where + ": cancelled, never placed");
+        check(run.nothingLeft() && run.called("write remove " + Temp), "cancelled " + where + ": the temporary file is removed");
     }
     {
         Run run;
@@ -606,7 +675,32 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
         check(run.result.status == KeepRecordingResult::Status::Failed
                   && run.result.message.find("broke its word") != std::string::npos,
               "a port that throws: failed, saying why");
-        check(run.nothingLeft(), "a port that throws: the FLAC is removed");
+        check(run.nothingLeft(), "a port that throws: the temporary file is removed");
+    }
+    {
+        Run run;
+        run.encoder.placeError = "the FLAC was not given its name: DJ Kelp - Late Set.flac appeared while the "
+                                 "recording was encoded, and is not replaced";
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed
+                  && run.result.message.find("appeared while the recording was encoded") != std::string::npos,
+              "a placing refused before the rename: failed, in the encoder's words: " + run.result.message);
+        check(run.nothingLeft() && run.result.leftBehind.empty(), "a placing refused: the temporary file is removed");
+    }
+    {
+        Run run;
+        run.encoder.throwsBeforeRename = true;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed && run.nothingLeft()
+                  && run.result.leftBehind.empty(),
+              "a placing that throws before its rename: failed, the temporary file removed");
+    }
+    {
+        Run run;
+        run.encoder.noPath = true;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed && !run.called("tags") && !run.called("place"),
+              "an encoder that does not say where its file is: failed, nothing tagged or placed");
     }
     {
         Run run;
@@ -617,13 +711,14 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
                   && run.result.message.find("no room") != std::string::npos
                   && run.result.message.find("could not be removed") != std::string::npos
                   && run.result.message.find("it is held open") != std::string::npos,
-              "a FLAC that cannot be removed: said, beside why the job failed");
-        check(run.result.leftBehind == Flac && run.result.message.find(Flac) != std::string::npos,
-              "a FLAC that cannot be removed: left behind, with its path");
+              "a temporary file that cannot be removed: said, beside why the job failed");
+        check(run.result.leftBehind == Temp && run.result.message.find(Temp) != std::string::npos,
+              "a temporary file that cannot be removed: left behind, with its path: " + run.result.message);
+        check(run.files.present.count(Flac) == 0, "and nothing has the FLAC's name");
     }
     {
-        // A cancel between the encoding and the tags, and the unfinished
-        // FLAC cannot be removed: what was left, and where.
+        // A cancel before the tags, and the temporary file cannot be
+        // removed: what was left, and where.
         Run run;
         run.files.removeRefusal = "it is held open";
         run.onProgress = [&run](const KeepRecordingProgress &p) {
@@ -632,51 +727,59 @@ void testFailuresAfterTheEncodingRemoveTheFlac()
             }
         };
         run.go();
-        check(run.result.status == KeepRecordingResult::Status::Cancelled && run.result.leftBehind == Flac
-                  && run.result.message.find(Flac) != std::string::npos,
-              "cancelled, and the FLAC cannot be removed: left behind, said with its path: " + run.result.message);
+        check(run.result.status == KeepRecordingResult::Status::Cancelled && run.result.leftBehind == Temp
+                  && run.result.message.find(Temp) != std::string::npos,
+              "cancelled, and the temporary file cannot be removed: left behind, said with its path: "
+                  + run.result.message);
     }
 }
 
-// The encoder and the tag writer may answer "not kept" while a file stands
-// under the FLAC's name (a check after the rename that failed): it is left
-// as it is, said with its path, and never removed as if it were the job's.
+// Once placed the job is done: a cancel then is too late.
+void testACancelAfterThePlacingIsTooLate()
+{
+    Run run;
+    run.encoder.cancelAfterPlacing = true;
+    run.go();
+    check(run.result.status == KeepRecordingResult::Status::Kept && run.result.flacPath == Flac,
+          "cancelled right after the placing: kept");
+    check(run.files.present.count(Flac) == 1 && !run.called("write remove"), "cancelled after the placing: the FLAC stays");
+}
+
+// The placing may answer "not placed" while a file stands under the FLAC's
+// name (the size check after the rename): it is left as it is, said with
+// its path, and never removed as if it were the job's.
 void testAFileLeftInPlaceIsSaid()
 {
     {
         Run run;
-        run.encoder.error = "DJ Kelp - Late Set.flac does not have the size of the checked file after it was given its "
-                            "name; it was left as it is and does not count as kept";
-        run.encoder.leavesTarget = true;
+        run.encoder.placeLeavesTarget = true;
         run.go();
-        check(run.result.status == KeepRecordingResult::Status::Failed, "the encoder left a file: failed");
-        check(run.result.leftBehind == Flac, "the encoder left a file: it is named as left behind");
+        check(run.result.status == KeepRecordingResult::Status::Failed, "another size after the rename: failed");
+        check(run.result.leftBehind == Flac, "another size after the rename: the file is named as left behind");
         check(run.result.message.find(Flac) != std::string::npos
                   && run.result.message.find("does not count as kept") != std::string::npos,
-              "the encoder left a file: the message gives its path: " + run.result.message);
-        check(!run.called("write remove") && run.files.present.count(Flac) == 1, "the encoder left a file: never removed");
+              "another size after the rename: the message gives its path: " + run.result.message);
+        check(!run.called("write remove") && run.files.present.count(Flac) == 1,
+              "another size after the rename: never removed");
     }
     {
+        // A placing that throws after its rename: what is where is looked
+        // at, and the file under the FLAC's name is said.
         Run run;
-        run.tags.error = "the tags of DJ Kelp - Late Set.flac were written, but the file under its name does not have "
-                         "the size of the checked copy afterwards";
-        run.tags.replacesFile = true;
+        run.encoder.throwsAfterRename = true;
         run.go();
-        check(run.result.status == KeepRecordingResult::Status::Failed && run.result.leftBehind == Flac,
-              "the tag writer left another file: named as left behind");
-        check(run.result.message.find(Flac) != std::string::npos
-                  && run.result.message.find("was left") != std::string::npos,
-              "the tag writer left another file: the message gives its path: " + run.result.message);
-        check(!run.called("write remove") && run.files.present.count(Flac) == 1,
-              "the tag writer left another file: never removed");
+        check(run.result.status == KeepRecordingResult::Status::Failed && run.result.leftBehind == Flac
+                  && run.result.message.find("broke down after the rename") != std::string::npos
+                  && run.result.message.find(Flac) != std::string::npos,
+              "a placing that throws after its rename: failed, the file said with its path: " + run.result.message);
+        check(!run.called("write remove"), "a placing that throws after its rename: nothing removed");
     }
     {
         Run run;
         run.encoder.error = "the encoder stopped";
-        run.files.existsUnknown = false;
         run.go();
-        check(run.result.leftBehind.empty() && run.result.message == "the encoder stopped",
-              "nothing under the name after a failed encoding: nothing said about it");
+        check(run.result.leftBehind.empty() && run.result.message == "the encoder stopped" && run.nothingLeft(),
+              "a failed encoding: nothing left, nothing said about it");
     }
 }
 
@@ -788,19 +891,18 @@ void testTheRecordingIsOnTheStick()
     }
 }
 
-// An exception out of the encoder after it put a file under the target's
-// name: the file is said, with its path, as after a failure.
-void testAnEncoderExceptionSaysWhatIsLeft()
+// An exception out of the encoder: its own temporary file is its own to
+// take away, nothing has the FLAC's name, and nothing is removed.
+void testAnEncoderException()
 {
     Run run;
-    run.encoder.throwsAfterTarget = true;
+    run.encoder.throws = true;
     run.go();
     check(run.result.status == KeepRecordingResult::Status::Failed
               && run.result.message.find("broke down") != std::string::npos,
           "an encoder that throws: failed, saying why: " + run.result.message);
-    check(run.result.leftBehind == Flac && run.result.message.find(Flac) != std::string::npos,
-          "an encoder that throws: the file under the target's name is said with its path: " + run.result.message);
-    check(!run.called("write remove"), "an encoder that throws: that file is not removed as the job's");
+    check(run.result.leftBehind.empty() && !run.called("write remove") && run.nothingLeft(),
+          "an encoder that throws: nothing left, nothing removed");
 }
 
 // A recording whose header was not completed: refused unless the person
@@ -882,6 +984,76 @@ void testAnUnfinishedRecording()
                   && run.result.notes.empty(),
               "a finished recording with the choice set: kept, nothing to note");
     }
+    {
+        // Lengths are cut to whole seconds, as a clock shows them: 42:10.9
+        // is 42:10, never 42:11, the way the form and the rows say it.
+        Run run;
+        run.encoder.unfinished = true;
+        run.encoder.heldFrames = 48000ULL * 2530 + 47999;
+        run.encoder.declaredFrames = 48000ULL * 3599 + 47999;
+        run.go();
+        check(run.result.message.find("The header declares 59:59 of audio, the file holds 42:10.") != std::string::npos,
+              "lengths are cut to whole seconds, never rounded up: " + run.result.message);
+    }
+    {
+        // Cut short by less than a second: both lengths print the same,
+        // and the bytes missing are said in plain words.
+        Run run;
+        run.encoder.unfinished = true;
+        run.encoder.heldFrames = 48000ULL * 2530 + 100;
+        run.encoder.declaredFrames = 48000ULL * 2530 + 1100;
+        run.encoder.bytesMissing = 4000;
+        run.go();
+        check(run.result.message.find("The header declares 42:10 of audio, the file holds 42:10 (4000 bytes less "
+                                      "than the header declares).")
+                  != std::string::npos,
+              "cut short by less than a second, refused: the bytes missing are said: " + run.result.message);
+        Run kept;
+        kept.encoder.unfinished = true;
+        kept.encoder.heldFrames = 48000ULL * 2530 + 100;
+        kept.encoder.declaredFrames = 48000ULL * 2530 + 1100;
+        kept.encoder.bytesMissing = 4000;
+        KeepRecordingRequest r = request();
+        r.keepUnfinished = true;
+        kept.go(r);
+        const std::string notes = kept.result.notes.empty() ? std::string() : kept.result.notes.back();
+        check(notes.find("it declares 42:10 of audio, the file held 42:10 (4000 bytes less than the header declares).")
+                  != std::string::npos,
+              "cut short by less than a second, kept: the notes say the bytes missing: " + notes);
+        Run apart;
+        apart.encoder.unfinished = true;
+        apart.encoder.heldFrames = 48000ULL * 2530;
+        apart.encoder.declaredFrames = 48000ULL * 3600;
+        apart.encoder.bytesMissing = 4ULL * 48000 * 1070;
+        apart.go();
+        check(apart.result.message.find("bytes less") == std::string::npos,
+              "lengths that print apart: no bytes said: " + apart.result.message);
+    }
+    {
+        // A declared length no recording has is not printed as one.
+        Run run;
+        run.encoder.unfinished = true;
+        run.encoder.heldFrames = 48000ULL * 61;
+        run.encoder.declaredFrames = 48000ULL * 3600 * 5000;
+        run.encoder.declaredUnusable = true;
+        run.go();
+        check(run.result.message.find("The header's length is not usable, and the file holds 1:01 of audio.")
+                  != std::string::npos
+                  && run.result.message.find("5000:00:00") == std::string::npos,
+              "an absurd declared length, refused: not printed, said to be not usable: " + run.result.message);
+        Run kept;
+        kept.encoder.unfinished = true;
+        kept.encoder.heldFrames = 48000ULL * 61;
+        kept.encoder.declaredFrames = 48000ULL * 3600 * 5000;
+        kept.encoder.declaredUnusable = true;
+        KeepRecordingRequest r = request();
+        r.keepUnfinished = true;
+        kept.go(r);
+        const std::string notes = kept.result.notes.empty() ? std::string() : kept.result.notes.back();
+        check(notes.find("the header's length is not usable, and the file held 1:01.") != std::string::npos
+                  && notes.find("5000:00:00") == std::string::npos,
+              "an absurd declared length, kept: the notes do not print it: " + notes);
+    }
 }
 
 // The sweep of leftovers runs at the start, in the target folder; its
@@ -897,9 +1069,11 @@ void testTheSweep()
     check(run.files.leftoverInHand == std::vector<bool>{true, false},
           "the job's own FLAC is in hand while it runs, another is not");
     Run encoderNotes;
-    encoderNotes.encoder.notes = {"a second name"};
+    encoderNotes.encoder.notes = {"an encoder's note"};
+    encoderNotes.encoder.placeNotes = {"a second name"};
     encoderNotes.go();
-    check(encoderNotes.result.notes == std::vector<std::string>{"a second name"}, "the encoder's notes are the job's");
+    check(encoderNotes.result.notes == (std::vector<std::string>{"an encoder's note", "a second name"}),
+          "the encoder's notes and the placing's are the job's");
 }
 
 // A job that ends in an exception lets go of its recording and its FLAC:
@@ -914,7 +1088,7 @@ void testTheRegistryLetsGoOnAnException()
     }
     {
         Run run;
-        run.encoder.throwsAfterTarget = true;
+        run.encoder.throws = true;
         run.go();
         check(run.result.status == KeepRecordingResult::Status::Failed, "an encoder that throws: failed");
     }
@@ -994,13 +1168,14 @@ int main()
     testRefusedBeforeAnything();
     testFreeSpace();
     testEncoderFailsOrIsCancelled();
-    testFailuresAfterTheEncodingRemoveTheFlac();
+    testFailuresBeforeThePlacingRemoveTheTemp();
+    testACancelAfterThePlacingIsTooLate();
     testOneJobPerRecordingAndFlac();
     testAFileLeftInPlaceIsSaid();
     testThePlaceAndTheText();
     testFileNames();
     testTheRecordingIsOnTheStick();
-    testAnEncoderExceptionSaysWhatIsLeft();
+    testAnEncoderException();
     testAnUnfinishedRecording();
     testTheSweep();
     testTheRegistryLetsGoOnAnException();

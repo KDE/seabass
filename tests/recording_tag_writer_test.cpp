@@ -14,23 +14,18 @@
 //     ASCII included, read back through TagLib (here, not through the
 //     writer) as they were written, exactly one value each;
 //   - writing again replaces them, and fields left empty are gone;
+//   - the tags go into the encoder's proven file under its temporary name
+//     (no ".flac" at the end), in place: no other file appears in the
+//     folder, the file keeps its identity (inode) while it grows past its
+//     padding for a large cover, and the answer describes it as it is
+//     now, which placeVerified() then gives the FLAC's name;
 //   - the audio is untouched: the same STREAMINFO (with its MD5), the
 //     same audio frames byte for byte, and it decodes to the signal;
-//   - a file that is not a FLAC: a failure, the file left byte for byte as
-//     it was; another write's copy beside the file is left alone;
-//   - the copy taken away or changed after its check: a failure, the file
-//     byte for byte as it was, never an empty file in its place;
-//   - a file that is not there: a failure, "it is not there", and a copy
-//     of the writer beside it (another job's) is left untouched: write()
-//     never recovers;
-//   - recoverInterruptedTagWrite(), asked for: a file that is not there
-//     while one copy of the writer is (what a power cut leaves on FAT):
-//     the copy is put back under the file's name, never deleted; a copy
-//     that is no FLAC, or two copies, are left as they are; a rename that
-//     leaves the copy's name as a second name removes it again;
-//   - the copy is named "<FLAC>.<16 hex>.seabass-tag-tmp", and the extra
-//     bytes the temporary names add are what recordingTempNameExtraBytes()
-//     says;
+//   - a file that is not the one described (another size, another
+//     STREAMINFO), a file that is not a FLAC, one that is not there: a
+//     failure, the file left byte for byte as it was;
+//   - the extra bytes the temporary name adds are the encoder's suffix's
+//     (recordingTempNameExtraBytes());
 //   - a large picture is decoded at the cover's size, absurd sizes are
 //     refused before decoding, and an extreme shape keeps a side of at
 //     least one pixel.
@@ -47,12 +42,14 @@
 #include <QPainter>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <taglib/flacfile.h>
@@ -65,18 +62,16 @@
 #include "infrastructure/audio/qt_flac_recording_encoder.hpp"
 #include "infrastructure/audio/recording_file_steps.hpp"
 #include "infrastructure/audio/taglib_recording_tag_writer.hpp"
-#include "infrastructure/no_replace_rename.hpp"
 #include "recording_test_support.hpp"
 
 #if !defined(_WIN32)
-#include <cerrno>
+#include <sys/stat.h>
 #endif
 
 using namespace seabass;
 using infrastructure::audio::QtCoverArtPreparer;
 using infrastructure::audio::QtFlacRecordingEncoder;
-using infrastructure::audio::RecordingTagTempSuffix;
-using infrastructure::audio::recoverInterruptedTagWrite;
+using infrastructure::audio::RecordingEncodeTempSuffix;
 using infrastructure::audio::TagLibRecordingTagWriter;
 namespace fs = std::filesystem;
 
@@ -98,28 +93,36 @@ std::string readAll(const std::string &path)
     return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
-void writeAll(const std::string &path, const std::string &bytes)
+// The names in a folder, sorted.
+std::vector<std::string> entries(const std::string &folder)
 {
-    std::ofstream(pathFromUtf8(path), std::ios::binary) << bytes;
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(pathFromUtf8(folder), ec)) {
+        names.push_back(pathToUtf8(entry.path().filename()));
+    }
+    std::sort(names.begin(), names.end());
+    return names;
 }
 
-// The writer's copies beside `flac`: names that start with the FLAC's
-// name and end in the suffix.
-std::vector<std::string> copiesBeside(const std::string &flac)
+#if !defined(_WIN32)
+// The file's identity: the same inode is the same file, written in place.
+ino_t inodeOf(const std::string &path)
 {
-    const fs::path path = pathFromUtf8(flac);
-    const std::string prefix = pathToUtf8(path.filename()) + ".";
-    const std::string suffix = RecordingTagTempSuffix;
-    std::vector<std::string> found;
-    std::error_code ec;
-    for (const auto &entry : fs::directory_iterator(path.parent_path(), ec)) {
-        const std::string name = pathToUtf8(entry.path().filename());
-        if (name.size() > prefix.size() + suffix.size() && name.compare(0, prefix.size(), prefix) == 0
-            && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            found.push_back(name);
-        }
-    }
-    return found;
+    struct stat st{};
+    return ::stat(pathToUtf8(pathFromUtf8(path)).c_str(), &st) == 0 ? st.st_ino : 0;
+}
+#endif
+
+// The encoder's proven file for `flac`, left unplaced under its temporary
+// name, as a keep job has it before the tags.
+application::VerifiedFlac unplaced(QtFlacRecordingEncoder &encoder, const std::string &wav, const std::string &flac)
+{
+    application::RecordingEncodeOptions options;
+    options.leaveUnplaced = true;
+    const auto made = encoder.encode(wav, flac, options);
+    check(made.encoded && !made.unplaced.path.empty(), "the FLAC to tag is made, unplaced (" + made.error + ")");
+    return made.unplaced;
 }
 
 std::string encoded(const QImage &image, const char *format)
@@ -280,17 +283,25 @@ std::string field(TagLib::Ogg::XiphComment *comment, const char *name)
 void tags(const std::string &dir)
 {
     const recording_test::WavSpec spec{44100, 2, 16, 44100 * 3};
+    const std::string folder = dir + "/tags";
+    fs::create_directories(pathFromUtf8(folder));
     const std::string wav = dir + "/tagged.wav";
-    const std::string flac = dir + "/Unicode-\xC3\xA9\xC3\x9F set.flac";
+    const std::string flac = folder + "/Unicode-\xC3\xA9\xC3\x9F set.flac";
     recording_test::writeWav(wav, spec);
     QtFlacRecordingEncoder encoder;
-    const auto made = encoder.encode(wav, flac, {});
-    if (!made.encoded) {
-        check(false, "tags: the FLAC to tag could not be made: " + made.error);
+    const application::VerifiedFlac proven = unplaced(encoder, wav, flac);
+    if (proven.path.empty()) {
         return;
     }
-    const Audio untagged = audioOf(flac);
+    const std::string suffix = ".seabass-encode-tmp";  // as written, not the constant
+    check(proven.path.size() > suffix.size() && proven.path.compare(proven.path.size() - suffix.size(), suffix.size(), suffix) == 0,
+          "tags: the file tagged is the encoder's temporary file, its name not ending in .flac: " + proven.path);
+    const Audio untagged = audioOf(proven.path);
     check(!untagged.frames.empty(), "tags: the untagged FLAC's audio is found");
+    const std::vector<std::string> before = entries(folder);
+#if !defined(_WIN32)
+    const ino_t inode = inodeOf(proven.path);
+#endif
 
     QtCoverArtPreparer preparer;
     const application::CoverArtResult cover = preparer.prepare(encoded(photo(2400, 2400), "png"));
@@ -306,16 +317,21 @@ void tags(const std::string &dir)
         tags.cover = *cover.cover;
     }
     TagLibRecordingTagWriter writer;
-    const auto written = writer.write(flac, tags);
+    const auto written = writer.tagInPlace(proven, tags);
     check(written.written && written.error.empty(), "tags: written (" + written.error + ")");
-    check(copiesBeside(flac).empty(), "tags: no temporary copy left");
+    check(entries(folder) == before, "tags: no other file appeared in the folder, no copy and no temporary file");
 #if !defined(_WIN32)
-    const fs::perms perms = fs::status(pathFromUtf8(flac)).permissions();
-    check((perms & (fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec)) == fs::perms::none,
-          "tags: the tagged FLAC is not executable");
+    check(inode != 0 && inodeOf(proven.path) == inode, "tags: written in place, the same file (inode) as before");
 #endif
+    const std::uint64_t taggedSize = fs::file_size(pathFromUtf8(proven.path));
+    check(cover.cover && taggedSize > proven.size && taggedSize - proven.size > cover.cover->jpeg.size() / 2,
+          "tags: the file grew past its padding for the cover (" + std::to_string(proven.size) + " to "
+              + std::to_string(taggedSize) + " bytes)");
+    check(written.tagged.path == proven.path && written.tagged.size == taggedSize
+              && written.tagged.streamInfo == proven.streamInfo,
+          "tags: the answer describes the file as it is now: its size, its STREAMINFO unchanged");
     {
-        const fs::path path = pathFromUtf8(flac);
+        const fs::path path = pathFromUtf8(proven.path);
         TagLib::FLAC::File file(path.c_str(), false);
         TagLib::Ogg::XiphComment *comment = file.xiphComment(false);
         check(field(comment, "ARTIST") == tags.artist, "tags: ARTIST reads back: " + field(comment, "ARTIST"));
@@ -334,19 +350,19 @@ void tags(const std::string &dir)
             check(std::string(data.data(), data.size()) == cover.cover->jpeg, "tags: the picture's bytes are the cover's");
         }
     }
-    const Audio tagged = audioOf(flac);
+    const Audio tagged = audioOf(proven.path);
     check(tagged.streamInfo == untagged.streamInfo, "tags: STREAMINFO (and its MD5) is as it was");
     check(tagged.frames == untagged.frames, "tags: the audio frames are as they were, byte for byte");
-    const std::string mismatch = recording_test::compareWithSignal(recording_test::decodeAll(flac), spec);
+    const std::string mismatch = recording_test::compareWithSignal(recording_test::decodeAll(proven.path), spec);
     check(mismatch.empty(), "tags: the tagged FLAC decodes to the signal: " + mismatch);
 
     // Again, with less: what is left empty goes, the cover too.
     application::RecordingTags fewer;
     fewer.title = "Second take";
-    const auto again = writer.write(flac, fewer);
+    const auto again = writer.tagInPlace(written.tagged, fewer);
     check(again.written, "rewrite: written (" + again.error + ")");
     {
-        const fs::path path = pathFromUtf8(flac);
+        const fs::path path = pathFromUtf8(proven.path);
         TagLib::FLAC::File file(path.c_str(), false);
         TagLib::Ogg::XiphComment *comment = file.xiphComment(false);
         check(field(comment, "TITLE") == "Second take", "rewrite: TITLE replaced: " + field(comment, "TITLE"));
@@ -355,170 +371,66 @@ void tags(const std::string &dir)
         }
         check(file.pictureList().isEmpty(), "rewrite: the cover is gone");
     }
-    const Audio rewritten = audioOf(flac);
+    const Audio rewritten = audioOf(proven.path);
     check(rewritten.streamInfo == untagged.streamInfo && rewritten.frames == untagged.frames,
           "rewrite: the audio is as it was");
+    check(again.tagged.size == fs::file_size(pathFromUtf8(proven.path)), "rewrite: the answer has the size now");
 
-    // Another write's copy beside the file (or a leftover of one that was
-    // killed): left alone, and the write works.
-    {
-        const std::string other = flac + ".fedcba9876543210" + RecordingTagTempSuffix;
-        writeAll(other, "another write's copy");
-        const auto beside = writer.write(flac, tags);
-        check(beside.written, "another copy beside: written (" + beside.error + ")");
-        check(readAll(other) == "another write's copy", "another copy beside: left as it was");
-        fs::remove(pathFromUtf8(other));
-    }
+    // The description handed on is what the placing checks: the tagged
+    // file gets the FLAC's name, and is the signal with its tags.
+    const auto placed = encoder.placeVerified(again.tagged, flac);
+    check(placed.placed, "placed after the tags (" + placed.error + ")");
+    check(entries(folder) == std::vector<std::string>{pathToUtf8(pathFromUtf8(flac).filename())},
+          "placed: the FLAC alone in the folder, no temporary file left");
+    check(recording_test::compareWithSignal(recording_test::decodeAll(flac), spec).empty(),
+          "placed: the FLAC decodes to the signal");
+    // Placing with the description from before the tags is refused: the
+    // file is not that one any more.
+    const application::VerifiedFlac second = unplaced(encoder, wav, folder + "/Stale.flac");
+    const auto taggedSecond = writer.tagInPlace(second, tags);
+    const auto stale = encoder.placeVerified(second, folder + "/Stale.flac");
+    check(taggedSecond.written && !stale.placed && stale.error.find("changed after it was checked") != std::string::npos,
+          "placing with the description from before the tags: refused (" + stale.error + ")");
+    check(!fs::exists(pathFromUtf8(folder + "/Stale.flac")) && fs::exists(pathFromUtf8(second.path)),
+          "and nothing has the FLAC's name, the file stays under its own");
 }
 
-// The copy that takes the file's place is the copy that was checked.
-void placement(const std::string &dir)
+// A file that is not the one described is not written to.
+void notTheFileChecked(const std::string &dir)
 {
     const recording_test::WavSpec spec{44100, 2, 16, 44100 * 2};
-    const std::string wav = dir + "/placement.wav";
-    const std::string flac = dir + "/placement.flac";
-    recording_test::writeWav(wav, spec);
-    QtFlacRecordingEncoder encoder;
-    if (!encoder.encode(wav, flac, {}).encoded) {
-        check(false, "placement: the FLAC to tag could not be made");
-        return;
-    }
-    const std::string before = readAll(flac);
-    application::RecordingTags tags;
-    tags.title = "Placed";
-    {
-        TagLibRecordingTagWriter writer;
-        writer.setBeforePlaceForTests([](const std::string &copy) { fs::remove(pathFromUtf8(copy)); });
-        const auto result = writer.write(flac, tags);
-        check(!result.written && result.error.find("could not be flushed") != std::string::npos,
-              "copy vanished: a failure at the flush (" + result.error + ")");
-        check(readAll(flac) == before, "copy vanished: the file is as it was, byte for byte, not empty");
-        check(copiesBeside(flac).empty(), "copy vanished: no copy made either");
-    }
-    {
-        TagLibRecordingTagWriter writer;
-        writer.setBeforePlaceForTests([](const std::string &copy) {
-            std::ofstream(pathFromUtf8(copy), std::ios::binary | std::ios::app) << "x";
-        });
-        const auto result = writer.write(flac, tags);
-        check(!result.written && result.error.find("changed after it was checked") != std::string::npos,
-              "copy changed: a failure (" + result.error + ")");
-        check(readAll(flac) == before, "copy changed: the file is as it was, byte for byte");
-        check(copiesBeside(flac).empty(), "copy changed: the copy is taken away");
-    }
-    {
-        TagLibRecordingTagWriter writer;
-        std::string seen;
-        writer.setBeforePlaceForTests([&seen](const std::string &copy) { seen = copy; });
-        const auto result = writer.write(flac, tags);
-        const std::string name = pathToUtf8(pathFromUtf8(seen).filename());
-        const std::string suffix = ".seabass-tag-tmp";  // as written, not the constant
-        check(result.written, "copy name: written (" + result.error + ")");
-        check(name.size() == std::string("placement.flac").size() + 1 + 16 + suffix.size()
-                  && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0,
-              "copy name: <FLAC>.<16 hex>.seabass-tag-tmp, no audio extension last: " + name);
-        std::size_t most = 0;
-        for (const char *s : infrastructure::audio::RecordingTempSuffixes) {
-            const std::string temp = pathToUtf8(infrastructure::audio::uniqueTempBeside(pathFromUtf8("x"), s).filename());
-            most = std::max(most, temp.size() - 1);
-        }
-        check(most == infrastructure::audio::recordingTempNameExtraBytes(),
-              "the name budget's extra bytes are the longest temporary name's: " + std::to_string(most));
-    }
-}
-
-// What a power cut leaves on FAT and exFAT, where the copy replaces the
-// file by a delete and a rename: the file gone, its copy there. The copy
-// may be the only one, and is never deleted.
-void interruptedReplace(const std::string &dir)
-{
-    const recording_test::WavSpec spec{44100, 2, 16, 44100 * 2};
-    const std::string wav = dir + "/fat.wav";
+    const std::string wav = dir + "/described.wav";
     recording_test::writeWav(wav, spec);
     QtFlacRecordingEncoder encoder;
     TagLibRecordingTagWriter writer;
     application::RecordingTags tags;
-    tags.title = "After the power cut";
-
-    // One copy, a FLAC: put back under the file's name.
-    {
-        const std::string flac = dir + "/fat-one.flac";
-        if (!encoder.encode(wav, flac, {}).encoded) {
-            check(false, "interrupted: the FLAC could not be made");
-            return;
-        }
-        const std::string copy = flac + ".00112233445566aa" + RecordingTagTempSuffix;
-        fs::rename(pathFromUtf8(flac), pathFromUtf8(copy));
-        const std::string bytes = readAll(copy);
-        const auto plain = writer.write(flac, tags);
-        check(!plain.written && plain.error.find("it is not there") != std::string::npos,
-              "write() of a FLAC that is not there: a failure that says so (" + plain.error + ")");
-        check(readAll(copy) == bytes && !fs::exists(pathFromUtf8(flac)),
-              "write() of a FLAC that is not there: the copy beside it is untouched, nothing put back");
-        const auto result = recoverInterruptedTagWrite(flac);
-        check(result.putBack && result.message.find("put back") != std::string::npos,
-              "interrupted, one copy: put back, saying so (" + result.message + ")");
-        check(readAll(flac) == bytes, "interrupted, one copy: the file is back under its name, byte for byte");
-        check(copiesBeside(flac).empty(), "interrupted, one copy: the copy is now the file, none left");
-        check(recording_test::compareWithSignal(recording_test::decodeAll(flac), spec).empty(),
-              "interrupted, one copy: it decodes to the recording");
-        const auto again = writer.write(flac, tags);
-        check(again.written, "interrupted, one copy: the tags can be written afterwards (" + again.error + ")");
+    tags.title = "Described";
+    const application::VerifiedFlac proven = unplaced(encoder, wav, dir + "/described.flac");
+    if (proven.path.empty()) {
+        return;
     }
-    // A copy that is not a whole FLAC: left as it is, nothing made.
+    const std::string bytes = readAll(proven.path);
     {
-        const std::string flac = dir + "/fat-cut.flac";
-        const std::string copy = flac + ".00112233445566bb" + RecordingTagTempSuffix;
-        writeAll(copy, "fLaC and then the power went");
-        const auto result = recoverInterruptedTagWrite(flac);
-        check(!result.putBack && result.message.find("left as it is") != std::string::npos,
-              "interrupted, damaged copy: nothing put back (" + result.message + ")");
-        check(readAll(copy) == "fLaC and then the power went", "interrupted, damaged copy: left as it was");
-        check(!fs::exists(pathFromUtf8(flac)), "interrupted, damaged copy: nothing under the file's name");
+        application::VerifiedFlac other = proven;
+        other.size += 1;
+        const auto result = writer.tagInPlace(other, tags);
+        check(!result.written && result.error.find("not the file that was checked") != std::string::npos,
+              "another size than described: refused (" + result.error + ")");
+        check(readAll(proven.path) == bytes, "another size than described: the file is as it was, byte for byte");
     }
-    // Two copies: which one is the file cannot be told; both stay.
     {
-        const std::string flac = dir + "/fat-two.flac";
-        if (!encoder.encode(wav, flac, {}).encoded) {
-            check(false, "interrupted: the FLAC could not be made");
-            return;
-        }
-        const std::string first = flac + ".00112233445566cc" + RecordingTagTempSuffix;
-        const std::string second = flac + ".00112233445566dd" + RecordingTagTempSuffix;
-        fs::copy_file(pathFromUtf8(flac), pathFromUtf8(second));
-        fs::rename(pathFromUtf8(flac), pathFromUtf8(first));
-        const auto result = recoverInterruptedTagWrite(flac);
-        check(!result.putBack && result.message.find("2 temporary copies") != std::string::npos,
-              "interrupted, two copies: nothing put back, saying so (" + result.message + ")");
-        check(fs::exists(pathFromUtf8(first)) && fs::exists(pathFromUtf8(second)) && !fs::exists(pathFromUtf8(flac)),
-              "interrupted, two copies: both left as they are");
+        application::VerifiedFlac other = proven;
+        other.streamInfo[33] ^= 0x01;  // the MD5's last byte
+        const auto result = writer.tagInPlace(other, tags);
+        check(!result.written && result.error.find("not the file that was checked") != std::string::npos,
+              "another STREAMINFO than described: refused (" + result.error + ")");
+        check(readAll(proven.path) == bytes, "another STREAMINFO than described: the file is as it was");
     }
-#if !defined(_WIN32)
-    // Put back through a hard link whose old name could not be removed:
-    // removed again, nothing left beside the file.
-    {
-        const std::string flac = dir + "/fat-link.flac";
-        if (!encoder.encode(wav, flac, {}).encoded) {
-            check(false, "interrupted: the FLAC could not be made");
-            return;
-        }
-        const std::string copy = flac + ".00112233445566ee" + RecordingTagTempSuffix;
-        fs::rename(pathFromUtf8(flac), pathFromUtf8(copy));
-        infrastructure::setNoReplaceRenameCallsForTests({[](const char *, const char *) {
-                                                             errno = EINVAL;
-                                                             return -1;
-                                                         },
-                                                         {},
-                                                         [](const char *) {
-                                                             errno = EBUSY;
-                                                             return -1;
-                                                         }});
-        const auto result = recoverInterruptedTagWrite(flac);
-        infrastructure::setNoReplaceRenameCallsForTests({});
-        check(result.putBack && fs::exists(pathFromUtf8(flac)) && copiesBeside(flac).empty(),
-              "put back through a link, old name left: removed again (" + result.message + ")");
-    }
-#endif
+    check(infrastructure::audio::recordingTempNameExtraBytes()
+              == 1 + 16 + std::string_view(RecordingEncodeTempSuffix).size(),
+          "the name budget's extra bytes are the encoder's temporary name's: "
+              + std::to_string(infrastructure::audio::recordingTempNameExtraBytes()));
+    fs::remove(pathFromUtf8(proven.path));
 }
 
 void notFlac(const std::string &dir)
@@ -528,15 +440,20 @@ void notFlac(const std::string &dir)
     std::ofstream(pathFromUtf8(path)) << "fLaX this is not a FLAC file at all";
     application::RecordingTags tags;
     tags.title = "x";
-    const auto result = writer.write(path, tags);
+    application::VerifiedFlac file;
+    file.path = path;
+    file.size = fs::file_size(pathFromUtf8(path));
+    const auto result = writer.tagInPlace(file, tags);
     check(!result.written && result.error.find("not a FLAC") != std::string::npos,
           "not a FLAC: a failure that says so (" + result.error + ")");
     check(readAll(path) == "fLaX this is not a FLAC file at all", "not a FLAC: left as it was");
-    check(copiesBeside(path).empty(), "not a FLAC: no temporary copy");
 
-    const auto missing = writer.write(dir + "/missing.flac", tags);
-    check(!missing.written && missing.error.find("it is not there") != std::string::npos,
-          "missing: a failure that says it is not there (" + missing.error + ")");
+    application::VerifiedFlac missing;
+    missing.path = dir + "/missing.flac";
+    const auto gone = writer.tagInPlace(missing, tags);
+    check(!gone.written && gone.error.find("it is not there") != std::string::npos,
+          "missing: a failure that says it is not there (" + gone.error + ")");
+    check(!fs::exists(pathFromUtf8(missing.path)), "missing: nothing made");
 }
 
 }  // namespace
@@ -566,8 +483,7 @@ int main(int argc, char **argv)
     const std::string dir = QDir(scratch.path()).absolutePath().toStdString();
     covers();
     tags(dir);
-    placement(dir);
-    interruptedReplace(dir);
+    notTheFileChecked(dir);
     notFlac(dir);
     if (failures > 0) {
         std::cerr << failures << " check(s) FAILED\n";

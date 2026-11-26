@@ -9,9 +9,10 @@
 // its cover, progress that never goes back and ends full, a second job
 // that waits for the first, a cancel in the middle (and the jobs it
 // drops), a failure that stays in the strip while the next job runs, a
-// cancel too late to undo the job, a file left in place said with its
-// path, a folder on the stick refused, a name cut to what the drive and
-// the temporary names leave room for, on a character boundary, text a tag
+// cancel while the tags are written (nothing kept) and one right after the
+// FLAC was placed (too late to undo the job), a file left in place said
+// with its path, a folder on the stick refused, a name cut to what the
+// drive and the temporary name leave room for, on a character boundary, text a tag
 // cannot hold refused, and the controller destroyed in the middle of a
 // job, in the encoder and in the tag writer. What is in the target folder
 // afterwards is read from the disk here. The settings store is a scratch
@@ -46,6 +47,7 @@
 #include "gui/seabass_settings.hpp"
 #include "infrastructure/audio/qt_cover_art_preparer.hpp"
 #include "infrastructure/audio/qt_flac_recording_encoder.hpp"
+#include "infrastructure/audio/taglib_recording_tag_writer.hpp"
 #include "infrastructure/local/local_keep_recording_files.hpp"
 #include "recording_test_support.hpp"
 #include "scratch_path.hpp"
@@ -428,10 +430,11 @@ void destroyedMidEncoding(const QString &scratch)
 class SlowTags : public seabass::application::RecordingTagWriter
 {
 public:
-    seabass::application::RecordingTagWriteResult write(const std::string &, const seabass::application::RecordingTags &) override
+    seabass::application::RecordingTagWriteResult tagInPlace(const seabass::application::VerifiedFlac &file,
+                                                             const seabass::application::RecordingTags &) override
     {
         QThread::msleep(2500);
-        return {true, {}};
+        return {true, {}, file};
     }
 };
 
@@ -457,10 +460,10 @@ void destroyedMidTagging(const QString &scratch)
     const qint64 ms = timer.elapsed();
     check(ms < 1500, "the controller goes within a second and a half while the tags are written: " + std::to_string(ms) + " ms");
     QThreadPool::globalInstance()->waitForDone();
-    // The tag writer said written: the job was done, a cancel that came
-    // while it wrote was too late, and the FLAC stays.
-    check(entries(folder) == std::vector<std::string>{"Slow.flac"},
-          "the tags were written after all: the finished FLAC stays");
+    // The tag writer said written, but the FLAC was not placed yet: the
+    // cancel that came while it wrote is seen before the placing, and
+    // nothing is kept, no temporary file either.
+    check(entries(folder).empty(), "cancelled while the tags were written: nothing kept, nothing left in the folder");
     KeepRecordingController::setPartsForTesting({});
 }
 
@@ -651,32 +654,46 @@ void failureStaysWhileTheNextRuns(const QString &scratch)
           "and after it: failed, then kept");
 }
 
-// A tag writer that is told to stop while it writes, and writes all the
-// same: the cancel comes too late, and the FLAC is kept.
-class TagsThatFinishAnyway : public seabass::application::RecordingTagWriter
+// The real encoder, and the person cancels right after it placed the
+// FLAC: the cancel comes too late, and the FLAC is kept.
+class EncoderCancelledAfterPlacing : public seabass::application::RecordingEncoder
 {
 public:
-    explicit TagsThatFinishAnyway(KeepRecordingController *controller) : m_controller(controller) {}
-    seabass::application::RecordingTagWriteResult write(const std::string &, const seabass::application::RecordingTags &) override
+    explicit EncoderCancelledAfterPlacing(KeepRecordingController *controller) : m_controller(controller) {}
+    seabass::application::RecordingEncodeResult encode(const std::string &wav, const std::string &flac,
+                                                       const seabass::application::RecordingEncodeOptions &options) override
     {
+        return m_real.encode(wav, flac, options);
+    }
+    seabass::application::RecordingPlaceResult placeVerified(const seabass::application::VerifiedFlac &file,
+                                                             const std::string &flac) override
+    {
+        const auto placed = m_real.placeVerified(file, flac);
         QMetaObject::invokeMethod(m_controller, [c = m_controller]() { c->cancel(); }, Qt::BlockingQueuedConnection);
-        return {true, {}};
+        return placed;
     }
 
 private:
     KeepRecordingController *m_controller;
+    seabass::infrastructure::audio::QtFlacRecordingEncoder m_real;
 };
 
-// A tag writer that fails and leaves another file in the FLAC's place, as
-// the real one does when the size is wrong after its rename.
-class TagsThatLeaveAFile : public seabass::application::RecordingTagWriter
+// The real tag writer, and the person cancels while it writes: seen before
+// the placing, so nothing is kept.
+class TagsCancelledWhileWriting : public seabass::application::RecordingTagWriter
 {
 public:
-    seabass::application::RecordingTagWriteResult write(const std::string &flacPath, const seabass::application::RecordingTags &) override
+    explicit TagsCancelledWhileWriting(KeepRecordingController *controller) : m_controller(controller) {}
+    seabass::application::RecordingTagWriteResult tagInPlace(const seabass::application::VerifiedFlac &file,
+                                                             const seabass::application::RecordingTags &tags) override
     {
-        std::ofstream(seabass::pathFromUtf8(flacPath), std::ios::binary | std::ios::app) << "more than was checked";
-        return {false, "the file under its name does not have the size of the checked copy afterwards"};
+        QMetaObject::invokeMethod(m_controller, [c = m_controller]() { c->cancel(); }, Qt::BlockingQueuedConnection);
+        return m_real.tagInPlace(file, tags);
     }
+
+private:
+    KeepRecordingController *m_controller;
+    seabass::infrastructure::audio::TagLibRecordingTagWriter m_real;
 };
 
 void lateCancelAndLeftFiles(const QString &scratch)
@@ -689,9 +706,9 @@ void lateCancelAndLeftFiles(const QString &scratch)
         KeepRecordingController::setPartsForTesting([raw]() {
             KeepRecordingParts parts;
             parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
-            parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
+            parts.encoder = std::make_unique<EncoderCancelledAfterPlacing>(raw);
             parts.covers = std::make_unique<seabass::infrastructure::audio::QtCoverArtPreparer>();
-            parts.tags = std::make_unique<TagsThatFinishAnyway>(raw);
+            parts.tags = std::make_unique<seabass::infrastructure::audio::TagLibRecordingTagWriter>();
             return parts;
         });
         const QString folder = scratch + QStringLiteral("/late");
@@ -701,16 +718,44 @@ void lateCancelAndLeftFiles(const QString &scratch)
         check(waitUntil([&]() { return finished.count() >= 1; }), "it ends");
         const QVariantMap outcome = finished.isEmpty() ? QVariantMap() : finished.first().first().toMap();
         check(outcome.value("state").toString() == QStringLiteral("kept"),
-              "a cancel after the tags were written: kept, said so: " + outcome.value("state").toString().toStdString());
+              "a cancel after the FLAC was placed: kept, said so: " + outcome.value("state").toString().toStdString());
         check(entries(folder) == std::vector<std::string>{"Late.flac"}, "and the FLAC stays");
     }
     {
-        KeepRecordingController::setPartsForTesting([]() {
+        auto controller = std::make_unique<KeepRecordingController>();
+        controller->setStickRoot(stick);
+        KeepRecordingController *raw = controller.get();
+        KeepRecordingController::setPartsForTesting([raw]() {
             KeepRecordingParts parts;
             parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
             parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
             parts.covers = std::make_unique<seabass::infrastructure::audio::QtCoverArtPreparer>();
-            parts.tags = std::make_unique<TagsThatLeaveAFile>();
+            parts.tags = std::make_unique<TagsCancelledWhileWriting>(raw);
+            return parts;
+        });
+        const QString folder = scratch + QStringLiteral("/during-tags");
+        const std::string wav = writeWav(scratch, QStringLiteral("during-tags.wav"), 0.5);
+        QSignalSpy finished(controller.get(), &KeepRecordingController::finished);
+        check(controller->keep(form(wav, folder, QString(), QStringLiteral("During"))), "a job cancelled while tagged");
+        check(waitUntil([&]() { return finished.count() >= 1; }), "it ends");
+        const QVariantMap outcome = finished.isEmpty() ? QVariantMap() : finished.first().first().toMap();
+        check(outcome.value("state").toString() == QStringLiteral("cancelled"),
+              "a cancel while the tags are written: cancelled: " + outcome.value("state").toString().toStdString());
+        check(entries(folder).empty(), "and nothing is in the folder, no temporary file either");
+    }
+    {
+        // Something else under the FLAC's name after the rename (here the
+        // file grown right before it): left as it is, named with its path.
+        KeepRecordingController::setPartsForTesting([]() {
+            KeepRecordingParts parts;
+            parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
+            auto encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
+            encoder->setBeforeRenameForTests([](const std::string &temp) {
+                std::ofstream(seabass::pathFromUtf8(temp), std::ios::binary | std::ios::app) << "more than was checked";
+            });
+            parts.encoder = std::move(encoder);
+            parts.covers = std::make_unique<seabass::infrastructure::audio::QtCoverArtPreparer>();
+            parts.tags = std::make_unique<seabass::infrastructure::audio::TagLibRecordingTagWriter>();
             return parts;
         });
         KeepRecordingController controller;
@@ -718,7 +763,7 @@ void lateCancelAndLeftFiles(const QString &scratch)
         const QString folder = scratch + QStringLiteral("/left");
         const std::string wav = writeWav(scratch, QStringLiteral("left.wav"), 0.5);
         QSignalSpy finished(&controller, &KeepRecordingController::finished);
-        check(controller.keep(form(wav, folder, QString(), QStringLiteral("Left"))), "a job whose tag writer leaves a file");
+        check(controller.keep(form(wav, folder, QString(), QStringLiteral("Left"))), "a job whose FLAC is another size after the rename");
         check(waitUntil([&]() { return finished.count() >= 1; }), "it ends");
         const QVariantMap outcome = finished.isEmpty() ? QVariantMap() : finished.first().first().toMap();
         const QString left = QDir::cleanPath(QDir::fromNativeSeparators(outcome.value("leftBehind").toString()));

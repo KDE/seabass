@@ -100,12 +100,12 @@ struct KeepRecordingParts
 // queue and waits up to KeepRecordingStopWaitMs for the worker to end
 // (a wait on a condition the worker sets as it returns, not a spin). The
 // encoder answers a cancel within a fraction of a second; the tag
-// writer's copy of a long recording cannot be interrupted, and a worker
-// still in it then is left to finish on its own: it uses nothing of this
-// object, and QCoreApplication waits for it at exit. When the tag writer
-// returns, the FLAC stays if the tags were written (the job was done: a
-// cancel that came while they were written was too late) and is taken
-// away if they were not.
+// writer, which hashes the audio of a long recording twice, cannot be
+// interrupted, and a worker still in it then is left to finish on its own:
+// it uses nothing of this object, and QCoreApplication waits for it at
+// exit. When the tag writer returns, the job sees the cancel before the
+// placing and takes its temporary file away: nothing is kept. A cancel
+// that comes once the FLAC is placed is too late, and the FLAC stays.
 class KeepRecordingController : public QObject
 {
     Q_OBJECT
@@ -126,7 +126,7 @@ class KeepRecordingController : public QObject
     Q_PROPERTY(QString currentRecording READ currentRecording NOTIFY busyChanged)
     Q_PROPERTY(QString currentFileName READ currentFileName NOTIFY busyChanged)
     Q_PROPERTY(QString currentFolder READ currentFolder NOTIFY busyChanged)
-    // "space", "encoding", "checking", "tags"; "" when idle.
+    // "space", "encoding", "checking", "tags", "placing"; "" when idle.
     Q_PROPERTY(QString progressStep READ progressStep NOTIFY progressChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     // The jobs that wait, in order: [{wavPath, recording, fileName, folder}].

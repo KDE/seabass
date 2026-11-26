@@ -155,24 +155,29 @@ from day one.
   stick becomes a FLAC with artist, track name, album, genre, year and a
   front cover in a folder on this computer ("Keep…" on the row, a form,
   then the passive progress strip: encoding, checking, tags and cover,
-  with Cancel and a queue). `KeepRecordingController` runs
+  saving, with Cancel and a queue). `KeepRecordingController` runs
   `application::keepRecording` on a worker with the Qt Multimedia encoder
   (the FLAC decoded again and compared with the WAV sample for sample),
-  the QImage cover preparer and the TagLib tag writer. Nothing under the
-  target's name is ever replaced; a failure or a cancel leaves no file in
-  the folder; the recording on the stick is only read and never deleted
-  here. A recording whose WAV header was not completed (a data size of 0
+  the QImage cover preparer and the TagLib tag writer. The FLAC is encoded
+  to a temporary file, checked, tagged in place and checked again (tags,
+  cover, STREAMINFO and the audio frames byte for byte), and only then
+  given its name by a rename that never replaces: nothing under the
+  target's name is ever replaced; a failure or a cancel before that leaves
+  no file in the folder, a cancel after it keeps the FLAC; the recording
+  on the stick is only read and never deleted here. A recording whose WAV header was not completed (a data size of 0
   or 0xFFFFFFFF in a plain RIFF, or more than the file holds) is marked
   on its row with the length the file holds, and the length the header
   declares where it declares one, and kept only when "Keep the audio the
   file holds" is ticked: every whole frame the file holds, the WAV never
-  repaired. A header that declares less than the file holds, or a finished
+  repaired. A plain RIFF over 4 GB without a size is such a recording; a
+  declared length over 100 hours (or an RF64 one over a thousand times
+  what the file holds) is said to be not usable rather than printed. A header that declares less than the file holds, or a finished
   file followed by more than a second of zero bytes or bytes it does not
   know, is refused with both lengths; RF64 takes its size from ds64 only.
-  Leftover temporary files (`*.seabass-encode-tmp`, `*.seabass-tag-tmp`)
-  older than a day are swept from the target folder at the start of a
-  job, except a tag writer's copy whose FLAC is not beside it, which the
-  job's notes name instead. Shown only with Experimental on. Verified with synthetic WAVs
+  Leftover temporary files (`*.seabass-encode-tmp`, and `*.seabass-tag-tmp`
+  from earlier builds) older than a day are swept from the target folder
+  at the start of a job, except such a tag copy whose FLAC is not beside
+  it, which the job's notes name instead. Shown only with Experimental on. Verified with synthetic WAVs
   (`keep_recording_test`, `keep_recording_controller_test`,
   `recording_encoder_test`, `recording_tag_writer_test`,
   `local_keep_recording_files_test`); no real recording has been kept

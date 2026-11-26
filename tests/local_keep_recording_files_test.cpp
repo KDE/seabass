@@ -4,15 +4,15 @@
 
 // LocalKeepRecordingFiles on a real folder:
 //
-//   - sweepLeftovers() removes the encoder's and the tag writer's leftover
-//     temporary files older than a day, and says each; it leaves a younger
-//     one, one whose FLAC a job has in hand, one whose name only looks
-//     like one (no 16 hex digits, an audio extension after the suffix), a
-//     link named like one (and what it points to), a folder named like
-//     one, and one in a folder below. A tag writer's copy whose FLAC is not
-//     beside it (it can be the only copy of a kept FLAC) is never removed:
-//     an old one is named in the notes; an encoder's file without its FLAC
-//     goes as any;
+//   - sweepLeftovers() removes the encoder's leftover temporary files and
+//     the tag copies earlier builds left, older than a day, and says each;
+//     it leaves a younger one, one whose FLAC a job has in hand, one whose
+//     name only looks like one (no 16 hex digits, an audio extension after
+//     the suffix), a link named like one (and what it points to), a folder
+//     named like one, and one in a folder below. An earlier build's tag
+//     copy whose FLAC is not beside it (it can be the only copy of a kept
+//     FLAC) is never removed: an old one is named in the notes; an
+//     encoder's file without its FLAC goes as any;
 //   - isWithin(): a folder inside the root, the root itself, a folder
 //     still to be made inside it, and one outside it;
 //   - withinByDevice(), the device rule, with device numbers given: a root

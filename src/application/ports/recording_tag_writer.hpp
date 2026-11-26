@@ -6,6 +6,8 @@
 
 #include <string>
 
+#include "application/ports/recording_encoder.hpp"
+
 namespace seabass::application
 {
 
@@ -30,20 +32,27 @@ struct RecordingTags
     CoverArt cover;
 };
 
-// What RecordingTagWriter::write did: written, or the reason not.
+// What RecordingTagWriter::tagInPlace did: written, or the reason not.
 struct RecordingTagWriteResult
 {
     bool written = false;
     std::string error;
+    // When written: the tagged file as it is now (its new size; its
+    // STREAMINFO block is the one it had).
+    VerifiedFlac tagged;
 };
 
-// Writes the tags and the front cover of an encoded recording (a FLAC),
-// and reads them back to compare before it says written.
+// Writes the tags and the front cover of an encoded recording (a FLAC)
+// into the file itself, and reads them back to compare before it says
+// written.
 //
-// The audio of the file is not touched: what is tagged is a copy beside
-// it, whose audio is compared with the file's before the copy replaces
-// it. On any failure the file is left as it was and the copy is taken
-// away.
+// The file is one that was proven to hold the recording and has not been
+// given its name yet (the encoder's temporary file): before anything is
+// written its size and STREAMINFO block must be what `file` says, and
+// after, its STREAMINFO block must be unchanged (with the MD5 of the
+// samples) and its audio frames the very bytes they were before the write.
+// On a failure the file may have been changed: it is the caller's, who
+// removes it. Nothing else is written, no copy and no file beside it.
 //
 // Never throws.
 class RecordingTagWriter
@@ -51,7 +60,7 @@ class RecordingTagWriter
 public:
     virtual ~RecordingTagWriter() = default;
 
-    virtual RecordingTagWriteResult write(const std::string &flacPath, const RecordingTags &tags) = 0;
+    virtual RecordingTagWriteResult tagInPlace(const VerifiedFlac &file, const RecordingTags &tags) = 0;
 };
 
 }  // namespace seabass::application

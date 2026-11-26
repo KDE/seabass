@@ -20,6 +20,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
 #include <exception>
@@ -150,6 +151,81 @@ std::optional<qsizetype> firstDifference(const QAudioBuffer &buffer, const std::
     return std::nullopt;
 }
 
+// Gives the proven file at `temp` the name `target`: flushed without being
+// created, its size and STREAMINFO block compared with what was proven,
+// renamed by a rename that never replaces, the target's size read again.
+// The reasons are phrases for the caller to put in its own sentence.
+application::RecordingPlaceResult placeProven(const fs::path &temp, const fs::path &target, std::uint64_t checkedSize,
+                                              const std::array<std::uint8_t, 34> &checkedInfo,
+                                              const QtFlacRecordingEncoder::TestHooks &hooks)
+{
+    application::RecordingPlaceResult result;
+    const auto fail = [&result](const std::string &why) {
+        result.placed = false;
+        result.error = why;
+        return result;
+    };
+    if (hooks.beforePlace) {
+        hooks.beforePlace(pathToUtf8(temp));
+    }
+    // Opened without being created: a temporary file that went away after
+    // the check is a failure, never an empty file under the target's name.
+    std::uint64_t flushedSize = 0;
+    try {
+        flushedSize = flushExistingFile(temp);
+    } catch (const std::exception &e) {
+        return fail(std::string("the encoded file could not be flushed: ") + e.what());
+    }
+    // The file that was flushed is the one that was checked: its size and
+    // its STREAMINFO block, with the MD5 of every sample. Not its audio
+    // again: decoding or hashing a FLAC of a whole set once more costs the
+    // person minutes on every keep, for a file changed in the moment
+    // between the check and here by something else, which the size and the
+    // MD5 already catch unless it rewrote the audio with other bytes of the
+    // same length and left STREAMINFO alone.
+    const std::optional<FlacStreamInfo> info = readFlacStreamInfo(temp);
+    if (flushedSize != checkedSize || !info || info->raw != checkedInfo) {
+        return fail("the encoded file changed after it was checked");
+    }
+    // Asked again for a plain answer: the encoding takes minutes. The
+    // rename below refuses a file that appears after this look too.
+    const std::string targetName = pathToUtf8(target.filename());
+    if (somethingAt(target) != std::optional<bool>(false)) {
+        return fail(targetName + " appeared while the recording was encoded, and is not replaced");
+    }
+    if (hooks.beforeRename) {
+        hooks.beforeRename(pathToUtf8(temp));
+    }
+    const NoReplaceRename renamed = renameNoReplace(temp, target);
+    if (renamed.status == NoReplaceRename::Status::TargetExists) {
+        return fail(targetName + " appeared while the recording was encoded, and is not replaced");
+    }
+    if (renamed.status != NoReplaceRename::Status::Renamed) {
+        return fail("the encoded file could not be given its name: " + renamed.error);
+    }
+    if (renamed.oldNameRemains) {
+        // Given its name through a hard link whose old name could not be
+        // removed: tried once more, and said when it stays.
+        if (!removeSecondName(temp, target)) {
+            result.notes.push_back(targetName + " also has a second name that could not be removed (" + renamed.error
+                                   + "): " + pathToUtf8(temp) + ". It is the same file and can be deleted.");
+        }
+    }
+    try {
+        fsyncDirectoryContaining(pathToUtf8(target));
+    } catch (...) {
+    }
+    // What has the name now is the size that was checked. Something else
+    // is left where it is: it may be another program's.
+    if (fileSizeOf(target) != std::optional<std::uint64_t>(checkedSize)) {
+        result.leftUnderTargetName = true;
+        return fail(targetName + " does not have the size of the checked file after it was given its name; "
+                                 "it was left as it is and does not count as kept");
+    }
+    result.placed = true;
+    return result;
+}
+
 class EncodeJob
 {
 public:
@@ -172,7 +248,7 @@ public:
         }
         bool done = false;
         try {
-            done = encodeToTemp() && verifyTemp() && place();
+            done = encodeToTemp() && verifyTemp() && (m_options.leaveUnplaced ? leaveUnplaced() : place());
         } catch (const std::exception &e) {
             fail(e.what());
         } catch (...) {
@@ -191,6 +267,9 @@ public:
         }
         m_result.encoded = true;
         m_result.error.clear();
+        if (m_options.leaveUnplaced) {
+            return m_result;
+        }
         // The FLAC is in its place and proven: a progress callback that
         // throws now does not make it a failure.
         try {
@@ -229,6 +308,8 @@ private:
         result.unfinished = m_result.unfinished;
         result.partialFrameBytesDropped = m_result.partialFrameBytesDropped;
         result.framesDeclared = m_result.framesDeclared;
+        result.bytesMissing = m_result.bytesMissing;
+        result.declaredUnusable = m_result.declaredUnusable;
     }
 
     void report(double fraction)
@@ -277,6 +358,8 @@ private:
             m_result.partialFrameBytesDropped = unfinished->partialFrameBytes;
             if (unfinished->kind != WavUnfinished::Kind::NoSize) {
                 m_result.framesDeclared = unfinished->framesDeclared;
+                m_result.bytesMissing = unfinished->bytesMissing;
+                m_result.declaredUnusable = !unfinished->declaredUsable;
             }
             // The format is known: a refusal for it can say how long.
             m_result.sampleRate = m_wav->layout().sampleRate;
@@ -751,66 +834,31 @@ private:
             m_cancelled = true;
             return false;
         }
-        if (m_hooks.beforePlace) {
-            m_hooks.beforePlace(pathToUtf8(m_temp));
+        const application::RecordingPlaceResult placed =
+            placeProven(m_temp, m_target, m_checkedSize, m_checkedInfo.raw, m_hooks);
+        // Renamed: the temporary name is the FLAC's now (or a second name
+        // of it, said in the notes), and is never removed as the job's.
+        if (placed.placed || placed.leftUnderTargetName) {
+            m_tempMayExist = false;
         }
-        // Opened without being created: a temporary file that went away
-        // after the check is a failure, never an empty file under the
-        // target's name.
-        std::uint64_t flushedSize = 0;
-        try {
-            flushedSize = flushExistingFile(m_temp);
-        } catch (const std::exception &e) {
-            return fail(std::string("the encoded file could not be flushed: ") + e.what());
+        for (const std::string &note : placed.notes) {
+            m_result.notes.push_back(note);
         }
-        // The file that was flushed is the one that was checked: its size
-        // and its STREAMINFO block, with the MD5 of every sample. Not its
-        // audio again, unlike the tag writer, which re-hashes its copy:
-        // decoding or hashing a FLAC of a whole set a second time costs
-        // the person minutes on every keep, for a file changed in the
-        // moment between the check and here by something else, which the
-        // size and the MD5 already catch unless it rewrote the audio with
-        // other bytes of the same length and left STREAMINFO alone.
-        const std::optional<FlacStreamInfo> info = readFlacStreamInfo(m_temp);
-        if (flushedSize != m_checkedSize || !info || info->raw != m_checkedInfo.raw) {
-            return fail("the encoded file changed after it was checked");
+        return placed.placed || fail(placed.error);
+    }
+
+    // The proven file stays under its temporary name, and is the caller's
+    // from here on.
+    bool leaveUnplaced()
+    {
+        if (m_options.cancel.cancelled()) {
+            m_cancelled = true;
+            return false;
         }
-        // Asked again for a plain answer: the encoding takes minutes. The
-        // rename below refuses a file that appears after this look too.
-        const std::string targetName = pathToUtf8(m_target.filename());
-        if (somethingAt(m_target) != std::optional<bool>(false)) {
-            return fail(targetName + " appeared while the recording was encoded, and is not replaced");
-        }
-        if (m_hooks.beforeRename) {
-            m_hooks.beforeRename(pathToUtf8(m_temp));
-        }
-        const NoReplaceRename renamed = renameNoReplace(m_temp, m_target);
-        if (renamed.status == NoReplaceRename::Status::TargetExists) {
-            return fail(targetName + " appeared while the recording was encoded, and is not replaced");
-        }
-        if (renamed.status != NoReplaceRename::Status::Renamed) {
-            return fail("the encoded file could not be given its name: " + renamed.error);
-        }
+        m_result.unplaced.path = pathToUtf8(m_temp);
+        m_result.unplaced.size = m_checkedSize;
+        m_result.unplaced.streamInfo = m_checkedInfo.raw;
         m_tempMayExist = false;
-        if (renamed.oldNameRemains) {
-            // Given its name through a hard link whose old name could not
-            // be removed: tried once more, and said when it stays.
-            if (!removeSecondName(m_temp, m_target)) {
-                m_result.notes.push_back(targetName + " also has a second name that could not be removed ("
-                                         + renamed.error + "): " + pathToUtf8(m_temp)
-                                         + ". It is the same file and can be deleted.");
-            }
-        }
-        try {
-            fsyncDirectoryContaining(pathToUtf8(m_target));
-        } catch (...) {
-        }
-        // What has the name now is the size that was checked. Something
-        // else is left where it is: it may be another program's.
-        if (fileSizeOf(m_target) != std::optional<std::uint64_t>(m_checkedSize)) {
-            return fail(targetName + " does not have the size of the checked file after it was given its name; "
-                        "it was left as it is and does not count as kept");
-        }
         return true;
     }
 
@@ -827,6 +875,27 @@ private:
 };
 
 }  // namespace
+
+application::RecordingPlaceResult QtFlacRecordingEncoder::placeVerified(const application::VerifiedFlac &file,
+                                                                        const std::string &flacPath)
+{
+    application::RecordingPlaceResult result;
+    try {
+        const fs::path temp = fs::absolute(pathFromUtf8(file.path));
+        const fs::path target = fs::absolute(pathFromUtf8(flacPath));
+        result = placeProven(temp, target, file.size, file.streamInfo, m_hooks);
+    } catch (const std::exception &e) {
+        result = {};
+        result.error = e.what();
+    } catch (...) {
+        result = {};
+        result.error = "unknown error";
+    }
+    if (!result.placed) {
+        result.error = "the FLAC was not given its name: " + result.error;
+    }
+    return result;
+}
 
 QtFlacRecordingEncoder::QtFlacRecordingEncoder(int stallTimeoutMs)
     : m_stallTimeoutMs(stallTimeoutMs)

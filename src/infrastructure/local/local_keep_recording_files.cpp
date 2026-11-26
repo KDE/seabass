@@ -296,11 +296,11 @@ std::vector<std::string> LocalKeepRecordingFiles::sweepLeftovers(const std::stri
             continue;  // younger than a day: another Seabass may be writing it
         }
         const std::string path = pathToUtf8(entry);
-        // The tag writer's copy of a FLAC whose FLAC is not there: after
-        // an interrupted replace on FAT or exFAT it can be the only copy
-        // of a kept recording (taglib_recording_tag_writer.hpp). Never
-        // removed, and named, so it is not left unseen. The encoder's
-        // file is unverified by definition and goes.
+        // A tag copy of a FLAC whose FLAC is not there: earlier builds
+        // tagged a copy and renamed it over the FLAC, and after an
+        // interrupted replace on FAT or exFAT it can be the only copy of a
+        // kept recording. Never removed, and named, so it is not left
+        // unseen. The encoder's file was never placed and goes.
         if (name.ends_with(audio::RecordingTagTempSuffix)) {
             std::error_code flacEc;
             const fs::file_status flac = fs::symlink_status(folder / pathFromUtf8(*flacName), flacEc);

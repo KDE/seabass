@@ -10,10 +10,15 @@
 #include <string>
 #include <string_view>
 
-// The names of the temporary files the recording encoder and the
-// recording tag writer write beside a kept FLAC:
+// The names of the temporary files beside a kept FLAC:
 //
 //     "<FLAC's name>.<16 hex digits><suffix>"
+//
+// A keep job writes one only: the encoder's, which is tagged in place and
+// then given the FLAC's name. The tag writer's copy is a suffix of earlier
+// builds, which tagged a copy of the placed FLAC and renamed it over the
+// FLAC; their leftovers are still recognised, so that the sweep of
+// leftovers finds them (LocalKeepRecordingFiles::sweepLeftovers()).
 //
 // The suffix comes last and is no audio extension, so a music player that
 // indexes the folder does not take a leftover for a track. Header only:
@@ -22,22 +27,19 @@
 namespace seabass::infrastructure::audio
 {
 
-// The encoder's file before it is proven, and the tag writer's copy.
+// The encoder's file until it is placed, and an earlier build's tag copy.
 inline constexpr const char *RecordingEncodeTempSuffix = ".seabass-encode-tmp";
 inline constexpr const char *RecordingTagTempSuffix = ".seabass-tag-tmp";
 inline constexpr std::size_t RecordingTempTokenDigits = 16;
 
-// The suffixes, for whoever walks them all.
+// The suffixes, for the sweep that walks them all.
 inline constexpr const char *RecordingTempSuffixes[] = {RecordingEncodeTempSuffix, RecordingTagTempSuffix};
 
-// How many bytes the longest of the temporary names adds to a FLAC's name.
+// How many bytes the temporary name a keep job writes adds to a FLAC's
+// name: the encoder's, the only one it writes.
 inline constexpr std::size_t recordingTempNameExtraBytes()
 {
-    std::size_t most = 0;
-    for (const char *suffix : RecordingTempSuffixes) {
-        most = std::max(most, 1 + RecordingTempTokenDigits + std::string_view(suffix).size());
-    }
-    return most;
+    return 1 + RecordingTempTokenDigits + std::string_view(RecordingEncodeTempSuffix).size();
 }
 
 // The FLAC's name a temporary name of one of the suffixes belongs to:

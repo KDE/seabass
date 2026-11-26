@@ -58,15 +58,27 @@ Page {
     function plural(n, one, many) {
         return n + " " + (n === 1 ? one : many);
     }
-    // "1:07:13" or "7:13"; "" when unknown.
+    // "1:07:13" or "7:13"; "" when unknown. Cut to whole seconds as a
+    // clock shows them, never rounded up: the C++ texts (the notes of a
+    // kept job, the reasons) count the same way.
     function duration(seconds) {
         if (seconds === undefined || seconds < 0) return "";
-        const total = Math.round(seconds);
+        const total = Math.floor(seconds);
         const h = Math.floor(total / 3600);
         const m = Math.floor((total % 3600) / 60);
         const s = total % 60;
         const two = (v) => (v < 10 ? "0" : "") + v;
         return h > 0 ? h + ":" + two(m) + ":" + two(s) : m + ":" + two(s);
+    }
+    // For a header that declares more than the file holds, when both
+    // lengths print the same: how much is missing, in words. "" otherwise.
+    function missingNote(declaredSeconds, heldSeconds, missingBytes) {
+        if (missingBytes === undefined || missingBytes < 0 || declaredSeconds < 0
+            || root.duration(declaredSeconds) !== root.duration(heldSeconds)) {
+            return "";
+        }
+        return missingBytes === 1 ? qsTr("1 byte less than the header declares")
+            : qsTr("%1 bytes less than the header declares").arg(missingBytes);
     }
     // Sessions/ is Engine OS's, the REC folders a Pioneer or AlphaTheta
     // deck's: the play key takes that deck's form.
@@ -114,7 +126,7 @@ Page {
     // Opens the form for a row of the list.
     function openKeepForm(row) {
         keepDialog.openFor(row.path, row.fileName, row.modified, row.unfinished, row.heldSeconds,
-                           row.declaredSeconds);
+                           row.declaredSeconds, row.declaredUnusable, row.missingBytes);
     }
 
     // What the strip says, for the job in hand or the ones that ended.
@@ -122,6 +134,7 @@ Page {
         {key: "encoding", label: qsTr("Encoding")},
         {key: "checking", label: qsTr("Checking")},
         {key: "tags", label: qsTr("Tags and cover")},
+        {key: "placing", label: qsTr("Saving")},
     ]
     readonly property var keepFinishedJobs: root.keepController !== null ? (root.keepController.finishedJobs ?? []) : []
     readonly property var keepFinished: root.keepFinishedJobs.length > 0
@@ -263,6 +276,11 @@ Page {
         property bool unfinished: false
         property double heldSeconds: -1
         property double declaredSeconds: -1
+        // The header declares a length no recording has; how many bytes
+        // less the file holds than the header declares (-1 when not cut
+        // short).
+        property bool declaredUnusable: false
+        property double missingBytes: -1
         // Shown once the person has tried to start, or has typed.
         property bool tried: false
         readonly property var keep: root.keepController
@@ -282,13 +300,16 @@ Page {
         readonly property bool ready: problems.length === 0 && keep !== null && keep.coverPreparing !== true
             && (!keepDialog.unfinished || keepUnfinishedBox.checked)
 
-        function openFor(path, name, recorded, unfinished, heldSeconds, declaredSeconds) {
+        function openFor(path, name, recorded, unfinished, heldSeconds, declaredSeconds, declaredUnusable,
+                         missingBytes) {
             const suggested = root.keepController.suggestionsFor(name, recorded);
             keepDialog.wavPath = path;
             keepDialog.recording = name;
             keepDialog.unfinished = unfinished === true;
             keepDialog.heldSeconds = heldSeconds ?? -1;
             keepDialog.declaredSeconds = declaredSeconds ?? -1;
+            keepDialog.declaredUnusable = declaredUnusable === true;
+            keepDialog.missingBytes = missingBytes ?? -1;
             keepUnfinishedBox.checked = false;
             keepDialog.tried = false;
             artistField.text = suggested.artist;
@@ -360,7 +381,20 @@ Page {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
                 color: Theme.danger
-                text: keepDialog.declaredSeconds >= 0
+                readonly property string missing: root.missingNote(keepDialog.declaredSeconds, keepDialog.heldSeconds,
+                                                                   keepDialog.missingBytes)
+                text: keepDialog.declaredUnusable
+                    ? qsTr("The header of this recording was not completed: the header's length is not usable, and "
+                        + "the file holds %1 of audio. This happens when a player is switched off or a stick is "
+                        + "pulled while recording. The recording on the stick is not changed.")
+                        .arg(root.duration(keepDialog.heldSeconds))
+                    : keepDialog.declaredSeconds >= 0 && missing.length > 0
+                    ? qsTr("The header of this recording was not completed: the header declares %1 of audio, the "
+                        + "file holds %2 (%3). This happens when a player is switched off or a stick is pulled "
+                        + "while recording. The recording on the stick is not changed.")
+                        .arg(root.duration(keepDialog.declaredSeconds)).arg(root.duration(keepDialog.heldSeconds))
+                        .arg(missing)
+                    : keepDialog.declaredSeconds >= 0
                     ? qsTr("The header of this recording was not completed: the header declares %1 of audio, the "
                         + "file holds %2. This happens when a player is switched off or a stick is pulled while "
                         + "recording. The recording on the stick is not changed.")
@@ -681,6 +715,8 @@ Page {
                 required property bool unfinished
                 required property double heldSeconds
                 required property double declaredSeconds
+                required property bool declaredUnusable
+                required property double missingBytes
                 required property bool holdsNoAudio
 
                 readonly property var kept: root.keepController !== null
@@ -710,7 +746,15 @@ Page {
                         return parts.join(" · ");
                     }
                     if (row.unfinished) {
-                        parts.push(row.declaredSeconds >= 0
+                        const missing = root.missingNote(row.declaredSeconds, row.heldSeconds, row.missingBytes);
+                        parts.push(row.declaredUnusable
+                            ? qsTr("header not completed: its length is not usable, the file holds %1")
+                                .arg(root.duration(row.heldSeconds))
+                            : row.declaredSeconds >= 0 && missing.length > 0
+                            ? qsTr("header not completed: it declares %1, the file holds %2 (%3)")
+                                .arg(root.duration(row.declaredSeconds)).arg(root.duration(row.heldSeconds))
+                                .arg(missing)
+                            : row.declaredSeconds >= 0
                             ? qsTr("header not completed: it declares %1, the file holds %2")
                                 .arg(root.duration(row.declaredSeconds)).arg(root.duration(row.heldSeconds))
                             : qsTr("header not completed, the file holds %1 of audio")

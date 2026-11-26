@@ -274,15 +274,18 @@ TestCase {
         rows.append({path: "/media/u/WHALESHARK/Sessions/Milkshaken.wav", fileName: "Milkshaken.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 2239137764,
                      modified: new Date(2026, 4, 7, 20, 6), durationSeconds: 12693.5, included: false,
-                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
+                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
+                     missingBytes: -1, holdsNoAudio: false});
         rows.append({path: "/media/u/WHALESHARK/Sessions/Session-0002.wav", fileName: "Session-0002.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 111384620,
                      modified: new Date(2026, 6, 12, 2, 30), durationSeconds: 631.4, included: false,
-                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
+                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
+                     missingBytes: -1, holdsNoAudio: false});
         rows.append({path: "/media/u/WHALESHARK/PIONEER REC/REC001.WAV", fileName: "REC001.WAV",
                      folderName: "PIONEER REC", source: "pioneer", sizeBytes: 457387052,
                      modified: new Date(2017, 0, 1, 1, 0), durationSeconds: -1, included: false,
-                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
+                     unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
+                     missingBytes: -1, holdsNoAudio: false});
         controller.recount();
     }
 
@@ -332,7 +335,9 @@ TestCase {
         compare(findChild(first, "fileNameLabel").text, "Milkshaken.wav");
         const details = findChild(first, "detailsLabel").text;
         verify(details.indexOf("Sessions (Engine OS)") === 0, details);
-        verify(details.indexOf("3:31:34") > 0, "the length, h:mm:ss: " + details);
+        // 12693.5 seconds: cut to whole seconds as a clock shows them, as
+        // the C++ texts count, never rounded up.
+        verify(details.indexOf("3:31:33") > 0, "the length, h:mm:ss, cut to whole seconds: " + details);
         compare(findChild(first, "sizeLabel").text, Theme.humanBytes(2239137764));
 
         // No length known: folder and date only, nothing where a length
@@ -593,7 +598,8 @@ TestCase {
             controller.recordings.append({path: "/media/u/WHALESHARK/Sessions/Set.mp3", fileName: "Set.mp3",
                                           folderName: "Sessions", source: "engine", sizeBytes: 1000,
                                           modified: new Date(2026, 1, 1), durationSeconds: 10, included: false,
-                                          unfinished: false, heldSeconds: -1, declaredSeconds: -1, holdsNoAudio: false});
+                                          unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
+                     missingBytes: -1, holdsNoAudio: false});
         });
         for (let i = 0; i < 3; ++i) {
             verify(findChild(row(page, i), "keepButton").visible, "row " + i + " is a WAV and can be kept");
@@ -775,7 +781,7 @@ TestCase {
         verify(strip.expanded, "a click opens the panel");
         verify(waitForPolish(page.Window.window));
         const steps = findAll(strip, "passiveProgressStep");
-        compare(steps.map(s => s.text), ["Encoding", "Checking", "Tags and cover"]);
+        compare(steps.map(s => s.text), ["Encoding", "Checking", "Tags and cover", "Saving"]);
         const counts = findAll(strip, "passiveProgressStepCount").filter(c => c.visible);
         compare(counts.map(c => c.text), ["70%"], "the step in hand with its count");
         const lines = findAll(strip, "passiveProgressActivityLine").map(l => l.text);
@@ -792,10 +798,11 @@ TestCase {
     // hand is now, those after come later.
     function test_theStepsFollowTheJob_data() {
         return [
-            {tag: "space", step: "space", states: ["now", "later", "later"], word: "encoding"},
-            {tag: "encoding", step: "encoding", states: ["now", "later", "later"], word: "encoding"},
-            {tag: "checking", step: "checking", states: ["done", "now", "later"], word: "checking"},
-            {tag: "tags", step: "tags", states: ["done", "done", "now"], word: "tags and cover"},
+            {tag: "space", step: "space", states: ["now", "later", "later", "later"], word: "encoding"},
+            {tag: "encoding", step: "encoding", states: ["now", "later", "later", "later"], word: "encoding"},
+            {tag: "checking", step: "checking", states: ["done", "now", "later", "later"], word: "checking"},
+            {tag: "tags", step: "tags", states: ["done", "done", "now", "later"], word: "tags and cover"},
+            {tag: "placing", step: "placing", states: ["done", "done", "done", "now"], word: "saving"},
         ];
     }
     function test_theStepsFollowTheJob(data) {
@@ -1142,6 +1149,51 @@ TestCase {
         openForm(page, 0);
         verify(field(page, "keepUnfinishedLabel").text.indexOf("does not say how long") >= 0,
                "one that declares no length: its own words, not the last one's lengths");
+    }
+
+    // Cut short by less than a second: both lengths print the same, so the
+    // bytes missing are said, in the row and in the form. Lengths are cut
+    // to whole seconds (42:10.9 is 42:10), as the C++ texts count.
+    function test_aRecordingCutShortByLessThanASecond() {
+        const page = makePage(controller => {
+            addRecordings(controller);
+            controller.recordings.setProperty(1, "unfinished", true);
+            controller.recordings.setProperty(1, "heldSeconds", 2530.9);
+            controller.recordings.setProperty(1, "declaredSeconds", 2530.95);
+            controller.recordings.setProperty(1, "missingBytes", 9600);
+            controller.recordings.setProperty(0, "unfinished", true);
+            controller.recordings.setProperty(0, "heldSeconds", 2530.2);
+            controller.recordings.setProperty(0, "declaredSeconds", 3600);
+            controller.recordings.setProperty(0, "missingBytes", 10706400);
+        });
+        const details = findChild(row(page, 1), "detailsLabel").text;
+        verify(details.endsWith("header not completed: it declares 42:10, the file holds 42:10 (9600 bytes less "
+                                + "than the header declares)"), details);
+        verify(findChild(row(page, 0), "detailsLabel").text.indexOf("bytes less") < 0,
+               "lengths that print apart: no bytes said");
+        openForm(page, 1);
+        compare(field(page, "keepUnfinishedLabel").text,
+                "The header of this recording was not completed: the header declares 42:10 of audio, the file "
+                + "holds 42:10 (9600 bytes less than the header declares). This happens when a player is switched "
+                + "off or a stick is pulled while recording. The recording on the stick is not changed.");
+    }
+
+    // A declared length no recording has is not printed as one.
+    function test_aDeclaredLengthThatIsNotUsable() {
+        const page = makePage(controller => {
+            addRecordings(controller);
+            controller.recordings.setProperty(1, "unfinished", true);
+            controller.recordings.setProperty(1, "heldSeconds", 61.5);
+            controller.recordings.setProperty(1, "declaredUnusable", true);
+            controller.recordings.setProperty(1, "missingBytes", 1e15);
+        });
+        const details = findChild(row(page, 1), "detailsLabel").text;
+        verify(details.endsWith("header not completed: its length is not usable, the file holds 1:01"), details);
+        openForm(page, 1);
+        compare(field(page, "keepUnfinishedLabel").text,
+                "The header of this recording was not completed: the header's length is not usable, and the file "
+                + "holds 1:01 of audio. This happens when a player is switched off or a stick is pulled while "
+                + "recording. The recording on the stick is not changed.");
     }
 
     // A WAV without one whole frame of audio: the row says so and offers

@@ -39,7 +39,18 @@
 //     partial frame reported, STREAMINFO's total the frames kept and the
 //     FLAC the signal of those frames;
 //   - RF64 with a data size of 0 is refused with a plain reason, and a file
-//     without one whole frame holds no audio;
+//     without one whole frame, or cut before its data chunk, holds no
+//     audio; a declared length over 100 hours, or an RF64 one over a
+//     thousand times what the file holds, is not usable and not said as a
+//     length; one that prints as the length held is said with the bytes
+//     missing;
+//   - a plain RIFF over 4 GB (sparse) whose data size is 0 or 0xFFFFFFFF
+//     is unfinished (no size) and read to its end with the choice; over
+//     4 GB with any other data size it is refused;
+//   - pinned as they are: a header without a size followed by a long run
+//     of zeros, by a LIST chunk or by an ID3v1 block reads all of it as
+//     audio to the end, and more than a second of digital silence inside
+//     the declared data of a finished file is audio like any other;
 //   - the temporary file is named "<FLAC>.<16 hex>.seabass-encode-tmp",
 //     and the recorder writes under that name (no extension added);
 //   - a temporary name too long for the filesystem: refused, saying so;
@@ -657,6 +668,216 @@ void headerReadings(const std::string &dir)
         const auto wav = read("one-frame", WavSpec{44100, 2, 16, 1}, WavReading::AsDeclared);
         check(wav->isOpen() && !wav->holdsNoAudio(), "one frame: open, holds audio");
     }
+    // Cut before its data chunk: holds no audio, the reason as before.
+    {
+        const std::string path = dir + "/no-data-chunk.wav";
+        recording_test::writeWav(path, WavSpec{44100, 2, 16, 44100});
+        fs::resize_file(pathFromUtf8(path), 36);
+        for (const WavReading reading : {WavReading::AsDeclared, WavReading::ToEndOfFile}) {
+            const WavPcmFile wav(pathFromUtf8(path), reading);
+            check(wav.state() == WavPcmFile::State::Refused && wav.holdsNoAudio() && !wav.unfinished()
+                      && wav.error() == "it holds no audio (no data chunk)",
+                  "cut before its data chunk: holds no audio: " + wav.error());
+        }
+    }
+    // Cut short by less than a second: both lengths print the same, and
+    // the bytes missing are said.
+    {
+        WavSpec spec{48000, 2, 16, 48000 * 2 + 10};
+        spec.declaredDataBytes = (48000 * 2 + 1010) * 4;
+        const auto wav = read("cut-by-less-than-a-second", spec, WavReading::AsDeclared);
+        check(wav->state() == WavPcmFile::State::Unfinished && wav->unfinished()
+                  && wav->unfinished()->bytesMissing == 4000 && wav->unfinished()->declaredUsable
+                  && wav->error() == "its header was not completed: it declares 0:02 of audio, and the file holds 0:02 "
+                                     "(4000 bytes less than the header declares)",
+              "cut short by less than a second: the bytes missing are said: " + wav->error());
+    }
+    // A declared length no recording has: over 100 hours in a plain RIFF
+    // cannot be (4 GB at 44.1 kHz mono 16 bit is 13.5 hours), so RF64:
+    // 101 hours declared for 400 seconds of audio (less than a thousand
+    // times it), and a thousand and one times the file's audio.
+    {
+        WavSpec spec{48000, 1, 16, 48000 * 400};
+        spec.rf64 = true;
+        spec.ds64DataBytes = 48000ULL * 2 * 3600 * 101;
+        const auto wav = read("rf64-101-hours", spec, WavReading::AsDeclared);
+        check(wav->state() == WavPcmFile::State::Unfinished && wav->unfinished()
+                  && !wav->unfinished()->declaredUsable
+                  && wav->error() == "its header was not completed: the header's length is not usable, and the file "
+                                     "holds 6:40",
+              "a declared length over 100 hours: not usable, not said as a length: " + wav->error());
+        WavSpec hundred{48000, 1, 16, 48000 * 400};
+        hundred.rf64 = true;
+        hundred.ds64DataBytes = 48000ULL * 2 * 3600 * 100;
+        const auto atLimit = read("rf64-100-hours", hundred, WavReading::AsDeclared);
+        check(atLimit->unfinished() && atLimit->unfinished()->declaredUsable
+                  && atLimit->error().find("it declares 100:00:00 of audio") != std::string::npos,
+              "a declared length of 100 hours: said: " + atLimit->error());
+        WavSpec factor{48000, 1, 16, 48000};
+        factor.rf64 = true;
+        factor.ds64DataBytes = 48000ULL * 2 * 1001;
+        const auto far = read("rf64-factor", factor, WavReading::AsDeclared);
+        check(far->unfinished() && !far->unfinished()->declaredUsable,
+              "an RF64 size of more than a thousand times the audio held: not usable: " + far->error());
+        WavSpec within{48000, 1, 16, 48000};
+        within.rf64 = true;
+        within.ds64DataBytes = 48000ULL * 2 * 1000;
+        const auto near = read("rf64-within-factor", within, WavReading::AsDeclared);
+        check(near->unfinished() && near->unfinished()->declaredUsable
+                  && near->error().find("it declares 16:40 of audio") != std::string::npos,
+              "an RF64 size of a thousand times the audio held: said: " + near->error());
+        WavSpec plainLong{44100, 1, 16, 44100};
+        plainLong.declaredDataBytes = 0xFFFFFFF0U;  // 13.5 hours, cut to a second
+        const auto plain = read("plain-cut-to-a-second", plainLong, WavReading::AsDeclared);
+        check(plain->unfinished() && plain->unfinished()->declaredUsable
+                  && plain->error().find("it declares 13:31:35 of audio") != std::string::npos,
+              "a plain RIFF cut to a small part: its length is said, plain sizes are never absurd: " + plain->error());
+    }
+}
+
+// Whether `decoded` holds, after the first `skipFrames` frames, exactly
+// the 16 bit little endian stereo samples in `bytes` (whole frames only).
+std::string compareWithBytes(const recording_test::Decoded &decoded, std::uint64_t skipFrames, const std::string &bytes)
+{
+    if (!decoded.error.empty()) {
+        return decoded.error;
+    }
+    const std::uint64_t samples = bytes.size() / 4 * 2;
+    if (decoded.samples.size() != skipFrames * 2 + samples) {
+        return "decoded to " + std::to_string(decoded.samples.size()) + " samples, not "
+            + std::to_string(skipFrames * 2 + samples);
+    }
+    for (std::uint64_t i = 0; i < samples; ++i) {
+        const auto lo = static_cast<std::uint8_t>(bytes[2 * i]);
+        const auto hi = static_cast<std::uint8_t>(bytes[2 * i + 1]);
+        const auto v = static_cast<std::int16_t>(static_cast<std::uint16_t>(lo | (hi << 8)));
+        if (decoded.samples[skipFrames * 2 + i] != recording_test::scaled32(v, 16)) {
+            return "sample " + std::to_string(i) + " after frame " + std::to_string(skipFrames) + " differs";
+        }
+    }
+    return {};
+}
+
+// What the reader makes of a header without a size followed by bytes that
+// are no audio, and of digital silence inside a finished file. Pinned as
+// they are: no behaviour of their own.
+void trailingBytesWithoutASize(const std::string &dir)
+{
+    struct Case
+    {
+        std::string label;
+        std::string trailing;
+    };
+    const std::vector<Case> cases = {
+        {"zeros", std::string(44100 * 4 * 3, '\0')},  // three seconds of zero bytes
+        {"list", std::string("LIST\x0a\x00\x00\x00INFOabcdef", 18)},
+        {"id3v1", "TAG" + std::string("Late Set") + std::string(117, ' ')},
+    };
+    for (const Case &c : cases) {
+        WavSpec spec{44100, 2, 16, 44100};
+        spec.declaredDataBytes = 0xFFFFFFFFU;
+        spec.trailing = c.trailing;
+        const std::string label = "no size, then " + c.label;
+        const std::string wav = dir + "/nosize-" + c.label + ".wav";
+        const std::string flac = dir + "/nosize-" + c.label + ".flac";
+        recording_test::writeWav(wav, spec);
+        QtFlacRecordingEncoder encoder;
+        const Run run = encode(encoder, wav, flac, application::CancellationToken::none(), 2.0, true);
+        const std::uint64_t extraFrames = c.trailing.size() / 4;
+        check(run.result.encoded && run.result.unfinished && !run.result.framesDeclared,
+              label + ": kept as a header without a size, read to the end (" + run.result.error + ")");
+        check(run.result.framesInWav == spec.frames + extraFrames
+                  && run.result.partialFrameBytesDropped == c.trailing.size() % 4,
+              label + ": every byte after the header is audio, a partial frame left out ("
+                  + std::to_string(run.result.framesInWav) + " frames)");
+        const recording_test::Decoded decoded = recording_test::decodeAll(flac);
+        recording_test::Decoded head = decoded;
+        head.samples.resize(std::min<std::size_t>(head.samples.size(), spec.frames * 2));
+        check(recording_test::compareWithSignal(head, spec).empty(), label + ": the recording's frames come first");
+        check(compareWithBytes(decoded, spec.frames, c.trailing.substr(0, extraFrames * 4)).empty(),
+              label + ": and the bytes after them follow as samples: "
+                  + compareWithBytes(decoded, spec.frames, c.trailing.substr(0, extraFrames * 4)));
+    }
+    // A finished file with a second and a half of digital silence inside
+    // its declared data: audio like any other, kept as it is.
+    {
+        WavSpec spec{44100, 2, 16, 44100 * 4};
+        const std::string wav = dir + "/silence-inside.wav";
+        const std::string flac = dir + "/silence-inside.flac";
+        recording_test::writeWav(wav, spec);
+        {
+            std::fstream file(pathFromUtf8(wav), std::ios::in | std::ios::out | std::ios::binary);
+            file.seekp(44 + 44100 * 4);  // from the second second on
+            const std::string zeros(44100 * 4 * 3 / 2, '\0');
+            file.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
+        }
+        const std::string data = readAll(wav).substr(44);
+        QtFlacRecordingEncoder encoder;
+        const Run run = encode(encoder, wav, flac);
+        check(run.result.encoded && !run.result.unfinished && run.result.framesInWav == spec.frames,
+              "silence inside a finished file: kept as declared, not unfinished (" + run.result.error + ")");
+        check(compareWithBytes(recording_test::decodeAll(flac), 0, data).empty(),
+              "silence inside a finished file: the FLAC holds the file's samples, the silence included");
+    }
+}
+
+// A plain RIFF over 4 GB: unfinished when it declares no size, refused
+// with any other. Sparse files: the reader looks at the header only.
+void overFourGigabytes(const std::string &dir)
+{
+    using infrastructure::audio::WavPcmFile;
+    using infrastructure::audio::WavReading;
+    using infrastructure::audio::WavUnfinished;
+    const std::uint64_t size = (std::uint64_t{1} << 32) + 4096 + 2;
+    for (const std::uint32_t declared : {std::uint32_t{0xFFFFFFFFU}, std::uint32_t{0}}) {
+        const std::string wav = dir + "/huge-nosize.wav";
+        WavSpec spec{48000, 2, 24, 48000};
+        spec.declaredDataBytes = declared;
+        recording_test::writeWav(wav, spec);
+        fs::resize_file(pathFromUtf8(wav), size);
+        const std::string label = "over 4 GB, data size " + std::to_string(declared);
+        const std::uint64_t frames = (size - 44) / 6;
+        {
+            const WavPcmFile file(pathFromUtf8(wav), WavReading::AsDeclared);
+            check(file.state() == WavPcmFile::State::Unfinished && file.unfinished()
+                      && file.unfinished()->kind == WavUnfinished::Kind::NoSize
+                      && file.unfinished()->framesHeld == frames && file.unfinished()->partialFrameBytes == (size - 44) % 6,
+                  label + ": unfinished, no size, every whole frame held counted: " + file.error());
+            check(file.error().find("does not say how long the audio is") != std::string::npos
+                      && file.error().find("holds " + infrastructure::audio::wavDuration(frames, 48000) + " of audio")
+                          != std::string::npos
+                      && frames / 48000 > 4 * 3600,
+                  label + ": the reason says the hours it holds: " + file.error());
+        }
+        {
+            const WavPcmFile file(pathFromUtf8(wav), WavReading::ToEndOfFile);
+            check(file.isOpen() && file.layout().frames == frames, label + ": with the choice, read to its end");
+            std::vector<std::byte> last(6);
+            bool read = file.isOpen();
+            try {
+                if (read) {
+                    file.readFrames(frames - 1, last);
+                }
+            } catch (const std::exception &) {
+                read = false;
+            }
+            check(read, label + ": its last whole frame, past 4 GB, can be read");
+        }
+        fs::remove(pathFromUtf8(wav));
+    }
+    {
+        const std::string wav = dir + "/huge-sized.wav";
+        WavSpec spec{48000, 2, 24, 48000};
+        recording_test::writeWav(wav, spec);
+        fs::resize_file(pathFromUtf8(wav), size);
+        for (const WavReading reading : {WavReading::AsDeclared, WavReading::ToEndOfFile}) {
+            const WavPcmFile file(pathFromUtf8(wav), reading);
+            check(file.state() == WavPcmFile::State::Refused && !file.unfinished()
+                      && file.error().find("over 4 GB") != std::string::npos,
+                  "over 4 GB with a data size: refused, not unfinished: " + file.error());
+        }
+        fs::remove(pathFromUtf8(wav));
+    }
 }
 
 // The temporary file's name, and what the filesystem cannot take.
@@ -1014,6 +1235,8 @@ int main(int argc, char **argv)
         trailingBytes(dir);
         unfinishedHeaders(dir);
         headerReadings(dir);
+        trailingBytesWithoutASize(dir);
+        overFourGigabytes(dir);
         temporaryNames(dir);
         comparisonAlone(dir);
         placement(dir);

@@ -72,6 +72,29 @@ std::string wavDuration(std::uint64_t frames, int sampleRate)
     return h > 0 ? std::to_string(h) + ":" + two(m) + ":" + two(sec) : std::to_string(m) + ":" + two(sec);
 }
 
+bool declaredLengthUsable(std::uint64_t framesDeclared, int sampleRate, std::uint64_t bytesDeclared,
+                          std::uint64_t bytesHeld, bool rf64)
+{
+    if (sampleRate <= 0 || framesDeclared / static_cast<std::uint64_t>(sampleRate) > MaxUsableDeclaredSeconds) {
+        return false;
+    }
+    return !rf64 || bytesHeld == 0 || bytesDeclared / bytesHeld <= MaxUsableRf64DeclaredFactor;
+}
+
+std::string declaredAgainstHeld(const WavUnfinished &unfinished, int sampleRate)
+{
+    const std::string holds = wavDuration(unfinished.framesHeld, sampleRate);
+    if (!unfinished.declaredUsable) {
+        return "the header's length is not usable, and the file holds " + holds;
+    }
+    const std::string declared = wavDuration(unfinished.framesDeclared, sampleRate);
+    std::string text = "it declares " + declared + " of audio, and the file holds " + holds;
+    if (declared == holds) {
+        text += " (" + std::to_string(unfinished.bytesMissing) + " bytes less than the header declares)";
+    }
+    return text;
+}
+
 namespace
 {
 
@@ -164,10 +187,6 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
             refuse("it is not a WAV file");
             return;
         }
-        if (riff && fileSize > PlainRiffLimit) {
-            refuse("it is a plain WAV over 4 GB, whose header cannot say how long its audio is");
-            return;
-        }
 
         std::optional<std::uint64_t> ds64DataSize;
         std::optional<Fmt> fmt;
@@ -240,7 +259,17 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
             return;
         }
         if (!dataOffset) {
+            m_noAudio = true;
             refuse("it holds no audio (no data chunk)");
+            return;
+        }
+        // A plain RIFF's sizes have 32 bits: past 4 GB the header cannot
+        // say how long its audio is. One that declares no size is a long
+        // recording the player never finished (past 4 h 8 min at 24 bit,
+        // 48 kHz, stereo), unfinished like a shorter one; any other size
+        // in a file that large is refused.
+        if (riff && fileSize > PlainRiffLimit && !noSize) {
+            refuse("it is a plain WAV over 4 GB, whose header cannot say how long its audio is");
             return;
         }
         m_layout.sampleRate = fmt->sampleRate;
@@ -292,6 +321,11 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
             info.framesHeld = held / align;
             info.partialFrameBytes = held % align;
             info.framesDeclared = *unfinished == WavUnfinished::Kind::NoSize ? 0 : dataBytes / align;
+            if (*unfinished == WavUnfinished::Kind::PastEnd) {
+                info.bytesMissing = dataBytes - held;
+                info.declaredUsable = declaredLengthUsable(info.framesDeclared, fmt->sampleRate, dataBytes, held,
+                                                           m_layout.rf64);
+            }
             if (info.framesHeld == 0) {
                 m_noAudio = true;
                 refuse("it holds no audio");
@@ -307,9 +341,7 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
                                   "holds " + holds + " of audio";
                         break;
                     case WavUnfinished::Kind::PastEnd:
-                        m_error = "its header was not completed: it declares "
-                            + wavDuration(info.framesDeclared, fmt->sampleRate) + " of audio, and the file holds "
-                            + holds;
+                        m_error = "its header was not completed: " + declaredAgainstHeld(info, fmt->sampleRate);
                         break;
                 }
                 return;
