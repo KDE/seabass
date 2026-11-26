@@ -126,6 +126,10 @@
 #include "infrastructure/engine/engine_import_state.hpp"
 #include "infrastructure/engine/libdjinterop_engine_library_creator.hpp"
 #include "gui/rekordbox_export_sync_list_model.hpp"
+#include "domain/engine_update_planning.hpp"
+#include "domain/rekordbox_baseline.hpp"
+#include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
+#include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/exact_sample_count.hpp"
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
@@ -215,26 +219,6 @@ void waitUntilIdle(RekordboxExportSyncController &controller)
     assert(!controller.busy());
 }
 
-// B01's comment, added in rekordbox between export 40 and export 128.
-// Since #108 Seabass records the comments it writes but not who wrote a
-// comment, so a rekordbox comment that differs from the recorded one asks
-// (it may be an export bringing back rekordbox's older one). The hardware
-// round took rekordbox's, and so does every analysis here.
-const std::string B01CommentKey = "comment:contents/seabass test/t73 base/t73-b01-click-44k-102bpm.flac";
-
-void answerB01Comment(RekordboxExportSyncController &controller)
-{
-    const auto &rows = controller.rows()->rows();
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        if (rows[i].section == Section::Conflicts && rows[i].header.key == B01CommentKey
-            && rows[i].header.reason == d::EngineUpdateReason::OriginUnknown) {
-            assert(!rows[i].included && "asked, not ticked");
-            controller.resolveConflict(static_cast<int>(i), true);
-            break;
-        }
-    }
-}
-
 void analyze(RekordboxExportSyncController &controller, const testing::EngineChangeStick &stick)
 {
     controller.analyze(QStringLiteral("TESTSHARK"), stick.pioneerPath(), stick.enginePath());
@@ -244,7 +228,6 @@ void analyze(RekordboxExportSyncController &controller, const testing::EngineCha
     }
     assert(controller.errorMessage().isEmpty());
     assert(controller.analyzed());
-    answerB01Comment(controller);
 }
 
 LibraryEditSession *sessionOf(const testing::EngineChangeStick &stick)
@@ -391,9 +374,6 @@ std::multiset<std::string> expectedProposal()
         // Ratings and comments to Engine (2)
         "rating to Engine " + b01 + ": 4",
         "comment to Engine " + b01 + ": \"T73 comment\"",
-        // The question B01's comment raises since #108, answered with
-        // rekordbox's (analyze()): the row stays, ticked.
-        "no edit: conflict " + B01CommentKey,
     };
     std::multiset<std::string> ticked;
     for (const auto &row : out) {
@@ -740,8 +720,7 @@ void assertGoldenProposal(RekordboxExportSyncController &controller, const std::
     assert(controller.checkedCount() == 24);
     assert(controller.conflictCount() == static_cast<int>(conflicts.size()));
     const QVariantMap counts = controller.sectionCounts();
-    // The conflicts section holds B01's comment question too, answered.
-    const std::map<QString, int> want{{"conflicts", static_cast<int>(conflicts.size()) + 1},
+    const std::map<QString, int> want{{"conflicts", static_cast<int>(conflicts.size())},
                                       {"playlists", 5},          {"tracksToAdd", 3},
                                       {"tracksToRemove", 4},   {"membership", 10},        {"metadataToEngine", 2},
                                       {"cuesToEngine", 0},     {"restoresToRekordbox", 0}, {"engineOwnKept", 0},
@@ -832,7 +811,6 @@ void testSaveUndoSave()
         assert(chains.whole());
     }
     assert(fileBytes(recordOf(stick)) == record40);
-    answerB01Comment(controller);  // the record is back at 40, so it asks again
     assertGoldenProposal(controller);
     std::cout << "undo: m.db and the record as before save 1, the 24 rows again OK\n";
 
@@ -1048,6 +1026,140 @@ void testInSync()
             assert(!(r.section == Section::Conflicts && r.header.key == key) && "the answered conflict is not asked again");
         }
         std::cout << "insync: an empty answer to a comment both sides changed is recorded and not asked again OK\n";
+    }
+}
+
+// --- remembered ----------------------------------------------------------
+
+// rekordbox's view of one T73 track ("B01"): its export.pdb row.
+seabass::domain::Track rekordboxRowOf(const testing::EngineChangeStick &stick, const std::string &name)
+{
+    seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pathToUtf8(stick.pioneer));
+    for (auto &track : reader.readAll()) {
+        if (track.filename.rfind("T73-" + name + "-", 0) == 0) {
+            return track;
+        }
+    }
+    assert(false && "the track is in export.pdb");
+    return {};
+}
+
+// What rekordbox's next export does to a rating Seabass wrote: master.db
+// never saw it, so export.pdb gets rekordbox's own back.
+void exportRating(const testing::EngineChangeStick &stick, const std::string &name, int stars)
+{
+    seabass::infrastructure::rekordbox::PdbRowWriter writer(pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb"));
+    assert(writer.setTrackRating(static_cast<std::uint32_t>(std::stoul(rekordboxRowOf(stick, name).sourceId)), stars));
+    assert(writer.commit());
+}
+
+// What the record remembers across saves of the page (#108): a rating
+// Seabass wrote, kept as Engine's when an export brought rekordbox's back,
+// goes back by itself after the next such export; the mark of a comment
+// Seabass wrote stays while the record's comment is that one, and a stale
+// mark goes. Libraries in sync at export 128, then planted: Seabass wrote
+// 5 stars on B01 (record and Engine), rekordbox's export still has 4.
+void testRemembered()
+{
+    namespace local = seabass::infrastructure::local;
+    const auto stick = makeStick("t73_remembered", "m-after-R3d.db", "rekordbox-baseline-export128.tsv.gz");
+    const std::string b01 = Base + "t73-b01-click-44k-102bpm.flac";
+    const std::string b02 = Base + "t73-b02-click-44k-104bpm.flac";
+    const std::string ratingKey = "rating:" + b01;
+    const std::string commentKey = "comment:" + b01;
+    const std::string staleKey = "comment:" + b02;
+    const std::string kept = d::keptRatingAnswer(5, "rating:4");
+    assert(testing::sqlExec(stick.db, "UPDATE Track SET rating = 100 WHERE filename LIKE 'T73-B01-%';"));
+    std::string error;
+    auto record = local::readRekordboxBaseline(stick.root, &error);
+    assert(error.empty() && record);
+    int planted = 0;
+    for (auto &track : record->tracks) {
+        if (track.pathKey == b01) {
+            assert(track.comment == "T73 comment" && "precondition: the record knew B01's comment");
+            track.rating = 5;
+            track.ratingOrigin = d::ValueOrigin::Seabass;
+            ++planted;
+        }
+    }
+    assert(planted == 1);
+    record->declined[commentKey] = d::seabassCommentMarker("T73 comment");
+    record->declined[staleKey] = d::seabassCommentMarker("long gone");
+    assert(local::writeRekordboxBaseline(stick.root, *record, [](const std::string &) {}, &error));
+    const auto recorded = [&] {
+        std::string why;
+        auto now = local::readRekordboxBaseline(stick.root, &why);
+        assert(why.empty() && now);
+        return *now;
+    };
+    const auto rowOf = [](RekordboxExportSyncController &page, const std::string &key, Section section) {
+        const auto &rows = page.rows()->rows();
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            if (rows[i].section == section && rows[i].header.key == key) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+
+    // 1. Asked; answered with Engine's 5 stars, written back onto rekordbox.
+    {
+        RekordboxExportSyncController page;
+        analyze(page, stick);
+        const int row = rowOf(page, ratingKey, Section::Conflicts);
+        assert(row >= 0 && "a rating Seabass wrote that rekordbox has otherwise asks");
+        assert(rowOf(page, ratingKey, Section::RestoresToRekordbox) < 0);
+        page.resolveConflict(row, false);
+        page.stageSelected();
+        assert(page.errorMessage().isEmpty());
+        waitForSave(sessionOf(stick), page, false);
+        const auto after = recorded();
+        assert(after.declined.count(ratingKey) && after.declined.at(ratingKey) == kept && "the answer is remembered");
+        assert(after.declined.count(commentKey) && "the mark of B01's comment stays: the record's comment is it");
+        assert(!after.declined.count(staleKey) && "a stale mark goes");
+        assert(rekordboxRowOf(stick, "B01").rating == 5);
+        std::cout << "remembered: a rating kept as Engine's is recorded with rekordbox's at the time OK\n";
+    }
+
+    // 2. The next export brings 4 back: Engine's goes back, ticked, not asked.
+    exportRating(stick, "B01", 4);
+    {
+        RekordboxExportSyncController page;
+        analyze(page, stick);
+        assert(rowOf(page, ratingKey, Section::Conflicts) < 0 && "not asked again");
+        const int row = rowOf(page, ratingKey, Section::RestoresToRekordbox);
+        assert(row >= 0 && page.rows()->rows()[static_cast<std::size_t>(row)].included);
+        page.stageSelected();
+        assert(page.errorMessage().isEmpty());
+        waitForSave(sessionOf(stick), page, false);
+        assert(rekordboxRowOf(stick, "B01").rating == 5);
+        assert(recorded().declined.at(ratingKey) == kept && "still remembered");
+        std::cout << "remembered: the next export's 4 stars are put back to Engine's 5 without asking OK\n";
+    }
+
+    // 3. A save about another track (rekordbox rated B02) keeps both.
+    exportRating(stick, "B02", 1);
+    {
+        RekordboxExportSyncController page;
+        analyze(page, stick);
+        assert(rowOf(page, ratingKey, Section::RestoresToRekordbox) < 0 && rowOf(page, ratingKey, Section::Conflicts) < 0);
+        assert(rowOf(page, "rating:" + b02, Section::MetadataToEngine) >= 0);
+        page.stageSelected();
+        assert(page.errorMessage().isEmpty());
+        waitForSave(sessionOf(stick), page, false);
+        const auto after = recorded();
+        assert(after.declined.count(ratingKey) && after.declined.at(ratingKey) == kept);
+        assert(after.declined.count(commentKey) && after.declined.at(commentKey) == d::seabassCommentMarker("T73 comment"));
+        std::cout << "remembered: a save that does not offer B01 keeps its answer and its comment's mark OK\n";
+    }
+
+    // 4. rekordbox rated B01 otherwise: asked again.
+    exportRating(stick, "B01", 2);
+    {
+        RekordboxExportSyncController page;
+        analyze(page, stick);
+        assert(rowOf(page, ratingKey, Section::Conflicts) >= 0 && "another rating in rekordbox asks again");
+        std::cout << "remembered: another rating in rekordbox asks again OK\n";
     }
 }
 
@@ -1574,7 +1686,7 @@ std::set<std::string> conflictKeys(RekordboxExportSyncController &controller)
 {
     std::set<std::string> out;
     for (const Row &row : controller.rows()->rows()) {
-        if (row.section == Section::Conflicts && row.header.key != B01CommentKey) {
+        if (row.section == Section::Conflicts) {
             out.insert(row.header.key);
         }
     }
@@ -4735,7 +4847,7 @@ int main(int argc, char **argv)
 {
     seabass::tests::assumeNothingElseRunning();
     if (argc < 3) {
-        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|renamedparent|conflictedparent|deleteunderunticked|deletechained|foldermovedout|folderholdsown|reusedpulled|reusedpath|kindrefused\n";
+        std::cerr << "usage: testshark_t73_test <tests/fixtures/testshark_t73> fixture|proposal|save|insync|replay|analysis|create|cuesync|folder|reused|reusedrenamed|renamedparent|conflictedparent|deleteunderunticked|deletechained|foldermovedout|folderholdsown|reusedpulled|reusedpath|kindrefused|remembered\n";
         return 2;
     }
     qputenv("SEABASS_IGNORE_REMOVABLE_MEDIA", "1");
@@ -4797,6 +4909,8 @@ int main(int argc, char **argv)
         testReusedAtAPathEngineHas();
     } else if (which == "kindrefused") {
         testKindChangedRefused();
+    } else if (which == "remembered") {
+        testRemembered();
     } else {
         std::cerr << "unknown case " << which << "\n";
         return 2;

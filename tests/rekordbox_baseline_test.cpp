@@ -612,9 +612,16 @@ void testRecordSeabassWrites()
     const auto &three = *b.findTrack(Three);
     assert(three.comment == "edited in Seabass" && "a comment written is the recorded one (#108)");
     assert(three.ratingOrigin == ValueOrigin::Unknown && "a comment alone leaves the rating's origin");
+    assert(b.declined.at("comment:" + Three) == seabass::domain::seabassCommentMarker("edited in Seabass")
+           && "the record says Seabass wrote it");
+    assert(!b.declined.count("comment:" + One) && !b.declined.count("comment:contents/x/none.mp3")
+           && "no mark without a comment written, or for a track not listed");
+    assert(seabass::domain::seabassCommentMarker("a") != seabass::domain::seabassCommentMarker("b"));
+    assert(seabass::domain::seabassCommentMarker("a").rfind("written ", 0) == 0);
     RekordboxBaseline cleared = b;
     seabass::domain::recordSeabassWrites(cleared, {{Three, std::nullopt, std::nullopt, std::string()}});
     assert(cleared.findTrack(Three)->comment.empty() && "a comment cleared is recorded cleared");
+    assert(cleared.declined.at("comment:" + Three) == seabass::domain::seabassCommentMarker(""));
     std::cout << "recordSeabassWrites (cues and rating of Seabass origin, comments as written, unlisted reported) OK\n";
 }
 

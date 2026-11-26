@@ -3804,7 +3804,7 @@ if(TARGET seabass_edit)
     if(TARGET seabass_taglib)
         target_link_libraries(testshark_t73_test PRIVATE seabass_taglib)
     endif()
-    set(_t73_cases fixture proposal save insync replay folder reused reusedrenamed renamedparent conflictedparent deleteunderunticked deletechained foldermovedout folderholdsown reusedpulled reusedpath kindrefused)
+    set(_t73_cases fixture proposal save insync replay folder reused reusedrenamed renamedparent conflictedparent deleteunderunticked deletechained foldermovedout folderholdsown reusedpulled reusedpath kindrefused remembered)
     # "Copy beat grids/waveforms from rekordbox to Engine when syncing" on
     # that save: completing a created row takes its file's own sample
     # count, which only TagLib reads.

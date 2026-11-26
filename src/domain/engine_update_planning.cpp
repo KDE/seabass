@@ -2393,21 +2393,37 @@ private:
                         // has another: rekordbox's export writes master.db's
                         // ratings, which never saw Seabass's, so this is as
                         // likely the export bringing back the old one as a
-                        // change in rekordbox. It asks.
-                        auto c = conflictOf(EngineUpdateReason::OriginUnknown,
-                                            "rekordbox has " + starsText(rv) + " where Seabass wrote " + starsText(bv)
-                                                + ", which " + engineName
-                                                + " still has: nothing recorded whether rekordbox changed it or an "
-                                                  "export brought back an older one");
-                        c.rekordboxChoice.emplace_back(toEngine(rv, true, EngineUpdateReason::OriginUnknown,
-                                                                c.rekordboxSide));
-                        c.engineSide = "Keep " + engineName + "'s " + starsText(ev)
-                            + " and write the rating back onto rekordbox";
-                        auto back = toRekordbox(ev, true, EngineUpdateReason::OriginUnknown,
-                                                "Put " + starsText(ev) + " back on rekordbox");
-                        back.restoresSeabassWrite = true;  // the record says Seabass wrote it
-                        c.engineChoice.emplace_back(std::move(back));
-                        out.conflicts.push_back(std::move(c));
+                        // change in rekordbox. It asks, once: answered with
+                        // Engine's, the answer is remembered with rekordbox's
+                        // rating then, and while an export brings that same
+                        // rating back, Engine's goes back by itself.
+                        const std::string remembered = keptRatingAnswer(ev, state);
+                        const auto answer = base->declined.find(itemKeyText);
+                        if (answer != base->declined.end() && answer->second == remembered) {
+                            auto restore = toRekordbox(ev, true, EngineUpdateReason::ExportDropped,
+                                                       "rekordbox's export brought back " + starsText(rv)
+                                                           + " again; " + engineName + "'s " + starsText(ev)
+                                                           + " was kept when Sync last asked, so it goes back");
+                            restore.restoresSeabassWrite = true;
+                            restore.rememberAs = remembered;
+                            out.restoresToRekordbox.push_back(std::move(restore));
+                        } else {
+                            auto c = conflictOf(EngineUpdateReason::OriginUnknown,
+                                                "rekordbox has " + starsText(rv) + " where Seabass wrote "
+                                                    + starsText(bv) + ", which " + engineName
+                                                    + " still has: nothing recorded whether rekordbox changed it "
+                                                      "or an export brought back an older one");
+                            c.rekordboxChoice.emplace_back(toEngine(rv, true, EngineUpdateReason::OriginUnknown,
+                                                                    c.rekordboxSide));
+                            c.engineSide = "Keep " + engineName + "'s " + starsText(ev)
+                                + " and write the rating back onto rekordbox";
+                            auto back = toRekordbox(ev, true, EngineUpdateReason::OriginUnknown,
+                                                    "Put " + starsText(ev) + " back on rekordbox");
+                            back.restoresSeabassWrite = true;  // the record says Seabass wrote it
+                            back.rememberAs = remembered;      // and asks once
+                            c.engineChoice.emplace_back(std::move(back));
+                            out.conflicts.push_back(std::move(c));
+                        }
                     } else if (bv == ev) {
                         out.metadataToEngine.push_back(toEngine(rv, true, EngineUpdateReason::RekordboxChanged,
                                                                 "rekordbox changed the rating from " + starsText(bv)
@@ -2459,14 +2475,13 @@ private:
                 }
             }
 
-            // Comment. No origin is recorded for comments (the record's
-            // format has no place for one), so where rekordbox's differs
-            // from the recorded one and Engine's does not, nothing says
-            // whether rekordbox changed it or an export brought back the
-            // comment rekordbox had before Seabass edited it (#108: Seabass
-            // records its comment edits, rekordbox's master.db never sees
-            // them). That asks, every time, and is never assumed either
-            // way. A comment rekordbox lacks is never assumed dropped.
+            // Comment. Where rekordbox's differs from the recorded one and
+            // Engine's does not, rekordbox changed it, unless Seabass wrote
+            // the recorded one (#108, seabassCommentMarker): rekordbox's
+            // master.db never sees a comment Seabass writes, so the next
+            // export may bring back the one rekordbox had before, and
+            // nothing says which it was. That asks. A comment rekordbox
+            // lacks is never assumed dropped.
             if (r->comment != e->comment) {
                 const std::string itemKeyText = commentItemKey(key);
                 const std::string state = "comment:" + r->comment;
@@ -2488,7 +2503,17 @@ private:
                     c.rekordboxChoice.emplace_back(toEngine(true, reason, c.rekordboxSide));
                     return c;
                 };
-                if (b && b->comment == e->comment && !r->comment.empty()) {
+                const bool seabassWroteIt = [&] {
+                    if (!b) {
+                        return false;
+                    }
+                    const auto marker = base->declined.find(itemKeyText);
+                    return marker != base->declined.end() && marker->second == seabassCommentMarker(b->comment);
+                }();
+                if (b && b->comment == e->comment && !r->comment.empty() && !seabassWroteIt) {
+                    out.metadataToEngine.push_back(
+                        toEngine(true, EngineUpdateReason::RekordboxChanged, "rekordbox changed the comment" + since()));
+                } else if (b && b->comment == e->comment && !r->comment.empty()) {
                     // Keeping Engine's writes nothing: Sync does not write
                     // comments onto rekordbox, so the answer says that
                     // rekordbox keeps its own, which the next record then
@@ -2497,12 +2522,11 @@ private:
                     auto c = conflictOf(
                         EngineUpdateReason::OriginUnknown,
                         b->comment.empty()
-                            ? "rekordbox has a comment " + engineName
-                                  + " does not, and nothing recorded whether it is new in rekordbox or one an "
-                                    "export brought back"
-                            : "rekordbox's comment is not the one Seabass last recorded, which " + engineName
-                                  + " still has: nothing recorded whether rekordbox changed it or an export "
-                                    "brought back an older one");
+                            ? "rekordbox has a comment where Seabass cleared it, and " + engineName
+                                  + " has none: rekordbox may have a new one, or an export brought back the old one"
+                            : "rekordbox's comment is not the one Seabass wrote, which " + engineName
+                                  + " still has: rekordbox may have changed it, or an export brought back the old "
+                                    "one");
                     c.engineSide = e->comment.empty()
                         ? "Leave " + engineName + " without a comment; rekordbox keeps its own"
                         : "Keep " + engineName + "'s comment " + shortQuoted(e->comment) + "; rekordbox keeps its own";
@@ -3409,6 +3433,11 @@ std::string engineUpdateStateHash(std::string_view canonicalState)
     char text[17];
     std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(hash));
     return text;
+}
+
+std::string keptRatingAnswer(std::optional<int> engineStars, const std::string &rekordboxState)
+{
+    return "kept " + (engineStars ? std::to_string(*engineStars) : std::string("none")) + " over " + rekordboxState;
 }
 
 }  // namespace seabass::domain

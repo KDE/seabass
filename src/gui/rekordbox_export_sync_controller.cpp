@@ -1624,6 +1624,18 @@ void RekordboxExportSyncController::stageSelected()
     for (const auto &key : applied) {
         declined.erase(key);
     }
+    // An answer to remember (MetadataEdit::rememberAs): a rating Seabass
+    // wrote, kept as Engine's over the one rekordbox's export brought
+    // back. Recorded as a declined entry of its own, so the next export
+    // that brings the same rating back puts Engine's back without asking.
+    for (const Row &row : rows) {
+        if (!RekordboxExportSyncListModel::writable(row.section) || !row.included || !row.edit) {
+            continue;
+        }
+        if (const auto *edit = std::get_if<domain::MetadataEdit>(&*row.edit); edit && !edit->rememberAs.empty()) {
+            declined[row.header.key] = edit->rememberAs;
+        }
+    }
 
     if (changes.empty() && declined.empty() && !record.answeredWithoutAWrite && analysis.proposal.hasBaseline) {
         setStatusMessage(QStringLiteral("Nothing is selected, so there is nothing to stage."));
@@ -1703,10 +1715,25 @@ void RekordboxExportSyncController::stageSelected()
     // not this save offered their track: nextBaseline keeps only the
     // declines of items offered. A key this save answered anew, either
     // way, takes the new answer (rekordbox's side: no entry, the two agree
-    // once it is written).
+    // once it is written). So do the ratings kept as Engine's
+    // (keptRatingAnswer): the save after the one that wrote Engine's back
+    // finds the two sides level and offers nothing, and the next export
+    // that brings rekordbox's old rating back is what they are kept for.
     if (analysis.baseline) {
         for (const auto &[key, state] : analysis.baseline->declined) {
-            if (key.rfind("analysis:", 0) == 0 && !declined.count(key) && !applied.count(key)) {
+            // And the comments Seabass wrote (seabassCommentMarker), for
+            // the same reason, while the record's comment is the one
+            // written, which is what the planner reads the mark against:
+            // a question left open keeps the record's comment and needs
+            // the mark next time; an item that advanced leaves it stale.
+            bool remembered = key.rfind("analysis:", 0) == 0 || state.rfind("kept ", 0) == 0;
+            if (state.rfind("written ", 0) == 0) {
+                const auto parsed = domain::parseItemKey(key);
+                const domain::BaselineTrack *recorded =
+                    parsed ? analysis.baseline->findTrack(parsed->pathKey) : nullptr;
+                remembered = recorded && domain::seabassCommentMarker(recorded->comment) == state;
+            }
+            if (remembered && !declined.count(key) && !applied.count(key)) {
                 declined.emplace(key, state);
             }
         }

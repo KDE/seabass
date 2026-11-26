@@ -3095,66 +3095,111 @@ int main()
         std::cout << "a rating Seabass wrote and rekordbox changed asks OK\n";
     }
 
-    // Comments with a record (#108): Seabass records the comments it
-    // writes, but not that it wrote them. A comment of rekordbox's that
-    // differs from the recorded one, Engine's still the recorded one,
-    // asks: it may be an edit in rekordbox, or an export bringing back
-    // rekordbox's comment from before Seabass edited it. Engine's own
-    // change stays Engine's, and both changed asks as before.
+    // Comments with a record (#108). A comment Seabass wrote carries its
+    // mark in the record (seabassCommentMarker under the comment's key):
+    // rekordbox's master.db never saw it, so a rekordbox comment other
+    // than it may be rekordbox's change or the export bringing back the
+    // old one, and asks. Without the mark rekordbox changed it, and it
+    // goes to Engine as always. Engine's own change stays Engine's, both
+    // changed asks.
     {
         World w;
         w.rekordbox = {rb("1", "Music/A.mp3"), rb("2", "Music/B.mp3"), rb("3", "Music/C.mp3"),
-                       rb("4", "Music/D.mp3")};
+                       rb("4", "Music/D.mp3"), rb("5", "Music/E.mp3")};
         w.engine = {en("e1", "Music/A.mp3"), en("e2", "Music/B.mp3"), en("e3", "Music/C.mp3"),
-                    en("e4", "Music/D.mp3")};
+                    en("e4", "Music/D.mp3"), en("e5", "Music/E.mp3")};
         for (auto *side : {&w.rekordbox, &w.engine}) {
             (*side)[0].comment = "edited in Seabass";
             (*side)[2].comment = "same";
             (*side)[3].comment = "same";
+            (*side)[4].comment = "rekordbox's own";
         }
-        const auto base = baselineOf(w);
+        auto base = baselineOf(w);
+        base.declined["comment:music/a.mp3"] = seabass::domain::seabassCommentMarker("edited in Seabass");
+        // A stale mark: Seabass wrote another comment once, the record moved on.
+        base.declined["comment:music/e.mp3"] = seabass::domain::seabassCommentMarker("long gone");
         w.rekordbox[0].comment = "rekordbox's old one";  // the export brought it back
         w.rekordbox[1].comment = "new in rekordbox";      // none recorded, rekordbox has one now
         w.engine[2].comment = "Engine's";                 // Engine changed C
         w.rekordbox[3].comment = "rekordbox's";           // both changed D
         w.engine[3].comment = "Engine's";
+        w.rekordbox[4].comment = "rekordbox's newer";     // rekordbox changed E
         const auto p = plan(w, base);
-        assert(p.metadataToEngine.empty() && "no comment goes to Engine without a question");
+        assert(p.metadataToEngine.size() == 2);
+        assert(p.metadataToEngine[0].header.key == "comment:music/b.mp3"
+               && p.metadataToEngine[0].header.checkedByDefault
+               && p.metadataToEngine[0].header.reason == EngineUpdateReason::RekordboxChanged);
+        assert(p.metadataToEngine[1].header.key == "comment:music/e.mp3" && "a stale mark says nothing");
         assert(p.engineOwnKept.size() == 1 && p.engineOwnKept[0].header.key == "comment:music/c.mp3");
-        assert(p.conflicts.size() == 3);
+        assert(p.conflicts.size() == 2);
         const auto &a = p.conflicts[0];
         assert(a.header.key == "comment:music/a.mp3" && a.header.reason == EngineUpdateReason::OriginUnknown);
         assert(a.header.reasonText
-               == "rekordbox's comment is not the one Seabass last recorded, which Engine still has: nothing "
-                  "recorded whether rekordbox changed it or an export brought back an older one");
+               == "rekordbox's comment is not the one Seabass wrote, which Engine still has: rekordbox may have "
+                  "changed it, or an export brought back the old one");
         assert(a.rekordboxSide == "Set the comment in Engine to \"rekordbox's old one\" (rekordbox's)");
         assert(a.engineSide == "Keep Engine's comment \"edited in Seabass\"; rekordbox keeps its own");
         assert(std::get<MetadataEdit>(a.rekordboxChoice[0]).comment == "rekordbox's old one");
         assert(a.engineChoice.empty() && "keeping Engine's writes nothing");
-        const auto &b = p.conflicts[1];
-        assert(b.header.key == "comment:music/b.mp3" && b.header.reason == EngineUpdateReason::OriginUnknown);
-        assert(b.header.reasonText
-               == "rekordbox has a comment Engine does not, and nothing recorded whether it is new in rekordbox "
-                  "or one an export brought back");
-        assert(p.conflicts[2].header.key == "comment:music/d.mp3"
-               && p.conflicts[2].header.reason == EngineUpdateReason::BothChanged);
-        World after = w;
-        apply(after, p, true);
-        assert(after.engine[0].comment == "rekordbox's old one" && after.engine[1].comment == "new in rekordbox");
-        assert(after.engine[2].comment == "Engine's");
-        // Answered toward Engine, A's rekordbox comment stays; recorded as
-        // it is now, the question does not come back, and Engine's comment
-        // is Engine's own from then on.
-        World kept = w;
-        kept.engine[1].comment = w.rekordbox[1].comment;  // B taken
-        const auto again = plan(kept, baselineOf(kept));
-        assert(again.conflicts.empty() && again.metadataToEngine.empty());
-        bool aKept = false;
-        for (const auto &own : again.engineOwnKept) {
-            aKept = aKept || own.header.key == "comment:music/a.mp3";
-        }
-        assert(aKept && "Engine's comment is Engine's own, not asked again");
+        assert(p.conflicts[1].header.key == "comment:music/d.mp3"
+               && p.conflicts[1].header.reason == EngineUpdateReason::BothChanged);
+        // Without the mark, A's goes to Engine like any rekordbox change.
+        auto unmarked = base;
+        unmarked.declined.erase("comment:music/a.mp3");
+        const auto q = plan(w, unmarked);
+        assert(q.conflicts.size() == 1 && q.metadataToEngine.size() == 3
+               && q.metadataToEngine[0].header.key == "comment:music/a.mp3");
+        // A comment Seabass cleared that rekordbox has again asks too.
+        World cleared;
+        cleared.rekordbox = {rb("1", "Music/A.mp3")};
+        cleared.engine = {en("e1", "Music/A.mp3")};
+        auto clearedBase = baselineOf(cleared);
+        clearedBase.declined["comment:music/a.mp3"] = seabass::domain::seabassCommentMarker("");
+        cleared.rekordbox[0].comment = "back again";
+        const auto c = plan(cleared, clearedBase);
+        assert(c.conflicts.size() == 1 && c.metadataToEngine.empty());
+        assert(c.conflicts[0].header.reasonText
+               == "rekordbox has a comment where Seabass cleared it, and Engine has none: rekordbox may have a "
+                  "new one, or an export brought back the old one");
+        assert(c.conflicts[0].engineSide == "Leave Engine without a comment; rekordbox keeps its own");
         std::cout << "comments with a record ask where rekordbox's differs (#108) OK\n";
+    }
+
+    // A rating kept as Engine's over the one rekordbox's export brought
+    // back is remembered (keptRatingAnswer, carried in rememberAs): the
+    // next export that brings the same rating back puts Engine's back,
+    // ticked, without asking; another rating in rekordbox asks again.
+    {
+        World w;
+        w.rekordbox = {rb("1", "Music/A.mp3", {}, 4)};
+        w.engine = {en("e1", "Music/A.mp3", {}, 4)};
+        auto base = baselineOf(w);
+        base.tracks[0].ratingOrigin = ValueOrigin::Seabass;
+        w.rekordbox[0].rating = 2;
+        const auto asked = plan(w, base);
+        assert(asked.conflicts.size() == 1);
+        const auto &back = std::get<MetadataEdit>(asked.conflicts[0].engineChoice[0]);
+        assert(back.rememberAs == seabass::domain::keptRatingAnswer(4, "rating:2"));
+        assert(std::get<MetadataEdit>(asked.conflicts[0].rekordboxChoice[0]).rememberAs.empty()
+               && "taking rekordbox's remembers nothing");
+
+        base.declined["rating:music/a.mp3"] = back.rememberAs;
+        const auto again = plan(w, base);
+        assert(again.conflicts.empty() && again.metadataToEngine.empty());
+        assert(again.restoresToRekordbox.size() == 1);
+        const auto &r = again.restoresToRekordbox[0];
+        assert(r.header.key == "rating:music/a.mp3" && r.header.checkedByDefault && r.rating == 4);
+        assert(r.header.reason == EngineUpdateReason::ExportDropped && r.restoresSeabassWrite);
+        assert(r.rememberAs == back.rememberAs && "saved again, it stays remembered");
+        assert(r.header.reasonText
+               == "rekordbox's export brought back 2 stars again; Engine's 4 stars was kept when Sync last asked, "
+                  "so it goes back");
+        assert(again.declinedSuppressed.empty() && "the remembered answer is not a decline");
+
+        w.rekordbox[0].rating = 3;  // rekordbox has another rating now
+        const auto changed = plan(w, base);
+        assert(changed.restoresToRekordbox.empty() && changed.conflicts.size() == 1);
+        std::cout << "a rating kept as Engine's is remembered until rekordbox has another OK\n";
     }
 
     // A declined item stays out while rekordbox's state of it is the one

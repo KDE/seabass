@@ -5,6 +5,7 @@
 #include "domain/rekordbox_baseline.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <charconv>
 #include <cmath>
 #include <string_view>
@@ -609,11 +610,26 @@ std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const 
                 row.comment = *write.comment;
             }
         }
+        if (found && write.comment) {
+            baseline.declined[commentItemKey(write.pathKey)] = seabassCommentMarker(*write.comment);
+        }
         if (!found) {
             unlisted.push_back(write.pathKey);
         }
     }
     return unlisted;
+}
+
+std::string seabassCommentMarker(const std::string &comment)
+{
+    std::uint64_t hash = 14695981039346656037ULL;  // FNV-1a 64: the same in every build
+    for (const unsigned char c : comment) {
+        hash ^= c;
+        hash *= 1099511628211ULL;
+    }
+    char text[17];
+    std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(hash));
+    return std::string("written ") + text;
 }
 
 void keepPreviousItems(RekordboxBaseline &next, const RekordboxBaseline *previous, const std::set<std::string> &keys)

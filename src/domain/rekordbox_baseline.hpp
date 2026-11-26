@@ -308,14 +308,23 @@ struct SeabassWrite
 // The origin ledger: each written track's cues become the written set,
 // every cue of Seabass origin, and its rating the written one (0 stars
 // recorded as unrated, as the readers give it), of Seabass origin, and its
-// comment the written one (no origin: the record has no place for a
-// comment's, and the planner asks wherever rekordbox's differs). Every
+// comment the written one, with seabassCommentMarker(comment) as the
+// record's declined entry under the comment's key: the record's tracks
+// have no place for a comment's origin, its declined entries take any
+// text (#108). Every
 // row of the track's pathKey is updated. The written values are what the
 // rekordbox side holds for those items now, so they are a valid base for
 // them whether or not the baseline is current. Returns the pathKeys of
 // writes for a track the baseline does not list, which are left out: a
 // track row needs more than a write knows.
 std::vector<std::string> recordSeabassWrites(RekordboxBaseline &baseline, const std::vector<SeabassWrite> &writes);
+
+// The declined entry that says Seabass wrote `comment` (#108): "written "
+// and a hash of the text. It holds only while the record's comment is that
+// text, so a comment that moved on since leaves it stale, and harmless.
+// Never equal to a state hash, so no decline is taken for it; a Seabass
+// build without it reads it as a decline that never matches.
+std::string seabassCommentMarker(const std::string &comment);
 
 // Puts back, in `next`, the value `previous` had for each item in `keys`
 // (itemKey grammar; anything else is ignored), so the item comes up again

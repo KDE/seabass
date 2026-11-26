@@ -281,7 +281,20 @@ struct MetadataEdit
     // says Seabass wrote (an OriginUnknown conflict's Engine choice). A
     // description must not claim Seabass wrote what it only copies.
     bool restoresSeabassWrite = false;
+    // Non-empty: the answer to remember when this edit is saved, as the
+    // record's declined entry under header.key (keptRatingAnswer). A
+    // rating Seabass wrote and rekordbox's export keeps bringing back
+    // otherwise: kept as Engine's once, it goes back by itself after each
+    // such export, until rekordbox's rating is another again.
+    std::string rememberAs;
 };
+
+// The declined entry that remembers "Engine's rating kept over
+// rekordbox's" for a rating item: Engine's stars, and rekordbox's state
+// when it was answered. Never equal to a state, so the planner's
+// declines never take it for a decline; a Seabass build without it
+// asks again, as it always did.
+std::string keptRatingAnswer(std::optional<int> engineStars, const std::string &rekordboxState);
 
 // One track's cues, either direction, as a SyncPlan that SyncPlanChange
 // writes unchanged: plan.match is {rekordbox, Engine}, so ToB writes
