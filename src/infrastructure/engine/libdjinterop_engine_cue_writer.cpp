@@ -1526,7 +1526,20 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
             }
         }
 
-        if (!gridWrite && !overviewWrite && !fileWrite) {
+        // The tempo with a grid that is Seabass's own analysis of the file
+        // (tempoWithGrid): with the grid written, and with one that is the
+        // same already, whose tempo may still be an older analysis's.
+        std::optional<std::pair<EngineSqlValue, EngineSqlValue>> tempoWrite;
+        if (options.tempoWithGrid && analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)
+            && (gridWrite || result.grid.outcome == Outcome::AlreadySame)) {
+            const EngineSqlValue bpm = EngineSqlValue::ofInteger(std::llround(*analysis.bpm));
+            const EngineSqlValue bpmAnalyzed = EngineSqlValue::ofReal(*analysis.bpm);
+            if (!(now.columns.bpm == bpm) || !(now.columns.bpmAnalyzed == bpmAnalyzed)) {
+                tempoWrite = std::pair{bpm, bpmAnalyzed};
+            }
+        }
+
+        if (!gridWrite && !overviewWrite && !fileWrite && !tempoWrite) {
             return result;
         }
         // The player's analysis of a row whose file is not under the stick
@@ -1540,6 +1553,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 result.waveform = Waveform::CannotKeepEngines;
             }
             result.overviewFileRelativePath.clear();
+            result.tempoWritten = false;
             return result;
         };
         if (m_keptStore && options.keepKey.empty()) {
@@ -1548,10 +1562,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         const auto apply = [&](EngineAnalysisColumns &after) {
             if (gridWrite) {
                 after.beatData = EngineSqlValue::ofBlob(textOf(gridWrite->to_blob()));
-                if (options.tempoWithGrid && analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)) {
-                    after.bpm = EngineSqlValue::ofInteger(std::llround(*analysis.bpm));
-                    after.bpmAnalyzed = EngineSqlValue::ofReal(*analysis.bpm);
-                }
+            }
+            if (tempoWrite) {
+                after.bpm = tempoWrite->first;
+                after.bpmAnalyzed = tempoWrite->second;
             }
             if (overviewWrite) {
                 after.overviewWaveFormData = EngineSqlValue::ofBlob(textOf(overviewWrite->to_blob()));
@@ -1560,6 +1574,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 after.overviewFile = *fileWrite;
             }
         };
+        result.tempoWritten = tempoWrite.has_value();
         const KeepFacts keep{true, overviewWrite.has_value() || fileWrite.has_value(), options.ownGridFingerprint};
         // What the write would refuse (a kept entry that cannot be read),
         // a preview refuses too, so it never offers a track the save

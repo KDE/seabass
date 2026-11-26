@@ -1137,6 +1137,68 @@ std::optional<size_t> LibdjinteropEngineReader::countTracks()
     return count;
 }
 
+std::optional<domain::Track> LibdjinteropEngineReader::readTrack(const std::string &trackSourceId)
+{
+    takeCorrectionSetting();
+    std::int64_t id = 0;
+    try {
+        id = std::stoll(trackSourceId);
+    } catch (const std::logic_error &) {
+        return std::nullopt;
+    }
+    // Through a read copy where a read of the stick's own m.db would write
+    // beside it (#110), as readTracks() reads.
+    const StickDatabaseRead read = StickDatabaseRead::engine(m_engineLibraryPath);
+    const std::string databaseRoot = read.rootUtf8();
+    auto db = djinterop::engine::load_database(databaseRoot);
+    auto row = db.track_by_id(id);
+    if (!row) {
+        return std::nullopt;
+    }
+    djinterop::track_snapshot snap;
+    try {
+        snap = row->snapshot();
+    } catch (const std::exception &e) {
+        m_progress->warn("track id=" + trackSourceId + ": read field by field (" + e.what() + ")");
+        snap = snapshotFromGetters(*m_progress, *row);
+    }
+    domain::Track track;
+    track.sourceId = trackSourceId;
+    track.format = "engine";
+    track.title = snap.title.value_or("");
+    track.bpm = snap.bpm.value_or(0.0);
+    if (snap.key) {
+        std::ostringstream oss;
+        oss << *snap.key;
+        track.key = oss.str();
+    }
+    const std::string relative = snap.relative_path.value_or("");
+    if (!relative.empty()) {
+        track.filePath = pathToUtf8((pathFromUtf8(m_engineLibraryPath) / pathFromUtf8(relative)).lexically_normal());
+    }
+    const auto streamingSources = readStreamingSources(databaseRoot);
+    if (const auto streaming = streamingSources.find(id); streaming != streamingSources.end()) {
+        track.streamingSource = streaming->second;
+    }
+    const std::optional<double> storedRate =
+        snap.sample_rate && *snap.sample_rate > 0.0 ? snap.sample_rate : std::nullopt;
+    track.cues = cuesOfRow(snap.hot_cues, snap.loops, snap.main_cue, storedRate.value_or(FallbackSampleRate));
+    track.cueRateUnverified = !storedRate;
+    if (!storedRate && !track.cues.empty()) {
+        if (const auto fileRate = rateFromSource(track)) {
+            track.cues = cuesOfRow(snap.hot_cues, snap.loops, snap.main_cue, *fileRate);
+        }
+    }
+    if (!track.cues.empty()) {
+        takeRekordboxImportMarks(databaseRoot);
+        track.engineCuesOnRekordboxTimeline = onRekordboxTimeline(track);
+        track.engineCueWriteShiftMs = fileShiftFromSource(track);
+        track.cueTimelineShiftMs = track.engineCuesOnRekordboxTimeline ? 0.0 : track.engineCueWriteShiftMs;
+        shiftCuePositions(track.cues, track.cueTimelineShiftMs);
+    }
+    return track;
+}
+
 std::vector<domain::Track> LibdjinteropEngineReader::readTracks()
 {
     takeCorrectionSetting();

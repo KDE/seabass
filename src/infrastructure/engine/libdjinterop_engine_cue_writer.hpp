@@ -181,8 +181,8 @@ public:
     // database and the overview file with ones converted from rekordbox's
     // preview (three-band, else colour) over the row's own length. The
     // analysis record and the analysed flag stay, and so does the tempo
-    // unless the options carry it with a grid that is written
-    // (AnalysisImportOptions::tempoWithGrid).
+    // unless the options carry it with a grid that is written or is the
+    // same already (AnalysisImportOptions::tempoWithGrid).
     //
     // A row the player has not analysed is completed all or nothing: a row
     // flagged analysed with a piece missing does not play on a Prime 4 (no

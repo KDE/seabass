@@ -292,7 +292,10 @@ bool TrackImportController::start(ImportRequest request)
             request = std::move(joined);
             joins = true;
         } else {
-            setErrorMessage(!m_staged.empty()
+            setErrorMessage(!m_reanalysed.empty()
+                                ? QStringLiteral("Tracks analysed again are waiting to be saved: an import is checked "
+                                                 "against the stick as it is. Save or take them back first.")
+                            : !m_staged.empty()
                                 ? QStringLiteral("An import into another playlist is waiting to be saved. Save it, or take "
                                                  "it back, before the next.")
                                 : QStringLiteral("Save or discard the edits that are waiting first: an import is checked "
@@ -554,17 +557,22 @@ void TrackImportController::onReanalysed()
         for (const auto &change : prepared.changes) {
             m_reanalysed[change->id()] = playlist;
         }
-        m_reviewed = prepared.changes;
+        // This run's changes take the place of earlier ones of the same
+        // track (the session replaced those); the rest still wait, and
+        // their switches stay reachable.
+        std::erase_if(m_reviewed, [&](const auto &earlier) {
+            return std::any_of(prepared.changes.begin(), prepared.changes.end(),
+                               [&](const auto &change) { return change->id() == earlier->id(); });
+        });
+        m_reviewed.insert(m_reviewed.end(), prepared.changes.begin(), prepared.changes.end());
         ++m_pendingRevision;
         emit pendingChanged();
     }
-    if (prepared.changes.empty()) {
-        m_reviewed.clear();
-    }
+    pruneCueReview();
     int cueTracks = 0;
     int cuesToMove = 0;
     int tooMuch = 0;
-    for (const auto &change : m_reviewed) {
+    for (const auto &change : prepared.changes) {
         const auto &plan = change->cueReview().plan;
         cueTracks += plan.moves.empty() ? 0 : 1;
         cuesToMove += static_cast<int>(plan.moves.size());
@@ -603,22 +611,18 @@ void TrackImportController::setMoveCues(const QString &changeId, bool move)
     for (const auto &change : m_reviewed) {
         if (change->id() == changeId && change->moveCues() != move) {
             change->setMoveCues(move);
-            emit cueReviewChanged();
+            emit moveCuesChanged(changeId, move);
         }
     }
 }
 
 void TrackImportController::setMoveCuesForAll(bool move)
 {
-    bool changed = false;
     for (const auto &change : m_reviewed) {
         if (!change->cueReview().plan.moves.empty() && change->moveCues() != move) {
             change->setMoveCues(move);
-            changed = true;
+            emit moveCuesChanged(change->id(), move);
         }
-    }
-    if (changed) {
-        emit cueReviewChanged();
     }
 }
 

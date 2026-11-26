@@ -87,6 +87,15 @@ public:
     std::vector<domain::Track> readAll() override;
     std::vector<domain::Track> readTracks() override;
     void fillCues(std::vector<domain::Track> &tracks) override;
+    // One row, its key, tempo and cues read as readTracks() reads them
+    // (the stored rate, else the source's; the file's lead-in moved onto
+    // rekordbox's timeline unless the row carries the import mark); no
+    // playlists, artwork or edit time. For a save that has to see a row as
+    // the save has left it so far, in its scratch copy of m.db, without
+    // reading every row (Analyse again's cue moves): such a database is
+    // the save's own and between its transactions, so no journal is
+    // recovered first. nullopt when there is no such row.
+    std::optional<domain::Track> readTrack(const std::string &trackSourceId);
     void setSampleRateSource(SampleRateSource source) { m_sampleRateSource = std::move(source); }
 
     // Engine positions on an MP3 are moved onto rekordbox's timeline as

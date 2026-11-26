@@ -76,8 +76,17 @@ TestCase {
             function reanalysisCount(playlist) { return reanalysed[playlist] ?? 0; }
             property var cueReview: []
             property var cueReviewTooDifferent: []
-            function setMoveCues(id, move) { calls.push(["moveCues", id, move]); }
-            function setMoveCuesForAll(move) { calls.push(["moveCuesForAll", move]); }
+            signal moveCuesChanged(string changeId, bool move)
+            function setMoveCues(id, move) {
+                calls.push(["moveCues", id, move]);
+                moveCuesChanged(id, move);
+            }
+            function setMoveCuesForAll(move) {
+                calls.push(["moveCuesForAll", move]);
+                for (const track of cueReview) {
+                    moveCuesChanged(track.id, move);
+                }
+            }
         }
     }
 
@@ -585,8 +594,8 @@ TestCase {
         fake.reanalysisReady();
         const result = findChild(page, "reanalysisResultDialog");
         tryCompare(result, "opened", true);
-        verify(result.detailText.indexOf("On 1 track(s) the new grid sits elsewhere than the old one, and 1 cue point(s) "
-                                         + "and loop(s) sat on the old grid.") >= 0, result.detailText);
+        verify(result.detailText.indexOf("1 cue point(s) or loop(s) sat on a beat of the old grid, which the new one "
+                                         + "has elsewhere.") >= 0, result.detailText);
         verify(result.detailText.indexOf("On 1 track(s) the grid changed too much to carry cue points") >= 0,
                result.detailText);
         const reviewButton = findChild(page, "reanalysisReviewCuesButton");
@@ -651,5 +660,52 @@ TestCase {
         compare(reviewButton.visible, false);
         compare(result.detailText, "Nothing is written until you save.");
         result.close();
+    }
+
+    // A switch turned, or all of them: only the switches follow; the list,
+    // its pictures and where it is scrolled to stay as they are.
+    function test_aCueChoiceKeepsTheReviewWhereItIs() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const strip = {spanMs: 2000, columns: [{low: 0.5, mid: 0.2, high: 0.1}], oldBeats: [200, 700],
+                       newBeats: [240, 740], oldCueMs: 700, newCueMs: 740};
+        const tracks = [];
+        for (let t = 0; t < 6; ++t) {
+            tracks.push({id: "track" + t, title: "Track " + t, gridShiftMs: 40, oldBpm: 120, newBpm: 120,
+                         moveCues: false, offBeat: 0,
+                         rows: [{label: "Hot cue 1", name: "", color: "", isLoop: false, oldText: "0:01.000",
+                                 newText: "0:01.040", diffMs: 40, strip: strip}]});
+        }
+        fake.cueReview = tracks;
+        const review = findChild(page, "cueReviewDialog");
+        review.open();
+        tryCompare(review, "opened", true);
+        tryVerify(() => review.opacity === 1 && review.scale === 1);
+        const scroll = findChild(page, "cueReviewScroll");
+        const flick = scroll.contentItem;
+        tryVerify(() => flick.contentHeight > flick.height + 100, 2000, "the review scrolls");
+        flick.contentY = 120;
+        const repeater = findChild(page, "cueReviewTracks");
+        const sections = [];
+        for (let t = 0; t < 6; ++t) {
+            sections.push(repeater.itemAt(t));
+        }
+        const firstStrip = findChild(sections[0], "cueReviewStrip");
+        const switchOf = t => findChild(sections[t], "moveCuesSwitch");
+        fake.setMoveCues("track2", true);
+        compare(switchOf(2).checked, true);
+        compare(switchOf(1).checked, false);
+        fake.setMoveCuesForAll(true);
+        for (let t = 0; t < 6; ++t) {
+            compare(switchOf(t).checked, true);
+        }
+        fake.setMoveCuesForAll(false);
+        compare(switchOf(4).checked, false);
+        compare(flick.contentY, 120);
+        for (let t = 0; t < 6; ++t) {
+            verify(repeater.itemAt(t) === sections[t], "section " + t + " not made again");
+        }
+        verify(findChild(sections[0], "cueReviewStrip") === firstStrip, "the picture not made again");
+        review.close();
     }
 }

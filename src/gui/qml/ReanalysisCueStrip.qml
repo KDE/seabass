@@ -117,6 +117,10 @@ Item {
             target: root
             function onStripChanged() { marks.requestPaint(); }
             function onWidthChanged() { marks.requestPaint(); }
+            // The colours follow Theme (a light or dark scheme picked
+            // while the review is open).
+            function onOldColorChanged() { marks.requestPaint(); }
+            function onNewColorChanged() { marks.requestPaint(); }
         }
     }
 

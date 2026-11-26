@@ -11,10 +11,13 @@
 #include <vector>
 
 #include "application/ports/cue_writer.hpp"
+#include "application/path_key.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
+#include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/pdb_lookup.hpp"
@@ -133,8 +136,24 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
     // re-scan fresh (via the shared cache, which itself re-reads
     // whenever the catalog's mtime has moved) so the augmented list
     // below always starts from this track's real current state.
-    std::vector<domain::Track> tracks = LibraryCatalogCache::instance().tracksFor(
-        m_format.toStdString(), m_path.toStdString(), ctx.progress(), ctx.cancel());
+    //
+    // Engine through the save's write session for m.db: when an earlier
+    // change of this save put it behind a scratch copy, that copy is
+    // where this save's Engine writes are, and the stick's m.db is still
+    // the one from before the save (the cache would hand back that).
+    FormatWriteSession *engineSession =
+        m_format == "engine" ? &sharedFormatWriteSession(ctx, "engine", m_path.toStdString(), 0, "add-cue") : nullptr;
+    std::vector<domain::Track> tracks;
+    if (engineSession && engineSession->usesScratch()) {
+        infrastructure::engine::LibdjinteropEngineReader reader(engineSession->writeRoot());
+        reader.setAudioRoot(engineSession->realRoot());
+        if (auto row = reader.readTrack(m_sourceId.toStdString())) {
+            tracks.push_back(std::move(*row));
+        }
+    } else {
+        tracks = LibraryCatalogCache::instance().tracksFor(m_format.toStdString(), m_path.toStdString(), ctx.progress(),
+                                                          ctx.cancel());
+    }
 
     std::string id = m_sourceId.toStdString();
     const domain::Track *track = nullptr;
@@ -210,12 +229,29 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
     } else {
         // Shared for the save: opening an Engine library is a full SQLite
         // open plus schema detection, and a save adding several cues to
-        // the same library should pay that once.
-        writer = &sharedEngineCueWriter(ctx, pioneerRoot);
-        ctx.backupOnce(pathToUtf8(pathFromUtf8(pioneerRoot) / "Database2" / "m.db"), "add-cue");
+        // the same library should pay that once. On the write session's
+        // root, never straight at the stick's m.db: a write there while
+        // another change of the save holds a scratch copy is overwritten
+        // when the copy is committed (RemoveJunkCueChange's fix, for the
+        // same bug). Hint 0: a cue never asks for a scratch copy itself.
+        // The session took the database's backup.
+        const std::string root = engineSession->writeRoot();
+        writer = &ctx.shared<infrastructure::engine::LibdjinteropEngineCueWriter>(
+            "add-cue:engine-writer:" + application::normalizedPathKey(root), [&]() {
+                auto made = std::make_unique<infrastructure::engine::LibdjinteropEngineCueWriter>(root);
+                // The scratch copy holds the database, not the audio.
+                made->setAudioRoot(engineSession->realRoot());
+                useSaveLeadIns(ctx, *made, engineSession->realRoot());
+                return made;
+            });
     }
 
     writer->writeHotCues(id, cues);
+    if (engineSession) {
+        // Counted, because a session discards a scratch copy nothing was
+        // applied to, and this cue with it.
+        engineSession->noteItemApplied();
+    }
     // Right away, not after the save: the next AddCueChange in this save
     // re-reads the track through the cache, and the cache's freshness
     // key is the catalog's mtime, which FAT32 keeps in 2-second steps. A

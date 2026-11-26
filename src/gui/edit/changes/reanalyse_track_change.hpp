@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,9 +29,10 @@ namespace seabass::gui
 //
 // rekordbox's two libraries share the track's analysis files (.DAT, .EXT,
 // .2EX) through the file their rows name. In each, the grid and the
-// waveforms are replaced and everything else is kept byte for byte, the
-// cue lists first of all (infrastructure::rekordbox::mergeTrackAnlzFiles);
-// a .2EX the track lacks is written whole. Then export.pdb's row gets the
+// waveforms are replaced and everything else is kept byte for byte
+// (infrastructure::rekordbox::mergeTrackAnlzFiles), the cue lists too
+// unless the person asked for the cues to follow the grid (below); a
+// .2EX the track lacks is written whole. Then export.pdb's rows get the
 // grid's tempo (PdbRowWriter::setTrackTempoAndKey) and exportLibrary.db's
 // rows the same (OneLibraryCueWriter::setTempoAndKeyForPath). A library
 // whose rows name no analysis file, or one that is not on the stick, is
@@ -39,34 +41,47 @@ namespace seabass::gui
 //
 // Engine's row gets grid, overview and tempo through the analysis writer
 // the import and Beat Grids & Waveforms use, by their rules: a row the
-// player has not analysed is completed; on one it has, a grid locked or
-// moved on the player is left alone (and so is its tempo), and the
-// player's own analysis is kept on the stick before it is first replaced.
+// player has not analysed is completed; on one it has, a row whose grid
+// is locked or moved on the player is left alone whole (grid, overview
+// and tempo: a new overview under the DJ's grid would be half an
+// analysis), and the player's own analysis is kept on the stick before it
+// is first replaced.
 // The grid written is recorded in the beat grid ledger, so the next
 // Analyse again, or a copy, knows it for Seabass's.
 //
-// The key: the analyser's, in rekordbox's spelling, goes into the rows
-// only where the file's tags name no key (`analysedKey` empty means the
-// rows' key stays). Engine takes it only on a row it completes: on an
-// analysed row the key lives in the analysis record, which the kept
-// analysis is recognised by, and writing it there would have the next
-// write take Seabass's key for a new analysis of the player's.
+// The key: a key a row has is never replaced. It is rekordbox's analysis
+// or the DJ's choice, and the analyser's is a guess. The analyser's key
+// (`analysedKey`, rekordbox's spelling) goes only into a row that names
+// none, in each library whose writer can take it safely: export.pdb and
+// exportLibrary.db, and an Engine row the writer completes. Not an Engine
+// row the player analysed: there the key lives in the analysis record,
+// which the kept analysis is recognised by, and writing it would have the
+// next write take Seabass's key for a new analysis of the player's.
 //
 // Cues and loops on a beat of the old grid can follow the new one
 // (application::planCueGridMoves()), only where the person asked for it
 // for this track (setMoveCues(), off until then, settable until the
-// save). At the save each library's cues are read as they are then and
-// planned again against the same two grids, and those that move are
-// written through that library's own cue writer (rekordbox's analysis
-// files with OneLibrary kept in step, Engine's row), the whole set as
-// every cue change writes it. Engine's cues follow only where Engine's
-// row took the new grid: next to a grid left alone (locked, moved on the
-// player) they belong to that grid.
+// save). At the save, before anything is written, every library's cues
+// for the file are read as they are then (Engine's from the save's own
+// copy of m.db) and planned against the two grids the review showed. The
+// cues move only if every library that holds cues for the track plans
+// exactly the moves the review showed (cuesMatchTheReview()), and only
+// where every Engine row takes the new grid; otherwise no cue of the
+// track moves anywhere, the grid part still applies, and the log and the
+// save's summary say why. Those that move are written through each
+// library's own cue writer (rekordbox's analysis files of every row with
+// OneLibrary kept in step, Engine's rows), the whole set as every cue
+// change writes it, and reported as Seabass's write for the rekordbox
+// baseline (rekordboxWrites()).
+//
+// After each library's write the catalog cache is told, so a cue change
+// later in the same save reads the track as this one left it.
 //
 // The change is tied to the track's file (unitKeys(), id()): staging the
-// track again replaces it. One unit of the save; a track whose libraries
-// all turn out to have nothing to replace when the save reaches it is a
-// skip, said in the log.
+// track again replaces it. One unit of the save. A track where no library
+// took anything (all refused, or all the same already) is a skip, its
+// reason in the log; one where some did and a library refused is a
+// success whose summary note names the library left as it was.
 class ReanalyseTrackChange : public PendingChange
 {
 public:
@@ -105,6 +120,19 @@ public:
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // The cue set of the track's rekordbox side, as the last apply() wrote
+    // it, when it moved cues. Not the grid, tempo and key: the rekordbox
+    // baseline has nothing to record them in (RekordboxWrite holds cues
+    // and a rating only).
+    std::vector<RekordboxWrite> rekordboxWrites() const override;
+
+    // Whether `plan` holds exactly `review`'s moves: the same number, each
+    // of the review's matched by one of the same kind, pad (or memory) and
+    // loop-ness, on the same beat, its old and new places (a loop's ends
+    // too) within `toleranceMs` (domain::cueToleranceMsFor() of the
+    // track's tempo, the app's cue comparison). And a plan that moves.
+    static bool cuesMatchTheReview(const application::CueGridPlan &review, const application::CueGridPlan &plan,
+                                   double toleranceMs);
 
     // What the review shows of the track's cues, made when the analysis
     // was: both grids and the cues on rekordbox's timeline (where every
@@ -151,11 +179,6 @@ private:
     // analyses.
     std::string ledgerStickRoot() const;
     std::string ledgerKey() const;
-    // The cues on the old grid moved onto the new one in each library
-    // that took the new analysis (see the class comment); a line for the
-    // log per cue moved into `done`. A message when the change must fail.
-    QString moveCuesOntoNewGrid(SaveContext &ctx, bool toDeviceLibrary, bool toOneLibrary,
-                                const std::vector<std::int64_t> &engineRows, std::vector<std::string> &done);
 
     std::string m_audioFile;
     std::string m_stickPath;
@@ -170,6 +193,7 @@ private:
     int m_itemCountHint = 1;
     CueReview m_cueReview;
     std::atomic<bool> m_moveCues{false};
+    std::optional<RekordboxWrite> m_written;
 };
 
 }  // namespace seabass::gui

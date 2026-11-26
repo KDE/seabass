@@ -2156,8 +2156,12 @@ void OneLibraryCueWriter::writePlayCountForPath(const std::string &filePath, int
     refreshStalenessBaseline();
 }
 
-int OneLibraryCueWriter::setTempoAndKeyForPath(const std::string &filePath, double bpm, const std::string &key)
+int OneLibraryCueWriter::setTempoAndKeyForPath(const std::string &filePath, double bpm, const std::string &key,
+                                               int *keysWritten)
 {
+    if (keysWritten) {
+        *keysWritten = 0;
+    }
     if (!(bpm >= 0.0) || bpm >= 1000.0) {
         throw std::invalid_argument("onelibrary: not a tempo a content row holds");
     }
@@ -2177,17 +2181,31 @@ int OneLibraryCueWriter::setTempoAndKeyForPath(const std::string &filePath, doub
     }
 
     const int64_t bpmx100 = static_cast<int64_t>(bpm * 100.0 + 0.5);
+    // The rows that name no key yet: only they take one.
+    std::set<int64_t> keyless;
+    if (!key.empty()) {
+        for (int64_t contentId : contentIds) {
+            SqlCipherStatement has(db, "SELECT key_id FROM content WHERE content_id = ?");
+            has.bindInt64(1, contentId);
+            if (has.step() && (has.columnIsNull(0) || has.columnInt64(0) == 0)) {
+                keyless.insert(contentId);
+            }
+        }
+    }
     std::optional<int64_t> keyId;
     db.exec("BEGIN IMMEDIATE;");
     try {
         std::vector<MadeRow> made;
-        keyId = lookupRow(db, "key", "key_id", "name", key, made);
+        if (!keyless.empty()) {
+            keyId = lookupRow(db, "key", "key_id", "name", key, made);
+        }
         for (int64_t contentId : contentIds) {
-            SqlCipherStatement set(db, keyId ? "UPDATE content SET bpmx100 = ?, key_id = ? WHERE content_id = ?"
-                                             : "UPDATE content SET bpmx100 = ? WHERE content_id = ?");
+            const bool withKey = keyId && keyless.count(contentId) > 0;
+            SqlCipherStatement set(db, withKey ? "UPDATE content SET bpmx100 = ?, key_id = ? WHERE content_id = ?"
+                                               : "UPDATE content SET bpmx100 = ? WHERE content_id = ?");
             int at = 1;
             set.bindInt64(at++, bpmx100);
-            if (keyId) {
+            if (withKey) {
                 set.bindInt64(at++, *keyId);
             }
             set.bindInt64(at, contentId);
@@ -2208,14 +2226,18 @@ int OneLibraryCueWriter::setTempoAndKeyForPath(const std::string &filePath, doub
         SqlCipherStatement verify(verifyConnection(), "SELECT c.bpmx100, k.name FROM content c LEFT JOIN key k ON "
                                                       "k.key_id = c.key_id WHERE c.content_id = ?");
         verify.bindInt64(1, contentId);
+        const bool withKey = keyId && keyless.count(contentId) > 0;
         if (!verify.step() || verify.columnIsNull(0) || verify.columnInt64(0) != bpmx100
-            || (keyId && verify.columnText(1) != key)) {
+            || (withKey && verify.columnText(1) != key)) {
             throw std::runtime_error("onelibrary: post-write verification failed, tempo or key did not land for "
                                      + contentPath);
         }
     }
 
     refreshStalenessBaseline();
+    if (keysWritten && keyId) {
+        *keysWritten = static_cast<int>(keyless.size());
+    }
     return static_cast<int>(contentIds.size());
 }
 

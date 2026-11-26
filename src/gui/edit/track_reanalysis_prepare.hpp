@@ -46,11 +46,12 @@ struct PreparedReanalysis
 // Reads the stick's libraries, finds every file the playlist holds in any
 // of them, and analyses each one whose audio is on the stick (analyseFiles(),
 // so the import's progress reports and cancel hold). A track is left as it
-// is, with its reason, when its file is missing or cannot be decoded, is
+// is, with its reason, when its file is missing, is of another size than
+// its rows record (not the file they describe), cannot be decoded, is
 // longer than the analysis takes, has no grid in the analysis, is an MP3
 // whose lead-in cannot be read (its grid has no known place on rekordbox's
-// timeline), or has no analysis in any library to replace. The key goes
-// into the change only where the file's tags name none.
+// timeline), or has no analysis in any library to replace. The analyser's
+// key goes with the change, for the rows that name no key.
 //
 // A stick with a library that is there and cannot be read is refused: a
 // track's analysis belongs in every library of a stick.

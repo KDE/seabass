@@ -18,6 +18,7 @@
 #include "application/path_key.hpp"
 #include "application/ports/analysis_writer.hpp"
 #include "application/use_cases/plan_engine_update.hpp"
+#include "domain/cue_tolerance.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/format_write_session.hpp"
@@ -27,6 +28,7 @@
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/engine/rekordbox_key_parser.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -223,8 +225,9 @@ std::vector<BackupTarget> ReanalyseTrackChange::filesToBackup(SaveContext &) con
     std::set<std::string> libraries;
     for (const AnalysisFileOf &file : m_analysisFiles) {
         libraries.insert(file.library.toStdString());
-        // A .2EX the track lacks is made: noted absent, so Undo takes it
-        // away. The others are only ever written over.
+        // Each noted absent where it is not there: a .2EX the track lacks
+        // is made, and Undo takes it away again. A missing .DAT or .EXT is
+        // never made, so noting it absent restores nothing.
         for (const std::string &anlz : anlzFilesOf(file.datPath)) {
             targets.push_back({anlz, Label, true});
         }
@@ -249,19 +252,125 @@ std::vector<BackupTarget> ReanalyseTrackChange::filesToBackup(SaveContext &) con
     return targets;
 }
 
+namespace
+{
+
+// What this save's Analyse again changes left out, for the summary: the
+// tracks whose cue points stayed where they were though the person asked
+// for them to move, and the tracks where a library was left as it was.
+// One hook for the save, counting only the changes that landed.
+struct ReanalysisNotes
+{
+    std::map<QString, std::string> cuesLeft;
+    std::map<QString, std::string> librariesLeft;
+};
+
+ReanalysisNotes &saveNotesOf(SaveContext &ctx)
+{
+    bool created = false;
+    auto &notes = ctx.sharedForWholeSave<ReanalysisNotes>("track-reanalysis:notes", [&]() {
+        created = true;
+        return std::make_unique<ReanalysisNotes>();
+    });
+    if (created) {
+        ctx.onAfterCommit([&ctx](const SaveContext::AfterCommit &after) {
+            const auto *notes = ctx.sharedForWholeSaveIfPresent<ReanalysisNotes>("track-reanalysis:notes");
+            if (notes == nullptr) {
+                return;
+            }
+            const auto landed = [&](const std::map<QString, std::string> &of) {
+                int n = 0;
+                for (const auto &[id, why] : of) {
+                    n += after.appliedIds.contains(id) && !after.skippedIds.contains(id) ? 1 : 0;
+                }
+                return n;
+            };
+            if (const int n = landed(notes->cuesLeft); n > 0) {
+                ctx.addSummaryNote(
+                    n == 1 ? QStringLiteral("The cue points of one track analysed again were left where they are: they "
+                                            "changed since the review, or the libraries hold different ones.")
+                           : QStringLiteral("The cue points of %1 tracks analysed again were left where they are: they "
+                                            "changed since the review, or the libraries hold different ones.")
+                                 .arg(n));
+            }
+            if (const int n = landed(notes->librariesLeft); n > 0) {
+                ctx.addSummaryNote(n == 1 ? QStringLiteral("On one track analysed again a library was left as it was "
+                                                           "(the log says which, and why).")
+                                          : QStringLiteral("On %1 tracks analysed again a library was left as it was "
+                                                           "(the log says which, and why).")
+                                                .arg(n));
+            }
+        });
+    }
+    return notes;
+}
+
+bool engineTookGrid(const application::AnalysisImportResult &result)
+{
+    using Outcome = application::BeatGridWriteResult::Outcome;
+    return result.grid.outcome == Outcome::Written || result.grid.outcome == Outcome::AlreadySame;
+}
+
+}  // namespace
+
+bool ReanalyseTrackChange::cuesMatchTheReview(const application::CueGridPlan &review,
+                                              const application::CueGridPlan &plan, double toleranceMs)
+{
+    if (plan.verdict != application::CueGridPlan::Verdict::Moves || plan.moves.size() != review.moves.size()) {
+        return false;
+    }
+    std::vector<bool> taken(plan.moves.size(), false);
+    const auto near = [&](double a, double b) { return std::abs(a - b) < toleranceMs; };
+    for (const application::CueGridMove &shown : review.moves) {
+        bool found = false;
+        for (std::size_t i = 0; i < plan.moves.size() && !found; ++i) {
+            const application::CueGridMove &move = plan.moves[i];
+            const bool same = !taken[i] && move.kind == shown.kind && move.isLoop == shown.isLoop
+                              && (move.kind != domain::CuePoint::Kind::Hot || move.hotCueNumber == shown.hotCueNumber)
+                              && move.beat == shown.beat && near(move.oldMs, shown.oldMs) && near(move.newMs, shown.newMs)
+                              && (!move.isLoop
+                                  || (move.endBeat == shown.endBeat && near(move.oldEndMs, shown.oldEndMs)
+                                      && near(move.newEndMs, shown.newEndMs)));
+            if (same) {
+                taken[i] = true;
+                found = true;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<RekordboxWrite> ReanalyseTrackChange::rekordboxWrites() const
+{
+    if (!m_written) {
+        return {};
+    }
+    return {*m_written};
+}
+
 ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
 {
+    m_written.reset();
     const std::string pioneer = m_pioneerRoot.toStdString();
     const std::string name = "\"" + subject().toStdString() + "\" (" + m_stickPath + ")";
+    const std::string fileKey = application::normalizedPathKey(m_audioFile);
+    // What was written, what was the same already, and the libraries left
+    // as they were with the reason: for the log line and the outcome.
     std::vector<std::string> done;
+    std::vector<std::string> same;
+    std::vector<std::string> left;
     const auto leftAlone = [&](const std::string &why) {
         ctx.log().record(std::string(Label) + ": " + name + ": " + why);
     };
 
     // Everything that can refuse is asked before the first write: the
     // files built and merged in memory, each against the file as it is
-    // now. A change that fails takes the save back, so nothing of it may
-    // be half on the stick.
+    // now, Engine's rows asked in a preview, and every library's cues
+    // planned. A change that fails takes the save back, so nothing of it
+    // may be half on the stick.
     const RekordboxAnalysisFiles built = rekordboxAnalysisFilesFor(*m_analysis, m_audioFile, m_stickPath, 0.0);
     if (!built.files || built.beats.empty()) {
         leftAlone("left as it is: the analysis has no grid on rekordbox's timeline"
@@ -282,10 +391,10 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
     std::map<QString, bool> libraryTakesIt;
     for (const AnalysisFileOf &file : m_analysisFiles) {
         auto taken = libraryTakesIt.emplace(file.library, true).first;
-        const auto same = std::find_if(merges.begin(), merges.end(), [&](const MergedFiles &m) {
+        const auto known = std::find_if(merges.begin(), merges.end(), [&](const MergedFiles &m) {
             return application::normalizedPathKey(m.datPath) == application::normalizedPathKey(file.datPath);
         });
-        if (same != merges.end()) {
+        if (known != merges.end()) {
             continue;
         }
         const std::vector<std::string> paths = anlzFilesOf(file.datPath);
@@ -301,15 +410,15 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 old.twoEx = AnlzFile::readRaw(paths[2]);
             }
         } catch (const std::exception &e) {
-            leftAlone("the analysis files at " + file.datPath + " could not be read (" + e.what() + "); "
-                      + file.library.toStdString() + " left as it is");
+            left.push_back(file.library.toStdString() + ": the analysis files at " + file.datPath
+                           + " could not be read (" + e.what() + ")");
             taken->second = false;
             continue;
         }
         const auto merged =
             infrastructure::rekordbox::mergeTrackAnlzFiles(old, built.files->dat, built.files->ext, built.files->twoEx);
         if (!merged) {
-            leftAlone(file.datPath + " is not on the stick; " + file.library.toStdString() + " left as it is");
+            left.push_back(file.library.toStdString() + ": " + file.datPath + " is not on the stick");
             taken->second = false;
             continue;
         }
@@ -336,8 +445,139 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                               && libraryTakesIt[QStringLiteral("onelibrary")];
     const bool hasEngine = !m_enginePath.isEmpty()
                            && isFile(FormatWriteSession::databaseFileFor("engine", m_enginePath.toStdString()));
+    auto &catalogs = LibraryCatalogCache::instance();
 
     try {
+        // Engine's rows, read from the save's own copy of m.db (a scratch
+        // copy in a large save), and what the writer would do to each.
+        struct EngineRow
+        {
+            std::int64_t id = 0;
+            domain::Track track;
+            application::RekordboxAnalysis analysis;
+            application::AnalysisImportOptions options;
+            application::AnalysisImportResult preview;
+        };
+        std::vector<EngineRow> engineRows;
+        FormatWriteSession *engineSession = nullptr;
+        const std::string stickRoot = ledgerStickRoot();
+        const std::string key = ledgerKey();
+        if (hasEngine) {
+            engineSession = &sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, Label);
+            infrastructure::engine::LibdjinteropEngineReader reader(engineSession->writeRoot());
+            reader.setAudioRoot(engineSession->realRoot());
+            const auto &ledger = saveBeatGridLedger(ctx, stickRoot);
+            for (const std::int64_t id :
+                 infrastructure::engine::engineTrackIdsForFile(engineSession->writeRoot(), engineSession->realRoot(),
+                                                               m_audioFile)) {
+                EngineRow row;
+                row.id = id;
+                row.track = reader.readTrack(std::to_string(id)).value_or(domain::Track{});
+                row.analysis.beats = built.beats;
+                row.analysis.threeBandPreview = built.files->threeBandPreview;
+                row.analysis.colourPreview = built.files->colourPreview;
+                row.analysis.scrollEntries = built.files->scrollEntries;
+                if (bpm > 0.0) {
+                    row.analysis.bpm = bpm;
+                }
+                // Only into a row with no key: the writer puts it in when it
+                // completes the row, and never on one the player analysed.
+                if (!m_analysedKey.empty() && row.track.key.empty()) {
+                    if (const auto parsed = infrastructure::engine::parseRekordboxKey(m_analysedKey)) {
+                        row.analysis.key = static_cast<int>(*parsed);
+                    }
+                }
+                row.options.fileSampleRateHz = static_cast<double>(m_analysis->waveform.sampleRateHz);
+                row.options.fileIsMp3 = built.isMp3;
+                row.options.fileSampleCount = built.sampleCount;
+                row.options.fileCountRequired = !built.isMp3;
+                row.options.tempoWithGrid = true;
+                row.options.keepKey = key;
+                if (const auto own = ledger.find(key); !key.empty() && own != ledger.end()) {
+                    row.options.ownGridFingerprint = own->second;
+                }
+                application::AnalysisImportOptions preview = row.options;
+                preview.previewOnly = true;
+                row.preview = engineAnalysisWriterFor(ctx, *engineSession, stickRoot)
+                                  .importAnalysis(std::to_string(id), row.analysis, preview);
+                engineRows.push_back(std::move(row));
+            }
+            if (engineRows.empty()) {
+                left.push_back("Engine: it has no row for the file");
+            }
+        }
+
+        // The cue part, all or nothing across the libraries (see the class
+        // comment): every library that holds cues for the file planned
+        // against the review's grids, before anything is written.
+        struct RekordboxCues
+        {
+            std::string sourceId;
+            std::vector<domain::CuePoint> moved;
+        };
+        std::vector<RekordboxCues> deviceLibraryCues;
+        std::optional<std::vector<domain::CuePoint>> oneLibraryCues;
+        std::vector<std::pair<std::int64_t, std::vector<domain::CuePoint>>> engineCues;
+        std::vector<application::CueGridMove> movedForLog;
+        bool cuesMove = false;
+        if (moveCues() && m_cueReview.plan.verdict == application::CueGridPlan::Verdict::Moves) {
+            const double tolerance = domain::cueToleranceMsFor(m_cueReview.oldBpm, m_cueReview.oldBpm);
+            std::string whyNot;
+            const auto check = [&](const std::string &library, const domain::Track &track) {
+                if (track.cues.empty() || !whyNot.empty()) {
+                    return std::optional<std::vector<domain::CuePoint>>{};
+                }
+                const application::CueGridPlan plan =
+                    application::planCueGridMoves(track.cues, m_cueReview.oldBeats, m_cueReview.newBeats);
+                if (!cuesMatchTheReview(m_cueReview.plan, plan, tolerance)) {
+                    whyNot = library + " holds other cue points than the review showed";
+                    return std::optional<std::vector<domain::CuePoint>>{};
+                }
+                if (movedForLog.empty()) {
+                    movedForLog = plan.moves;
+                }
+                return std::optional<std::vector<domain::CuePoint>>{application::cuesMovedOntoNewGrid(track.cues, plan)};
+            };
+            if (toDeviceLibrary) {
+                for (const domain::Track &track : catalogs.tracksFor("rekordbox", pioneer, ctx.progress(), ctx.cancel())) {
+                    if (application::normalizedPathKey(track.filePath) == fileKey) {
+                        if (auto moved = check("DeviceLibrary", track)) {
+                            deviceLibraryCues.push_back({track.sourceId, std::move(*moved)});
+                        }
+                    }
+                }
+            }
+            if (toOneLibrary) {
+                for (const domain::Track &track : catalogs.tracksFor("onelibrary", pioneer, ctx.progress(), ctx.cancel())) {
+                    if (application::normalizedPathKey(track.filePath) == fileKey) {
+                        if (auto moved = check("OneLibrary", track)) {
+                            oneLibraryCues = std::move(*moved);
+                        }
+                    }
+                }
+            }
+            for (const EngineRow &row : engineRows) {
+                if (row.track.cues.empty()) {
+                    continue;
+                }
+                if (!engineTookGrid(row.preview)) {
+                    whyNot = whyNot.empty() ? "Engine keeps its own grid (" + gridInWords(row.preview.grid.outcome) + ")"
+                                            : whyNot;
+                    continue;
+                }
+                if (auto moved = check("Engine", row.track)) {
+                    engineCues.emplace_back(row.id, std::move(*moved));
+                }
+            }
+            cuesMove = whyNot.empty() && !movedForLog.empty();
+            if (!cuesMove) {
+                const std::string why = whyNot.empty() ? "no library holds the cue points the review showed" : whyNot;
+                leftAlone("cue points left where they are, though moving them was asked for: " + why);
+                saveNotesOf(ctx).cuesLeft[id()] = why;
+            }
+        }
+
+        // The writes, each library told to the catalog cache as it lands.
         for (const MergedFiles &m : toWrite) {
             const auto &files = m.merged.files;
             files.dat->writeRaw(m.paths[0]);
@@ -357,192 +597,162 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                               : m.merged.phrasesRemoved ? ", phrases taken out (they counted the old grid's beats)"
                                                         : ""));
         }
+        if (!toWrite.empty()) {
+            catalogs.invalidateWithOneLibraryMirror("rekordbox", pioneer);
+        }
 
         if (toDeviceLibrary) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
             infrastructure::rekordbox::PdbRowWriter rows(exportPdbUnder(session.writeRoot()));
             const std::vector<std::uint32_t> ids = rows.trackIdsWithFilePath(m_stickPath);
-            for (const std::uint32_t id : ids) {
-                rows.setTrackTempoAndKey(id, bpm, m_analysedKey);
+            int keys = 0;
+            for (const std::uint32_t row : ids) {
+                bool keyWritten = false;
+                rows.setTrackTempoAndKey(row, bpm, m_analysedKey, &keyWritten);
+                keys += keyWritten ? 1 : 0;
             }
             if (!ids.empty()) {
                 if (!rows.commit()) {
                     return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb for %1.").arg(subject()));
                 }
                 session.noteItemApplied();
-                done.push_back("export.pdb: tempo" + std::string(m_analysedKey.empty() ? "" : " and key " + m_analysedKey)
-                               + " of " + std::to_string(ids.size()) + " row(s)");
+                catalogs.invalidate("rekordbox", pioneer);
+                done.push_back("export.pdb: tempo of " + std::to_string(ids.size()) + " row(s)"
+                               + (keys > 0 ? ", key " + m_analysedKey + " into " + std::to_string(keys)
+                                                 + " that named none"
+                                           : ", keys left as they are"));
             } else {
-                leftAlone("export.pdb has no row for it any more");
+                left.push_back("DeviceLibrary: export.pdb has no row for it any more");
             }
         }
         if (toOneLibrary) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
             try {
-                const int rows = sharedOneLibraryWriter(ctx, pioneer).setTempoAndKeyForPath(m_audioFile, bpm, m_analysedKey);
-                done.push_back("exportLibrary.db: tempo"
-                               + std::string(m_analysedKey.empty() ? "" : " and key " + m_analysedKey) + " of "
-                               + std::to_string(rows) + " row(s)");
+                int keys = 0;
+                const int rows =
+                    sharedOneLibraryWriter(ctx, pioneer).setTempoAndKeyForPath(m_audioFile, bpm, m_analysedKey, &keys);
+                catalogs.invalidateWithOneLibraryMirror("onelibrary", pioneer);
+                done.push_back("exportLibrary.db: tempo of " + std::to_string(rows) + " row(s)"
+                               + (keys > 0 ? ", key " + m_analysedKey + " into " + std::to_string(keys)
+                                                 + " that named none"
+                                           : ", keys left as they are"));
             } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
-                leftAlone("exportLibrary.db has no row for it any more");
+                left.push_back("OneLibrary: exportLibrary.db has no row for it any more");
             }
         }
 
         std::vector<std::int64_t> engineRowsOnNewGrid;
-        if (hasEngine) {
-            FormatWriteSession &session =
-                sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, Label);
-            const std::vector<std::int64_t> rows =
-                infrastructure::engine::engineTrackIdsForFile(session.writeRoot(), session.realRoot(), m_audioFile);
-            const std::string stickRoot = ledgerStickRoot();
-            const std::string key = ledgerKey();
-            const auto &ledger = saveBeatGridLedger(ctx, stickRoot);
-            for (const std::int64_t row : rows) {
-                application::RekordboxAnalysis analysis;
-                analysis.beats = built.beats;
-                analysis.threeBandPreview = built.files->threeBandPreview;
-                analysis.colourPreview = built.files->colourPreview;
-                analysis.scrollEntries = built.files->scrollEntries;
-                if (bpm > 0.0) {
-                    analysis.bpm = bpm;
-                }
-                if (!m_analysedKey.empty()) {
-                    if (const auto parsed = infrastructure::engine::parseRekordboxKey(m_analysedKey)) {
-                        analysis.key = static_cast<int>(*parsed);
-                    }
-                }
-                application::AnalysisImportOptions options;
-                options.fileSampleRateHz = static_cast<double>(m_analysis->waveform.sampleRateHz);
-                options.fileIsMp3 = built.isMp3;
-                options.fileSampleCount = built.sampleCount;
-                options.fileCountRequired = !built.isMp3;
-                options.tempoWithGrid = true;
-                options.keepKey = key;
-                if (const auto own = ledger.find(key); !key.empty() && own != ledger.end()) {
-                    options.ownGridFingerprint = own->second;
-                }
-                const application::AnalysisImportResult written =
-                    engineAnalysisWriterFor(ctx, session, stickRoot).importAnalysis(std::to_string(row), analysis, options);
-                using Outcome = application::BeatGridWriteResult::Outcome;
-                if (written.grid.outcome == Outcome::Written || written.grid.outcome == Outcome::AlreadySame) {
-                    recordGridInLedgerAfterCommit(ctx, stickRoot, id(), key, written.grid.gridFingerprint);
-                    engineRowsOnNewGrid.push_back(row);
-                }
-                if (written.grid.outcome == Outcome::Written
-                    || written.waveform == application::AnalysisImportResult::Waveform::Written) {
-                    session.noteItemApplied();
-                }
-                done.push_back("Engine id " + std::to_string(row) + ": " + gridInWords(written.grid.outcome)
-                               + (written.completedRow ? ", row completed" : "")
-                               + (written.keptEngineAnalysis ? ", the player's analysis kept first" : ""));
+        for (const EngineRow &row : engineRows) {
+            // A row whose grid stays (locked or moved on the player, its
+            // own analysis not to be kept, unreadable) is left whole: a
+            // new overview under the DJ's grid would be half an analysis.
+            if (!engineTookGrid(row.preview) && !row.preview.completedRow) {
+                left.push_back("Engine id " + std::to_string(row.id) + ": " + gridInWords(row.preview.grid.outcome));
+                continue;
             }
-            if (rows.empty()) {
-                leftAlone("Engine has no row for it");
+            const application::AnalysisImportResult written =
+                engineAnalysisWriterFor(ctx, *engineSession, stickRoot)
+                    .importAnalysis(std::to_string(row.id), row.analysis, row.options);
+            using Outcome = application::BeatGridWriteResult::Outcome;
+            const bool gridWritten = written.grid.outcome == Outcome::Written;
+            const bool waveformWritten = written.waveform == application::AnalysisImportResult::Waveform::Written;
+            if (engineTookGrid(written)) {
+                recordGridInLedgerAfterCommit(ctx, stickRoot, id(), key, written.grid.gridFingerprint);
+                engineRowsOnNewGrid.push_back(row.id);
+            }
+            const std::string what = "Engine id " + std::to_string(row.id) + ": " + gridInWords(written.grid.outcome)
+                                     + (written.completedRow ? ", row completed" : "")
+                                     + (written.tempoWritten ? ", tempo written" : "")
+                                     + (waveformWritten ? ", waveform written" : "")
+                                     + (written.keptEngineAnalysis ? ", the player's analysis kept first" : "");
+            if (gridWritten || waveformWritten || written.tempoWritten || written.completedRow) {
+                engineSession->noteItemApplied();
+                done.push_back(what);
+            } else if (written.grid.outcome == Outcome::AlreadySame) {
+                same.push_back(what);
+            } else {
+                left.push_back(what);
             }
         }
+        if (!engineRows.empty()) {
+            catalogs.invalidate("engine", m_enginePath.toStdString());
+        }
 
-        if (moveCues() && m_cueReview.plan.verdict == application::CueGridPlan::Verdict::Moves) {
-            const QString failed = moveCuesOntoNewGrid(ctx, toDeviceLibrary, toOneLibrary, engineRowsOnNewGrid, done);
-            if (!failed.isEmpty()) {
-                return ChangeOutcome::failure(failed);
+        if (cuesMove) {
+            const auto said = [&](const std::string &library) {
+                for (const application::CueGridMove &move : movedForLog) {
+                    std::string line = library + ": moved "
+                                       + cueLabel(move.kind, move.hotCueNumber, move.isLoop).toStdString() + " from "
+                                       + clockText(move.oldMs).toStdString() + " to "
+                                       + clockText(move.newMs).toStdString();
+                    if (move.isLoop) {
+                        line += " (its end from " + clockText(move.oldEndMs).toStdString() + " to "
+                                + clockText(move.newEndMs).toStdString() + ")";
+                    }
+                    done.push_back(line);
+                }
+            };
+            if (!deviceLibraryCues.empty()) {
+                // Every row's own files: two rows naming two analysis files
+                // each take the move. The files are declared in
+                // filesToBackup(); the writer reads them as written above.
+                infrastructure::rekordbox::RekordboxCueWriter writer(pioneer, sharedAnlzPathIndex(ctx, m_pioneerRoot));
+                for (const RekordboxCues &row : deviceLibraryCues) {
+                    writer.writeHotCues(row.sourceId, row.moved);
+                }
+                if (toOneLibrary) {
+                    const QString failed =
+                        mirrorCuesOrExplain(sharedOneLibraryWriter(ctx, pioneer), m_audioFile, deviceLibraryCues.front().moved,
+                                            ctx, Label, QStringLiteral("move the cue points"));
+                    if (!failed.isEmpty()) {
+                        return ChangeOutcome::failure(failed);
+                    }
+                }
+                catalogs.invalidateWithOneLibraryMirror("rekordbox", pioneer);
+                catalogs.invalidateWithOneLibraryMirror("onelibrary", pioneer);
+                m_written = RekordboxWrite{m_audioFile, deviceLibraryCues.front().moved, std::nullopt};
+                said(toOneLibrary ? "DeviceLibrary and OneLibrary" : "DeviceLibrary");
+            } else if (oneLibraryCues) {
+                sharedOneLibraryWriter(ctx, pioneer).writeCuesForPath(m_audioFile, *oneLibraryCues);
+                catalogs.invalidateWithOneLibraryMirror("onelibrary", pioneer);
+                m_written = RekordboxWrite{m_audioFile, *oneLibraryCues, std::nullopt};
+                said("OneLibrary");
+            }
+            if (!engineCues.empty()) {
+                for (const auto &[row, moved] : engineCues) {
+                    engineAnalysisWriterFor(ctx, *engineSession, stickRoot).writeHotCues(std::to_string(row), moved);
+                }
+                engineSession->noteItemApplied();
+                catalogs.invalidate("engine", m_enginePath.toStdString());
+                said("Engine");
             }
         }
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }
 
+    const auto joined = [](const std::vector<std::string> &parts) {
+        std::string line;
+        for (const std::string &part : parts) {
+            line += (line.empty() ? "" : "; ") + part;
+        }
+        return line;
+    };
     if (done.empty()) {
-        leftAlone("left as it is: no library on the stick had an analysis of it to replace");
+        leftAlone("left as it is, nothing written"
+                  + (left.empty() && same.empty() ? std::string(": no library on the stick had an analysis of it to replace")
+                                                  : ": " + joined(left) + (left.empty() || same.empty() ? "" : "; ")
+                                                        + joined(same)));
         return ChangeOutcome::skip();
     }
-    std::string line;
-    for (const std::string &part : done) {
-        line += (line.empty() ? "" : "; ") + part;
+    if (!left.empty()) {
+        saveNotesOf(ctx).librariesLeft[id()] = joined(left);
     }
-    ctx.log().record(std::string(Label) + ": analysed " + name + " again, " + QString::number(bpm, 'f', 2).toStdString() + " BPM"
-                     + (m_analysedKey.empty() ? std::string(", key left as it is") : ", key " + m_analysedKey) + ": "
-                     + line);
+    ctx.log().record(std::string(Label) + ": analysed " + name + " again, " + QString::number(bpm, 'f', 2).toStdString()
+                     + " BPM, analysed key " + (m_analysedKey.empty() ? std::string("none") : m_analysedKey) + ": "
+                     + joined(done) + (same.empty() ? "" : "; " + joined(same))
+                     + (left.empty() ? "" : "; left as it was: " + joined(left)));
     return ChangeOutcome::success();
-}
-
-QString ReanalyseTrackChange::moveCuesOntoNewGrid(SaveContext &ctx, bool toDeviceLibrary, bool toOneLibrary,
-                                                 const std::vector<std::int64_t> &engineRows,
-                                                 std::vector<std::string> &done)
-{
-    const std::string pioneer = m_pioneerRoot.toStdString();
-    const std::string fileKey = application::normalizedPathKey(m_audioFile);
-    // The library's cues as they are now, planned again against the two
-    // grids the review showed: what another change of this save did to
-    // them counts, and a cue that is no longer on a beat stays.
-    const auto plannedFor = [&](const domain::Track &track) {
-        return application::planCueGridMoves(track.cues, m_cueReview.oldBeats, m_cueReview.newBeats);
-    };
-    const auto said = [&](const char *library, const application::CueGridPlan &plan) {
-        for (const application::CueGridMove &move : plan.moves) {
-            std::string line = std::string(library) + ": moved "
-                               + cueLabel(move.kind, move.hotCueNumber, move.isLoop).toStdString() + " from "
-                               + clockText(move.oldMs).toStdString() + " to " + clockText(move.newMs).toStdString();
-            if (move.isLoop) {
-                line += " (its end from " + clockText(move.oldEndMs).toStdString() + " to "
-                        + clockText(move.newEndMs).toStdString() + ")";
-            }
-            done.push_back(line);
-        }
-    };
-    auto &catalogs = LibraryCatalogCache::instance();
-    if (toDeviceLibrary || toOneLibrary) {
-        const std::string format = toDeviceLibrary ? "rekordbox" : "onelibrary";
-        const std::vector<domain::Track> tracks = catalogs.tracksFor(format, pioneer, ctx.progress(), ctx.cancel());
-        for (const domain::Track &track : tracks) {
-            if (application::normalizedPathKey(track.filePath) != fileKey) {
-                continue;
-            }
-            const application::CueGridPlan plan = plannedFor(track);
-            if (plan.verdict != application::CueGridPlan::Verdict::Moves) {
-                continue;
-            }
-            const std::vector<domain::CuePoint> moved = application::cuesMovedOntoNewGrid(track.cues, plan);
-            if (toDeviceLibrary) {
-                // The analysis files are declared in filesToBackup(); the
-                // writer reads them as this change just wrote them.
-                infrastructure::rekordbox::RekordboxCueWriter writer(pioneer, sharedAnlzPathIndex(ctx, m_pioneerRoot));
-                writer.writeHotCues(track.sourceId, moved);
-                if (toOneLibrary) {
-                    const QString failed = mirrorCuesOrExplain(sharedOneLibraryWriter(ctx, pioneer), m_audioFile, moved,
-                                                               ctx, Label, QStringLiteral("move the cue points"));
-                    if (!failed.isEmpty()) {
-                        return failed;
-                    }
-                }
-            } else {
-                sharedOneLibraryWriter(ctx, pioneer).writeCuesForPath(m_audioFile, moved);
-            }
-            said(toDeviceLibrary ? (toOneLibrary ? "DeviceLibrary and OneLibrary" : "DeviceLibrary") : "OneLibrary", plan);
-            break;
-        }
-    }
-    if (!engineRows.empty()) {
-        FormatWriteSession &session =
-            sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, Label);
-        const std::vector<domain::Track> tracks =
-            catalogs.tracksFor("engine", m_enginePath.toStdString(), ctx.progress(), ctx.cancel());
-        for (const std::int64_t row : engineRows) {
-            for (const domain::Track &track : tracks) {
-                if (track.sourceId != std::to_string(row)) {
-                    continue;
-                }
-                const application::CueGridPlan plan = plannedFor(track);
-                if (plan.verdict == application::CueGridPlan::Verdict::Moves) {
-                    engineAnalysisWriterFor(ctx, session, ledgerStickRoot())
-                        .writeHotCues(track.sourceId, application::cuesMovedOntoNewGrid(track.cues, plan));
-                    session.noteItemApplied();
-                    said("Engine", plan);
-                }
-                break;
-            }
-        }
-    }
-    return {};
 }
 
 // The strip of the review for one cue or loop: the new analysis's

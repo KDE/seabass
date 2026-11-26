@@ -2712,8 +2712,11 @@ std::string PdbRowWriter::newTrackRefusal(const NewTrack &track)
     return {};
 }
 
-bool PdbRowWriter::setTrackTempoAndKey(uint32_t trackId, double bpm, const std::string &key)
+bool PdbRowWriter::setTrackTempoAndKey(uint32_t trackId, double bpm, const std::string &key, bool *keyWritten)
 {
+    if (keyWritten) {
+        *keyWritten = false;
+    }
     if (m_format != Format::Export) {
         throw std::logic_error("tracks live in export.pdb");
     }
@@ -2725,18 +2728,20 @@ bool PdbRowWriter::setTrackTempoAndKey(uint32_t trackId, double bpm, const std::
     if (!domain::isStorableText(key)) {
         throw std::invalid_argument("export.pdb: the key \"" + key + "\" is not UTF-8, or ends in a blank");
     }
-    if (!findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
-            auto *t = dynamic_cast<Pdb::track_row_t *>(body);
-            return t != nullptr && t->id() == trackId;
-        })) {
+    const auto before = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!before) {
         return false;
     }
+    const bool rowHasKey = readU32LE(m_buffer, before->rowBodyOffset + TrackKeyIdOffset) != 0;
     const std::string bufferBefore = m_buffer;
     const std::set<uint32_t> editedBefore = m_editedPageIndices;
     const std::set<uint32_t> appendedBefore = m_appendedPages;
     try {
         std::optional<uint32_t> keyId;
-        if (!key.empty()) {
+        if (!key.empty() && !rowHasKey) {
             uint32_t found = 0;
             forEachPresentRow(m_buffer, Pdb::PAGE_TYPE_KEYS, [&](kaitai::kstruct *body) {
                 auto *row = dynamic_cast<Pdb::key_row_t *>(body);
@@ -2762,12 +2767,18 @@ bool PdbRowWriter::setTrackTempoAndKey(uint32_t trackId, double bpm, const std::
         writeU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset, static_cast<uint32_t>(bpm * 100.0 + 0.5));
         if (keyId) {
             writeU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset, *keyId);
+            if (keyWritten) {
+                *keyWritten = true;
+            }
         }
         m_editedPageIndices.insert(row->pageIndex);
     } catch (...) {
         m_buffer = bufferBefore;
         m_editedPageIndices = editedBefore;
         m_appendedPages = appendedBefore;
+        if (keyWritten) {
+            *keyWritten = false;
+        }
         throw;
     }
     return true;

@@ -89,16 +89,15 @@ class TrackImportController : public QObject
     // and while an import is prepared.
     Q_PROPERTY(QString reanalysingPlaylist READ reanalysingPlaylist NOTIFY busyChanged)
     // What the last Analyse again came to: {playlist, analysed (tracks
-    // staged with a new analysis), leftAlone (tracks left as they are)}.
-    // What the last Analyse again came to: {playlist, analysed (tracks
     // staged with a new analysis), leftAlone (tracks left as they are),
     // cueTracks (tracks with cues on the old grid that would move),
     // cuesToMove (how many), gridChangedTooMuch (tracks whose grid
-    // changed too much to carry cues)}.
+    // changed too much to carry cues), all of that run only}.
     Q_PROPERTY(QVariantMap lastReanalysis READ lastReanalysis NOTIFY reanalysisReady)
-    // The review of those cues, one entry per track of the last Analyse
-    // again whose cues would move and whose change still waits:
-    // {id, title, artist, gridShiftMs, oldBpm, newBpm, moveCues, offBeat,
+    // The review of the cues on the old grid: one entry per track whose
+    // Analyse again change still waits and whose cues would move, of this
+    // run and earlier ones: {id, title (with the artist), gridShiftMs,
+    // oldBpm, newBpm, moveCues, offBeat,
     // rows: [{label, name, color, isLoop, oldText, newText, diffMs,
     // oldEndText, newEndText, strip: {spanMs, columns: [{low, mid, high}],
     // oldBeats, newBeats, oldCueMs, newCueMs, oldEndMs, newEndMs}}]}, the
@@ -175,6 +174,9 @@ signals:
     // Analyse again has staged what it could (lastReanalysis).
     void reanalysisReady();
     void cueReviewChanged();
+    // One track's choice changed (setMoveCues(), setMoveCuesForAll()): the
+    // review updates that switch alone, not the whole list.
+    void moveCuesChanged(const QString &changeId, bool move);
     // A save wrote at least one imported track: the page should rescan.
     void tracksImported();
 

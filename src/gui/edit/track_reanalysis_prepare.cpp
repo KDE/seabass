@@ -12,7 +12,6 @@
 
 #include "application/path_key.hpp"
 #include "application/ports/progress_reporter.hpp"
-#include "application/ports/track_tag_reader.hpp"
 #include "domain/mp3_lead_in.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
@@ -21,10 +20,6 @@
 #include "infrastructure/rekordbox/anlz_analysis_merge.hpp"
 #include "infrastructure/long_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
-
-#ifdef SEABASS_HAVE_TAGLIB
-#include "infrastructure/audio/taglib_tag_reader.hpp"
-#endif
 
 namespace seabass::gui
 {
@@ -49,6 +44,9 @@ struct PlaylistFile
     // timeline as read), and its tempo.
     std::optional<std::vector<domain::CuePoint>> cues;
     double bpm = 0.0;
+    // The file's size as each row that records one has it (export.pdb,
+    // Engine; OneLibrary's reader gives none).
+    std::vector<std::uint64_t> recordedSizes;
 };
 
 // The track's grid before the new analysis, on rekordbox's timeline: the
@@ -76,15 +74,6 @@ std::vector<double> oldGridOf(const PlaylistFile &file, const fs::path &root, co
         return beats;
     }
     return {};
-}
-
-std::string trimmed(const std::string &text)
-{
-    const auto first = text.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) {
-        return {};
-    }
-    return text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1);
 }
 
 }  // namespace
@@ -170,24 +159,35 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
                 file->second.cues = row.cues;
                 file->second.bpm = row.bpm;
             }
+            if (row.catalogFileBytes > 0) {
+                file->second.recordedSizes.push_back(row.catalogFileBytes);
+            }
         }
     }
 
-    // The ones whose audio is there, and what their tags say of the key.
-#ifdef SEABASS_HAVE_TAGLIB
-    infrastructure::audio::TagLibTagReader tags;
-#else
-    application::NullTrackTagReader tags;
-#endif
+    // The ones whose audio is there, as the libraries describe it.
     std::vector<std::string> toAnalyse;
     std::vector<const PlaylistFile *> analysing;
-    std::vector<bool> taggedKey;
     for (const std::string &key : order) {
         cancel.throwIfCancelled();
         const PlaylistFile &file = files.at(key);
         std::error_code ec;
-        if (!fs::is_regular_file(infrastructure::longPathSafe(pathFromUtf8(file.filePath)), ec)) {
+        const fs::path audio = infrastructure::longPathSafe(pathFromUtf8(file.filePath));
+        if (!fs::is_regular_file(audio, ec)) {
             prepared.leftAlone.push_back({file.filePath, "is not on the stick"});
+            continue;
+        }
+        // A file of another size than its rows record is not the file
+        // they describe: its length, its MP3 frame count (PVBR) and its
+        // size would all be the old file's beside a new analysis. Importing
+        // it again is the way to give it rows of its own.
+        const std::uintmax_t size = fs::file_size(audio, ec);
+        bool otherFile = static_cast<bool>(ec);
+        for (const std::uint64_t recorded : file.recordedSizes) {
+            otherFile = otherFile || recorded != static_cast<std::uint64_t>(size);
+        }
+        if (otherFile) {
+            prepared.leftAlone.push_back({file.filePath, "is not the file its rows describe (another size)"});
             continue;
         }
         // A row whose .DAT is not there has no analysis to replace: that
@@ -202,14 +202,8 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
             prepared.leftAlone.push_back({file.filePath, "has no analysis in any library on the stick to replace"});
             continue;
         }
-        const std::optional<domain::TrackTags> read = tags.read(file.filePath);
-        if (!read) {
-            prepared.leftAlone.push_back({file.filePath, "could not be read as audio"});
-            continue;
-        }
         toAnalyse.push_back(file.filePath);
         analysing.push_back(&file);
-        taggedKey.push_back(!trimmed(read->key).empty());
     }
 
     const std::vector<std::shared_ptr<const ImportAnalysis>> made =
@@ -242,7 +236,7 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
         const QString title = QString::fromStdString(file.title);
         auto change = std::make_shared<ReanalyseTrackChange>(
             file.filePath, stickPath, pathToQString(root), pioneerRoot, enginePath, file.analysisFiles, made[i],
-            taggedKey[i] ? std::string() : made[i]->key, title, QString::fromStdString(file.artist),
+            made[i]->key, title, QString::fromStdString(file.artist),
             static_cast<int>(made.size()));
         // What the cues on the old grid would do on the new one, for the
         // review: both grids as the save will see them.

@@ -85,12 +85,13 @@ struct AnalysisImportOptions
     // of it, when the writer has a KeptEngineAnalysisStore.
     std::string keepKey;
     // On a row the player has analysed, the tempo (analysis.bpm) goes in
-    // with the grid, in the same write, when the grid part is written:
-    // for a grid that is Seabass's own analysis of the file (Analyse
-    // again), whose tempo the old one would contradict. Off, as for
-    // rekordbox's grid, the tempo stays what the row has. Never without
-    // the grid: a grid left alone (locked, moved on the player) keeps its
-    // tempo too. A row being completed takes the tempo either way.
+    // with the grid, in the same write, when the grid part is written or
+    // is that grid already: for a grid that is Seabass's own analysis of
+    // the file (Analyse again), whose tempo the old one would contradict.
+    // Off, as for rekordbox's grid, the tempo stays what the row has.
+    // Never beside a grid left alone (locked, moved on the player): that
+    // grid keeps its tempo. A row being completed takes the tempo either
+    // way.
     bool tempoWithGrid = false;
     // Every check, no write, no file and no hook; the result is the one the
     // same call would give without it.
@@ -147,6 +148,11 @@ struct AnalysisImportResult
     // The row's grid is locked on the player (a lock that cannot be read
     // counts as one), as the call found it.
     bool rowLocked = false;
+
+    // The tempo went in with the grid (AnalysisImportOptions::
+    // tempoWithGrid; in a preview: would). A completed row takes it as
+    // part of completedRow.
+    bool tempoWritten = false;
 
     // The overview file's path from the Engine Library folder, '/'-separated,
     // when one was (in a preview: would be) written.

@@ -360,7 +360,6 @@ Page {
         readonly property int analysed: outcome.analysed ?? 0
         readonly property int leftAlone: outcome.leftAlone ?? 0
         readonly property string playlist: outcome.playlist ?? ""
-        readonly property int cueTracks: outcome.cueTracks ?? 0
         readonly property int cuesToMove: outcome.cuesToMove ?? 0
         readonly property int gridChangedTooMuch: outcome.gridChangedTooMuch ?? 0
         severity: analysed > 0 ? SeabassDialog.Info : SeabassDialog.Warning
@@ -369,17 +368,17 @@ Page {
             : qsTr("No track of \"%1\" could be analysed again.").arg(playlist)
         detailText: (leftAlone > 0 ? qsTr("%n track(s) left as they are.", "", leftAlone) : "")
             + (analysed > 0 ? (leftAlone > 0 ? " " : "") + qsTr("Nothing is written until you save.") : "")
-            + (cueTracks > 0
-                ? "\n\n" + qsTr("On %n track(s) the new grid sits elsewhere than the old one, and %1 cue point(s) and "
-                                 + "loop(s) sat on the old grid. They stay where they are unless you choose to move them.",
-                                 "", cueTracks).arg(cuesToMove) : "")
+            + (cuesToMove > 0
+                ? "\n\n" + qsTr("%n cue point(s) or loop(s) sat on a beat of the old grid, which the new one has "
+                                 + "elsewhere. They stay where they are unless you choose to move them.", "", cuesToMove)
+                : "")
             + (gridChangedTooMuch > 0
                 ? "\n\n" + qsTr("On %n track(s) the grid changed too much to carry cue points; they stay where they are.",
                                  "", gridChangedTooMuch) : "")
         footer: DialogButtonBox {
             Button {
                 objectName: "reanalysisReviewCuesButton"
-                visible: reanalysisResultDialog.cueTracks > 0
+                visible: reanalysisResultDialog.cuesToMove > 0
                 text: qsTr("Review the cue points...")
                 DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
                 onClicked: {
@@ -481,10 +480,23 @@ Page {
                                         .arg(newBpm.toFixed(2)) : "")
                         }
                         Switch {
+                            id: moveCuesSwitch
                             objectName: "moveCuesSwitch"
                             text: qsTr("Move these cue points onto the new grid")
                             checked: reviewTrack.modelData.moveCues
                             onToggled: root.trackImportController.setMoveCues(reviewTrack.modelData.id, checked)
+                            // Only this switch follows a choice: the list
+                            // and its pictures stay as they are, and so
+                            // does where it is scrolled to.
+                            Connections {
+                                target: root.trackImportController
+                                ignoreUnknownSignals: true
+                                function onMoveCuesChanged(changeId, move) {
+                                    if (changeId === reviewTrack.modelData.id) {
+                                        moveCuesSwitch.checked = move;
+                                    }
+                                }
+                            }
                         }
                         Repeater {
                             model: reviewTrack.modelData.rows
