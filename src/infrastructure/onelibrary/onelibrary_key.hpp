@@ -32,9 +32,15 @@ std::string deriveOneLibraryKey();
 // again by every reader, writer and check of the same file. The key it
 // arrives at depends on the passphrase and the salt alone, so it is
 // derived here once per salt for the life of the process and handed to
-// SQLCipher as a raw key, which it uses as is. A file with no salt to
-// read (missing, shorter than 16 bytes, or a plain SQLite file) gets the
-// passphrase, as before.
+// SQLCipher as a raw key together with that salt, which it uses as they
+// are. A file with no salt to read (missing, shorter than 16 bytes, or a
+// plain SQLite file) gets the passphrase.
+//
+// The pragma is for the file as it was read here. Another database put in
+// its place before the connection reads its first page is refused as not
+// a database, where the passphrase would have opened it; nothing is
+// written to it. Seabass has one writer on a stick, so that takes another
+// program replacing the file in that moment.
 std::string oneLibraryKeyPragma(const std::string &dbPath);
 
 }  // namespace seabass::infrastructure::onelibrary

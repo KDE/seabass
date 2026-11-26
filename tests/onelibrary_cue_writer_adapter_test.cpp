@@ -33,7 +33,6 @@ void createFixture(const std::string &pioneerRoot)
     fs::create_directories(seabass::pathFromUtf8(pioneerRoot) / "rekordbox");
     std::string dbPath = OneLibraryCueWriter::dbPathFor(pioneerRoot);
 
-    std::string key = deriveOneLibraryKey();
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
     db.exec(seabass::infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));

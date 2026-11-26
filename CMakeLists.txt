@@ -4378,6 +4378,18 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME onelibrary_wal_checkpoint_test COMMAND onelibrary_wal_checkpoint_test)
 
+    # The key Seabass derives for a OneLibrary database against the
+    # passphrase rekordbox and the players open it with.
+    add_executable(onelibrary_key_test tests/onelibrary_key_test.cpp)
+    target_include_directories(onelibrary_key_test PRIVATE src tests)
+    target_compile_definitions(onelibrary_key_test PRIVATE
+        SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(onelibrary_key_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)
+    if(NOT WIN32)
+        target_link_libraries(onelibrary_key_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME onelibrary_key_test COMMAND onelibrary_key_test)
+
     # A OneLibrary cue write lands in the analysis file first (#59); a
     # change that then fails must put that file back too.
     add_executable(onelibrary_cue_file_backup_test tests/onelibrary_cue_file_backup_test.cpp)

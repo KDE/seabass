@@ -122,6 +122,8 @@ std::string oneLibraryKeyPragma(const std::string &dbPath)
     const std::string saltKey(salt.data(), salt.size());
     static std::mutex mutex;
     static std::map<std::string, std::string> rawKeyBySalt;
+    // Held over the derivation too: a second thread opening the same
+    // database waits for the first one's key rather than deriving its own.
     const std::lock_guard<std::mutex> lock(mutex);
     auto found = rawKeyBySalt.find(saltKey);
     if (found == rawKeyBySalt.end()) {
@@ -133,6 +135,16 @@ std::string oneLibraryKeyPragma(const std::string &dbPath)
         static const char *digits = "0123456789ABCDEF";
         std::string hex;
         for (const std::uint8_t b : key) {
+            hex += digits[b >> 4];
+            hex += digits[b & 15];
+        }
+        // The salt goes with the key, SQLCipher's 96-digit form. The key
+        // is right for this salt only, and the file is read again when the
+        // connection opens it: should it be empty or gone by then, the
+        // database SQLCipher starts is given this salt rather than a new
+        // one, and so still opens with the passphrase, which is all
+        // rekordbox and a player have.
+        for (const std::uint8_t b : saltBytes) {
             hex += digits[b >> 4];
             hex += digits[b & 15];
         }
