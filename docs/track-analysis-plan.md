@@ -1066,6 +1066,84 @@ millisecond early at the mean; changing it changes what the Beat Grids
 page calls "already the same" for every grid copied so far, which is
 for Sebastian to decide.
 
+### A new playlist through the import, and: in doubt the double
+
+A playlist of 280 MP3s of indie and electro, 18 hours, music the
+analyser never saw, imported onto a stick by the test build and analysed
+by rekordbox 7 in its Dynamic mode. What the import wrote is what the
+analyser gives: the grid on the stick is a fresh analysis's on all 280,
+every beat within 1 ms, and so is the key.
+
+| The stick's grid against rekordbox's | Tracks | |
+|---|---|---|
+| Within 3 ms, start to end | 94 | 33.6 percent |
+| 3 to 10 ms, start to end | 89 | 31.8 percent |
+| The same beat, over 10 ms apart in places | 60 | 21.4 percent |
+| The same beat, over 10 ms off throughout | 2 | |
+| Half a beat out | 11 | 3.9 percent |
+| Another tempo | 24 | 8.6 percent |
+
+The key is rekordbox's on 189 (67.5 percent; 68.1 on the held-back
+halves before). Our straight grids sit 3.2 ms after rekordbox's Dynamic
+grid at the middle (later on 138 of 149), the followed ones 0.9 ms
+before it.
+
+**Heard (59 tracks, 2026-11-25).** Of the 24 at another tempo: rekordbox
+21, ours 1, neither 2. Eighteen of the 24 are at half of rekordbox's
+tempo (rekordbox 150 to 182 BPM, ours 75 to 91), and of those rekordbox
+is right on 17. Half a beat out, 11: ours 6, both 1, rekordbox 2,
+neither 1, not sure 1. Over 10 ms off, 2: rekordbox 1, neither 1. The
+ten straight grids latest against rekordbox's (6 to 10 ms): both fine 6,
+rekordbox 2, ours 1, not sure 1. Twelve of the sixty that run apart:
+both fine 5, not sure 5, one each. So by ear we are wrong on 28 of the
+280 and rekordbox on 11, and what runs apart is mostly two grids that
+are both fine.
+
+**The tempo range does part of it.** Analysed in 88 to 175, the playlist
+has rekordbox's tempo on 268 tracks for 256: 14 of his 21 come right and
+4 others are lost.
+
+**A tempo or its double, counted.** On the tuning halves (the four sets
+and this playlist's), where both lie in the range: where we take the
+slow one it is the wrong one on 22 tracks of 68, where we take the fast
+one on 3 of 247. The mistake has one side.
+
+**What does not tell them apart.** What sits on the beats and between
+them in three bands (a snare between the kicks, how alike consecutive
+beats are): truly slow tracks alternate more from beat to beat (1.37 at
+the middle for 1.09) and have less between the beats (0.68 for 0.87),
+but fitted with one track left out at a time it moves as many tracks
+wrongly as rightly (7 and 8), with the folds' ratio added too.
+
+**In doubt the double** (his word, 2026-11-25: more beat lines help the
+DJ). Where the double of the chosen tempo lies in the range and the
+track folds there at least three quarters as sharply, it is the tempo.
+Three quarters is where it stops paying: scored from a lab run that
+printed every tempo tried, 30 tracks gained and 6 lost at 0.75, 42 and
+15 at 0.65, 45 and 23 with no limit. Run `d2`, tempo right, with
+rekordbox's tempo as the right one and his ear on this playlist:
+
+| | Before | After | Gained | Lost |
+|---|---|---|---|---|
+| Tuning halves (1,108 tracks) | 1,032 | 1,052 | 26 | 6 |
+| Held-back halves (1,057) | 1,000 | 1,010 | 14 | 4 |
+
+On the playlist itself, all 280: another tempo 24 to 9, within 10 ms
+start to end 183 to 195, wrong by ear 28 to 17.
+
+**It goes against what he heard on 2026-11-24.** With those answers
+counted the tuning halves stand at 1,052 for 1,056 (14 gained, 18 lost),
+and the scoring by decisions at 1,045 of 1,327 for 1,065: on the CD rips
+he gave 15 of the tracks now doubled to our slower tempo against
+rekordbox's double (second playlist 4, first variety list 2, collection
+1). He trusts the later round more and chose the double; the rule
+follows that. If the earlier answers are to stand, the rule is too
+strong and nothing found so far tells the two kinds of track apart.
+
+Left on the playlist's tempo: four tracks still at half (their double
+folds under three quarters as sharply), and five at four thirds, two
+thirds or further off.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one

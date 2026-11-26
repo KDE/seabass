@@ -681,8 +681,15 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets, const Period
     constexpr std::array<double, 7> Relatives{0.5, 2.0 / 3.0, 0.75, 1.0, 4.0 / 3.0, 1.5, 2.0};
     double chosen = base;
     double chosenScore = -1.0;
+    double chosenPeak = 0.0;
     std::array<double, Relatives.size()> tried{};
     std::size_t triedCount = 0;
+    // The repeat nearest a period, within a few milliseconds, made finer.
+    constexpr std::size_t Near = 6;
+    const auto repeatNear = [&ac, floor](double about) {
+        const auto middle = static_cast<std::size_t>(std::llround(about));
+        return sharpened(ac, parabolaPeak(ac, indexOfMax(ac, middle - Near, middle + Near)), floor);
+    };
     for (const double relative : Relatives) {
         double about = base * relative;
         while (about > allowed.longest) {
@@ -701,14 +708,41 @@ std::optional<double> beatPeriod(const std::vector<double> &onsets, const Period
             continue;
         }
         tried[triedCount++] = about;
-        // The repeat nearest that period, within a few milliseconds.
-        constexpr std::size_t Near = 6;
-        const auto middle = static_cast<std::size_t>(std::llround(about));
-        const double period = sharpened(ac, parabolaPeak(ac, indexOfMax(ac, middle - Near, middle + Near)), floor);
-        const double score = localPeak(onsets, period) * (allowed.prefersNear128 ? preference(period, 128.0, 1.0) : 1.0);
+        const double period = repeatNear(about);
+        const double peak = localPeak(onsets, period);
+        const double score = peak * (allowed.prefersNear128 ? preference(period, 128.0, 1.0) : 1.0);
         if (score > chosenScore) {
             chosenScore = score;
             chosen = period;
+            chosenPeak = peak;
+        }
+    }
+
+    // A tempo or its double, in doubt the double: more beat lines help
+    // the DJ, a grid at half the tempo has none where the other beats are
+    // (Sebastian, 2026-11-25). Where the double of the chosen tempo lies
+    // inside the range, it is taken when the track folds there at least
+    // three quarters as sharply. By the fold alone the slower tempo wins
+    // too often (see above): on a playlist of 280 indie tracks it had half
+    // of rekordbox's tempo on 18, and by ear rekordbox's was the right one
+    // on 17 of them.
+    //
+    // The double is measured here and not looked up among the relatives
+    // tried: of a relative at three quarters or two thirds of the lag,
+    // the loop above tries one octave only.
+    //
+    // A track that folds nowhere (every peak nothing) is no doubt between
+    // two tempos, and keeps what it had.
+    //
+    // Three quarters is where it stops paying, with rekordbox's tempo as
+    // the right one and his ear where he listened to that playlist: on
+    // the tuning halves 26 tracks come to the right tempo and 6 leave it,
+    // on the held-back halves 14 and 4. From 0.65 it loses 15 for 42.
+    constexpr double DoubleTakenFrom = 0.75;
+    if (chosenPeak > 0.0 && chosen / 2.0 >= allowed.shortest) {
+        const double doubled = repeatNear(chosen / 2.0);
+        if (localPeak(onsets, doubled) >= DoubleTakenFrom * chosenPeak) {
+            return doubled;
         }
     }
     return chosen;

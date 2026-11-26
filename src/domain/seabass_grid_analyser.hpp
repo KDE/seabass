@@ -52,9 +52,13 @@ struct TempoRange
 // double) are then each tried as the beat: the one at which the track
 // folds sharpest is it (window by window, each window free to fold at a
 // period of its own within 5 percent, so that a drummer who wanders does
-// not blur the comparison), with a wide preference around 128 BPM to
-// decide between a tempo and its double. A relative outside the tempo
-// range (TempoRange below) counts as its double or half inside it.
+// not blur the comparison), with a wide preference around 128 BPM
+// between a tempo and its double. A relative outside the tempo range
+// (TempoRange below) counts as its double or half inside it. And in
+// doubt the double: where the double of what was chosen lies inside the
+// range and the track folds there at least three quarters as sharply, it
+// is the tempo (a grid at half the tempo has no lines where the other
+// beats are, and more lines help the DJ).
 //
 // The place of the beat: the onset function folded onto one beat over the
 // whole track has most of its weight there (the weight within 30 ms, not
