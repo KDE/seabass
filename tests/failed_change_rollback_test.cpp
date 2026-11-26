@@ -869,6 +869,45 @@ int main()
     }
 #endif
 
+    // 13. A folder sits where a change declares a file (#141). It is not a
+    //     file the save can copy and put back, and it is not one the change
+    //     created, so a failed save must leave it, and whatever is in it,
+    //     where it was. The change is refused before it writes.
+    {
+        const ScratchStick scratch(seabass::testing::scratchRoot() / "seabass_failed_change_rollback_folder");
+        const fs::path &stick = scratch.path;
+        const fs::path pdb = stick / "PIONEER" / "rekordbox" / "export.pdb";
+        const fs::path emptyFolder = stick / "Contents" / "Track.mp3";
+        const fs::path fullFolder = stick / "PIONEER" / "USBANLZ" / "P001" / "ANLZ0000.DAT";
+        const fs::path inside = fullFolder / "keep.txt";
+        write(pdb, "pdb-original");
+        fs::create_directories(emptyFolder);
+        write(inside, "inside");
+        bool applied = false;
+        CancellationToken token;
+        SaveContext ctx(token, noProgress, {}, pathToQString(stick / "PIONEER"), {});
+        std::vector<std::shared_ptr<PendingChange>> changes = {
+            std::make_shared<ScriptedChange>(
+                "a", std::vector<std::string>{pathToUtf8(pdb), pathToUtf8(emptyFolder), pathToUtf8(fullFolder)},
+                [&](SaveContext &) {
+                    applied = true;
+                    write(pdb, "pdb-from-a");
+                    return ChangeOutcome::failure("the copy was refused");
+                }),
+        };
+        auto result = runSaveLoop(changes, ctx);
+        if (!result.error.contains(QStringLiteral("Track.mp3"))) {
+            std::cerr << "error: " << result.error.toStdString() << "\n";
+        }
+        assert(result.appliedIds.isEmpty());
+        assert(fs::is_directory(emptyFolder) && "the empty folder in the way is still there");
+        assert(read(inside) == "inside" && "and so is the folder with a file in it");
+        assert(read(pdb) == "pdb-original");
+        assert(!applied && "refused before the change wrote anything");
+        assert(result.error.contains(QStringLiteral("Track.mp3")) && "the error names the path in the way");
+        std::cout << "case 13 (a folder at a declared path is refused and left alone) OK\n";
+    }
+
     std::cout << "failed_change_rollback_test: all cases passed\n";
     return 0;
 }

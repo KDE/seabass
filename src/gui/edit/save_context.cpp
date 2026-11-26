@@ -668,7 +668,27 @@ void SaveContext::protectForThisChange(const std::string &file)
         Checkpoint checkpoint{member, {}, firstInSave};
         const fs::path memberPath = pathFromUtf8(member);
         std::error_code ec;
-        if (fs::is_regular_file(memberPath, ec)) {
+        const bool isFile = fs::is_regular_file(memberPath, ec);
+        if (!isFile) {
+            // No copy is recorded as "was not there", and a rollback removes
+            // what has none. So "not a file" has to really be "nothing
+            // there": a folder at the path (or a link to nowhere, or
+            // anything else) is not this save's to copy back or to remove,
+            // and neither is a path the filesystem would not answer for.
+            // The change is refused before it writes (#141).
+            std::error_code lec;
+            const fs::file_type type = fs::symlink_status(memberPath, lec).type();
+            if (type == fs::file_type::none || type == fs::file_type::unknown) {
+                throw std::runtime_error("could not tell what is at " + member + " before writing it: "
+                                         + (lec ? lec.message() : std::string("unknown file type")));
+            }
+            if (type != fs::file_type::not_found) {
+                throw std::runtime_error(
+                    member + (type == fs::file_type::directory ? " is a folder" : " is not a regular file")
+                    + " where a file is to be written; nothing was written");
+            }
+        }
+        if (isFile) {
             std::optional<infrastructure::ScratchDirGuard> &dir = firstInSave ? m_saveCheckpointDir : m_checkpointDir;
             if (!dir) {
                 fs::path made = fs::temp_directory_path()
