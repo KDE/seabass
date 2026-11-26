@@ -20,6 +20,11 @@
 // 3. The same save over a stale baseline (sequence 100: rekordbox
 //    exported since): the ledger is merged and the sequence stays 100.
 // 4. A save with only Engine writes leaves the baseline byte for byte.
+// 5. A comment edited in the track details (#108): the record holds the
+//    comment written and the mark that Seabass wrote it
+//    (seabassCommentMarker), so Sync after Rekordbox Export asks when an
+//    export brings rekordbox's old one back. The rating and the cues are
+//    left as they were.
 
 #include <QCoreApplication>
 
@@ -29,7 +34,9 @@
 #include <memory>
 
 #include "domain/metadata_restore.hpp"
+#include "domain/rekordbox_baseline.hpp"
 #include "gui/edit/changes/restore_metadata_change.hpp"
+#include "gui/edit/changes/track_field_edit_change.hpp"
 #include "rekordbox_baseline_fixture.hpp"
 
 using namespace seabass;
@@ -208,6 +215,32 @@ int main(int argc, char **argv)
         assert(saved.error.isEmpty() && saved.appliedIds.size() == 1);
         assert(testing::fileBytes(testing::baselineFileOf(p.stick)) == p.bytes);
         std::cout << "case 4 (Engine-only save leaves the baseline byte for byte) OK\n";
+    }
+
+    // 5. A comment edited in the track details.
+    {
+        const Planted p = plantedStick(fixture, "ledger_comment", testing::FixtureSequence);
+        const std::string file = p.tracks[0].filePath;
+        const std::string text = "noted in Seabass";
+        auto change = std::make_shared<TrackFieldEditChange>(
+            p.stick.pioneerPath(), p.stick.enginePath(), file, "T",
+            TrackFieldValue{TrackField::Comment, std::nullopt, text},
+            findTrackRows(p.stick.pioneerPath(), p.stick.enginePath(), file));
+        const SaveLoopResult saved = testing::saveChanges({change}, p.stick.pioneerPath(), p.stick.enginePath());
+        reportError(saved, "save");
+        assert(saved.error.isEmpty() && saved.warning.isEmpty() && saved.appliedIds.size() == 1);
+        const auto b = testing::readBaseline(p.stick);
+        assert(b);
+        const auto &row = *b->findTrack(p.k1);
+        assert(row.comment == text && "the comment written is the recorded one");
+        const auto mark = b->declined.find("comment:" + p.k1);
+        assert(mark != b->declined.end() && mark->second == domain::seabassCommentMarker(text)
+               && "and the record says Seabass wrote it");
+        assert(row.rating == 1 && row.ratingOrigin == ValueOrigin::Rekordbox && "the rating left as it was");
+        assert(row.cues.size() == 1 && row.cues[0].origin == ValueOrigin::Rekordbox && "the cues too");
+        assert(!b->declined.count("comment:" + p.k2) && "no mark for a track not edited");
+        secondTrackAsPlanted(*b, p.k2);
+        std::cout << "case 5 (a comment edit is recorded with Seabass's mark) OK\n";
     }
 
     std::cout << "rekordbox_baseline_ledger_test: all passed\n";
