@@ -215,6 +215,26 @@ void waitUntilIdle(RekordboxExportSyncController &controller)
     assert(!controller.busy());
 }
 
+// B01's comment, added in rekordbox between export 40 and export 128.
+// Since #108 Seabass records the comments it writes but not who wrote a
+// comment, so a rekordbox comment that differs from the recorded one asks
+// (it may be an export bringing back rekordbox's older one). The hardware
+// round took rekordbox's, and so does every analysis here.
+const std::string B01CommentKey = "comment:contents/seabass test/t73 base/t73-b01-click-44k-102bpm.flac";
+
+void answerB01Comment(RekordboxExportSyncController &controller)
+{
+    const auto &rows = controller.rows()->rows();
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].section == Section::Conflicts && rows[i].header.key == B01CommentKey
+            && rows[i].header.reason == d::EngineUpdateReason::OriginUnknown) {
+            assert(!rows[i].included && "asked, not ticked");
+            controller.resolveConflict(static_cast<int>(i), true);
+            break;
+        }
+    }
+}
+
 void analyze(RekordboxExportSyncController &controller, const testing::EngineChangeStick &stick)
 {
     controller.analyze(QStringLiteral("TESTSHARK"), stick.pioneerPath(), stick.enginePath());
@@ -224,6 +244,7 @@ void analyze(RekordboxExportSyncController &controller, const testing::EngineCha
     }
     assert(controller.errorMessage().isEmpty());
     assert(controller.analyzed());
+    answerB01Comment(controller);
 }
 
 LibraryEditSession *sessionOf(const testing::EngineChangeStick &stick)
@@ -370,6 +391,9 @@ std::multiset<std::string> expectedProposal()
         // Ratings and comments to Engine (2)
         "rating to Engine " + b01 + ": 4",
         "comment to Engine " + b01 + ": \"T73 comment\"",
+        // The question B01's comment raises since #108, answered with
+        // rekordbox's (analyze()): the row stays, ticked.
+        "no edit: conflict " + B01CommentKey,
     };
     std::multiset<std::string> ticked;
     for (const auto &row : out) {
@@ -716,7 +740,8 @@ void assertGoldenProposal(RekordboxExportSyncController &controller, const std::
     assert(controller.checkedCount() == 24);
     assert(controller.conflictCount() == static_cast<int>(conflicts.size()));
     const QVariantMap counts = controller.sectionCounts();
-    const std::map<QString, int> want{{"conflicts", static_cast<int>(conflicts.size())},
+    // The conflicts section holds B01's comment question too, answered.
+    const std::map<QString, int> want{{"conflicts", static_cast<int>(conflicts.size()) + 1},
                                       {"playlists", 5},          {"tracksToAdd", 3},
                                       {"tracksToRemove", 4},   {"membership", 10},        {"metadataToEngine", 2},
                                       {"cuesToEngine", 0},     {"restoresToRekordbox", 0}, {"engineOwnKept", 0},
@@ -807,6 +832,7 @@ void testSaveUndoSave()
         assert(chains.whole());
     }
     assert(fileBytes(recordOf(stick)) == record40);
+    answerB01Comment(controller);  // the record is back at 40, so it asks again
     assertGoldenProposal(controller);
     std::cout << "undo: m.db and the record as before save 1, the 24 rows again OK\n";
 
@@ -1548,7 +1574,7 @@ std::set<std::string> conflictKeys(RekordboxExportSyncController &controller)
 {
     std::set<std::string> out;
     for (const Row &row : controller.rows()->rows()) {
-        if (row.section == Section::Conflicts) {
+        if (row.section == Section::Conflicts && row.header.key != B01CommentKey) {
             out.insert(row.header.key);
         }
     }

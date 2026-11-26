@@ -2489,7 +2489,12 @@ private:
                     return c;
                 };
                 if (b && b->comment == e->comment && !r->comment.empty()) {
-                    out.conflicts.push_back(conflictOf(
+                    // Keeping Engine's writes nothing: Sync does not write
+                    // comments onto rekordbox, so the answer says that
+                    // rekordbox keeps its own, which the next record then
+                    // holds (the question does not come back; Engine's
+                    // stays Engine's own).
+                    auto c = conflictOf(
                         EngineUpdateReason::OriginUnknown,
                         b->comment.empty()
                             ? "rekordbox has a comment " + engineName
@@ -2497,7 +2502,11 @@ private:
                                     "export brought back"
                             : "rekordbox's comment is not the one Seabass last recorded, which " + engineName
                                   + " still has: nothing recorded whether rekordbox changed it or an export "
-                                    "brought back an older one"));
+                                    "brought back an older one");
+                    c.engineSide = e->comment.empty()
+                        ? "Leave " + engineName + " without a comment; rekordbox keeps its own"
+                        : "Keep " + engineName + "'s comment " + shortQuoted(e->comment) + "; rekordbox keeps its own";
+                    out.conflicts.push_back(std::move(c));
                 } else if (b && b->comment == e->comment) {
                     out.conflicts.push_back(conflictOf(EngineUpdateReason::OriginUnknown,
                                                        "rekordbox no longer has the comment " + engineName

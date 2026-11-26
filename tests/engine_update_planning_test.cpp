@@ -3128,7 +3128,7 @@ int main()
                == "rekordbox's comment is not the one Seabass last recorded, which Engine still has: nothing "
                   "recorded whether rekordbox changed it or an export brought back an older one");
         assert(a.rekordboxSide == "Set the comment in Engine to \"rekordbox's old one\" (rekordbox's)");
-        assert(a.engineSide == "Keep Engine's comment \"edited in Seabass\"");
+        assert(a.engineSide == "Keep Engine's comment \"edited in Seabass\"; rekordbox keeps its own");
         assert(std::get<MetadataEdit>(a.rekordboxChoice[0]).comment == "rekordbox's old one");
         assert(a.engineChoice.empty() && "keeping Engine's writes nothing");
         const auto &b = p.conflicts[1];
@@ -3142,6 +3142,18 @@ int main()
         apply(after, p, true);
         assert(after.engine[0].comment == "rekordbox's old one" && after.engine[1].comment == "new in rekordbox");
         assert(after.engine[2].comment == "Engine's");
+        // Answered toward Engine, A's rekordbox comment stays; recorded as
+        // it is now, the question does not come back, and Engine's comment
+        // is Engine's own from then on.
+        World kept = w;
+        kept.engine[1].comment = w.rekordbox[1].comment;  // B taken
+        const auto again = plan(kept, baselineOf(kept));
+        assert(again.conflicts.empty() && again.metadataToEngine.empty());
+        bool aKept = false;
+        for (const auto &own : again.engineOwnKept) {
+            aKept = aKept || own.header.key == "comment:music/a.mp3";
+        }
+        assert(aKept && "Engine's comment is Engine's own, not asked again");
         std::cout << "comments with a record ask where rekordbox's differs (#108) OK\n";
     }
 

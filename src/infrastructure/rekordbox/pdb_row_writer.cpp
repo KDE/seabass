@@ -1579,6 +1579,14 @@ bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment,
     if (!expected || !rebuilt) {
         return refuse(trackCommentUnwritable);
     }
+    if (rowsBefore > 1) {
+        // Two present rows carry this id: findRow edits the first, the
+        // read-back below compares the last, and a player would show
+        // either. Refused with a reason rather than failing the save on
+        // the read-back.
+        return refuse("export.pdb lists this track in " + std::to_string(rowsBefore)
+                      + " rows under one id, so Seabass does not know which one to change");
+    }
     // As the readers give it back: they trim what ends a string in blanks.
     std::string readable = comment;
     while (!readable.empty() && (readable.back() == ' ' || readable.back() == '\t' || readable.back() == '\0')) {

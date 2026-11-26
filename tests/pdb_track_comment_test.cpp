@@ -313,7 +313,7 @@ int main(int argc, char **argv)
             assert(scrub.zeroUnusedSpace() > 0);
             assert(scrub.commit());
             expectTracks(readFile(pdbPath), expected);
-            std::cout << source.parent_path().parent_path().filename().string() << ": case 1 ("
+            std::cout << seabass::pathToUtf8(source.parent_path().parent_path().filename()) << ": case 1 ("
                       << (ids.size() + stride - 1) / stride << " rows, three rounds, " << moved
                       << " track pages at most) OK\n";
         }
@@ -459,6 +459,34 @@ int main(int argc, char **argv)
         assert(!writer.commit());
         assert(readFile(pdbPath) == bytes);
         std::cout << "case 5 (no new page possible: capacity " << capacity->units << " units, a longer comment refused) OK\n";
+    }
+
+    // 6. Two present rows under one id: which one a player shows is
+    //    anyone's guess, so the comment is refused with that reason, not
+    //    failed on the read-back, and the file left alone.
+    {
+        const fs::path pdbPath = copyIn(dir, seabass::pathFromUtf8(argv[1]), "twice.pdb");
+        std::string bytes = readFile(pdbPath);
+        const Snapshot snap = snapshotOf(bytes);
+        const size_t lenPage = u32(bytes, 4);
+        const size_t base = lenPage * snap.pages.front();
+        std::vector<size_t> present;
+        for (size_t i = 0; i < 16 && present.size() < 2; ++i) {
+            if ((u16(bytes, base + lenPage - 4) >> i) & 1) {
+                present.push_back(base + 40 + u16(bytes, base + lenPage - 6 - 2 * i));
+            }
+        }
+        assert(present.size() == 2 && "the fixture's first track page has two present rows");
+        const uint32_t id = u32(bytes, present[0] + 72);
+        put32(bytes, present[1] + 72, id);
+        writeFile(pdbPath, bytes);
+        PdbRowWriter writer(seabass::pathToUtf8(pdbPath));
+        std::string refusal;
+        assert(!writer.setTrackComment(id, "x", &refusal));
+        assert(refusal.find("rows under one id") != std::string::npos);
+        assert(!writer.commit());
+        assert(readFile(pdbPath) == bytes);
+        std::cout << "case 6 (two rows under one id: refused with the reason) OK\n";
     }
 
     fs::remove_all(dir);
