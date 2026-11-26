@@ -6,16 +6,15 @@
 
 #include <vector>
 
+#include "musicanalyze/beat.hpp"
+
 namespace seabass::domain
 {
 
-// One beat of a track's beat grid, as the DJ software analysed it.
-struct Beat
-{
-    double timeMs = 0.0;
-    // 1 to 4, 1 being the downbeat; 0 where the source does not say.
-    int beatInBar = 0;
-};
+// One beat of a track's beat grid, as the DJ software analysed it or as
+// the analysis library (lib/musicanalyze) found it: the library's type,
+// so a grid goes from the one to the other as it is.
+using musicanalyze::Beat;
 
 // How Engine stores a grid: not every beat, but markers, each pinning one
 // beat index to a moment, with the beats between two markers evenly

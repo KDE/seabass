@@ -9,28 +9,19 @@
 
 #include "domain/beat_grid.hpp"
 #include "domain/pcm_source.hpp"
+#include "musicanalyze/grid.hpp"
 
 namespace seabass::domain
 {
 
 // What a beat grid analyser makes of a track: every beat it found, on the
-// source's timeline (sample 0 at 0 ms), and how sure it is.
-struct GridAnalysis
-{
-    std::vector<Beat> beats;
-    // 0 to 1. An analyser that cannot say gives 0; the benchmark reports
-    // it beside the score and never weighs by it.
-    double confidence = 0.0;
-    // The beats follow a tempo that moves: a list of beats whose spacing
-    // changes, where false means one tempo from one place, start to end.
-    // A followed grid is the one to look at before trusting it: on music
-    // with a steady tempo it is rarely needed.
-    bool followsTempo = false;
-    // Empty when the analyser ran. A source that failed (PcmSource::error)
-    // is reported here rather than as an empty grid, which would read as
-    // "no beats in this track".
-    std::string error;
-};
+// source's timeline (sample 0 at 0 ms), and how sure it is (0 to 1; an
+// analyser that cannot say gives 0, and the benchmark reports it beside
+// the score and never weighs by it). The analysis library's type, which
+// the baseline analysers the benchmark compares it with fill as well. A
+// source that failed (PcmSource::error) is reported in its `error`
+// rather than as an empty grid.
+using musicanalyze::GridAnalysis;
 
 // A beat grid analyser over the PcmSource port, so it runs on generated
 // samples in a test exactly as on a decoded file in the app.

@@ -475,6 +475,23 @@ add_library(storageprobe STATIC
 target_include_directories(storageprobe PUBLIC src)
 target_compile_features(storageprobe PUBLIC cxx_std_17)
 
+# The analysis of a track's audio (beat grid, key, waveform): a library
+# of its own with its own build file, C++20 and the standard library and
+# nothing from this tree, so another project can carry the directory as
+# it is (lib/musicanalyze/README.md). The domain's types for a beat and
+# for what an analysis found are its types (domain/beat_grid.hpp,
+# domain/audio_analysis.hpp), so whatever includes those needs it. Its
+# own test runs with this suite: testing is switched on here already,
+# before the directory is read, or its test would not be registered.
+# (Registered in its directory and not in this one, it gets none of what
+# the end of this file gives every test here: no home of its own and no
+# -UNDEBUG. It writes nothing and uses no assert().)
+set(MUSICANALYZE_TESTS ${SEABASS_TESTS})
+if(SEABASS_TESTS)
+    enable_testing()
+endif()
+add_subdirectory(lib/musicanalyze)
+
 # The MP3 lead-in (#50): the model in domain/ and the reader that fills
 # it, with nothing else from this tree, so seabass_taglib's metadata
 # probe can read a lead-in without pulling in the whole core.
@@ -488,10 +505,6 @@ add_library(seabass_core STATIC
     src/domain/audio_levels.cpp
     src/domain/beat_grid.cpp
     src/domain/beat_grid_comparison.cpp
-    src/domain/seabass_grid_analyser.cpp
-    src/domain/waveform_from_audio.cpp
-    src/domain/audio_analysis.cpp
-    src/domain/key_from_audio.cpp
     src/domain/camelot_key.cpp
     src/domain/engine_overview.cpp
     src/domain/hidden_engine_cues.cpp
@@ -664,7 +677,7 @@ add_library(seabass_core STATIC
 # generated/ alongside src/: seabass_version.hpp is written there at
 # configure time, and everything that links the core can ask what it is.
 target_include_directories(seabass_core PUBLIC src "${CMAKE_BINARY_DIR}/generated")
-target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe seabass_mp3_lead_in)
+target_link_libraries(seabass_core PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe seabass_mp3_lead_in musicanalyze)
 
 # The production sources the tests kept re-compiling, compiled once.
 #
@@ -725,7 +738,6 @@ add_library(seabass_core_testing STATIC
     src/domain/matching_policy.cpp
     src/domain/beat_grid.cpp
     src/domain/beat_grid_comparison.cpp
-    src/domain/seabass_grid_analyser.cpp
     src/infrastructure/audio/playback_timeline.cpp
     src/domain/metadata_merge.cpp
     src/domain/stick_performance.cpp
@@ -818,7 +830,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/zip_archive_writer.cpp
 )
 target_include_directories(seabass_core_testing PUBLIC src)
-target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe seabass_mp3_lead_in)
+target_link_libraries(seabass_core_testing PUBLIC rekordbox_format DjInterop ZLIB::ZLIB storageprobe seabass_mp3_lead_in musicanalyze)
 
 # COMPILE_LANGUAGE:CXX-gated: this target also compiles sqlite3.c (below,
 # MSVC only) as a plain C file, and both of these are C++-only. The
@@ -1061,8 +1073,6 @@ endif()
 # reaches every target in this file that compiles it.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(src/domain/audio_alignment.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
-    # The grid analyser filters a whole track ten times over: the same.
-    set_source_files_properties(src/domain/seabass_grid_analyser.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
 endif()
 
 if(TARGET Qt6::Multimedia)
@@ -5385,6 +5395,8 @@ endif()
 # cross-correlation above is.
 add_library(seabass_synth_track STATIC tools/synth_track/synth_track.cpp)
 target_include_directories(seabass_synth_track PUBLIC src tools)
+# A beat is the analysis library's type (domain/beat_grid.hpp).
+target_link_libraries(seabass_synth_track PUBLIC musicanalyze)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(tools/synth_track/synth_track.cpp PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")
 endif()

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-#include "domain/seabass_grid_analyser.hpp"
+#include "musicanalyze/grid.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,8 +14,9 @@
 #include <limits>
 #include <numbers>
 #include <optional>
+#include <utility>
 
-namespace seabass::domain
+namespace musicanalyze
 {
 
 namespace
@@ -1578,7 +1579,7 @@ void setOnOnsets(std::vector<double> &beats, const std::vector<double> &onsets)
 
 }  // namespace
 
-SeabassGridAnalyser::SeabassGridAnalyser(TempoRange range)
+TempoRange usableTempoRange(TempoRange range)
 {
     // From 40 BPM, to 240: a beat every second and a half is as slow as
     // the tempo curve's windows of 8 s can follow, and a beat every
@@ -1591,7 +1592,7 @@ SeabassGridAnalyser::SeabassGridAnalyser(TempoRange range)
     }
     range.lowBpm = std::clamp(range.lowBpm, Lowest, Highest / 2.0);
     range.highBpm = std::clamp(range.highBpm, 2.0 * range.lowBpm, Highest);
-    m_range = range;
+    return range;
 }
 
 namespace
@@ -1601,8 +1602,6 @@ namespace
 // listening.
 GridAnalysis gridFromOnsets(const Onsets &both, const TempoRange &range)
 {
-    constexpr double FollowedGridEarlierMs = SeabassGridAnalyser::FollowedGridEarlierMs;
-    constexpr double StraightGridLaterMs = SeabassGridAnalyser::StraightGridLaterMs;
     GridAnalysis analysis;
     const std::vector<double> &onsets = both.forBeat;
     const Periods allowed = periodsOf(range);
@@ -1804,34 +1803,31 @@ GridAnalysis gridFromOnsets(const Onsets &both, const TempoRange &range)
 
 }  // namespace
 
-GridAnalysis SeabassGridAnalyser::analyse(PcmSource &source)
+// A minute over the middle gap. The middle, not the mean: a followed
+// grid's few long gaps over a breakdown would pull a mean down.
+double usualBpm(const std::vector<Beat> &beats)
 {
-    const int rate = source.sampleRate();
-    std::vector<float> samples = readAllSamples(source);
-    GridAnalysis failed;
-    if (!source.error().empty()) {
-        failed.error = source.error();
-        return failed;
+    if (beats.size() < 2) {
+        return 0.0;
     }
-    if (rate <= 0 || samples.empty()) {
-        failed.error = "no samples";
-        return failed;
+    std::vector<double> gaps;
+    gaps.reserve(beats.size() - 1);
+    for (std::size_t i = 1; i < beats.size(); ++i) {
+        gaps.push_back(beats[i].timeMs - beats[i - 1].timeMs);
     }
-    // The samples go as soon as the onsets are read from them: a track is
-    // held whole, and twice is once too many.
-    const Onsets both = onsetFunction(samples, rate);
-    samples = std::vector<float>();
-    return gridFromOnsets(both, m_range);
+    const auto middle = gaps.begin() + static_cast<std::ptrdiff_t>(gaps.size() / 2);
+    std::nth_element(gaps.begin(), middle, gaps.end());
+    return *middle > 0.0 ? 60000.0 / *middle : 0.0;
 }
 
-GridAnalysis SeabassGridAnalyser::analyseSamples(std::span<const float> samples, int sampleRateHz) const
+GridAnalysis gridFromSamples(std::span<const float> samples, int sampleRateHz, TempoRange range)
 {
     if (sampleRateHz <= 0 || samples.empty()) {
         GridAnalysis failed;
         failed.error = "no samples";
         return failed;
     }
-    return gridFromOnsets(onsetFunction(samples, sampleRateHz), m_range);
+    return gridFromOnsets(onsetFunction(samples, sampleRateHz), usableTempoRange(range));
 }
 
-}  // namespace seabass::domain
+}  // namespace musicanalyze

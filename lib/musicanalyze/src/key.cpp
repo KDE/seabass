@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-#include "domain/key_from_audio.hpp"
+#include "musicanalyze/key.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,9 +10,10 @@
 #include <cstddef>
 #include <limits>
 #include <numbers>
+#include <utility>
 #include <vector>
 
-namespace seabass::domain
+namespace musicanalyze
 {
 
 namespace
@@ -325,4 +326,4 @@ KeyAnalysis keyFromSamples(std::span<const float> samples, int sampleRateHz)
     return analysis;
 }
 
-}  // namespace seabass::domain
+}  // namespace musicanalyze

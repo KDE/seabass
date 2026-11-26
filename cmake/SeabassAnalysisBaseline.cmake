@@ -75,7 +75,7 @@ add_library(seabass_analysis_baseline STATIC EXCLUDE_FROM_ALL
     tools/analysis_baseline/mixxx_qm_plugins.cpp
     tools/analysis_baseline/baseline_analysers.cpp)
 target_include_directories(seabass_analysis_baseline PUBLIC src tools)
-target_link_libraries(seabass_analysis_baseline PUBLIC seabass_qmdsp)
+target_link_libraries(seabass_analysis_baseline PUBLIC seabass_qmdsp musicanalyze)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     set_source_files_properties(tools/analysis_baseline/mixxx_qm_plugins.cpp tools/analysis_baseline/mixxx_beatutils.cpp
         PROPERTIES COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>")

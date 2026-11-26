@@ -731,7 +731,7 @@ std::unique_ptr<domain::GridAnalyser> makeGridAnalyser(const std::string &name)
 
 bool isKeyAnalyser(const std::string &name)
 {
-    // Seabass's own key detector (domain/key_from_audio.hpp).
+    // Seabass's own key detector (lib/musicanalyze, key.hpp).
     if (name == "seabass-key") {
         return true;
     }

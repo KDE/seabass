@@ -451,7 +451,7 @@ arXiv 2407.21658. Ahn, Hwang and Jung, "The SMC Blind Spot", arXiv
 ## The tempo range
 
 The analyser takes a tempo range (`TempoRange` in
-`domain/seabass_grid_analyser.hpp`; `--tempo-range LOW-HIGH` in the
+`lib/musicanalyze`, `grid.hpp`; `--tempo-range LOW-HIGH` in the
 benchmark), as rekordbox does with its "BPM range". A tempo found
 outside it is taken as its double or half inside it. The default is
 rekordbox's default, 70 to 180, with which every reference grid here was
@@ -973,7 +973,9 @@ rebasing, the analysis has one home, here, and one call:
 `domain::analyseAudio()` takes a track's samples and the tempo range
 and gives the grid, its tempo as one number, the key and the waveform.
 
-- **Phase 4, a first version.** `domain/waveform_from_audio`: three
+- **Phase 4, a first version.** `domain/waveform_from_audio` (now the
+  library's `waveform.hpp`, see "The analysis as a library of its
+  own"): three
   bands split at 150 Hz and 2 kHz, 150 entries a second, written for the
   import and moved here. The bytes of rekordbox's PWV7 and PWV6 are low,
   mid, high in that order; the public description of the format has
@@ -982,7 +984,8 @@ and gives the grid, its tempo as one number, the key and the waveform.
 - **Phase 6, a first version.** `infrastructure/rekordbox/anlz_builder`:
   complete .DAT, .EXT and .2EX files from nothing, a tempo for every
   beat. The colours of PWV4 and PWV5 and the values of PWVC are guesses.
-- **Phase 5, a first version.** `domain/key_from_audio`: the intake's
+- **Phase 5, a first version.** `domain/key_from_audio` (now the
+  library's `key.hpp`): the intake's
   prototype in C++, its learned weights as they are (chroma from the
   peaks of the spectrum in thirds of a semitone over five octaves, one
   weight an octave and note for major and for minor, fitted to
@@ -1165,6 +1168,66 @@ could run beside each other, or the low bands at a lower rate, which
 changes the numbers a little), the key's transforms (0.45 s; half of it
 would go with a transform made for real input, with the same proviso),
 reading the decoded audio, the grid's own transforms.
+
+### The analysis as a library of its own
+
+The code that listens to the music (grid, key, waveform, and the one
+call that runs them) is in `lib/musicanalyze` now: a directory with its
+own build file, C++20 and the standard library, nothing from the rest
+of this tree. So that another program can use it, Mixxx say, by carrying
+the directory; its README says how. Seabass reaches it as before:
+`domain::analyseAudio()` and the `domain/` headers are still there and
+are the library's types and calls under the names Seabass had for them
+(a beat, `domain::Beat`, is the library's beat). `SeabassGridAnalyser`,
+the analyser behind the port the benchmark runs every analyser through,
+reads a source to its end and hands the samples over.
+
+It was a move and nothing else: every track of the five sets analysed
+before and after, 2,831 of them (one file of the CD rips cannot be
+decoded), and every beat, every key and every other number the
+benchmark writes is the same.
+
+What came with it:
+
+- **A version** (`version.hpp`, 0.1.0) for the interface.
+- **A revision for each part** (grid, key, waveform, each at 1): a
+  number that goes up with every change after which the same audio can
+  give another result, and with no other. `Analysis::revisions` carries
+  them with a result, for the import to keep beside what it writes, so
+  that it is known later which code analysed a track and which tracks
+  an improved analyser would do differently. (A grid a DJ has corrected
+  by hand is not to be analysed again on those grounds: the import's
+  ledger keeps a fingerprint of the grid it wrote for that.)
+- **A check that a revision is not forgotten.** The library's own test
+  (`musicanalyze_test`, which needs nothing but the library) generates
+  audio, and `tests/results.txt` holds what each part makes of it under
+  the revision it was written with: every beat of five grids, their
+  tempo, two keys and their margins, the levels of two waveforms. A
+  result that has changed under a revision that has not fails, and the
+  file cannot be written again until the number is raised. Four builds
+  (GCC with and without optimisation, Clang, Clang with fused
+  multiply-add as on ARM) write the same digits, every beat on the same
+  thousandth of a millisecond, so the room a number has is small: 0.005
+  ms a beat. Checked red: straight grids given out 0.01 ms later with
+  the revision left alone (fails, and the write is refused), the
+  revision raised with the file left alone (fails), one beat of a
+  followed grid moved by 0.05 ms (fails), the waveform's upper edge at
+  2010 Hz for 2000 (fails). It is a reminder and not a proof: it sees a
+  change on the audio the test makes, and music has more in it.
+
+Not moved yet: the large tests of the analysers
+(`tests/seabass_grid_analyser_test.cpp`, `key_from_audio_test.cpp`,
+`waveform_from_audio_test.cpp`) stay in Seabass's suite, because they
+use the generator of synthetic tracks in `tools/synth_track`; they run
+against the library as they did against the code where it was.
+
+Next in the library: audio in pieces. An analysis holds the whole track
+(about 32 MB a minute of music at its peak, by the code and not yet
+measured), which is what limits the import to mixes of an hour and a
+half. Only the first stage of the grid reads the audio itself, and its
+filters that run backwards through the track can run with a few seconds
+of what comes next instead of all of it; the key and the waveform go
+from front to back already.
 
 ## Denon again: the new music, and the players
 

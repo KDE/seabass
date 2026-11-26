@@ -2,14 +2,15 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
-#include "domain/waveform_from_audio.hpp"
+#include "musicanalyze/waveform.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <numbers>
+#include <utility>
 
-namespace seabass::domain
+namespace musicanalyze
 {
 
 namespace
@@ -75,10 +76,10 @@ private:
 // The whole measurement, fed in pieces: the filters keep their state
 // from one piece to the next, so a source read in chunks gives exactly
 // what the same samples in one span give.
-class WaveformMeter
+class Meter
 {
 public:
-    explicit WaveformMeter(int sampleRateHz)
+    explicit Meter(int sampleRateHz)
         : m_rate(sampleRateHz),
           m_low(Biquad::Kind::LowPass, WaveformLowMidEdgeHz, sampleRateHz),
           m_midHigh(Biquad::Kind::HighPass, WaveformLowMidEdgeHz, sampleRateHz),
@@ -161,43 +162,44 @@ std::size_t waveformEntryCount(std::uint64_t sampleCount, int sampleRateHz)
     return static_cast<std::size_t>((sampleCount * WaveformEntriesPerSecond + rate - 1) / rate);
 }
 
-AudioWaveform waveformFromSamples(std::span<const float> samples, int sampleRateHz)
+class WaveformMeter::State : public Meter
 {
-    if (sampleRateHz < WaveformLowestSampleRateHz) {
-        return {};
+public:
+    using Meter::Meter;
+};
+
+WaveformMeter::WaveformMeter(int sampleRateHz)
+{
+    if (sampleRateHz >= WaveformLowestSampleRateHz) {
+        m_state = std::make_unique<State>(sampleRateHz);
     }
-    WaveformMeter meter(sampleRateHz);
-    meter.feed(samples);
-    return meter.finish();
 }
 
-AudioWaveform waveformFromPcm(PcmSource &source, std::string *error)
+WaveformMeter::~WaveformMeter() = default;
+WaveformMeter::WaveformMeter(WaveformMeter &&) noexcept = default;
+WaveformMeter &WaveformMeter::operator=(WaveformMeter &&) noexcept = default;
+
+void WaveformMeter::feed(std::span<const float> samples)
 {
-    const int rate = source.sampleRate();
-    if (rate <= 0) {
-        if (error != nullptr) {
-            *error = source.error().empty() ? std::string("the source has no sample rate") : source.error();
-        }
+    if (m_state) {
+        m_state->feed(samples);
+    }
+}
+
+AudioWaveform WaveformMeter::finish()
+{
+    if (!m_state) {
         return {};
     }
-    if (rate < WaveformLowestSampleRateHz) {
-        if (error != nullptr) {
-            *error = "the sample rate is too low for a waveform";
-        }
-        return {};
-    }
-    WaveformMeter meter(rate);
-    std::vector<float> chunk(16384);
-    for (;;) {
-        const std::size_t got = source.read(chunk);
-        if (got == 0) {
-            break;
-        }
-        meter.feed(std::span<const float>(chunk.data(), got));
-    }
-    if (error != nullptr) {
-        *error = source.error();
-    }
+    AudioWaveform waveform = m_state->finish();
+    m_state.reset();
+    return waveform;
+}
+
+AudioWaveform waveformFromSamples(std::span<const float> samples, int sampleRateHz)
+{
+    WaveformMeter meter(sampleRateHz);
+    meter.feed(samples);
     return meter.finish();
 }
 
@@ -226,4 +228,4 @@ std::vector<WaveformEntry> reduceWaveform(const std::vector<WaveformEntry> &entr
     return out;
 }
 
-}  // namespace seabass::domain
+}  // namespace musicanalyze
