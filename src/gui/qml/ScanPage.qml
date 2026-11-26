@@ -160,6 +160,7 @@ Page {
     // in every library on it.
     readonly property bool trackImportEnabled: root.appSettingsController.experimentalFeaturesEnabled === true
     // Switched off, it stages nothing new; what waits stays staged.
+    property var originalAnalysisController: OriginalAnalysisController {}
     property var trackImportController: TrackImportController {
         experimentalEnabled: root.trackImportEnabled
     }
@@ -457,6 +458,10 @@ Page {
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
         }
+    }
+
+    RestoreOriginalAnalysisDialog {
+        controller: root.originalAnalysisController
     }
 
     // Analyse again's cue review: each track whose cues sat on the old
@@ -829,6 +834,16 @@ Page {
             height: visible ? implicitHeight : 0
             text: qsTr("Don't analyse the %n track(s) again", "", playlistMenu.reanalysing)
             onTriggered: root.trackImportController.dropReanalysis(playlistMenu.playlist)
+        }
+        // The way back from Analyse again: offered whenever something is
+        // kept for the playlist's tracks, also with the feature switched off.
+        RestoreOriginalAnalysisMenuItem {
+            visible: (root.trackImportEnabled || kept > 0) && !playlistMenu.isNew && !playlistMenu.staged
+            height: visible ? implicitHeight : 0
+            controller: root.originalAnalysisController
+            rekordboxPath: root.rekordboxPath
+            enginePath: root.enginePath
+            playlist: playlistMenu.playlist
         }
         MenuSeparator {
             visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
