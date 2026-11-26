@@ -126,6 +126,9 @@ ChangeOutcome AlignPlaylistChange::apply(SaveContext &ctx)
                     continue;
                 }
                 FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
+                // A playlist created above is in the save's shared buffer
+                // of export.pdb; the file this opens has to have it.
+                ctx.landHeldWrites();
                 const std::string root = session.writeRoot();
                 const auto ids = infrastructure::rekordbox::rekordboxPlaylistIdsByPath(root);
                 const auto playlist = ids.find(m_playlist);

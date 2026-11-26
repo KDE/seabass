@@ -19,6 +19,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
+#include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
 namespace seabass::gui
 {
@@ -210,5 +211,20 @@ FormatWriteSession &sharedFormatWriteSession(SaveContext &ctx, const std::string
 // is its writeRoot().
 FormatWriteSession *existingFormatWriteSession(SaveContext &ctx, const std::string &format,
                                                const std::string &catalogPath);
+
+// The save's one export.pdb writer for the rekordbox catalog `session`
+// writes (its writeRoot()), opened by whichever change asks first and
+// shared by every change after it: a save that imports a thousand tracks
+// into a playlist reads, parses and writes the file once rather than once
+// per track and once per entry. Nothing a change writes through it is
+// committed by the change. The rows are held until
+// SaveContext::landHeldWrites() writes them: before the first change that
+// does not share them, and after the last change. A save that fails goes
+// back without them.
+//
+// Only for a change that answers PendingChange::sharesHeldWrites() with
+// true, and so never opens the file any other way. One that has to,
+// within its own apply(), calls SaveContext::landHeldWrites() first.
+infrastructure::rekordbox::PdbRowWriter &sharedPdbRows(SaveContext &ctx, const FormatWriteSession &session);
 
 }  // namespace seabass::gui

@@ -104,6 +104,11 @@ void OwnedChange::beforeSave(SaveContext &ctx)
     m_inner->beforeSave(ctx);
 }
 
+bool OwnedChange::sharesHeldWrites() const
+{
+    return m_inner->sharesHeldWrites();
+}
+
 ChangeOutcome OwnedChange::apply(SaveContext &ctx)
 {
     return m_inner->apply(ctx);

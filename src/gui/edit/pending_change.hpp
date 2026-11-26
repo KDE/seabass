@@ -198,6 +198,13 @@ public:
     // writes the library must not write here; nothing is protected yet.
     virtual void beforeSave(SaveContext &ctx) { (void)ctx; }
 
+    // Whether this change writes export.pdb only through the save's shared
+    // buffer (sharedPdbRows()) and opens the file no other way. The save
+    // loop lands the held rows before every change that does not, so a
+    // change that opens the file itself, or reads the stick through
+    // anything else, sees every row the changes before it made.
+    virtual bool sharesHeldWrites() const { return false; }
+
     virtual ChangeOutcome apply(SaveContext &ctx) = 0;
 };
 

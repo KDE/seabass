@@ -205,6 +205,7 @@ int main(int argc, char **argv)
             assert(owned.playlistEdited() == bare->playlistEdited());
             assert(owned.formatsTouched() == bare->formatsTouched());
             assert(sameWrites(owned.rekordboxWrites(), bare->rekordboxWrites()));
+            assert(owned.sharesHeldWrites() == bare->sharesHeldWrites());
             const auto ownedTargets = owned.filesToBackup(ctx);
             const auto bareTargets = bare->filesToBackup(ctx);
             assert(ownedTargets.size() == bareTargets.size() && !ownedTargets.empty());
@@ -233,6 +234,9 @@ int main(int argc, char **argv)
         assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).id()
                == QStringLiteral("rekordbox-export-sync:sync:engine:6"));
         assert(OwnedChange(rekordboxExportSyncOwner(), deleteChange(stick)).verb() == QStringLiteral("deleted"));
+        assert(OwnedChange(rekordboxExportSyncOwner(), deleteChange(stick)).sharesHeldWrites()
+               && !OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).sharesHeldWrites()
+               && "whether a change shares the save's export.pdb rows is the wrapped change's");
         assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).verb() == QStringLiteral("synchronised"));
         assert(OwnedChange(rekordboxExportSyncOwner(), deleteChange(stick)).playlistEdited() == QStringLiteral("Playlist 001"));
         assert(OwnedChange(rekordboxExportSyncOwner(), syncChange(stick)).playlistEdited().isEmpty());

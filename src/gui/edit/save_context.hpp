@@ -371,6 +371,22 @@ public:
     const QStringList &summaryInfoClauses() const { return m_summaryInfoClauses; }
     bool rekordboxBaselineRecordedBySave() const { return m_baselineRecordedBySave; }
 
+    // Writes a writer holds in memory past the change that made them: the
+    // save's one export.pdb buffer, which every change that shares it
+    // (PendingChange::sharesHeldWrites()) adds its rows to, so a save that
+    // imports a thousand tracks reads, parses and writes the file once.
+    // `land` writes what is held to the file and lets go of the buffer,
+    // so the next change to ask reads the file again; it throws when the
+    // file cannot be written. Registered once per writer.
+    void onLandHeldWrites(std::function<void()> land);
+    // Lands every held write, in the order registered; the first that
+    // throws stops the rest and its exception is passed on. The save loop
+    // calls it before every change that does not share them (whatever it
+    // opens on its own then reads the file with every row in it) and once
+    // after the last change, before anything reads the stick to finish the
+    // save. Never after a failure: a save that goes back drops them.
+    void landHeldWrites();
+
     void onFinish(std::function<void(bool ok)> hook);
     // Runs every hook once, creation order; a throwing hook does not stop
     // the rest.
@@ -429,6 +445,7 @@ private:
     };
     std::map<std::string, WalDatabase> m_walDatabases;  // normalizedPathKey -> how to fold it
     std::vector<std::function<void(bool)>> m_finishHooks;
+    std::vector<std::function<void()>> m_landHeldWrites;
     bool m_hooksRan = false;
     std::vector<std::function<void(const AfterCommit &)>> m_afterCommitHooks;
     bool m_afterCommitRan = false;

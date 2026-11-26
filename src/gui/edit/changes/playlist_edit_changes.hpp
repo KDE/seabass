@@ -67,6 +67,9 @@ class SaveContext;
 // throws when one cannot be written or holds the path more than once.
 // CreatePlaylistChange and AlignPlaylistChange (a playlist only some
 // libraries have, followed from one that has it) both create through it.
+// export.pdb's rows go into the save's shared buffer (sharedPdbRows()): a
+// caller that opens the file itself afterwards lands them first
+// (SaveContext::landHeldWrites()).
 QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const QString &enginePath,
                              const std::string &playlist, const QStringList &libraries, int itemCountHint,
                              const char *label);
@@ -106,6 +109,8 @@ public:
     QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override { return true; }
 
 private:
     QString m_pioneerRoot;
@@ -146,6 +151,8 @@ public:
     QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override { return true; }
 
 private:
     QString m_pioneerRoot;
@@ -189,6 +196,8 @@ public:
     QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override { return true; }
 
     std::optional<int> toIndex() const { return m_toIndex; }
 
@@ -233,6 +242,8 @@ public:
     QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override { return true; }
 
 private:
     QString m_pioneerRoot;
@@ -271,6 +282,8 @@ public:
     QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override { return true; }
 
     int toIndex() const { return m_toIndex; }
 
@@ -318,6 +331,8 @@ public:
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override { return true; }
 
     int toIndex() const { return m_toIndex; }
     const std::vector<std::string> &files() const { return m_files; }
@@ -385,6 +400,8 @@ public:
     QStringList targetPaths() const override { return {m_pioneerRoot, m_enginePath}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override { return true; }
 
 private:
     QString m_pioneerRoot;

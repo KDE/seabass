@@ -2733,8 +2733,9 @@ int main(int argc, char **argv)
         }
 
         // 18h. An import whose source is replaced by a file of another size
-        //      after its analysis: the file is copied and the analysis
-        //      written as before, but nothing calls it the copied file's.
+        //      after its analysis: the file is copied, and nothing calls
+        //      the analysis the copied file's (import_held_rows_test case 4:
+        //      none of it is written).
         {
             writeBeatWav(computer / "x swapped.wav", 30, 128.0);
             assert(offer(QVariantList{pathToQString(computer / "x swapped.wav")}, QStringLiteral("Ledger"), false));

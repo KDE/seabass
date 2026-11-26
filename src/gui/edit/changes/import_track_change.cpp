@@ -361,7 +361,7 @@ ImportTrackChange::ImportTrackChange(std::string sourceFile, QString stickRoot, 
                                      domain::ImportedTrack track, QStringList libraries, int itemCountHint)
     : m_sourceFile(std::move(sourceFile)), m_stickRoot(std::move(stickRoot)), m_pioneerRoot(std::move(pioneerRoot)),
       m_enginePath(std::move(enginePath)), m_track(std::move(track)), m_libraries(std::move(libraries)),
-      m_itemCountHint(itemCountHint)
+      m_itemCountHint(itemCountHint), m_tagBpm(m_track.bpm)
 {
     if (m_stickRoot.isEmpty() || m_sourceFile.empty()) {
         throw std::invalid_argument("ImportTrackChange: a source file and a stick are required");
@@ -435,6 +435,11 @@ QStringList ImportTrackChange::unitKeys() const
 QStringList ImportTrackChange::formatsTouched() const
 {
     return m_libraries;
+}
+
+bool ImportTrackChange::sharesHeldWrites() const
+{
+    return true;
 }
 
 void ImportTrackChange::setAnalysis(std::shared_ptr<const ImportAnalysis> analysis)
@@ -515,12 +520,37 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     if (ec) {
         return ChangeOutcome::failure(QStringLiteral("%1 is not a file that can be read. Nothing was imported.").arg(pathToQString(pathFromUtf8(m_sourceFile))));
     }
+    // The analysis is of the file as it was when it was staged. A file
+    // replaced on the computer since then (another size or another time)
+    // is imported as a file nobody analysed: no grid, no waveform, its
+    // tempo and key from its tags alone, and no entry in the ledger.
+    std::shared_ptr<const ImportAnalysis> analysis = m_analysis;
+    domain::ImportedTrack track = m_track;
+    bool keyFromAnalysis = m_keyFromAnalysis;
+    const std::optional<std::int64_t> sourceMtime = fileMtimeUnixOf(source);
+    if (analysis && analysis->provenance
+        && (sourceSize != analysis->provenance->fileSize || sourceMtime != analysis->provenance->fileMtimeUnix)) {
+        const ImportAnalysis::Provenance &analysed = *analysis->provenance;
+        ctx.log().record(std::string(Label) + ": " + m_track.stickPath
+                         + " is not recorded in the analysis ledger: the file copied (" + std::to_string(sourceSize)
+                         + " bytes, last changed at " + (sourceMtime ? std::to_string(*sourceMtime) : std::string("an unknown time"))
+                         + ") is not the one analysed (" + std::to_string(analysed.fileSize) + " bytes, last changed at "
+                         + std::to_string(analysed.fileMtimeUnix)
+                         + "). It was replaced on the computer after its analysis, so it is imported without that "
+                           "analysis: no beat grid and no waveform, its tempo and key only as its tags give them");
+        analysis.reset();
+        track.bpm = m_tagBpm;
+        if (keyFromAnalysis) {
+            track.key.clear();
+            keyFromAnalysis = false;
+        }
+    }
     // Never over a file that is there (the copy would refuse too, after
     // the libraries were opened).
     if (fs::symlink_status(pathFromUtf8(destination), ec).type() != fs::file_type::not_found) {
         return ChangeOutcome::failure(
             QStringLiteral("%1 is on the stick already; not replaced. Nothing was imported.")
-                .arg(QString::fromStdString(m_track.stickPath)));
+                .arg(QString::fromStdString(track.stickPath)));
     }
     // The libraries named are the libraries the stick has: one written
     // and another left out would have them disagree about the track.
@@ -536,9 +566,9 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                 .arg(m_libraries.join(QStringLiteral(", "))));
     }
 
-    infrastructure::rekordbox::PdbRowWriter::NewTrack pdbRow = deviceLibraryRow(m_track, sourceSize);
-    infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneRow = oneLibraryRow(m_track, destination, sourceSize);
-    if (const std::string refusal = rowRefusal(m_track, m_libraries, sourceSize, static_cast<bool>(m_analysis));
+    infrastructure::rekordbox::PdbRowWriter::NewTrack pdbRow = deviceLibraryRow(track, sourceSize);
+    infrastructure::onelibrary::OneLibraryCueWriter::NewTrack oneRow = oneLibraryRow(track, destination, sourceSize);
+    if (const std::string refusal = rowRefusal(track, m_libraries, sourceSize, static_cast<bool>(analysis));
         !refusal.empty()) {
         return ChangeOutcome::failure(QString::fromStdString(refusal + ". Nothing was imported."));
     }
@@ -546,7 +576,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         if (const QString refusal = engineRowWriteRefusal(m_enginePath); !refusal.isEmpty()) {
             return ChangeOutcome::failure(refusal);
         }
-        if (m_track.sampleRateHz <= 0) {
+        if (track.sampleRateHz <= 0) {
             return ChangeOutcome::failure(
                 QStringLiteral("The sample rate of %1 could not be read, which an Engine row needs. Nothing was imported.")
                     .arg(pathToQString(pathFromUtf8(m_sourceFile))));
@@ -603,15 +633,15 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     std::optional<std::uint64_t> sampleCount;
     std::string engineGrid;  // the fingerprint of the grid Engine's row took
     const bool isMp3 = domain::hasMp3Extension(source);
-    if (m_analysis) {
-        RekordboxAnalysisFiles built = rekordboxAnalysisFilesFor(*m_analysis, source, m_track.stickPath, m_track.durationSeconds);
+    if (analysis) {
+        RekordboxAnalysisFiles built = rekordboxAnalysisFilesFor(*analysis, source, track.stickPath, track.durationSeconds);
         anlz = std::move(built.files);
         rekordboxBeats = std::move(built.beats);
         sampleCount = built.sampleCount;
         if (!built.error.empty()) {
             // A grid or a path the files cannot hold: the track goes in
             // unanalysed, and the log says so.
-            ctx.log().record(std::string(Label) + ": no analysis files for " + m_track.stickPath + ": " + built.error);
+            ctx.log().record(std::string(Label) + ": no analysis files for " + track.stickPath + ": " + built.error);
         }
     }
     std::string analysisFile;  // "/PIONEER/USBANLZ/.../ANLZ0000.DAT"
@@ -623,7 +653,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         // either (the list is from one pass, and never an excuse to
         // write over a file).
         for (int attempt = 0; inUse.complete && analysisFile.empty() && attempt < 8; ++attempt) {
-            const std::string candidate = infrastructure::rekordbox::newAnlzPathFor(m_track.stickPath, inUse.paths);
+            const std::string candidate = infrastructure::rekordbox::newAnlzPathFor(track.stickPath, inUse.paths);
             inUse.paths.insert(candidate);
             const std::string stem = candidate.substr(0, candidate.size() - 3);
             bool taken = false;
@@ -648,7 +678,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             }
         }
         if (analysisFile.empty()) {
-            ctx.log().record(std::string(Label) + ": no free analysis folder found for " + m_track.stickPath
+            ctx.log().record(std::string(Label) + ": no free analysis folder found for " + track.stickPath
                              + "; imported without analysis files");
         }
         if (analysisFile.empty()) {
@@ -668,13 +698,15 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         // copy of the file: what only the library can refuse it for (a
         // row that already names the file, a page that cannot take a row,
         // a table that cannot start a new page) is then known while
-        // nothing is on the stick. It reaches the file with commit(),
-        // after the copy.
-        std::optional<infrastructure::rekordbox::PdbRowWriter> pdbRows;
+        // nothing is on the stick. The copy is the save's one buffer of
+        // the file (sharedPdbRows()): the rows of every track before this
+        // one, and of the playlist changes between them, are in it, and it
+        // reaches the file once, when the save has applied its changes.
+        infrastructure::rekordbox::PdbRowWriter *pdbRows = nullptr;
         FormatWriteSession *pdbSession = nullptr;
         if (toDeviceLibrary) {
             pdbSession = &sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
-            pdbRows.emplace(exportPdbUnder(pdbSession->writeRoot()));
+            pdbRows = &sharedPdbRows(ctx, *pdbSession);
             if (cover) {
                 const std::string picture =
                     infrastructure::rekordbox::PdbRowWriter::artworkPathFor('a', pdbRows->nextArtworkId());
@@ -683,6 +715,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                 }
             }
             m_deviceLibraryId = pdbRows->addTrack(pdbRow);
+            pdbSession->noteItemApplied();
         }
 
         // Not cancellable: the save's cancel is asked between changes
@@ -733,10 +766,6 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             if (!pdbRow.artworkPath.empty()) {
                 writePictures(pdbRow.artworkPath);
             }
-            if (!pdbRows->commit()) {
-                return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb for %1.").arg(subject()));
-            }
-            pdbSession->noteItemApplied();
         }
         if (toOneLibrary) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
@@ -755,25 +784,25 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             FormatWriteSession &session =
                 sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, Label);
             infrastructure::engine::NewEngineTrack row;
-            row.source.title = m_track.title;
-            row.source.artist = m_track.artist;
-            row.source.album = m_track.album;
-            row.source.bpm = m_track.bpm;
-            row.source.key = m_track.key;
-            row.source.durationSeconds = m_track.durationSeconds;
-            row.source.bitrate = m_track.bitrate;
-            row.source.comment = m_track.comment;
+            row.source.title = track.title;
+            row.source.artist = track.artist;
+            row.source.album = track.album;
+            row.source.bpm = track.bpm;
+            row.source.key = track.key;
+            row.source.durationSeconds = track.durationSeconds;
+            row.source.bitrate = track.bitrate;
+            row.source.comment = track.comment;
             row.source.fileSizeBytes = copied.bytes;
             row.source.filePath = destination;
             domain::TrackTags tags;
-            tags.album = m_track.album;
-            tags.genre = m_track.genre;
-            tags.composer = m_track.composer;
-            tags.label = m_track.label;
-            tags.year = m_track.year;
-            tags.trackNumber = m_track.trackNumber;
+            tags.album = track.album;
+            tags.genre = track.genre;
+            tags.composer = track.composer;
+            tags.label = track.label;
+            tags.year = track.year;
+            tags.trackNumber = track.trackNumber;
             row.fileTags = tags;
-            row.sampleRateHz = static_cast<double>(m_track.sampleRateHz);
+            row.sampleRateHz = static_cast<double>(track.sampleRateHz);
             row.realEngineLibraryPath = session.realRoot();
             // Engine takes its cover from a file: the large picture, in
             // a temporary one that goes when this block ends.
@@ -802,23 +831,23 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                 // rekordbox's analysis writes them: the writer moves the
                 // grid onto Engine's timeline again and marks the row
                 // analysed.
-                application::RekordboxAnalysis analysis;
-                analysis.beats = rekordboxBeats;
-                analysis.threeBandPreview = anlz->threeBandPreview;
-                analysis.colourPreview = anlz->colourPreview;
-                analysis.scrollEntries = anlz->scrollEntries;
-                if (m_analysis->bpm > 0.0) {
-                    analysis.bpm = m_analysis->bpm;
+                application::RekordboxAnalysis forEngine;
+                forEngine.beats = rekordboxBeats;
+                forEngine.threeBandPreview = anlz->threeBandPreview;
+                forEngine.colourPreview = anlz->colourPreview;
+                forEngine.scrollEntries = anlz->scrollEntries;
+                if (analysis->bpm > 0.0) {
+                    forEngine.bpm = analysis->bpm;
                 }
                 application::AnalysisImportOptions options;
-                options.fileSampleRateHz = static_cast<double>(m_track.sampleRateHz);
+                options.fileSampleRateHz = static_cast<double>(track.sampleRateHz);
                 options.fileIsMp3 = isMp3;
                 options.fileSampleCount = sampleCount;
                 options.fileCountRequired = !isMp3;
                 options.grids = !rekordboxBeats.empty();
                 const application::AnalysisImportResult written =
                     engineAnalysisWriterFor(ctx, session, m_stickRoot.toStdString())
-                        .importAnalysis(std::to_string(m_engineId), analysis, options);
+                        .importAnalysis(std::to_string(m_engineId), forEngine, options);
                 m_engineAnalysed = written.completedRow;
                 if (written.grid.outcome == application::BeatGridWriteResult::Outcome::Written) {
                     engineGrid = written.grid.gridFingerprint;
@@ -830,7 +859,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         // the grids the libraries were left with, rekordbox's from the
         // analysis file's bytes as they were written. The ledger never
         // costs a save: a grid that cannot be read from them is "-".
-        if (m_analysis && m_analysis->provenance && (!analysisFile.empty() || m_engineAnalysed)) {
+        if (analysis && analysis->provenance && (!analysisFile.empty() || m_engineAnalysed)) {
             std::string rekordboxGrid;
             if (!analysisFile.empty()) {
                 const std::string datFile =
@@ -839,7 +868,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                     rekordboxGrid = infrastructure::rekordbox::pqtzGridFingerprint(
                         infrastructure::rekordbox::AnlzFile::fromBytes(anlz->dat, datFile));
                 } catch (const std::exception &e) {
-                    ctx.log().record(std::string(Label) + ": " + m_track.stickPath
+                    ctx.log().record(std::string(Label) + ": " + track.stickPath
                                      + ": the grid in its analysis file could not be read for the analysis ledger ("
                                      + e.what() + "); recorded as none");
                 }
@@ -847,27 +876,20 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             const std::string stickRootForLedger = ledgerStickRoot();
             const std::string key = analysisLedgerKeyOf(destination, stickRootForLedger);
             const std::optional<std::int64_t> mtime = fileMtimeUnixOf(destination);
-            if (copied.bytes != m_analysis->provenance->fileSize) {
-                // The source was replaced between its analysis and this
-                // save: the analysis is not of the file copied.
-                ctx.log().record(std::string(Label) + ": " + m_track.stickPath
-                                 + " is not recorded in the analysis ledger: the file copied ("
-                                 + std::to_string(copied.bytes) + " bytes) is not the one analysed ("
-                                 + std::to_string(m_analysis->provenance->fileSize) + " bytes)");
-            } else if (key.empty() || !mtime) {
-                ctx.log().record(std::string(Label) + ": " + m_track.stickPath
+            if (key.empty() || !mtime) {
+                ctx.log().record(std::string(Label) + ": " + track.stickPath
                                  + " is not recorded in the analysis ledger: its place or its time on the stick "
                                    "cannot be read");
             } else {
                 recordAnalysisAfterCommit(ctx, stickRootForLedger, id(),
-                                          analysisLedgerEntry(key, *m_analysis->provenance, copied.bytes, *mtime,
-                                                              rekordboxGrid, engineGrid, m_analysis->key,
-                                                              m_keyFromAnalysis),
+                                          analysisLedgerEntry(key, *analysis->provenance, copied.bytes, *mtime,
+                                                              rekordboxGrid, engineGrid, analysis->key,
+                                                              keyFromAnalysis),
                                           Label);
             }
         }
-        ctx.log().record(std::string(Label) + ": imported \"" + m_track.title + "\" from " + source + " to "
-                         + m_track.stickPath + " (" + std::to_string(copied.bytes) + " bytes): DeviceLibrary id "
+        ctx.log().record(std::string(Label) + ": imported \"" + track.title + "\" from " + source + " to "
+                         + track.stickPath + " (" + std::to_string(copied.bytes) + " bytes): DeviceLibrary id "
                          + std::to_string(m_deviceLibraryId) + ", OneLibrary id " + std::to_string(m_oneLibraryId)
                          + ", Engine id " + std::to_string(m_engineId) + " (0 or -1: not on this stick)");
     } catch (const std::exception &e) {

@@ -268,6 +268,12 @@ public:
     // (ImportAnalysis::provenance), is recorded in the stick's analysis
     // ledger once the save has committed (analysis_ledger_record.hpp),
     // with the grid each library holds afterwards.
+    //
+    // A file that is another size, or was last changed at another time,
+    // at the save than the provenance says it was when analysed was
+    // replaced on the computer since: it is imported as a file nobody
+    // analysed (no grid, no waveform, no analysis files, its tempo and key
+    // as its tags give them, no ledger entry), and the save's log says so.
     void setAnalysis(std::shared_ptr<const ImportAnalysis> analysis);
     bool analysed() const { return static_cast<bool>(m_analysis); }
     const std::shared_ptr<const ImportAnalysis> &analysis() const { return m_analysis; }
@@ -294,6 +300,8 @@ public:
     QStringList formatsTouched() const override;
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     ChangeOutcome apply(SaveContext &ctx) override;
+    // export.pdb only through sharedPdbRows().
+    bool sharesHeldWrites() const override;
 
     // The file on the stick: where it is, or will be.
     std::string destinationFile() const;
@@ -323,6 +331,9 @@ private:
     bool m_engineAnalysed = false;
     // The track's key is the analyser's: its tags named none.
     bool m_keyFromAnalysis = false;
+    // The tempo its tags give, before an analysis replaced it: the row's
+    // when the file was replaced after it was analysed.
+    double m_tagBpm = 0.0;
     // The stick root the analysis ledger is kept under, as Analyse again
     // finds it.
     std::string ledgerStickRoot() const;

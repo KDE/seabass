@@ -32,6 +32,8 @@ struct WorkCountersSnapshot
     std::uint64_t encryptedDatabaseOpens = 0;
     std::uint64_t trackDatabaseParses = 0;
     std::uint64_t durableFileWrites = 0;
+    std::uint64_t pdbWriterOpens = 0;
+    std::uint64_t pdbWriterCommits = 0;
 
     std::string describe() const;
 };
@@ -53,6 +55,11 @@ public:
     void noteTrackDatabaseParse() { m_trackDatabaseParses.fetch_add(1, std::memory_order_relaxed); }
     // A whole-file durable replacement: write, flush, rename, flush.
     void noteDurableFileWrite() { m_durableFileWrites.fetch_add(1, std::memory_order_relaxed); }
+    // export.pdb or exportExt.pdb read whole into a PdbRowWriter, and one
+    // written back whole by its commit(): once each per save, however
+    // many tracks the save imports.
+    void notePdbWriterOpen() { m_pdbWriterOpens.fetch_add(1, std::memory_order_relaxed); }
+    void notePdbWriterCommit() { m_pdbWriterCommits.fetch_add(1, std::memory_order_relaxed); }
 
     WorkCountersSnapshot snapshot() const;
     void reset();
@@ -62,6 +69,8 @@ private:
     std::atomic<std::uint64_t> m_encryptedDatabaseOpens{0};
     std::atomic<std::uint64_t> m_trackDatabaseParses{0};
     std::atomic<std::uint64_t> m_durableFileWrites{0};
+    std::atomic<std::uint64_t> m_pdbWriterOpens{0};
+    std::atomic<std::uint64_t> m_pdbWriterCommits{0};
 };
 
 }  // namespace seabass::infrastructure

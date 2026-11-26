@@ -311,6 +311,12 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
         ChangeOutcome outcome;
         bool damagedRowSkipped = false;
         try {
+            // What the changes before it hold in memory (the save's one
+            // export.pdb buffer) reaches the file before a change that may
+            // open the file itself.
+            if (!change->sharesHeldWrites()) {
+                ctx.landHeldWrites();
+            }
             // Every 200th and any slow one: a save holds over a thousand
             // changes, and a CI log is capped (#144).
             QElapsedTimer applyTimer;
@@ -405,6 +411,20 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
     // stays one short of full until the stick is committed.
     ctx.status(QStringLiteral("Committing changes to the stick"));
     ctx.progress().tick(backupUnits + changes.size());
+    // The rows the changes held in memory, written once for the whole
+    // save, before anything below reads the stick (the import record, the
+    // scratch copies' commit). Not after a failure: the save goes back.
+    if (!ctx.saveFailed()) {
+        try {
+            ctx.landHeldWrites();
+        } catch (const std::exception &e) {
+            result.error = QString::fromStdString(e.what());
+            if (!ctx.rekordboxPath().isEmpty() || !ctx.enginePath().isEmpty()) {
+                ctx.log().record("save: " + std::string(e.what()));
+            }
+            ctx.markSaveFailed();
+        }
+    }
     QString importWarning = ctx.saveFailed() ? QString() : keepImportLevel(ctx, importLevelWanted);
 
     // ok means "the whole batch went through". A cancel hands the hooks

@@ -1108,6 +1108,18 @@ std::vector<QString> SaveContext::runAfterCommitHooks(const AfterCommit &after)
     return warnings;
 }
 
+void SaveContext::onLandHeldWrites(std::function<void()> land)
+{
+    m_landHeldWrites.push_back(std::move(land));
+}
+
+void SaveContext::landHeldWrites()
+{
+    for (auto &land : m_landHeldWrites) {
+        land();
+    }
+}
+
 void SaveContext::onFinish(std::function<void(bool)> hook)
 {
     m_finishHooks.push_back(std::move(hook));

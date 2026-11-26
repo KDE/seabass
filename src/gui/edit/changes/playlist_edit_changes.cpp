@@ -308,7 +308,7 @@ QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const
     QStringList created;
     if (libraries.contains(QStringLiteral("rekordbox"))) {
         FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, itemCountHint, label);
-        infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+        infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
         if (!pdbPlaylistId(rows, playlist)) {
             uint32_t parentId = 0;
             if (!parent.empty()) {
@@ -319,9 +319,6 @@ QStringList createPlaylistIn(SaveContext &ctx, const QString &pioneerRoot, const
                 parentId = *folder;
             }
             rows.createPlaylist(parentId, name, false);
-            if (!rows.commit()) {
-                throw std::runtime_error("could not write export.pdb");
-            }
             session.noteItemApplied();
             created << QStringLiteral("rekordbox");
         }
@@ -494,12 +491,9 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session =
                 sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, m_label);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             if (const auto id = pdbPlaylistId(rows, m_playlist)) {
                 if (rows.deletePlaylist(*id) > 0) {
-                    if (!rows.commit()) {
-                        return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                    }
                     session.noteItemApplied();
                     ++deleted;
                 }
@@ -611,27 +605,21 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, AddLabel);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             const auto playlist = pdbPlaylistId(rows, m_playlist);
             const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, m_filePath));
             if (!playlist || ids.empty()) {
                 leftAlone.push_back(playlist ? "rekordbox has no row for the file" : "rekordbox has no such playlist");
             } else if (rows.appendPlaylistEntries(*playlist, {ids.front()}) > 0) {
-                if (!rows.commit()) {
-                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                }
                 session.noteItemApplied();
                 ++added;
                 // At its place: the entries rewritten in the new order, as
                 // a move within the playlist writes them (MoveInPlaylistChange).
                 if (m_toIndex) {
-                    infrastructure::rekordbox::PdbRowWriter placed(exportPdbOf(session.writeRoot()));
                     std::string why;
-                    if (const auto order = movedOrder(placed.playlistTrackIds(*playlist), std::set<uint32_t>{ids.front()},
+                    if (const auto order = movedOrder(rows.playlistTrackIds(*playlist), std::set<uint32_t>{ids.front()},
                                                       *m_toIndex, "rekordbox", why)) {
-                        if (placed.reorderPlaylist(*playlist, *order) && !placed.commit()) {
-                            return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                        }
+                        (void)rows.reorderPlaylist(*playlist, *order);
                     } else {
                         notPlaced.push_back(why);
                     }
@@ -787,15 +775,12 @@ ChangeOutcome RemoveFromPlaylistChange::apply(SaveContext &ctx)
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, RemoveLabel);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             const auto playlist = pdbPlaylistId(rows, m_playlist);
             const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, m_filePath));
             if (playlist && !ids.empty()) {
                 const size_t n = rows.removePlaylistEntries(*playlist, std::set<uint32_t>(ids.begin(), ids.end()));
                 if (n > 0) {
-                    if (!rows.commit()) {
-                        return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                    }
                     session.noteItemApplied();
                     removed += n;
                 }
@@ -904,7 +889,7 @@ ChangeOutcome MoveInPlaylistChange::apply(SaveContext &ctx)
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, MoveLabel);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             const auto playlist = pdbPlaylistId(rows, m_playlist);
             const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, m_filePath));
             std::string why;
@@ -913,9 +898,6 @@ ChangeOutcome MoveInPlaylistChange::apply(SaveContext &ctx)
             } else if (const auto order = movedOrder(rows.playlistTrackIds(*playlist),
                                                      std::set<uint32_t>(ids.begin(), ids.end()), m_toIndex, "rekordbox", why)) {
                 if (rows.reorderPlaylist(*playlist, *order)) {
-                    if (!rows.commit()) {
-                        return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                    }
                     session.noteItemApplied();
                     ++moved;
                 } else {
@@ -1074,7 +1056,7 @@ ChangeOutcome PlaceInPlaylistChange::apply(SaveContext &ctx)
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, MoveLabel);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             const auto playlist = pdbPlaylistId(rows, m_playlist);
             std::vector<uint32_t> run;
             for (const std::string &file : m_files) {
@@ -1089,9 +1071,6 @@ ChangeOutcome PlaceInPlaylistChange::apply(SaveContext &ctx)
                                               ? orderWithRunAt(rows.playlistTrackIds(*playlist), run, m_toIndex)
                                               : std::nullopt) {
                 if (rows.reorderPlaylist(*playlist, *order)) {
-                    if (!rows.commit()) {
-                        return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                    }
                     session.noteItemApplied();
                     ++moved;
                 } else {
@@ -1290,15 +1269,12 @@ ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, RenameLabel);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(session.writeRoot()));
+            infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             const auto ids = pdbPlaylistIds(rows, m_playlist);
             if (const auto why = refusal("rekordbox", static_cast<int>(ids.size()),
                                          static_cast<int>(pdbPlaylistIds(rows, renamed).size()))) {
                 leftAlone.push_back(*why);
             } else if (rows.renamePlaylist(ids.front(), m_newName)) {
-                if (!rows.commit()) {
-                    return ChangeOutcome::failure(QStringLiteral("could not write export.pdb"));
-                }
                 session.noteItemApplied();
                 ++done;
             }

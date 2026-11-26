@@ -64,6 +64,7 @@ public:
     std::vector<BackupTarget> filesToBackup(SaveContext &ctx) const override;
     std::vector<RekordboxWrite> rekordboxWrites() const override;
     void beforeSave(SaveContext &ctx) override;
+    bool sharesHeldWrites() const override;
     ChangeOutcome apply(SaveContext &ctx) override;
 
 private:

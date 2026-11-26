@@ -13,7 +13,8 @@ std::string WorkCountersSnapshot::describe() const
 {
     std::ostringstream out;
     out << "engine opens=" << engineDatabaseOpens << " encrypted opens=" << encryptedDatabaseOpens
-        << " pdb parses=" << trackDatabaseParses << " durable writes=" << durableFileWrites;
+        << " pdb parses=" << trackDatabaseParses << " durable writes=" << durableFileWrites
+        << " pdb writer opens=" << pdbWriterOpens << " pdb writer commits=" << pdbWriterCommits;
     return out.str();
 }
 
@@ -28,7 +29,9 @@ WorkCountersSnapshot WorkCounters::snapshot() const
     return {m_engineDatabaseOpens.load(std::memory_order_relaxed),
             m_encryptedDatabaseOpens.load(std::memory_order_relaxed),
             m_trackDatabaseParses.load(std::memory_order_relaxed),
-            m_durableFileWrites.load(std::memory_order_relaxed)};
+            m_durableFileWrites.load(std::memory_order_relaxed),
+            m_pdbWriterOpens.load(std::memory_order_relaxed),
+            m_pdbWriterCommits.load(std::memory_order_relaxed)};
 }
 
 void WorkCounters::reset()
@@ -37,6 +40,8 @@ void WorkCounters::reset()
     m_encryptedDatabaseOpens.store(0, std::memory_order_relaxed);
     m_trackDatabaseParses.store(0, std::memory_order_relaxed);
     m_durableFileWrites.store(0, std::memory_order_relaxed);
+    m_pdbWriterOpens.store(0, std::memory_order_relaxed);
+    m_pdbWriterCommits.store(0, std::memory_order_relaxed);
 }
 
 }  // namespace seabass::infrastructure

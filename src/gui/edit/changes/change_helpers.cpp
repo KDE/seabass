@@ -415,4 +415,42 @@ FormatWriteSession *existingFormatWriteSession(SaveContext &ctx, const std::stri
     return ctx.sharedForWholeSaveIfPresent<FormatWriteSession>(writeSessionKey(format, catalogPath));
 }
 
+namespace
+{
+
+// The writer sharedPdbRows() hands out, while it holds rows: none between
+// a landing and the next change to ask.
+struct HeldPdbRows
+{
+    std::optional<infrastructure::rekordbox::PdbRowWriter> writer;
+};
+
+}  // namespace
+
+infrastructure::rekordbox::PdbRowWriter &sharedPdbRows(SaveContext &ctx, const FormatWriteSession &session)
+{
+    const std::string pdb = pathToUtf8(pathFromUtf8(session.writeRoot()) / "rekordbox" / "export.pdb");
+    // For the whole save: a rolled-back change fails the save, which never
+    // lands what is held, and the rows of the changes before it must not
+    // go with the writers rollBackChange() closes.
+    bool created = false;
+    auto &held = ctx.sharedForWholeSave<HeldPdbRows>("pdb-rows:" + application::normalizedPathKey(pdb), [&]() {
+        created = true;
+        return std::make_unique<HeldPdbRows>();
+    });
+    if (created) {
+        ctx.onLandHeldWrites([&held, pdb]() {
+            std::optional<infrastructure::rekordbox::PdbRowWriter> landing;
+            landing.swap(held.writer);
+            if (landing && landing->hasEdits() && !landing->commit()) {
+                throw std::runtime_error("could not write " + pdb);
+            }
+        });
+    }
+    if (!held.writer) {
+        held.writer.emplace(pdb);
+    }
+    return *held.writer;
+}
+
 }  // namespace seabass::gui

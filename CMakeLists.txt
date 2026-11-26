@@ -4468,6 +4468,14 @@ if(TARGET seabass_edit)
     set_tests_properties(import_track_change_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
 
+    add_executable(import_held_rows_test tests/import_held_rows_test.cpp)
+    target_include_directories(import_held_rows_test PRIVATE src tests)
+    target_link_libraries(import_held_rows_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    add_test(NAME import_held_rows_test COMMAND import_held_rows_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(import_held_rows_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
     add_executable(track_import_staging_test tests/track_import_staging_test.cpp)
     target_include_directories(track_import_staging_test PRIVATE src tests)
     target_link_libraries(track_import_staging_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
@@ -5376,6 +5384,11 @@ add_executable(pdb_add_track_test tests/pdb_add_track_test.cpp)
 target_link_libraries(pdb_add_track_test PRIVATE seabass_core seabass_core_testing rekordbox_format ZLIB::ZLIB)
 target_include_directories(pdb_add_track_test PRIVATE src tests)
 add_test(NAME pdb_add_track_test COMMAND pdb_add_track_test ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73)
+
+add_executable(pdb_row_index_test tests/pdb_row_index_test.cpp)
+target_link_libraries(pdb_row_index_test PRIVATE seabass_core seabass_core_testing rekordbox_format ZLIB::ZLIB)
+target_include_directories(pdb_row_index_test PRIVATE src tests)
+add_test(NAME pdb_row_index_test COMMAND pdb_row_index_test ${CMAKE_SOURCE_DIR}/tests/fixtures/testshark_t73)
 
 add_executable(pdb_row_encoding_test tests/pdb_row_encoding_test.cpp)
 target_link_libraries(pdb_row_encoding_test PRIVATE seabass_core_testing)

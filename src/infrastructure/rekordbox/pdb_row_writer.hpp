@@ -484,6 +484,13 @@ public:
     //     string and every name its ids lead to; one that does not read
     //     as written is not kept (std::runtime_error, the buffer as it
     //     was).
+    //   - What it looks up (the paths named, the names, the highest ids)
+    //     comes from the writer's row index, built from the buffer once
+    //     and kept up to date by every call that changes rows, and the
+    //     read back reads the pages the rows are on: a track costs the
+    //     same whatever the file already holds, so one writer can take a
+    //     whole import. A refused track takes back only the pages it
+    //     wrote.
     // Refused with std::invalid_argument, the buffer as it was: an empty
     // title; a text that is not UTF-8 or ends in a blank
     // (domain::isStorableText); a date that is not a day as YYYY-MM-DD; a
@@ -614,6 +621,34 @@ public:
     // empty text never truncates.
     std::size_t truncatedTextFields() const { return m_truncatedTextFields; }
 
+    // Whether anything was written to the buffer since construction or the
+    // last commit(): what commit() would refuse for want of.
+    bool hasEdits() const { return !m_editedPageIndices.empty(); }
+    const std::string &path() const { return m_pdbPath; }
+
+    // For tests: the work this thread's writers have done, counted from
+    // the first. rowsVisited counts the rows of every whole-table walk
+    // (the parser's and the raw one that finds an id), tableWalks the
+    // walks, bytesCopied the bytes taken aside to undo an edit.
+    struct WorkCounts
+    {
+        std::size_t rowsVisited = 0;
+        std::size_t tableWalks = 0;
+        std::size_t bytesCopied = 0;
+    };
+    static WorkCounts workCountsForTesting();
+    // For tests: false makes addTrack(), nextArtworkId(),
+    // trackIdsWithFilePath() and appendPlaylistEntries() answer as they
+    // did before the row index, by walking the tables on every call and
+    // copying the whole buffer to undo a refused track: the reference a
+    // test holds the indexed answers against. True by default.
+    void setIndexedForTesting(bool indexed) { m_indexed = indexed; }
+    // For tests: builds every part of the row index not built now.
+    void buildIndexForTesting();
+    // For tests: how each built part of the row index differs from one
+    // built afresh from the buffer; empty when none does.
+    std::string indexMismatchForTesting() const;
+
 private:
     std::size_t m_truncatedTextFields = 0;
     Format m_format = Format::Export;
@@ -654,10 +689,122 @@ private:
     void writeRows(const RowPlacement &placement, const std::vector<std::string> &rows);
     uint32_t startPage(size_t tableEntry, uint32_t tableType);
     void appendRowsToPage(uint32_t pageIndex, const std::vector<std::string> &rows, size_t &next, size_t count);
+    // A row's place: its page and its number there.
+    struct RowAt
+    {
+        uint32_t page = 0;
+        uint32_t row = 0;
+        auto operator<=>(const RowAt &) const = default;
+    };
     // Places one row of `tableType`, built by `rowAt` from the number it
     // will have on its page (which artist, album and track rows repeat
-    // inside themselves).
-    void addRow(uint32_t tableType, const std::function<std::string(uint32_t rowIndex)> &rowAt);
+    // inside themselves), and says where it went.
+    RowAt addRow(uint32_t tableType, const std::function<std::string(uint32_t rowIndex)> &rowAt);
+    uint32_t addTrackUnindexed(const NewTrack &track);
+
+    // What addTrack() and the calls a save makes per track look up, built
+    // from the buffer once per part, on first use, and kept up to date by
+    // every call that adds rows to an indexed table (appendRowsToPage()).
+    // A call that changes indexed rows in any other way (deletes one,
+    // rewrites a name or a path, zeroes the space of deleted rows) drops
+    // the part, which is built again when next asked.
+    struct NameTableIndex
+    {
+        // The highest id any row offset of the table leads to, rows marked
+        // deleted included.
+        uint32_t highestId = 0;
+        // The lowest id of a present row spelled so, id 0 left out.
+        std::map<std::string, uint32_t> idByName;
+        // Where the present row of each id is: the last in table order
+        // when two have one.
+        std::map<uint32_t, RowAt> rowById;
+        bool operator==(const NameTableIndex &) const = default;
+    };
+    struct AlbumTableIndex
+    {
+        uint32_t highestId = 0;
+        // (album artist id, name) to the lowest id, as NameTableIndex.
+        std::map<std::pair<uint32_t, std::string>, uint32_t> idByArtistAndName;
+        std::map<uint32_t, RowAt> rowById;
+        bool operator==(const AlbumTableIndex &) const = default;
+    };
+    struct TrackTableIndex
+    {
+        uint32_t highestId = 0;
+        // The present rows in table order: its id and file_path.
+        std::map<std::uint64_t, std::pair<uint32_t, std::string>> rowsInOrder;
+        std::uint64_t nextOrder = 0;
+        // Places in that order, by application::normalizedPathKey() of the
+        // file_path and of the analyze_path.
+        std::map<std::string, std::set<std::uint64_t>> byPathKey;
+        std::map<std::string, std::set<std::uint64_t>> byAnalysisKey;
+        // Ids by file_path as stored, trailing blanks trimmed, in order.
+        std::map<std::string, std::vector<uint32_t>> idsByPath;
+        bool operator==(const TrackTableIndex &) const = default;
+    };
+    struct EntryTableIndex
+    {
+        // The highest track id any row offset of the table leads to.
+        uint32_t highestTrackId = 0;
+        struct Playlist
+        {
+            uint32_t highestEntryIndex = 0;
+            std::multiset<uint32_t> trackIds;
+            bool operator==(const Playlist &) const = default;
+        };
+        // Present entries, by playlist.
+        std::map<uint32_t, Playlist> byPlaylist;
+        bool operator==(const EntryTableIndex &) const = default;
+    };
+    // The parts, by table type: tracks 0, genres 1, artists 2, albums 3,
+    // labels 4, keys 5, playlist entries 8, history entries 12, artwork 13.
+    struct RowIndex
+    {
+        std::optional<TrackTableIndex> tracks;
+        std::map<uint32_t, NameTableIndex> names;  // genres, artists, labels, keys, artwork
+        std::optional<AlbumTableIndex> albums;
+        std::optional<EntryTableIndex> entries;
+        std::optional<uint32_t> historyHighestTrackId;
+    };
+    static void noteTrackRow(TrackTableIndex &index, uint32_t id, const std::string &filePath,
+                             const std::string &analyzePath);
+    static void noteNameRow(NameTableIndex &index, uint32_t id, const std::string &name, RowAt at);
+    static void noteAlbumRow(AlbumTableIndex &index, uint32_t id, uint32_t artistId, const std::string &name, RowAt at);
+    static void noteEntryRow(EntryTableIndex &index, uint32_t playlistId, uint32_t trackId, uint32_t entryIndex);
+    TrackTableIndex &trackIndex() const;
+    NameTableIndex &nameIndex(uint32_t tableType) const;
+    AlbumTableIndex &albumIndex() const;
+    EntryTableIndex &entryIndex() const;
+    uint32_t historyHighestTrackId() const;
+    // Drops the part of the index for `tableType`; every part when it is
+    // nullopt.
+    void dropIndex(std::optional<uint32_t> tableType = std::nullopt);
+    // Brings the index up to date with rows appendRowsToPage() just wrote.
+    void indexRowsAdded(uint32_t pageIndex, uint32_t tableType, uint32_t firstRow, const std::vector<std::string> &rows,
+                        size_t from, size_t count);
+    mutable RowIndex m_index;
+    bool m_indexed = true;
+
+    // An edit that is all or nothing (addTrack(), setTrackTempoAndKey()):
+    // the pages it writes are taken aside before their first write and put
+    // back if it fails, instead of a copy of the whole buffer.
+    struct Undo
+    {
+        size_t sizeBefore = 0;
+        std::map<uint32_t, std::string> pages;
+        std::vector<uint32_t> newlyEdited;
+        std::vector<uint32_t> newlyAppended;
+        std::set<uint32_t> tablesIndexed;  // index parts the edit changed
+    };
+    std::optional<Undo> m_undo;
+    void beginUndo();
+    void endUndo();
+    void undo();
+    // Before a write to `pageIndex`: takes it aside, when an edit that
+    // can be undone is under way and has not yet.
+    void keepPageForUndo(uint32_t pageIndex);
+    void markEdited(uint32_t pageIndex);
+    void markAppended(uint32_t pageIndex);
     void rewritePlaylistEntries(uint32_t playlistId, const std::vector<uint32_t> &trackIds);
     void rewriteTreeLevel(uint32_t parentId, const std::vector<TreeRowSlot> &level);
     static std::vector<TreeRowSlot> siblingsOf(const std::string &buffer, uint32_t parentId);
