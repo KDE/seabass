@@ -2152,6 +2152,28 @@ TestCase {
         compare(lanesOf(popup).length, 2);
     }
 
+    // In Both, the loaded side draws the player's own columns in the look
+    // they came with, not the look of what the page read for the row: a
+    // .2EX with PWV6 and no usable PWV7 has a 3Band overview but a Blue
+    // detail. The other side keeps the page's look.
+    function test_bothDrawsThePlayersColumnsInTheirOwnLook() {
+        const player = makeFakePlayer({position: 60000, autoDetail: false});
+        const popup = makePopup(player);
+        popup.sides = sidesFor(true);
+        popup.wantBoth = true;
+        popup.openLoaded();
+        tryCompare(popup, "opened", true);
+        compare(popup.showingBoth, true);
+        compare(popup.loadedSide, 0, "rekordbox's side is loaded");
+        player.detailWaveform = Object.assign({look: "rekordbox-blue"}, player.detail);
+        tryVerify(() => popup.hasDetail, 2000, "the player's detail arrives");
+        const lanes = lanesOf(popup);
+        tryVerify(() => tilesOf(lanes[0]).length > 0 && tilesOf(lanes[1]).length > 0, 2000, "tiles in both");
+        tryVerify(() => tilesOf(lanes[0]).every((t) => t.look === "rekordbox-blue"), 2000,
+                  "the player's side in its detail's look: " + tilesOf(lanes[0]).map((t) => t.look));
+        verify(tilesOf(lanes[1]).every((t) => t.look === "engine"), "the other side in the page's look");
+    }
+
     // The player moving on to another track (the queue, a media key) while
     // Both shows: the popup follows it as one view, with no box, and draws
     // nothing of the page's track.

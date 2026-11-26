@@ -177,7 +177,16 @@ int main(int argc, char **argv)
         assert(cache.counters().reads == 1 && "a new .2EX is a new key");
         assert(withTwoEx.waveformLook == WaveformLook::RekordboxThreeBand && withTwoEx.waveform.size() == 1200);
         // The .DAT rewritten (its time moved on): read again.
-        fs::last_write_time(dat, fs::last_write_time(dat) + std::chrono::seconds(10));
+        // A copy first: the fixture's files are hard links, and moving
+        // a link's time moves the committed file's.
+        {
+            const auto when = fs::last_write_time(dat);
+            fs::path copy = dat;
+            copy += ".copy";
+            fs::copy_file(dat, copy);
+            fs::rename(copy, dat);
+            fs::last_write_time(dat, when + std::chrono::seconds(10));
+        }
         const auto rewritten = cache.rekordboxAnalysis(root, id, &index);
         assert(cache.counters().reads == 2 && "a changed .DAT is a new key");
         assert(sameAnalysis(rewritten, withTwoEx));

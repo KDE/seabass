@@ -177,12 +177,16 @@ int main()
         assert(source.readSection(TwoExPath, "PWV6") == rekordbox::anlzSectionOf(big, "PWV6"));
         assert(source.readSection(TwoExPath, "PWV7") == rekordbox::anlzSectionOf(big, "PWV7"));
         assert(source.readSection(TwoExPath, "PWVC") == rekordbox::anlzSectionOf(big, "PWVC"));
-        // A "PWV6" inside the waveform's own bytes is not taken for the
-        // section: it does not chain to the end of the file.
-        std::string decoy = anlzFile({section("PWV7", {3, 20}, "xxPWV6" + std::string(54, '\x05')),
-                                      section("PWV6", {3, 1200}, threeBand(1200, 1, 2, 3))});
+        // A "PWV6" inside a later section's bytes, the first one a search
+        // from the end meets, is not taken for the section: it does not
+        // chain to the end of the file.
+        std::string decoy = anlzFile({section("PWV6", {3, 1200}, threeBand(1200, 1, 2, 3)),
+                                      section("PWV7", {3, 20}, "xxPWV6" + std::string(54, '\x05'))});
+        assert(decoy.rfind("PWV6") > decoy.find("PWV7") && "the decoy comes last");
         std::ofstream(root / seabass::pathFromUtf8(TwoExPath), std::ios::binary | std::ios::trunc) << decoy;
-        assert(source.readSection(TwoExPath, "PWV6") == rekordbox::anlzSectionOf(decoy, "PWV6"));
+        const auto real = rekordbox::anlzSectionOf(decoy, "PWV6");
+        assert(real && real->find(threeBand(1200, 1, 2, 3)) != std::string::npos);
+        assert(source.readSection(TwoExPath, "PWV6") == real);
         fs::remove_all(root.parent_path());
         std::cout << "case 3 (a file on disk gives the same section, from its end or by the walk) OK\n";
     }
