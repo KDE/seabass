@@ -22,6 +22,7 @@
 #include "gui/edit/changes/analysis_ledger_record.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/copy_analysis_change.hpp"
+#include "gui/edit/changes/kept_analysis_save.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/library_catalog_cache.hpp"
@@ -237,6 +238,12 @@ std::vector<BackupTarget> ReanalyseTrackChange::filesToBackup(SaveContext &) con
         }
     }
     const std::string pioneer = m_pioneerRoot.toStdString();
+    // rekordbox's analysis, kept on the stick before it is first replaced.
+    if (!m_analysisFiles.empty()) {
+        if (const std::string kept = keptRekordboxAnalysisFileOf(ledgerStickRoot(), ledgerKey()); !kept.empty()) {
+            targets.push_back({kept, Label, true});
+        }
+    }
     if (libraries.count("rekordbox") > 0) {
         targets.push_back({exportPdbUnder(pioneer), Label});
     }
@@ -596,6 +603,8 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         std::vector<std::string> paths;  // .DAT, .EXT, .2EX
         infrastructure::rekordbox::MergedTrackAnlzFiles merged;
         bool twoExIsNew = false;
+        // The files as they are now, for keeping rekordbox's analysis.
+        infrastructure::local::KeptAnlzFileSet before;
     };
     std::vector<MergedFiles> merges;
     // The rekordbox libraries whose every analysis file takes the new
@@ -634,7 +643,18 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             taken->second = false;
             continue;
         }
-        merges.push_back({file.datPath, paths, *merged, !old.twoEx});
+        infrastructure::local::KeptAnlzFileSet before;
+        before.datPath = file.datPath;
+        if (old.dat) {
+            before.dat = old.dat->toBytes();
+        }
+        if (old.ext) {
+            before.ext = old.ext->toBytes();
+        }
+        if (old.twoEx) {
+            before.twoEx = old.twoEx->toBytes();
+        }
+        merges.push_back({file.datPath, paths, *merged, !old.twoEx, std::move(before)});
     }
     // A library that names a file that could not take it keeps its rows as
     // they are; its other files are not written either.
@@ -938,6 +958,87 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             }
         }
 
+        // rekordbox's own analysis, kept on the stick before anything of
+        // it is replaced (kept_analysis_save.hpp, keepOriginalDecision()):
+        // the analysis files as they are, and the tempo and key of every
+        // row about to get the new tempo. A grid that is Seabass's (the
+        // analysis ledger's, or one Seabass wrote since it kept the
+        // original) has nothing to keep, and an original kept already
+        // stays: Restore original analysis returns to what rekordbox made.
+        std::optional<infrastructure::rekordbox::PdbRowWriter> pdbRows;
+        FormatWriteSession *rekordboxSession = nullptr;
+        if (toDeviceLibrary) {
+            rekordboxSession = &sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
+            pdbRows.emplace(exportPdbUnder(rekordboxSession->writeRoot()));
+        }
+        if (!toWrite.empty() && !key.empty()) {
+            auto &keptStore = saveKeptRekordboxStore(ctx, stickRoot);
+            const auto found = keptStore.find(key);
+            if (found.status == infrastructure::local::KeptRekordboxAnalysisLookup::Status::Damaged) {
+                leftAlone("left as it is, nothing written: what Seabass kept of rekordbox's analysis of it cannot "
+                          "be read (" + found.error + "), and the analysis there now is not replaced while it "
+                          "cannot be kept");
+                return ChangeOutcome::skip();
+            }
+            const infrastructure::local::KeptRekordboxAnalysis *kept =
+                found.status == infrastructure::local::KeptRekordboxAnalysisLookup::Status::Found ? &found.entry
+                                                                                                   : nullptr;
+            std::string gridNow;
+            if (toWrite.front().before.dat) {
+                gridNow = infrastructure::rekordbox::pqtzGridFingerprint(
+                    AnlzFile::fromBytes(*toWrite.front().before.dat, toWrite.front().datPath));
+            }
+            const std::string gridNew = infrastructure::rekordbox::pqtzGridFingerprint(*toWrite.front().merged.files.dat);
+            std::string ledgerGrid;
+            if (const auto *ledger = saveAnalysisLedger(ctx, stickRoot)) {
+                if (const auto entry = ledger->find(key); entry != ledger->end()) {
+                    ledgerGrid = entry->second.rekordboxGrid;
+                }
+            }
+            std::error_code sizeEc;
+            const std::uint64_t audioSize = fs::file_size(pathFromUtf8(m_audioFile), sizeEc);
+            const KeepOriginal decision = keepOriginalDecision(gridNow, ledgerGrid, kept, audioSize);
+            const auto withSeabassGrid = [&](infrastructure::local::KeptRekordboxAnalysis entry) {
+                if (!gridNew.empty()
+                    && std::find(entry.seabassGrids.begin(), entry.seabassGrids.end(), gridNew) == entry.seabassGrids.end()) {
+                    entry.seabassGrids.push_back(gridNew);
+                }
+                return entry;
+            };
+            if (decision == KeepOriginal::KeptStays) {
+                const auto next = withSeabassGrid(*kept);
+                if (!(next == *kept)) {
+                    keptStore.keep(next);
+                }
+            } else if (decision == KeepOriginal::KeepNow || decision == KeepOriginal::KeepNewer) {
+                infrastructure::local::KeptRekordboxAnalysis entry;
+                entry.pathKey = key;
+                entry.stickPath = m_stickPath;
+                entry.audioFileSize = audioSize;
+                entry.audioFileMtimeUnix = fileMtimeUnixOf(m_audioFile).value_or(0);
+                entry.originalGrid = gridNow;
+                for (const MergedFiles &m : toWrite) {
+                    entry.files.push_back(m.before);
+                }
+                if (pdbRows) {
+                    for (const std::uint32_t row : pdbRows->trackIdsWithFilePath(m_stickPath)) {
+                        if (const auto values = pdbRows->trackTempoAndKeyId(row)) {
+                            entry.rows.push_back({"rekordbox", row, values->tempo, values->keyId});
+                        }
+                    }
+                }
+                if (toOneLibrary) {
+                    for (const auto &row : sharedOneLibraryWriter(ctx, pioneer).tempoAndKeyIdsForPath(m_audioFile)) {
+                        entry.rows.push_back({"onelibrary", row.contentId, row.bpmx100, row.keyId});
+                    }
+                }
+                keptStore.keep(withSeabassGrid(entry));
+                done.push_back(decision == KeepOriginal::KeepNow
+                                   ? "rekordbox's analysis kept first"
+                                   : "rekordbox's newer analysis kept first, in place of the one kept before");
+            }
+        }
+
         // The writes, each library told to the catalog cache as it lands.
         for (const MergedFiles &m : toWrite) {
             const auto &files = m.merged.files;
@@ -963,8 +1064,8 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         }
 
         if (toDeviceLibrary) {
-            FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, Label);
-            infrastructure::rekordbox::PdbRowWriter rows(exportPdbUnder(session.writeRoot()));
+            FormatWriteSession &session = *rekordboxSession;
+            infrastructure::rekordbox::PdbRowWriter &rows = *pdbRows;
             const std::vector<std::uint32_t> ids = rows.trackIdsWithFilePath(m_stickPath);
             int keys = 0;
             for (const std::uint32_t row : ids) {

@@ -469,6 +469,10 @@ infrastructure::engine::LibdjinteropEngineCueWriter &engineAnalysisWriterFor(Sav
 const std::map<std::string, std::string> &saveBeatGridLedger(SaveContext &ctx, const std::string &stickRoot);
 void recordGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
                                    const std::string &ledgerKey, const std::string &gridFingerprint);
+// The ledger's line for a track taken out after the commit, if the change
+// landed: the row holds the player's own analysis again.
+void forgetGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                                   const std::string &ledgerKey);
 std::string beatGridLedgerFileOf(const std::string &stickRoot);
 std::string keptEngineAnalysisFileOf(const std::string &stickRoot, const std::string &ledgerKey);
 

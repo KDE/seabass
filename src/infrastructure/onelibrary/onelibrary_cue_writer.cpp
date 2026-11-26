@@ -2258,6 +2258,91 @@ int OneLibraryCueWriter::setTempoAndKeyForPath(const std::string &filePath, doub
     return static_cast<int>(contentIds.size());
 }
 
+std::vector<OneLibraryCueWriter::ContentTempoAndKey> OneLibraryCueWriter::tempoAndKeyIdsForPath(
+    const std::string &filePath)
+{
+    SqlCipherDb &db = writeConnection();
+    std::vector<ContentTempoAndKey> rows;
+    for (const int64_t contentId : contentIdsAt(db, toContentPath(m_stickRoot, filePath))) {
+        SqlCipherStatement read(db, "SELECT bpmx100, key_id FROM content WHERE content_id = ?");
+        read.bindInt64(1, contentId);
+        if (!read.step()) {
+            continue;
+        }
+        ContentTempoAndKey row;
+        row.contentId = contentId;
+        if (!read.columnIsNull(0)) {
+            row.bpmx100 = read.columnInt64(0);
+        }
+        if (!read.columnIsNull(1)) {
+            row.keyId = read.columnInt64(1);
+        }
+        rows.push_back(row);
+    }
+    return rows;
+}
+
+int OneLibraryCueWriter::setTempoAndKeyIds(const std::vector<ContentTempoAndKey> &rows)
+{
+    checkNotStale();
+    SqlCipherDb &db = writeConnection();
+    for (const ContentTempoAndKey &row : rows) {
+        if (row.keyId && *row.keyId != 0) {
+            SqlCipherStatement known(db, "SELECT 1 FROM key WHERE key_id = ?");
+            known.bindInt64(1, *row.keyId);
+            if (!known.step()) {
+                throw std::invalid_argument("onelibrary: no key row with id " + std::to_string(*row.keyId));
+            }
+        }
+    }
+    std::vector<ContentTempoAndKey> written;
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        for (const ContentTempoAndKey &row : rows) {
+            SqlCipherStatement has(db, "SELECT 1 FROM content WHERE content_id = ?");
+            has.bindInt64(1, row.contentId);
+            if (!has.step()) {
+                continue;
+            }
+            SqlCipherStatement set(db, "UPDATE content SET bpmx100 = ?, key_id = ? WHERE content_id = ?");
+            if (row.bpmx100) {
+                set.bindInt64(1, *row.bpmx100);
+            } else {
+                set.bindNull(1);
+            }
+            if (row.keyId) {
+                set.bindInt64(2, *row.keyId);
+            } else {
+                set.bindNull(2);
+            }
+            set.bindInt64(3, row.contentId);
+            set.run();
+            written.push_back(row);
+        }
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+    for (const ContentTempoAndKey &row : written) {
+        SqlCipherStatement verify(verifyConnection(), "SELECT bpmx100, key_id FROM content WHERE content_id = ?");
+        verify.bindInt64(1, row.contentId);
+        const auto same = [&](int column, const std::optional<int64_t> &wanted) {
+            return wanted ? !verify.columnIsNull(column) && verify.columnInt64(column) == *wanted
+                          : verify.columnIsNull(column);
+        };
+        if (!verify.step() || !same(0, row.bpmx100) || !same(1, row.keyId)) {
+            throw std::runtime_error("onelibrary: post-write verification failed, the tempo and key put back did not "
+                                     "land for content row " + std::to_string(row.contentId));
+        }
+    }
+    refreshStalenessBaseline();
+    return static_cast<int>(written.size());
+}
+
 int OneLibraryCueWriter::setTrackPath(const std::string &filePath, const std::string &newFilePath)
 {
     checkNotStale();

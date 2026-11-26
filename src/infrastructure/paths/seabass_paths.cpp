@@ -163,6 +163,11 @@ fs::path stickKeptEngineAnalysisDir(const fs::path &stickRoot)
     return stickDir(stickRoot) / "engine-analysis";
 }
 
+fs::path stickKeptRekordboxAnalysisDir(const fs::path &stickRoot)
+{
+    return stickDir(stickRoot) / "rekordbox-analysis";
+}
+
 fs::path stickDurationCache(const fs::path &stickRoot)
 {
     return stickCachesDir(stickRoot) / "durations.jsonl";

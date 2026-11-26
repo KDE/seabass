@@ -620,6 +620,7 @@ add_library(seabass_core STATIC
     src/infrastructure/local/analysis_ledger_file.cpp
     src/infrastructure/local/analysis_ledger_status.cpp
     src/infrastructure/local/kept_engine_analysis_file.cpp
+    src/infrastructure/local/kept_rekordbox_analysis_file.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/work_counters.cpp
     src/infrastructure/sqlite_settle_copy.cpp
@@ -801,6 +802,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/local/analysis_ledger_file.cpp
     src/infrastructure/local/analysis_ledger_status.cpp
     src/infrastructure/local/kept_engine_analysis_file.cpp
+    src/infrastructure/local/kept_rekordbox_analysis_file.cpp
     src/infrastructure/long_paths.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
@@ -1283,6 +1285,10 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/import_track_change.cpp
         src/gui/edit/changes/reanalyse_track_change.hpp
         src/gui/edit/changes/reanalyse_track_change.cpp
+        src/gui/edit/changes/kept_analysis_save.hpp
+        src/gui/edit/changes/kept_analysis_save.cpp
+        src/gui/edit/changes/restore_analysis_change.hpp
+        src/gui/edit/changes/restore_analysis_change.cpp
         src/gui/edit/changes/remove_engine_track_change.hpp
         src/gui/edit/changes/remove_engine_track_change.cpp
         src/gui/edit/changes/engine_playlist_changes.hpp
@@ -4045,6 +4051,38 @@ if(TARGET seabass_edit)
         add_test(NAME track_import_controller_test COMMAND track_import_controller_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
         set_tests_properties(track_import_controller_test PROPERTIES LABELS "integration"
+            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+
+        # Analyse again keeps the analysis rekordbox and the player made, and
+        # Restore original analysis and Free Up Space's kept originals, on a
+        # copy of the fixture stick with the real edit session.
+        add_executable(original_analysis_restore_test
+            src/gui/track_import_controller.hpp
+            src/gui/track_import_controller.cpp
+            src/gui/track_import_analysis.cpp
+            src/gui/analysis_resources.cpp
+            src/gui/track_import_cover.cpp
+            src/gui/edit/track_import_prepare.cpp
+            src/gui/edit/track_reanalysis_prepare.cpp
+            src/gui/edit/analysis_restore_prepare.cpp
+            src/gui/original_analysis_controller.hpp
+            src/gui/original_analysis_controller.cpp
+            src/gui/stick_catalogs.cpp
+            tests/original_analysis_restore_test.cpp
+        )
+        target_include_directories(original_analysis_restore_test PRIVATE src tests)
+        target_link_libraries(original_analysis_restore_test PRIVATE seabass_gui_edit_session_testing seabass_edit
+            seabass_taglib Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+        if(TARGET seabass_audio_qt)
+            target_link_libraries(original_analysis_restore_test PRIVATE seabass_audio_qt)
+        endif()
+        add_executable(kept_rekordbox_analysis_file_test tests/kept_rekordbox_analysis_file_test.cpp)
+        target_include_directories(kept_rekordbox_analysis_file_test PRIVATE src tests)
+        target_link_libraries(kept_rekordbox_analysis_file_test PRIVATE seabass_edit)
+        add_test(NAME kept_rekordbox_analysis_file_test COMMAND kept_rekordbox_analysis_file_test)
+        add_test(NAME original_analysis_restore_test COMMAND original_analysis_restore_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+        set_tests_properties(original_analysis_restore_test PROPERTIES LABELS "integration"
             ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
     endif()
 

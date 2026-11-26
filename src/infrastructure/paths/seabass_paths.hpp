@@ -97,6 +97,12 @@ fs::path stickAnalysisLedger(const fs::path &stickRoot);
 // it back. One file per track. Beside the ledger, and for its reason: it
 // cannot be rebuilt from the stick.
 fs::path stickKeptEngineAnalysisDir(const fs::path &stickRoot);
+// <stick>/Seabass/rekordbox-analysis -- per track, rekordbox's analysis
+// files (.DAT, .EXT, .2EX) and the tempo and key of its rows as they were
+// before Analyse again first replaced them
+// (local/kept_rekordbox_analysis_file.hpp), so Restore original analysis
+// can put them back. One file per track, beside the Engine ones.
+fs::path stickKeptRekordboxAnalysisDir(const fs::path &stickRoot);
 fs::path stickDurationCache(const fs::path &stickRoot);
 // Where the music starts and stops inside each file, once measured.
 // Separate from the duration cache because it costs a full decode to

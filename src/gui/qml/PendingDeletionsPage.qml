@@ -136,6 +136,8 @@ Page {
             EditSessionRegistry.removeLock(lockedDialog.libraryId);
             if (root.refusedAction === "prune") {
                 cleanupController.pruneStaleBackups();
+            } else if (root.refusedAction === "kept") {
+                keptAnalysisSection.controller.removeIncluded();
             } else {
                 cleanupController.deleteSelectedPendingFiles();
             }
@@ -370,6 +372,21 @@ Page {
                 iconName: "checkmark"
                 text: "No old backups."
                 detail: "Every backup on this stick is one Seabass can still undo from, or one you asked for."
+            }
+        }
+
+        // The analyses rekordbox and the player made, kept by Analyse
+        // again so they can be restored.
+        KeptAnalysisSection {
+            id: keptAnalysisSection
+            Layout.fillWidth: true
+            rekordboxPath: root.rekordboxPath
+            enginePath: root.enginePath
+            onSummaryReady: summary => summaryDialog.show(summary)
+            onLockRefused: holder => {
+                root.refusedAction = "kept";
+                lockedDialog.openFor(EditSessionRegistry.libraryIdForPath(root.hasEngine ? root.enginePath
+                                                                                          : root.rekordboxPath), holder);
             }
         }
     }

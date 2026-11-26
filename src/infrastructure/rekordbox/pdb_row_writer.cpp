@@ -3405,6 +3405,59 @@ bool PdbRowWriter::setTrackTempoAndKey(uint32_t trackId, double bpm, const std::
     return true;
 }
 
+std::optional<PdbRowWriter::TrackTempoAndKeyId> PdbRowWriter::trackTempoAndKeyId(uint32_t trackId) const
+{
+    if (m_format != Format::Export) {
+        throw std::logic_error("tracks live in export.pdb");
+    }
+    const auto row = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!row) {
+        return std::nullopt;
+    }
+    return TrackTempoAndKeyId{readU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset),
+                              readU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset)};
+}
+
+bool PdbRowWriter::setTrackTempoAndKeyId(uint32_t trackId, const TrackTempoAndKeyId &values)
+{
+    if (m_format != Format::Export) {
+        throw std::logic_error("tracks live in export.pdb");
+    }
+    if (values.keyId != 0) {
+        bool known = false;
+        forEachPresentRow(m_buffer, Pdb::PAGE_TYPE_KEYS, [&](kaitai::kstruct *body) {
+            auto *key = dynamic_cast<Pdb::key_row_t *>(body);
+            known = known || (key != nullptr && key->id() == values.keyId);
+        });
+        if (!known) {
+            throw std::invalid_argument("export.pdb: no key row with id " + std::to_string(values.keyId));
+        }
+    }
+    const auto row = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+        auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+        return t != nullptr && t->id() == trackId;
+    });
+    if (!row) {
+        return false;
+    }
+    if (m_indexed) {
+        beginUndo();
+        keepPageForUndo(row->pageIndex);
+    }
+    writeU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset, values.tempo);
+    writeU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset, values.keyId);
+    if (m_indexed) {
+        markEdited(row->pageIndex);
+        endUndo();
+    } else {
+        m_editedPageIndices.insert(row->pageIndex);
+    }
+    return true;
+}
+
 // setTrackTempoAndKey() as it was before the row index (commit
 // f4362099): the keys table walked for the key, the whole buffer copied
 // to undo a refusal. Kept for the tests that hold the indexed answers

@@ -124,6 +124,48 @@ AnlzFile mergeAnlzAnalysis(const AnlzFile &old, const AnlzFile &built, bool keep
     return merged;
 }
 
+bool isCueListSection(std::uint32_t fourcc)
+{
+    return fourcc == fourccOf("PCOB") || fourcc == fourccOf("PCO2");
+}
+
+AnlzFile restoreAnlzAnalysis(const AnlzFile &original, const AnlzFile &current)
+{
+    AnlzFile restored = current;
+    restored.headerBytes = original.headerBytes;
+    restored.sections.clear();
+    // The current file's cue lists of each kind, in their order, each
+    // taken once.
+    std::vector<bool> taken(current.sections.size(), false);
+    const auto nextCurrent = [&](std::uint32_t fourcc) -> std::optional<std::size_t> {
+        for (std::size_t i = 0; i < current.sections.size(); ++i) {
+            if (!taken[i] && current.sections[i].fourcc == fourcc) {
+                taken[i] = true;
+                return i;
+            }
+        }
+        return std::nullopt;
+    };
+    for (const AnlzRawSection &section : original.sections) {
+        if (!isCueListSection(section.fourcc)) {
+            restored.sections.push_back(section);
+        } else if (const auto at = nextCurrent(section.fourcc)) {
+            restored.sections.push_back(current.sections[*at]);
+        }
+    }
+    for (std::size_t i = 0; i < current.sections.size(); ++i) {
+        if (taken[i] || !isCueListSection(current.sections[i].fourcc)) {
+            continue;
+        }
+        const auto last = lastOf(restored.sections, current.sections[i].fourcc);
+        restored.sections.insert(restored.sections.begin()
+                                     + static_cast<std::ptrdiff_t>(last ? *last + 1 : restored.sections.size()),
+                                 current.sections[i]);
+        taken[i] = true;
+    }
+    return restored;
+}
+
 std::vector<double> pqtzBeatTimes(const AnlzFile &dat)
 {
     const auto at = firstOf(dat.sections, Pqtz);

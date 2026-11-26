@@ -58,6 +58,7 @@
 #include "infrastructure/local/analysis_file_facts.hpp"
 #include "infrastructure/local/cached_sample_rates.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
+#include "infrastructure/local/kept_rekordbox_analysis_file.hpp"
 #include "infrastructure/local/engine_update_stick_facts.hpp"
 #include "infrastructure/local/file_library_edit_lock_store.hpp"
 #include "infrastructure/logging/file_operation_log.hpp"
@@ -138,6 +139,7 @@ void printUsage()
     Console::info("                 [--restore-engine-analysis | --let-player-analyse]");
     Console::info("  seabass-cli backups [--rekordbox [PATH]] [--engine [PATH]] [--clean] [--keep N]");
     Console::info("  seabass-cli analysis-ledger [--rekordbox [PATH]] [--engine [PATH]] [--reset]");
+    Console::info("  seabass-cli kept-analysis [--rekordbox [PATH]] [--engine [PATH]]");
     Console::info("  seabass-cli export-xml [--rekordbox [PATH]] [--engine [PATH]] --out FILE");
     Console::info("                 [--prefer rekordbox|engine] [--exclude-ext EXT] [--map FROM=TO]");
     Console::info("                 [--keep-junk-cues]");
@@ -193,6 +195,10 @@ void printUsage()
     Console::info("           analysed by an older analyser than this Seabass has, and how sure the");
     Console::info("           analyser was of each grid and key (stored only). Read-only, unless");
     Console::info("           --reset. Exits 1 when the record cannot be read.");
+    Console::info("  kept-analysis  Counts the analyses rekordbox and the player made that Seabass");
+    Console::info("           keeps on a stick so they can be restored (Seabass/rekordbox-analysis and");
+    Console::info("           Seabass/engine-analysis): how many tracks, how many bytes, and how many");
+    Console::info("           of them are of tracks no longer on the stick. Read-only.");
     Console::info("  export-xml  Writes a rekordbox collection XML (the DJ_PLAYLISTS file");
     Console::info("           rekordbox imports on a computer) covering every catalog given,");
     Console::info("           with their cues merged. This is the one route into rekordbox's own");
@@ -1122,6 +1128,64 @@ int runAnalysisLedgerReset(const std::string &stickRoot, const std::string &cata
         Console::error(e.what());
         return 1;
     }
+}
+
+// kept-analysis: the original analyses kept on the stick
+// (local/kept_rekordbox_analysis_file.hpp, kept_engine_analysis_file.hpp),
+// counted with their size and how many are of tracks gone from the stick.
+// Read-only.
+int runKeptAnalysisCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPathArg,
+                           const std::optional<std::string> &enginePathArg)
+{
+    namespace local = seabass::infrastructure::local;
+    namespace paths = seabass::infrastructure::paths;
+    auto resolved = resolveLibraryPaths(wantRekordbox, wantEngine, rekordboxPathArg, enginePathArg);
+    if (!resolved.ok || (!resolved.rekordboxPath && !resolved.enginePath)) {
+        Console::error("kept-analysis needs a stick with a rekordbox export or an Engine library");
+        return 1;
+    }
+    const std::string stickRoot = paths::normalStickRootForCatalogPath(
+        resolved.rekordboxPath ? *resolved.rekordboxPath : *resolved.enginePath);
+    const fs::path root = seabass::pathFromUtf8(stickRoot);
+    const fs::path engineLibrary =
+        resolved.enginePath ? seabass::pathFromUtf8(*resolved.enginePath) : root / "Engine Library";
+    Console::heading("Original analyses kept on " + stickRoot);
+    const auto report = [](const std::string &what, const std::vector<local::KeptAnalysisFileInfo> &kept,
+                           const std::function<bool(const local::KeptAnalysisFileInfo &)> &gone,
+                           const std::string &error) {
+        std::uintmax_t bytes = 0;
+        std::uintmax_t goneBytes = 0;
+        std::size_t goneCount = 0;
+        for (const auto &info : kept) {
+            bytes += info.bytes;
+            if (gone(info)) {
+                ++goneCount;
+                goneBytes += info.bytes;
+            }
+        }
+        Console::info("  " + what + ": " + std::to_string(kept.size()) + " track(s), " + humanSize(bytes)
+                      + (goneCount > 0 ? "; of them " + std::to_string(goneCount) + " no longer on the stick ("
+                                             + humanSize(goneBytes) + ")"
+                                       : std::string()));
+        if (!error.empty()) {
+            Console::error(error);
+        }
+        return error.empty();
+    };
+    std::string error;
+    const auto rekordbox = local::listKeptRekordboxAnalyses(root, &error);
+    bool ok = report("rekordbox's analysis", rekordbox, [&](const local::KeptAnalysisFileInfo &info) {
+        std::error_code ec;
+        return !info.readable || info.trackFile.size() < 2
+               || !fs::is_regular_file(root / seabass::pathFromUtf8(info.trackFile.substr(1)), ec);
+    }, error);
+    const auto engine = local::listKeptEngineAnalyses(root, &error);
+    ok = report("the player's analysis", engine, [&](const local::KeptAnalysisFileInfo &info) {
+        std::error_code ec;
+        return !info.readable
+               || !fs::is_regular_file((engineLibrary / seabass::pathFromUtf8(info.trackFile)).lexically_normal(), ec);
+    }, error) && ok;
+    return ok ? 0 : 1;
 }
 
 int runAnalysisLedgerCommand(bool wantRekordbox, bool wantEngine, const std::optional<std::string> &rekordboxPathArg,
@@ -3256,6 +3320,7 @@ int main(int argc, char **argv)
         (commands[0] != "scan" && commands[0] != "backups" && commands[0] != "sync" && commands[0] != "anonymize" &&
          commands[0] != "sync-after-export" && commands[0] != "copy-beatgrids" &&
          commands[0] != "export-xml" && commands[0] != "digest" && commands[0] != "analysis-ledger"
+         && commands[0] != "kept-analysis"
          && commands[0] != "damage-filesystem")) {
         Console::error("unknown command: " + commands[0]);
         printUsage();
@@ -3264,6 +3329,10 @@ int main(int argc, char **argv)
 
     if (commands[0] == "backups") {
         return runBackupsCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath, clean, keepCount, force);
+    }
+
+    if (commands[0] == "kept-analysis") {
+        return runKeptAnalysisCommand(wantRekordbox, wantEngine, rekordboxPath, enginePath);
     }
 
     if (commands[0] == "analysis-ledger") {

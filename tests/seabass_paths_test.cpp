@@ -34,6 +34,7 @@ int main()
     assert(stickBeatGridLedger(stick) == stick / "Seabass" / "beat-grids.tsv");
     assert(stickAnalysisLedger(stick) == stick / "Seabass" / "analysis.tsv.gz");
     assert(stickKeptEngineAnalysisDir(stick) == stick / "Seabass" / "engine-analysis");
+    assert(stickKeptRekordboxAnalysisDir(stick) == stick / "Seabass" / "rekordbox-analysis");
     assert(stickDurationCache(stick) == stick / "Seabass" / "caches" / "durations.jsonl");
     std::cout << "case 1 (the on-stick layout) OK\n";
 

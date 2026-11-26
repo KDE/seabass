@@ -36,6 +36,26 @@ namespace seabass::infrastructure::rekordbox
 // a file that changed since it was read.
 AnlzFile mergeAnlzAnalysis(const AnlzFile &old, const AnlzFile &built, bool keepPhrases);
 
+// The way back from mergeAnlzAnalysis() (Restore original analysis): the
+// file as it was before Analyse again (`original`, kept on the stick),
+// with the cue lists of the file as it is now (`current`), since those
+// are the DJ's and may have changed since. Exactly:
+// - the header and every section are the original's, in its order,
+//   except its cue lists (PCOB, PCO2);
+// - the n-th cue list of a kind in the original is the n-th of that kind
+//   in `current`; one the current file no longer has is left out;
+// - a cue list `current` has beyond the original's count goes after the
+//   last cue list of its kind in the result, else at the end.
+// With the cue lists as Analyse again left them, the result is the
+// original byte for byte. The result is a copy of `current` (its header
+// and sections replaced), so writeRaw() to current's path still refuses a
+// file that changed since it was read.
+AnlzFile restoreAnlzAnalysis(const AnlzFile &original, const AnlzFile &current);
+
+// Whether `fourcc` is a cue list (PCOB, PCO2), which restoreAnlzAnalysis()
+// takes from the current file.
+bool isCueListSection(std::uint32_t fourcc);
+
 // Whether `fourcc` is a section mergeAnlzAnalysis() replaces.
 bool isReplacedAnalysisSection(std::uint32_t fourcc);
 

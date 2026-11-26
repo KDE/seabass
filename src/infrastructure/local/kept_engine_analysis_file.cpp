@@ -251,6 +251,16 @@ std::vector<std::pair<std::string, std::string>> fieldsOf(const KeptEngineAnalys
 
 }  // namespace
 
+std::string keptAnalysisBase64(std::string_view bytes)
+{
+    return base64(bytes);
+}
+
+std::optional<std::string> keptAnalysisUnbase64(std::string_view text)
+{
+    return unbase64(text);
+}
+
 fs::path keptEngineAnalysisFile(const fs::path &stickRoot, const std::string &pathKey)
 {
     const std::string hex = hashing::toHex(hashing::Sha256::of(std::string_view(pathKey)));

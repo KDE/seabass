@@ -6,7 +6,9 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "application/ports/kept_engine_analysis.hpp"
 
@@ -71,6 +73,12 @@ std::filesystem::path keptEngineAnalysisFile(const std::filesystem::path &stickR
 // text that is not this format to the letter.
 std::string serializeKeptEngineAnalysis(const application::KeptEngineAnalysis &entry);
 application::KeptEngineAnalysisLookup parseKeptEngineAnalysis(const std::string &text);
+
+// The strict base64 the entries hold their bytes in, for the other kept
+// analyses (kept_rekordbox_analysis_file.hpp): whole quads, padding only
+// at the end, no other characters; nullopt for any other text.
+std::string keptAnalysisBase64(std::string_view bytes);
+std::optional<std::string> keptAnalysisUnbase64(std::string_view text);
 
 // The store on one stick. Before a file is created, replaced or removed,
 // `beforeChange` is called with its path (UTF-8): a GUI save backs it up

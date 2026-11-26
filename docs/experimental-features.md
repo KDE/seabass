@@ -92,6 +92,46 @@ from day one.
   A track whose grid changed too much to carry its cues keeps them where
   they are.
 
+  **Keeping the original, and Restore original analysis** (added
+  2026-11-26): before Analyse again first replaces a track's analysis
+  that rekordbox made, it keeps it on the stick
+  (`Seabass/rekordbox-analysis/`, one file per track): the track's .DAT,
+  .EXT and .2EX as they were, and the tempo and key of its rows in
+  export.pdb and exportLibrary.db. Engine's row is kept the same way it
+  always was (`Seabass/engine-analysis/`). Both are written by the save,
+  so a save that goes back and Undo Last Save leave them as they were. A
+  grid Seabass wrote itself (the analysis ledger says so, or the kept
+  file records it) is nothing to keep: analysing again a second time
+  leaves the first original in place, and a track only Seabass ever
+  analysed (an imported one) has nothing kept. Only when rekordbox
+  analysed the track anew since (an export over the stick) does the
+  newer one take the older one's place.
+
+  "Restore original analysis", in a playlist's menu, puts back what is
+  kept for each of its tracks, in every library that has something kept:
+  the analysis files as they were, except for their cue lists, which stay
+  as they are now (cue points set since are kept); a .2EX that Analyse
+  again added is taken away again; the rows get their old tempo and key;
+  Engine's row its own analysis. The track is then no longer Seabass's
+  analysis in the ledger, and the kept copy is removed in the same save
+  (Undo brings it back). Cue points that Analyse again moved with the grid
+  can be moved back with it, reviewed per track like Analyse again's, the
+  switch on by itself only where every move is under the same threshold.
+  A track is left as it is, with the reason, when its audio file is not
+  the size it was, when its rows name other analysis files, or when its
+  grid was changed since Seabass analysed it, in rekordbox or on a player:
+  Seabass never writes over that. `seabass-cli kept-analysis` counts what
+  is kept on a stick.
+
+  Free Up Space lists what is kept, with its size: per track about 235 kB
+  for rekordbox's (measured on a rekordbox 7 collection, median; up to
+  about 320 kB) and 2 to 8 kB for Engine's. Removing it deletes the grids
+  and waveforms rekordbox or the player made for those tracks for good;
+  Seabass's analysis stays and the tracks play as they do now, but
+  Restore original analysis is no longer possible for them. What is kept
+  for tracks no longer on the stick is listed apart, ticked, as safe to
+  remove.
+
   **The analysis ledger** (added 2026-11-26): after a save that wrote an
   analysis of Seabass's, by the import or by Analyse again, the stick's
   `Seabass/analysis.tsv.gz` records for each track which revisions of the

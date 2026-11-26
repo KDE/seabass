@@ -48,6 +48,16 @@ namespace seabass::gui
 // and tempo: a new overview under the DJ's grid would be half an
 // analysis), and the player's own analysis is kept on the stick before it
 // is first replaced.
+// rekordbox's own analysis is kept on the stick before it is first
+// replaced (kept_analysis_save.hpp, local/kept_rekordbox_analysis_file.hpp):
+// the analysis files as they are and the tempo and key of every row that
+// takes the new tempo, written through the save before anything else, so
+// Restore original analysis (RestoreAnalysisChange) can put it back. A
+// grid that is Seabass's (the analysis ledger's fingerprint, or one the
+// kept entry records Seabass wrote) has nothing to keep, and an original
+// kept already stays the original: only rekordbox's own newer analysis
+// (a grid that is none of these) takes its place. What is kept that
+// cannot be read leaves the track alone.
 // The grid written is recorded in the beat grid ledger, so the next
 // Analyse again, or a copy, knows it for Seabass's.
 // The analysis written is recorded in the stick's analysis ledger once

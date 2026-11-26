@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -36,6 +37,9 @@ using infrastructure::local::AnalysisLedgerEntry;
 struct AnalysisLedgerRecord
 {
     std::map<QString, AnalysisLedgerEntry> byChange;
+    // The keys whose entries a change takes out (Restore original
+    // analysis: the track is no longer Seabass's analysis).
+    std::map<QString, std::string> forgetByChange;
 };
 
 std::string recordKeyFor(const std::string &stickRoot)
@@ -131,24 +135,53 @@ std::optional<std::int64_t> fileMtimeUnixOf(const std::string &file)
     return infrastructure::stick_backup::toUnixSeconds(written);
 }
 
+namespace
+{
+
+void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const std::string &label);
+
+AnalysisLedgerRecord &ledgerRecordOf(SaveContext &ctx, const std::string &stickRoot, const std::string &label)
+{
+    bool created = false;
+    AnalysisLedgerRecord &record =
+        ctx.sharedForWholeSave<AnalysisLedgerRecord>(recordKeyFor(stickRoot), [&created]() {
+            created = true;
+            return std::make_unique<AnalysisLedgerRecord>();
+        });
+    if (created) {
+        registerLedgerRecord(ctx, stickRoot, label);
+    }
+    return record;
+}
+
+}  // namespace
+
 void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
                                AnalysisLedgerEntry entry, const std::string &label)
 {
     if (stickRoot.empty() || entry.pathKey.empty()) {
         return;
     }
-    const std::string key = recordKeyFor(stickRoot);
-    bool created = false;
-    AnalysisLedgerRecord &record = ctx.sharedForWholeSave<AnalysisLedgerRecord>(key, [&created]() {
-        created = true;
-        return std::make_unique<AnalysisLedgerRecord>();
-    });
     // A change applied again in the same save (a retry) notes its entry
     // again: the last one is what it left.
-    record.byChange[changeId] = std::move(entry);
-    if (!created) {
+    ledgerRecordOf(ctx, stickRoot, label).byChange[changeId] = std::move(entry);
+}
+
+void forgetAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                               const std::string &pathKey, const std::string &label)
+{
+    if (stickRoot.empty() || pathKey.empty()) {
         return;
     }
+    ledgerRecordOf(ctx, stickRoot, label).forgetByChange[changeId] = pathKey;
+}
+
+namespace
+{
+
+void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const std::string &label)
+{
+    const std::string key = recordKeyFor(stickRoot);
     ctx.onAfterCommit([&ctx, key, stickRoot, label](const SaveContext::AfterCommit &after) {
         const AnalysisLedgerRecord *record = ctx.sharedForWholeSaveIfPresent<AnalysisLedgerRecord>(key);
         if (record == nullptr || after.appliedIds.isEmpty()) {
@@ -156,13 +189,22 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
             // it was, and so does the stick it describes.
             return;
         }
+        const auto landedChange = [&](const QString &changeId) {
+            return after.appliedIds.contains(changeId) && !after.skippedIds.contains(changeId);
+        };
         std::map<std::string, AnalysisLedgerEntry> landed;
         for (const auto &[changeId, entry] : record->byChange) {
-            if (after.appliedIds.contains(changeId) && !after.skippedIds.contains(changeId)) {
+            if (landedChange(changeId)) {
                 landed[entry.pathKey] = entry;
             }
         }
-        if (landed.empty()) {
+        std::set<std::string> forgotten;
+        for (const auto &[changeId, pathKey] : record->forgetByChange) {
+            if (landedChange(changeId) && landed.count(pathKey) == 0) {
+                forgotten.insert(pathKey);
+            }
+        }
+        if (landed.empty() && forgotten.empty()) {
             return;
         }
         const fs::path root = pathFromUtf8(stickRoot);
@@ -172,7 +214,7 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
         if (fault == infrastructure::local::AnalysisLedgerFault::Unreadable) {
             // What it holds is not known, so it is not replaced: this
             // save's entries go unrecorded, and the save says so.
-            ctx.log().record("analysis ledger: " + std::to_string(landed.size())
+            ctx.log().record("analysis ledger: " + std::to_string(landed.size() + forgotten.size())
                              + " track(s) not recorded, the ledger left as it is: " + readError);
             throw std::runtime_error(
                 "Your changes are saved, but Seabass could not record which tracks it analysed (" + readError
@@ -197,6 +239,10 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
                 }
             }
             next[pathKey] = entry;
+        }
+        std::size_t taken = 0;
+        for (const std::string &pathKey : forgotten) {
+            taken += next.erase(pathKey);
         }
         // An entry that cannot be written as it is stays off the stick,
         // and keeps no other entry off it.
@@ -237,10 +283,13 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
                   "analysis tries again.");
         }
         ctx.log().record("analysis ledger: recorded " + std::to_string(landed.size()) + " track(s), "
+                         + (taken > 0 ? "took " + std::to_string(taken) + " out, " : std::string())
                          + std::to_string(next.size()) + " in all"
                          + (readError.empty() ? std::string()
                                               : ", replacing a damaged ledger (" + readError + ")"));
     });
 }
+
+}  // namespace
 
 }  // namespace seabass::gui

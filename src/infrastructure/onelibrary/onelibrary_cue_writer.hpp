@@ -322,6 +322,25 @@ public:
     int setTempoAndKeyForPath(const std::string &filePath, double bpm, const std::string &keyWhereNone,
                               int *keysWritten = nullptr);
 
+    // Every content row listing `filePath`, its tempo (bpmx100) and key
+    // (key_id) exactly as stored, nullopt for NULL: what Analyse again
+    // keeps before it gives the rows a new tempo. Empty when no row lists
+    // the file.
+    struct ContentTempoAndKey
+    {
+        int64_t contentId = 0;
+        std::optional<int64_t> bpmx100;
+        std::optional<int64_t> keyId;
+    };
+    std::vector<ContentTempoAndKey> tempoAndKeyIdsForPath(const std::string &filePath);
+    // The same columns put back as kept (Restore original analysis), on
+    // the rows named, in one transaction, read back before it is trusted.
+    // A row that is not there any more is left out and not counted; a key
+    // id the key table does not hold (other than NULL or 0) is refused
+    // with std::invalid_argument before anything is written. Returns how
+    // many rows were written.
+    int setTempoAndKeyIds(const std::vector<ContentTempoAndKey> &rows);
+
     // Points every content row listing `filePath` at `newFilePath`
     // instead (content.path, converted the way every path here is, and
     // content.fileName, which the reader shows as the file's name), for

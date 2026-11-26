@@ -27,6 +27,7 @@
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/work_counters.hpp"
+#include "infrastructure/local/kept_rekordbox_analysis_file.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 #include "application/ports/progress_reporter.hpp"
 #include "gui/qt_workarounds.hpp"
@@ -883,6 +884,39 @@ public:
     }
 
     Q_INVOKABLE bool fileExists(const QString &file) const { return QFile::exists(file); }
+
+    // rekordbox's analysis kept on the stick (as Analyse again keeps it)
+    // for `onStick` tracks whose audio file is there ("/Contents/kept
+    // N.wav", made empty) and `gone` tracks whose file is not; the kept
+    // files' paths, or empty when one could not be written.
+    Q_INVOKABLE QStringList plantKeptAnalyses(const QString &stickRoot, int onStick, int gone)
+    {
+        namespace fs = std::filesystem;
+        const fs::path root = seabass::gui::pathFromQString(stickRoot);
+        seabass::infrastructure::local::StickKeptRekordboxAnalysisStore store(root);
+        QStringList files;
+        try {
+            for (int i = 0; i < onStick + gone; ++i) {
+                const std::string name = (i < onStick ? "kept " : "gone ") + std::to_string(i) + ".wav";
+                seabass::infrastructure::local::KeptRekordboxAnalysis entry;
+                entry.pathKey = "contents/" + name;
+                entry.stickPath = "/Contents/" + name;
+                entry.audioFileSize = 0;
+                entry.files.push_back({"/PIONEER/USBANLZ/P000/0000" + std::to_string(1000 + i) + "/ANLZ0000.DAT",
+                                       std::string(4000, static_cast<char>(i)), std::nullopt, std::nullopt});
+                if (i < onStick) {
+                    fs::create_directories(root / "Contents");
+                    std::ofstream(root / "Contents" / seabass::pathFromUtf8(name));
+                }
+                store.keep(entry);
+                files << QString::fromStdString(seabass::pathToUtf8(
+                    seabass::infrastructure::local::keptRekordboxAnalysisFile(root, entry.pathKey)));
+            }
+        } catch (const std::exception &) {
+            return {};
+        }
+        return files;
+    }
 
     // How many of the object's own children inherit `className`: for a
     // test that a controller has not made something it makes on demand

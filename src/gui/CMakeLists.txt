@@ -188,6 +188,9 @@ set(SEABASS_GUI_QML_FILES
     qml/PlayerBar.qml
     qml/WaveformView.qml
     qml/ReanalysisCueStrip.qml
+    qml/RestoreOriginalAnalysisMenuItem.qml
+    qml/RestoreOriginalAnalysisDialog.qml
+    qml/KeptAnalysisSection.qml
     qml/WaveformZoomPopup.qml
     qml/TrackTimeLabel.qml
     qml/SettingsPage.qml
@@ -247,6 +250,10 @@ set(SEABASS_GUI_SOURCES
     edit/track_import_prepare.cpp
     edit/track_reanalysis_prepare.hpp
     edit/track_reanalysis_prepare.cpp
+    edit/analysis_restore_prepare.hpp
+    edit/analysis_restore_prepare.cpp
+    original_analysis_controller.hpp
+    original_analysis_controller.cpp
     library_consistency_controller.hpp
     library_consistency_controller.cpp
     beat_grids_controller.hpp

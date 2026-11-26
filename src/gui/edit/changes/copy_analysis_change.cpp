@@ -294,6 +294,18 @@ void recordGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoo
     }
 }
 
+void forgetGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                                   const std::string &ledgerKey)
+{
+    if (ledgerKey.empty()) {
+        return;
+    }
+    recordLedgerAfterCommit(ctx, stickRoot);
+    if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(stickRoot))) {
+        record->byChange[changeId].emplace_back(ledgerKey, std::nullopt);
+    }
+}
+
 std::string beatGridLedgerFileOf(const std::string &stickRoot)
 {
     return ledgerFileOf(stickRoot);

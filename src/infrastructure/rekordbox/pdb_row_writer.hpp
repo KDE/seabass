@@ -134,6 +134,23 @@ public:
     // keys table cannot take a row.
     bool setTrackTempoAndKey(uint32_t trackId, double bpm, const std::string &keyWhereNone, bool *keyWritten = nullptr);
 
+    // A track row's tempo (hundredths of a BPM) and key id exactly as
+    // stored, for keeping them before Analyse again replaces them; nullopt
+    // when no present track row has this id.
+    struct TrackTempoAndKeyId
+    {
+        uint32_t tempo = 0;
+        uint32_t keyId = 0;
+    };
+    std::optional<TrackTempoAndKeyId> trackTempoAndKeyId(uint32_t trackId) const;
+    // The same two fields put back as they were kept (Restore original
+    // analysis), overwritten in place; nothing else on the row changes, and
+    // no keys row is made: a key id is put back only as one that was
+    // there. Returns false when no present track row has this id, and
+    // refuses (std::invalid_argument) a key id the keys table does not
+    // hold, other than 0 for none.
+    bool setTrackTempoAndKeyId(uint32_t trackId, const TrackTempoAndKeyId &values);
+
     // A track's free-text fields, to be written into the row's existing
     // device_sql_string spans in place -- see overwriteTrackText()'s own
     // doc comment for how each is fit into its field's fixed byte budget.

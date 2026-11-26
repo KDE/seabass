@@ -68,6 +68,14 @@ infrastructure::local::AnalysisLedgerEntry analysisLedgerEntry(const std::string
 void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
                                infrastructure::local::AnalysisLedgerEntry entry, const std::string &label);
 
+// Notes that the change `changeId` takes the entry of `pathKey` out of the
+// ledger (Restore original analysis: the track holds an analysis that is
+// not Seabass's again), by the same record after the commit: only if the
+// change landed, and never over an entry another change of the save
+// records for the same track.
+void forgetAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                               const std::string &pathKey, const std::string &label);
+
 // The fingerprint of the grid in the rekordbox analysis file at
 // `datPath` as it is on the stick now (rekordbox::pqtzGridFingerprint()),
 // for an entry. Never throws: the ledger never costs a save, so a file
