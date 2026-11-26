@@ -76,14 +76,30 @@ std::vector<double> oldGridOf(const PlaylistFile &file, const fs::path &root, co
     return {};
 }
 
+// prepareReanalysis()'s work, on its bar.
+PreparedReanalysis prepareReanalysisOn(const ReanalysisRequest &request, const application::CancellationToken &cancel,
+                                       ImportBar &bar);
+
 }  // namespace
 
 PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const application::CancellationToken &cancel,
                                      const ImportProgressSink &progress)
 {
-    if (progress) {
-        progress({ImportProgress::Step::Stick, 0, 0, {}, {}});
-    }
+    // One bar from the request to what is staged (ImportBar); planned
+    // once the files to analyse are known.
+    ImportBar bar(progress);
+    bar.report({ImportProgress::Step::Stick, 0, 0, {}, {}});
+    PreparedReanalysis prepared = prepareReanalysisOn(request, cancel, bar);
+    bar.end(prepared.refusal.empty() ? ImportProgress::Step::Analysis : ImportProgress::Step::Stick);
+    return prepared;
+}
+
+namespace
+{
+
+PreparedReanalysis prepareReanalysisOn(const ReanalysisRequest &request, const application::CancellationToken &cancel,
+                                       ImportBar &bar)
+{
     PreparedReanalysis prepared;
     const std::string libraryPath =
         request.rekordboxPath.isEmpty() ? request.enginePath.toStdString() : request.rekordboxPath.toStdString();
@@ -206,8 +222,16 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
         analysing.push_back(&file);
     }
 
+    std::uint64_t bytes = 0;
+    for (const std::string &file : toAnalyse) {
+        std::error_code ec;
+        const std::uintmax_t size = fs::file_size(infrastructure::longPathSafe(pathFromUtf8(file)), ec);
+        bytes += ec ? 0 : static_cast<std::uint64_t>(size);
+    }
+    bar.plan({{ImportProgress::Step::Stick, ImportBar::StickUnits},
+              {ImportProgress::Step::Analysis, ImportBar::analysisUnits(bytes, toAnalyse.size())}});
     const std::vector<std::shared_ptr<const ImportAnalysis>> made =
-        analyseFiles(toAnalyse, request.analyser, request.analysisJobs, cancel, progress);
+        analyseFiles(toAnalyse, request.analyser, request.analysisJobs, cancel, bar.sink());
     for (std::size_t i = 0; i < made.size(); ++i) {
         const PlaylistFile &file = *analysing[i];
         if (!made[i]) {
@@ -256,5 +280,7 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
     }
     return prepared;
 }
+
+}  // namespace
 
 }  // namespace seabass::gui

@@ -12,6 +12,7 @@
 #include <QVariantMap>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -59,6 +60,8 @@ public:
         FallbackArtworkPathRole,
         PendingAdditionRole,
         PendingMoveRole,
+        PendingImportRole,
+        ImportChangeIdRole,
     };
 
     explicit TrackListModel(QObject *parent = nullptr);
@@ -88,6 +91,15 @@ public:
     // The rows (by sourceId) shown at a place a staged move gives them,
     // served as pendingMove. Set before the tracks.
     void setPendingMoves(std::set<std::string> sourceIds) { m_pendingMoves = std::move(sourceIds); }
+    // The rows of the track import's staged batch (by sourceId), with the
+    // id of the change each stands for: served as importChangeId, and
+    // those that are new tracks (not on the stick yet) as pendingImport.
+    // Set before the tracks.
+    void setImportRows(std::map<std::string, QString> changeIds, std::set<std::string> newTracks)
+    {
+        m_importChangeIds = std::move(changeIds);
+        m_importNewTracks = std::move(newTracks);
+    }
     // Staged renames, {scanned path: new path}: playlistNames serves the
     // new names.
     void setPlaylistAliases(QVariantMap aliases) { m_playlistAliases = std::move(aliases); }
@@ -120,6 +132,8 @@ private:
     std::shared_ptr<const FallbackArtwork> m_fallbackArtwork;
     std::set<std::string> m_pendingAdditions;
     std::set<std::string> m_pendingMoves;
+    std::map<std::string, QString> m_importChangeIds;
+    std::set<std::string> m_importNewTracks;
     QVariantMap m_playlistAliases;
 };
 
@@ -264,6 +278,19 @@ public:
     // pendingMove (a track added at a place is among them with "addedAt",
     // put there and flagged pendingAddition only).
     Q_INVOKABLE void setPendingEdits(const QVariantMap &additions, const QVariantMap &moves);
+    // The track import's staged batch, as TrackImportController::
+    // stagedImport has it ({playlist, atIndex, rows, landed}), shown until
+    // Save: each new track as a row of its own, flagged pendingImport,
+    // in "All tracks" at its end and in the batch's playlist at the place
+    // the save gives it; each track of the stick's the batch puts into
+    // the playlist, there, flagged pendingAddition. Every such row carries
+    // the id of its change as importChangeId. Before the playlist
+    // editor's additions and moves, as the save writes them. `landed`
+    // (the rows the last save wrote) is shown the same way until the
+    // next scan is published, so the rows do not go and come back while
+    // the page reads the stick again; a row whose track the scan already
+    // has is never shown twice.
+    Q_INVOKABLE void setStagedImport(const QVariantMap &import);
     // The playlists staged to be renamed, {path in the scan: new path}, as
     // PlaylistEditController::pendingRenames has them: listed, filtered by
     // and shown in the rows' playlistNames under the new name until Save,
@@ -454,6 +481,9 @@ private:
     QString m_currentPlaylistFilter;
     QVariantMap m_pendingAdditions;
     QVariantMap m_pendingMoves;
+    QVariantMap m_stagedImport;
+    // The landed rows' change ids a scan published since has replaced.
+    std::set<QString> m_supersededLanded;
     QString m_currentSearchQuery;
     QString m_sortField = "playlist";
     bool m_sortAscending = true;

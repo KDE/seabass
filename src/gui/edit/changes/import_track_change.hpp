@@ -317,6 +317,10 @@ public:
 
     // The file on the stick: where it is, or will be.
     std::string destinationFile() const;
+    // The file on the computer, and the track as its rows will describe
+    // it (the analysis's tempo and key in it once setAnalysis() has run).
+    const std::string &sourceFile() const { return m_sourceFile; }
+    const domain::ImportedTrack &track() const { return m_track; }
     // After an apply() that succeeded: the ids of the new rows, 0 or -1
     // for a library that was not written. They name rows only while the
     // save that made them stands.

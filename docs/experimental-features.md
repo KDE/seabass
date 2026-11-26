@@ -60,6 +60,21 @@ from day one.
   audio. Switching Experimental off stages nothing new; what is staged
   already stays, for Save or to be taken back.
 
+  Until Save the staged tracks show in the track list, read from the
+  staged changes themselves (`TrackImportController::stagedImport`): in
+  "All tracks" at its end and in the playlist at the place the save gives
+  them, greyed and in italics as a staged add is, marked "new", with
+  their tags, the analysis's tempo and key, and the file's cover. They do
+  not play, open their details, drag or take part in Merge, Find matching
+  or Add to until saved, and say so. "Don't import" in a row's menu takes
+  that one track back with its playlist entry; the rest of the batch
+  keeps its place, and the last row takes the batch back whole, the new
+  playlist with it. The preparing has one bar from the drop to what is
+  staged (`ImportBar`), each step a stretch as long as its planned work,
+  the steps with their counts in the strip's panel. Escape stops it from
+  anywhere on the page but a text field, the open strip (where it closes
+  the panel) and a dialog or menu.
+
   **Analyse again** (added 2026-11-26), in a playlist's menu: every track
   of the playlist analysed again from its audio file on the stick, one
   change staged per track (`ReanalyseTrackChange`). The new grid and

@@ -1014,6 +1014,19 @@ PlaceInPlaylistChange::PlaceInPlaylistChange(QString pioneerRoot, QString engine
     }
 }
 
+bool PlaceInPlaylistChange::leaveOut(const std::string &file)
+{
+    const auto at = std::find(m_files.begin(), m_files.end(), file);
+    if (at == m_files.end()) {
+        return true;
+    }
+    if (m_files.size() == 1) {
+        return false;
+    }
+    m_files.erase(at);
+    return true;
+}
+
 QString PlaceInPlaylistChange::idFor(const std::string &playlist)
 {
     return QStringLiteral("addcue:place-in-playlist:") + QString::fromStdString(playlist);

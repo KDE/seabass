@@ -208,6 +208,9 @@ public:
     bool sharesHeldWrites() const override { return true; }
 
     std::optional<int> toIndex() const { return m_toIndex; }
+    const std::string &playlist() const { return m_playlist; }
+    const std::string &filePath() const { return m_filePath; }
+    bool stagedForImport() const { return m_forImport; }
 
     // Makes this entry one unit with the changes that carry `key` (see
     // PendingChange::unitKeys): a track imported in the same save and
@@ -349,6 +352,11 @@ public:
 
     int toIndex() const { return m_toIndex; }
     const std::vector<std::string> &files() const { return m_files; }
+    // `file` is no longer of the run (the track import's "Don't import"
+    // for one track): the rest are moved without it. Not while a save
+    // writes. False, nothing changed, when it is the last of the run,
+    // which is then taken back whole instead.
+    bool leaveOut(const std::string &file);
 
 private:
     QString m_pioneerRoot;

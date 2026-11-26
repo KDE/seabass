@@ -342,9 +342,10 @@ ListView {
         isCurrent: index === 0 ? root.shownPlaylist.length === 0 : modelData === root.shownPlaylist
         onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
         pendingDelete: index > 0 && !isNew && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
-        edited: index > 0 && !isNew && root.pendingRevision >= 0 && root.isEdited(modelData)
+        // "All tracks" changes by the tracks an import brings.
+        edited: index > 0 ? !isNew && root.pendingRevision >= 0 && root.isEdited(modelData) : countChange !== 0
         pendingRename: index > 0 && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
-        countChange: index > 0 && root.pendingRevision >= 0 ? root.trackCountChange(modelData) : 0
+        countChange: root.pendingRevision >= 0 ? root.trackCountChange(index === 0 ? "" : modelData) : 0
         showsThumbnail: true
         checkable: root.checkable
         checkState: root.checkable && root.checkRevision >= 0 ? root.checkStateOf(index === 0 ? "" : modelData) : Qt.Unchecked

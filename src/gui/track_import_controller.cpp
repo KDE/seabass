@@ -125,11 +125,12 @@ void TrackImportController::setBusy(bool busy)
 }
 
 void TrackImportController::setProgress(const QString &step, int done, int total, const QString &file,
-                                        const QStringList &inHand)
+                                        const QStringList &inHand, double fraction)
 {
     if (m_progressStep != step || m_progressDone != done || m_progressTotal != total || m_progressFile != file
-        || m_progressFiles != inHand) {
+        || m_progressFiles != inHand || m_progressFraction != fraction) {
         m_progressFiles = inHand;
+        m_progressFraction = fraction;
         m_progressStep = step;
         m_progressDone = done;
         m_progressTotal = total;
@@ -147,10 +148,82 @@ void TrackImportController::cancel()
 
 void TrackImportController::setErrorMessage(const QString &message)
 {
-    if (m_errorMessage != message) {
+    if (m_errorMessage != message || (!message.isEmpty() && m_shownErrorSource != m_errorSource)) {
         m_errorMessage = message;
+        m_shownErrorSource = m_errorSource;
         emit errorMessageChanged();
     }
+}
+
+void TrackImportController::refreshStagedImport()
+{
+    // The rows as the save will write them: the batch's changes in the
+    // session's order, which is the save's.
+    QVariantList rows;
+    int atIndex = -1;
+    if (m_session && !m_staged.empty()) {
+        std::map<std::string, std::shared_ptr<ImportTrackChange>> imports;
+        std::vector<std::shared_ptr<ImportTrackChange>> inOrder;
+        bool entries = false;
+        for (const auto &change : m_session->pendingChanges()) {
+            if (m_staged.count(change->id()) == 0) {
+                continue;
+            }
+            if (auto import = std::dynamic_pointer_cast<ImportTrackChange>(change)) {
+                imports[import->destinationFile()] = import;
+                inOrder.push_back(import);
+            }
+        }
+        const auto rowOf = [this](const ImportTrackChange &import) {
+            const domain::ImportedTrack &track = import.track();
+            const auto cover = m_covers.find(import.id());
+            return QVariantMap{
+                {QStringLiteral("changeId"), import.id()},
+                {QStringLiteral("existing"), false},
+                {QStringLiteral("filePath"), QString::fromStdString(import.destinationFile())},
+                {QStringLiteral("title"), QString::fromStdString(track.title)},
+                {QStringLiteral("artist"), QString::fromStdString(track.artist)},
+                {QStringLiteral("album"), QString::fromStdString(track.album)},
+                {QStringLiteral("durationSeconds"), track.durationSeconds},
+                {QStringLiteral("bpm"), track.bpm},
+                {QStringLiteral("key"), QString::fromStdString(track.key)},
+                {QStringLiteral("bitrate"), track.bitrate},
+                {QStringLiteral("artworkPath"), cover == m_covers.end() ? QString() : cover->second},
+            };
+        };
+        for (const auto &change : m_session->pendingChanges()) {
+            if (m_staged.count(change->id()) == 0) {
+                continue;
+            }
+            if (const auto entry = std::dynamic_pointer_cast<AddToPlaylistChange>(change)) {
+                entries = true;
+                const auto import = imports.find(entry->filePath());
+                if (import != imports.end()) {
+                    rows << rowOf(*import->second);
+                } else {
+                    rows << QVariantMap{{QStringLiteral("changeId"), entry->id()},
+                                        {QStringLiteral("existing"), true},
+                                        {QStringLiteral("filePath"), QString::fromStdString(entry->filePath())},
+                                        {QStringLiteral("title"), entry->subject()}};
+                }
+            } else if (const auto place = std::dynamic_pointer_cast<PlaceInPlaylistChange>(change)) {
+                atIndex = place->toIndex();
+            }
+        }
+        // Into no playlist: the new tracks alone, in the save's order.
+        if (!entries) {
+            for (const auto &import : inOrder) {
+                rows << rowOf(*import);
+            }
+        }
+    }
+    m_stagedImport = QVariantMap{
+        {QStringLiteral("playlist"), stagedPlaylist()},
+        {QStringLiteral("isNew"), stagedPlaylistIsNew()},
+        {QStringLiteral("atIndex"), atIndex},
+        {QStringLiteral("rows"), rows},
+        {QStringLiteral("landed"), m_landed},
+    };
 }
 
 void TrackImportController::pruneCueReview()
@@ -186,6 +259,7 @@ void TrackImportController::forgetStaged()
     m_stagedTracks = 0;
     m_stagedExisting = 0;
     ++m_pendingRevision;
+    refreshStagedImport();
     emit pendingChanged();
 }
 
@@ -198,6 +272,7 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
         if (m_session) {
             disconnect(m_session, nullptr, this, nullptr);
         }
+        m_landed.clear();
         forgetStaged();
         forgetReanalysis();
         m_session = session;
@@ -210,6 +285,15 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
                     emit pendingChanged();
                     pruneCueReview();
                 }
+                if (m_staged.count(changeId) > 0) {
+                    // Its row is written: shown as it was until the page
+                    // has read the stick again.
+                    for (const QVariant &row : m_stagedImport.value(QStringLiteral("rows")).toList()) {
+                        if (row.toMap().value(QStringLiteral("changeId")).toString() == changeId) {
+                            m_landed << row;
+                        }
+                    }
+                }
                 if (m_staged.erase(changeId) > 0) {
                     // Every change of the batch is something the page
                     // has to read again.
@@ -220,11 +304,19 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
                     if (m_staged.empty()) {
                         m_stagedExisting = 0;
                     }
+                    // The rows are read again at the end of the save
+                    // (saveFinished): every change it applied has its
+                    // row in `landed` by then.
                     ++m_pendingRevision;
                     emit pendingChanged();
                 }
             });
             connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &summary) {
+                if (m_appliedTracks > 0) {
+                    refreshStagedImport();
+                    ++m_pendingRevision;
+                    emit pendingChanged();
+                }
                 const bool wrote = m_appliedTracks > 0 && summary.value("written").toInt() > 0;
                 m_appliedTracks = 0;
                 if (wrote) {
@@ -232,8 +324,14 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
                 }
             });
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
+                const bool landed = !m_landed.isEmpty();
+                m_landed.clear();
                 forgetStaged();
                 forgetReanalysis();
+                if (landed) {
+                    refreshStagedImport();
+                    emit pendingChanged();
+                }
             });
             // A change of the batch taken back elsewhere (the session's
             // own list): what is left of it is no longer what was
@@ -270,6 +368,7 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
                     m_staged = std::move(still);
                     m_stagedTracks = tracks;
                     ++m_pendingRevision;
+                    refreshStagedImport();
                     emit pendingChanged();
                 }
             });
@@ -290,6 +389,7 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
 bool TrackImportController::importFiles(const QString &rekordboxPath, const QString &enginePath,
                                         const QVariantList &files, const QString &playlist, bool create, int atIndex)
 {
+    setErrorSource(QStringLiteral("import"));
     setErrorMessage({});
     if (!allowedToStage()) {
         return false;
@@ -322,6 +422,7 @@ bool TrackImportController::importFiles(const QString &rekordboxPath, const QStr
 
 bool TrackImportController::importPossibleDuplicates()
 {
+    setErrorSource(QStringLiteral("import"));
     setErrorMessage({});
     if (m_possibleDuplicates.empty() || m_request.offered.empty() || !allowedToStage()) {
         return false;
@@ -361,6 +462,8 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged)
             if (!replacesStaged) {
                 ImportRequest joined = m_request;
                 for (const std::string &offered : request.offered) {
+                    // Offered again by the person: no longer left out.
+                    joined.leftOutByPerson.erase(offered);
                     if (std::find(joined.offered.begin(), joined.offered.end(), offered) == joined.offered.end()) {
                         joined.offered.push_back(offered);
                     }
@@ -389,7 +492,7 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged)
     m_preparing = request;
     m_cancel = application::CancellationToken();
     setBusy(true);
-    setProgress(QStringLiteral("stick"), 0, 0, {});
+    setProgress(QStringLiteral("stick"), 0, 0, {}, {}, 0.0);
     const ImportProgressSink progress = progressSink();
     // A read, on a thread of its own (runRead(), not the pool the writes
     // use): one let go at the end (see the destructor) must not hold up
@@ -411,15 +514,18 @@ ImportProgressSink TrackImportController::progressSink()
         const QString file = QString::fromStdString(at.file);
         const int done = static_cast<int>(at.done);
         const int total = static_cast<int>(at.total);
+        const double fraction =
+            at.barTotal > 0 ? static_cast<double>(at.barDone) / static_cast<double>(at.barTotal) : 0.0;
         QStringList inHand;
         for (const std::string &name : at.inHand) {
             inHand.push_back(QString::fromStdString(name));
         }
         QMetaObject::invokeMethod(
             qApp,
-            [self, offer, step, done, total, file, inHand]() {
+            [self, offer, step, done, total, file, inHand, fraction]() {
                 if (self && self->m_busy && self->m_offer == offer && !self->m_cancel.cancelled()) {
-                    self->setProgress(step, done, total, file, inHand);
+                    // The one bar only goes forward.
+                    self->setProgress(step, done, total, file, inHand, std::max(self->m_progressFraction, fraction));
                 }
             },
             Qt::QueuedConnection);
@@ -430,6 +536,7 @@ void TrackImportController::onPrepared()
 {
     QString thrown;
     PreparedImport prepared = takeResult(m_watcher, &thrown);
+    setErrorSource(QStringLiteral("import"));
     setBusy(false);
     setProgress({}, 0, 0, {});
     if (m_cancel.cancelled()) {
@@ -516,12 +623,31 @@ void TrackImportController::onPrepared()
                 }
             }
         }
+        // Each row's source on the computer: an import's its own, a
+        // track of the stick's the k-th offered file found there, as
+        // staged.addedToPlaylist lists them in the entries' order.
+        std::map<QString, std::string> sources;
+        std::size_t existingIndex = 0;
+        for (const auto &change : prepared.staged.changes) {
+            if (const auto import = std::dynamic_pointer_cast<ImportTrackChange>(change)) {
+                sources[change->id()] = import->sourceFile();
+            } else if (existing.count(change->id()) > 0 && existingIndex < prepared.staged.addedToPlaylist.size()) {
+                sources[change->id()] = prepared.staged.addedToPlaylist[existingIndex++];
+            }
+        }
         if (!m_session->stageAll(prepared.staged.changes)) {
             // The session said why (a lock another instance holds, a
             // browsed backup).
             setErrorMessage(QStringLiteral("The import could not be staged on this stick."));
             return;
         }
+        m_sourceOf = std::move(sources);
+        m_covers.clear();
+        for (const auto &[id, jpeg] : prepared.covers) {
+            m_covers[id] = QStringLiteral("data:image/jpeg;base64,")
+                           + QString::fromLatin1(QByteArray::fromStdString(jpeg).toBase64());
+        }
+        m_landed.clear();
         m_staged = std::move(ids);
         m_stagedImports = std::move(imports);
         m_stagedTracks = stagedTracks = static_cast<int>(m_stagedImports.size());
@@ -530,6 +656,7 @@ void TrackImportController::onPrepared()
         m_stagedPlaylist = playlist;
         m_stagedPlaylistIsNew = isNew;
         ++m_pendingRevision;
+        refreshStagedImport();
         emit pendingChanged();
     }
     QStringList followed;
@@ -566,6 +693,7 @@ void TrackImportController::dropStaged()
 bool TrackImportController::analyseAgain(const QString &rekordboxPath, const QString &enginePath,
                                         const QString &playlist)
 {
+    setErrorSource(QStringLiteral("reanalysis"));
     setErrorMessage({});
     if (!allowedToStage()) {
         return false;
@@ -594,7 +722,7 @@ bool TrackImportController::analyseAgain(const QString &rekordboxPath, const QSt
     m_reanalysingPlaylist = playlist;
     m_cancel = application::CancellationToken();
     setBusy(true);
-    setProgress(QStringLiteral("stick"), 0, 0, {});
+    setProgress(QStringLiteral("stick"), 0, 0, {}, {}, 0.0);
     const ImportProgressSink progress = progressSink();
     m_reanalysisWatcher.setFuture(
         runRead([request, cancel = m_cancel, progress]() { return prepareReanalysis(request, cancel, progress); }));
@@ -607,6 +735,7 @@ void TrackImportController::onReanalysed()
     PreparedReanalysis prepared = takeResult(m_reanalysisWatcher, &thrown);
     const QString playlist = m_reanalysingPlaylist;
     m_reanalysingPlaylist.clear();
+    setErrorSource(QStringLiteral("reanalysis"));
     setBusy(false);
     setProgress({}, 0, 0, {});
     if (m_cancel.cancelled() || !allowedToStage()) {
@@ -841,8 +970,89 @@ int TrackImportController::reanalysisCount(const QString &playlist) const
 
 int TrackImportController::trackCountChange(const QString &playlist) const
 {
-    return !m_staged.empty() && !playlist.isEmpty() && playlist == m_stagedPlaylist ? m_stagedTracks + m_stagedExisting
-                                                                                    : 0;
+    if (m_staged.empty()) {
+        return 0;
+    }
+    if (playlist.isEmpty()) {
+        return m_stagedTracks;
+    }
+    return playlist == m_stagedPlaylist ? m_stagedTracks + m_stagedExisting : 0;
+}
+
+bool TrackImportController::dropStagedTrack(const QString &changeId)
+{
+    setErrorSource(QStringLiteral("import"));
+    setErrorMessage({});
+    if (!m_session || m_session->writing() || m_staged.count(changeId) == 0) {
+        return false;
+    }
+    std::vector<std::shared_ptr<PendingChange>> batch;
+    std::shared_ptr<PendingChange> picked;
+    for (const auto &change : m_session->pendingChanges()) {
+        if (m_staged.count(change->id()) > 0) {
+            batch.push_back(change);
+            if (change->id() == changeId) {
+                picked = change;
+            }
+        }
+    }
+    // What goes: a new track's import with what shares its unit (its
+    // playlist entry), or the entry of a track the stick has.
+    QStringList ids;
+    QString unitKey;
+    std::string file;
+    if (const auto import = std::dynamic_pointer_cast<ImportTrackChange>(picked)) {
+        unitKey = import->unitKeys().last();
+        file = import->destinationFile();
+        for (const auto &change : batch) {
+            if (change == picked
+                || (std::dynamic_pointer_cast<AddToPlaylistChange>(change) && change->unitKeys().contains(unitKey))) {
+                ids << change->id();
+            }
+        }
+    } else if (const auto entry = std::dynamic_pointer_cast<AddToPlaylistChange>(picked)) {
+        file = entry->filePath();
+        ids << entry->id();
+    } else {
+        return false;
+    }
+    // What stays: is there still a track in the batch?
+    std::shared_ptr<ImportTrackChange> nextImport;
+    bool anyLeft = false;
+    for (const auto &change : batch) {
+        if (ids.contains(change->id())) {
+            continue;
+        }
+        const auto import = std::dynamic_pointer_cast<ImportTrackChange>(change);
+        if (import && !nextImport) {
+            nextImport = import;
+        }
+        anyLeft = anyLeft || import || std::dynamic_pointer_cast<AddToPlaylistChange>(change);
+    }
+    const auto source = m_sourceOf.find(changeId);
+    if (source != m_sourceOf.end()) {
+        m_request.leftOutByPerson.insert(source->second);
+    }
+    if (!anyLeft) {
+        // The last of it: the batch whole, the playlist it would make too.
+        dropStaged();
+        return true;
+    }
+    for (const auto &change : batch) {
+        if (const auto place = std::dynamic_pointer_cast<PlaceInPlaylistChange>(change)) {
+            // The run is moved without it.
+            if (!place->leaveOut(file)) {
+                ids << place->id();
+            }
+        } else if (const auto made = std::dynamic_pointer_cast<CreatePlaylistChange>(change);
+                   made && !unitKey.isEmpty() && made->unitKeys().contains(unitKey)) {
+            // The playlist made for the batch goes with its first track
+            // still to come, or stands alone for the stick's tracks.
+            made->tieTo(nextImport ? nextImport->unitKeys().last() : QString());
+        }
+    }
+    m_session->unstageAll(ids);
+    return true;
 }
 
 QString TrackImportController::suggestedPlaylistName(const QVariantList &files) const

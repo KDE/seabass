@@ -3111,6 +3111,315 @@ int main(int argc, char **argv)
         std::cout << "case 22 (a controller going while a file is analysed is not held up by it) OK\n";
     }
 
+    // 23 to 27, on a stick of their own: what the track list shows of a
+    // staged batch before Save (stagedImport) is the batch's changes as
+    // the save will apply them, a row each, in their order; one row taken
+    // back takes its unit and leaves the rest as they will be saved; and
+    // the rows follow the save, a failed save and a discard.
+    {
+        const testing::EngineChangeStick rowsStick = testing::makeEngineChangeStick(fixture, "track_import_controller_rows");
+        testing::levelImportCounter(rowsStick);
+        const QString rowsPioneer = rowsStick.pioneerPath();
+        const QString rowsEngine = rowsStick.enginePath();
+        LibraryEditSession *rowsSession = registry->sessionFor(registry->libraryIdForPath(rowsPioneer));
+        assert(rowsSession && rowsSession != session);
+        const fs::path in = computer / "rows";
+        TrackImportController shown;
+        QSignalSpy shownResults(&shown, &TrackImportController::resultReady);
+        // The one bar of each run, as the strip shows it.
+        std::vector<double> bar;
+        QObject::connect(&shown, &TrackImportController::progressChanged, [&] {
+            if (shown.busy()) {
+                bar.push_back(shown.progressFraction());
+            }
+        });
+        const auto barWentWell = [&]() {
+            for (std::size_t i = 1; i < bar.size(); ++i) {
+                if (bar[i] < bar[i - 1]) {
+                    std::cerr << "  the bar went back from " << bar[i - 1] << " to " << bar[i] << "\n";
+                    return false;
+                }
+            }
+            const auto ends = std::count_if(bar.begin(), bar.end(), [](double at) { return at >= 1.0; });
+            return bar.size() > 3 && bar.back() == 1.0 && ends == 1;
+        };
+        const auto offerRows = [&](const QVariantList &files, const QString &playlist, bool create, int atIndex = -1) {
+            const int before = shownResults.count();
+            bar.clear();
+            if (!shown.importFiles(rowsPioneer, rowsEngine, files, playlist, create, atIndex)) {
+                return false;
+            }
+            assert(waitFor(&shown, &TrackImportController::busyChanged, [&] { return !shown.busy(); }));
+            if (!shown.errorMessage().isEmpty()) {
+                std::cerr << "  " << shown.errorMessage().toStdString() << "\n";
+            }
+            return shownResults.count() > before;
+        };
+        const auto saveRows = [&]() {
+            QSignalSpy done(rowsSession, &LibraryEditSession::saveFinished);
+            rowsSession->save();
+            assert(waitFor(rowsSession, &LibraryEditSession::saveFinished, [&] { return !done.isEmpty(); }));
+            return rowsSession->lastSummary();
+        };
+        const auto rowsOf = [&](const char *which) { return shown.stagedImport().value(QLatin1String(which)).toList(); };
+        const auto idsOf = [](const QVariantList &rows) {
+            QStringList ids;
+            for (const QVariant &row : rows) {
+                ids << row.toMap().value("changeId").toString();
+            }
+            return ids;
+        };
+        const auto nameOfRow = [](const QVariant &row) {
+            return pathToUtf8(pathFromUtf8(row.toMap().value("filePath").toString().toStdString()).filename());
+        };
+        // The rows against the session's changes of the batch: one per
+        // playlist entry (or per import, into no playlist), in the save's
+        // order, each with what its change will write.
+        const auto rowsMatchTheChanges = [&]() {
+            const QVariantList rows = rowsOf("rows");
+            std::map<std::string, std::shared_ptr<ImportTrackChange>> imports;
+            std::vector<std::shared_ptr<PendingChange>> order;
+            bool entries = false;
+            int placeAt = -1;
+            for (const auto &change : rowsSession->pendingChanges()) {
+                if (const auto import = std::dynamic_pointer_cast<ImportTrackChange>(change)) {
+                    imports[import->destinationFile()] = import;
+                }
+            }
+            for (const auto &change : rowsSession->pendingChanges()) {
+                if (const auto entry = std::dynamic_pointer_cast<AddToPlaylistChange>(change)) {
+                    entries = true;
+                    order.push_back(entry);
+                } else if (const auto place = std::dynamic_pointer_cast<PlaceInPlaylistChange>(change)) {
+                    placeAt = place->toIndex();
+                }
+            }
+            if (!entries) {
+                for (const auto &change : rowsSession->pendingChanges()) {
+                    if (std::dynamic_pointer_cast<ImportTrackChange>(change)) {
+                        order.push_back(change);
+                    }
+                }
+            }
+            if (static_cast<std::size_t>(rows.size()) != order.size()
+                || shown.stagedImport().value("atIndex").toInt() != placeAt) {
+                return false;
+            }
+            for (std::size_t i = 0; i < order.size(); ++i) {
+                const QVariantMap row = rows[static_cast<qsizetype>(i)].toMap();
+                std::shared_ptr<ImportTrackChange> import = std::dynamic_pointer_cast<ImportTrackChange>(order[i]);
+                if (const auto entry = std::dynamic_pointer_cast<AddToPlaylistChange>(order[i])) {
+                    const auto it = imports.find(entry->filePath());
+                    if (it == imports.end()) {
+                        // A track of the stick's.
+                        if (!row.value("existing").toBool() || row.value("changeId").toString() != entry->id()
+                            || row.value("filePath").toString().toStdString() != entry->filePath()) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    import = it->second;
+                }
+                const domain::ImportedTrack &track = import->track();
+                if (row.value("existing").toBool() || row.value("changeId").toString() != import->id()
+                    || row.value("filePath").toString().toStdString() != import->destinationFile()
+                    || row.value("title").toString().toStdString() != track.title
+                    || row.value("artist").toString().toStdString() != track.artist
+                    || row.value("album").toString().toStdString() != track.album
+                    || row.value("durationSeconds").toDouble() != track.durationSeconds
+                    || row.value("bpm").toDouble() != track.bpm
+                    || row.value("key").toString().toStdString() != track.key) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        // 23. Into no playlist: the new track's row, and "All tracks"
+        //     grows by it. Saved, the row is landed until the page reads
+        //     the stick again.
+        writeWav(in / "r base.wav", 44100, 61);
+        assert(offerRows(QVariantList{pathToQString(in / "r base.wav")}, QString(), false));
+        assert(rowsOf("rows").size() == 1 && rowsMatchTheChanges());
+        assert(shown.stagedImport().value("playlist").toString().isEmpty());
+        assert(shown.trackCountChange(QString()) == 1);
+        const QVariant baseRow = rowsOf("rows")[0];
+        assert(saveRows().value("error").toString().isEmpty());
+        assert(rowsOf("rows").isEmpty() && shown.trackCountChange(QString()) == 0);
+        assert(rowsOf("landed") == QVariantList{baseRow} && "the saved row is landed, as it was");
+        const fs::path baseOnStick = pathFromUtf8(baseRow.toMap().value("filePath").toString().toStdString());
+        assert(fs::exists(baseOnStick) && "the row said where the save puts the file");
+        std::cout << "case 23 (a track into no playlist: its row is its change, and landed once saved) OK\n";
+
+        // 24. Into a new playlist: a row per entry in the save's order,
+        //     with the tags and what the analysis found, the cover of the
+        //     one that has one.
+        {
+            QImage drawn(120, 120, QImage::Format_RGB32);
+            drawn.fill(QColor(30, 160, 200));
+            QByteArray png;
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            assert(drawn.save(&buffer, "PNG"));
+            writeWavWithCover(in / "r one.wav", 44100, 62, png.toStdString());
+        }
+        writeBeatWav(in / "r two.wav", 8, 124.0);
+        writeChordWav(in / "r three.wav", 6);
+        shown.setAnalyserForTesting(nullptr);
+        assert(offerRows(QVariantList{pathToQString(in / "r one.wav"), pathToQString(in / "r two.wav"),
+                                      pathToQString(in / "r three.wav")},
+                         QStringLiteral("Rows"), true));
+        assert(rowsMatchTheChanges());
+        assert(barWentWell() && "one bar from the drop to the staging, never back, at the end once");
+        QVariantList rows = rowsOf("rows");
+        assert(rows.size() == 3 && shown.stagedImport().value("isNew").toBool());
+        assert(shown.stagedImport().value("playlist").toString() == QLatin1String("Rows"));
+        assert(nameOfRow(rows[0]) == "r one.wav" && nameOfRow(rows[1]) == "r two.wav" && nameOfRow(rows[2]) == "r three.wav");
+        assert(rows[1].toMap().value("bpm").toDouble() > 100.0 && "the analysis's tempo, the file has no tag");
+        std::cerr << "  r two: " << rows[1].toMap().value("bpm").toDouble() << " BPM; r three: key "
+                  << rows[2].toMap().value("key").toString().toStdString() << std::endl;
+        {
+            const QString cover = rows[0].toMap().value("artworkPath").toString();
+            assert(cover.startsWith(QLatin1String("data:image/jpeg;base64,")));
+            const QImage picture = QImage::fromData(QByteArray::fromBase64(cover.mid(cover.indexOf(',') + 1).toLatin1()));
+            assert(picture.width() == 80 && picture.height() == 80 && "the small square the libraries keep");
+            assert(rows[1].toMap().value("artworkPath").toString().isEmpty());
+        }
+        assert(shown.trackCountChange(QStringLiteral("Rows")) == 3 && shown.trackCountChange(QString()) == 3);
+        assert(rowsOf("landed").isEmpty() && "a new batch: what landed before is the scan's");
+        const QVariantList newRows = rows;
+        const QVariantMap saved = saveRows();
+        assert(saved.value("error").toString().isEmpty());
+        assert(rowsOf("rows").isEmpty() && rowsOf("landed") == newRows);
+        {
+            const std::vector<std::string> expected{"r one.wav", "r two.wav", "r three.wav"};
+            assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(rowsStick.pioneer)), "Rows") == expected);
+            // The tempo the row showed is the one the libraries have.
+            for (const auto &track : infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(rowsStick.pioneer)).readAll()) {
+                if (pathToUtf8(pathFromUtf8(track.filePath).filename()) == "r two.wav") {
+                    assert(std::abs(track.bpm - newRows[1].toMap().value("bpm").toDouble()) < 0.01);
+                }
+            }
+        }
+        // Analyse again on one bar as well, and its refusals are its own.
+        bar.clear();
+        assert(shown.analyseAgain(rowsPioneer, rowsEngine, QStringLiteral("Rows")));
+        assert(!shown.analyseAgain(rowsPioneer, rowsEngine, QStringLiteral("Rows")));
+        assert(shown.errorSource() == QLatin1String("reanalysis") && !shown.errorMessage().isEmpty());
+        assert(!shown.importFiles(rowsPioneer, rowsEngine, QVariantList{pathToQString(in / "r one.wav")}, QString(), false));
+        assert(shown.errorSource() == QLatin1String("import"));
+        assert(waitFor(&shown, &TrackImportController::busyChanged, [&] { return !shown.busy(); }));
+        assert(barWentWell() && "Analyse again: one bar too");
+        assert(shown.reanalysisCount(QStringLiteral("Rows")) > 0);
+        shown.dropReanalysis(QStringLiteral("Rows"));
+        assert(rowsSession->pendingCount() == 0);
+        std::cout << "case 24 (a batch's rows: its entries in order, tags, analysis and cover; saved as shown; one bar) OK\n";
+
+        // 25. Into that playlist at its second place, with a track of the
+        //     stick's: a row each, the run's place. "Don't import" for one
+        //     takes it and its entry, the run moves without it; for the
+        //     stick's track, its entry. More files joined later do not
+        //     bring them back.
+        writeWav(in / "r four.wav", 44100, 63);
+        writeWav(in / "r five.wav", 44100, 64);
+        writeWav(in / "r six.wav", 44100, 65);
+        assert(offerRows(QVariantList{pathToQString(in / "r four.wav"), pathToQString(in / "r five.wav"),
+                                      pathToQString(baseOnStick), pathToQString(in / "r six.wav")},
+                         QStringLiteral("Rows"), false, 1));
+        assert(rowsMatchTheChanges());
+        rows = rowsOf("rows");
+        assert(rows.size() == 4 && shown.stagedImport().value("atIndex").toInt() == 1);
+        assert(rows[2].toMap().value("existing").toBool() && nameOfRow(rows[2]) == "r base.wav");
+        assert(shown.trackCountChange(QStringLiteral("Rows")) == 4 && shown.trackCountChange(QString()) == 3);
+        const QString fiveId = rows[1].toMap().value("changeId").toString();
+        const std::string fiveFile = rows[1].toMap().value("filePath").toString().toStdString();
+        const QString baseEntryId = rows[2].toMap().value("changeId").toString();
+        assert(!shown.dropStagedTrack(QStringLiteral("addcue:import-track:/no/such.wav")));
+        assert(shown.dropStagedTrack(fiveId));
+        assert(!rowsSession->hasChange(fiveId) && "its import goes");
+        assert(!rowsSession->hasChange(AddToPlaylistChange::idFor("Rows", fiveFile))
+               && !rowsSession->hasChange(QStringLiteral("addcue:import:") + AddToPlaylistChange::idFor("Rows", fiveFile).mid(7))
+               && "and its entry");
+        for (const auto &change : rowsSession->pendingChanges()) {
+            if (const auto entry = std::dynamic_pointer_cast<AddToPlaylistChange>(change)) {
+                assert(entry->filePath() != fiveFile && "no entry of it is left");
+            }
+            if (const auto place = std::dynamic_pointer_cast<PlaceInPlaylistChange>(change)) {
+                assert(place->files().size() == 3 && std::find(place->files().begin(), place->files().end(), fiveFile)
+                                                         == place->files().end());
+            }
+        }
+        assert(rowsMatchTheChanges() && rowsOf("rows").size() == 3);
+        assert(shown.trackCountChange(QStringLiteral("Rows")) == 3 && shown.stagedCount() == 2);
+        assert(shown.dropStagedTrack(baseEntryId));
+        assert(!rowsSession->hasChange(baseEntryId) && rowsMatchTheChanges() && rowsOf("rows").size() == 2);
+        assert(shown.trackCountChange(QStringLiteral("Rows")) == 2);
+        writeWav(in / "r seven.wav", 44100, 66);
+        assert(offerRows(QVariantList{pathToQString(in / "r seven.wav")}, QStringLiteral("Rows"), false));
+        assert(rowsMatchTheChanges());
+        rows = rowsOf("rows");
+        assert(rows.size() == 3 && nameOfRow(rows[0]) == "r four.wav" && nameOfRow(rows[1]) == "r six.wav"
+               && nameOfRow(rows[2]) == "r seven.wav" && "what was taken back stays out of the joined batch");
+        assert(shown.stagedImport().value("atIndex").toInt() == 1);
+        std::cout << "case 25 (one row taken back: its unit goes, the run moves without it, and it stays out) OK\n";
+
+        // 26. A save that fails goes back whole: the rows are staged again
+        //     as they were. Saved, the playlist is in the order shown.
+        const QVariantList beforeFailing = rowsOf("rows");
+        const fs::path blocked = pathFromUtf8(beforeFailing[0].toMap().value("filePath").toString().toStdString());
+        fs::create_directories(blocked);  // in the way of the copy
+        const QVariantMap failed = saveRows();
+        assert(!failed.value("error").toString().isEmpty());
+        assert(rowsOf("rows") == beforeFailing && rowsOf("landed").isEmpty() && rowsMatchTheChanges());
+        assert(shown.trackCountChange(QStringLiteral("Rows")) == 3);
+        fs::remove(blocked);
+        assert(saveRows().value("error").toString().isEmpty());
+        assert(rowsOf("rows").isEmpty() && rowsOf("landed") == beforeFailing);
+        {
+            const std::vector<std::string> expected{"r one.wav", "r four.wav", "r six.wav", "r seven.wav", "r two.wav",
+                                                    "r three.wav"};
+            assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(rowsStick.pioneer)), "Rows") == expected);
+            assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(rowsStick.engineUtf8()), "Rows") == expected);
+        }
+        std::cout << "case 26 (a failed save: the rows staged again; saved, the playlist as the rows put it) OK\n";
+
+        // 27. A discard takes the rows away, landed ones too. In a new
+        //     playlist the first track taken back hands the playlist on to
+        //     the next; the last takes the batch back whole, the playlist
+        //     too.
+        writeWav(in / "r eight.wav", 44100, 67);
+        assert(offerRows(QVariantList{pathToQString(in / "r eight.wav")}, QStringLiteral("Rows"), false));
+        assert(rowsOf("rows").size() == 1 && rowsOf("landed").isEmpty());
+        rowsSession->discard();
+        assert(rowsOf("rows").isEmpty() && rowsOf("landed").isEmpty() && shown.trackCountChange(QStringLiteral("Rows")) == 0);
+        writeWav(in / "r nine.wav", 44100, 68);
+        writeWav(in / "r ten.wav", 44100, 69);
+        assert(offerRows(QVariantList{pathToQString(in / "r nine.wav"), pathToQString(in / "r ten.wav")},
+                         QStringLiteral("Rows Two"), true));
+        rows = rowsOf("rows");
+        assert(rows.size() == 2 && rowsMatchTheChanges());
+        const auto made = [&]() -> std::shared_ptr<CreatePlaylistChange> {
+            for (const auto &change : rowsSession->pendingChanges()) {
+                if (auto create = std::dynamic_pointer_cast<CreatePlaylistChange>(change)) {
+                    return create;
+                }
+            }
+            return nullptr;
+        };
+        const QString tenKey =
+            ImportTrackChange::unitKeyFor("/" + pathToGenericUtf8(fs::relative(
+                                                    pathFromUtf8(rows[1].toMap().value("filePath").toString().toStdString()),
+                                                    rowsStick.root)));
+        assert(made() && !made()->unitKeys().contains(tenKey));
+        assert(shown.dropStagedTrack(rows[0].toMap().value("changeId").toString()));
+        assert(made() && made()->unitKeys().contains(tenKey) && "the playlist goes with the next import now");
+        assert(rowsSession->pendingCount() == 3 && rowsMatchTheChanges());
+        assert(shown.dropStagedTrack(rows[1].toMap().value("changeId").toString()));
+        assert(rowsSession->pendingCount() == 0 && !made() && "the last row takes the batch back, the playlist too");
+        assert(rowsOf("rows").isEmpty() && shown.stagedPlaylist().isEmpty());
+        std::cout << "case 27 (a discard takes the rows; the first and the last of a new playlist's batch taken back) OK\n";
+    }
+
     std::cout << "track_import_controller_test: all cases passed\n";
     return 0;
 }

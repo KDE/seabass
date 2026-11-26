@@ -12,6 +12,10 @@ import SeabassGui
 // opens it into a panel with room to read: the steps of the work with
 // their counts, what is in hand right now by name, what was done last,
 // and Cancel. It closes again with a click, so it may take the room.
+//
+// By keyboard it is one stop in the Tab order while it shows: Return,
+// Enter or Space open and close it, Escape closes it, and once open Tab
+// goes on to its buttons.
 Rectangle {
     id: root
 
@@ -33,8 +37,24 @@ Rectangle {
     property var steps: []
     property bool expanded: false
     property bool cancellable: true
+    // Buttons on the strip's own line, open or closed: [{key, text}], e.g.
+    // "Show in Folder" once the work is done. actionTriggered(key) says
+    // which was pressed.
+    property var actions: []
 
     signal cancelRequested()
+    signal actionTriggered(string key)
+
+    activeFocusOnTab: root.running
+    Keys.onPressed: (event) => {
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+            root.expanded = !root.expanded;
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Escape && root.expanded) {
+            root.expanded = false;
+            event.accepted = true;
+        }
+    }
 
     visible: root.running
     implicitHeight: root.running ? column.implicitHeight + 2 * Theme.tightSpacing : 0
@@ -53,6 +73,24 @@ Rectangle {
         width: parent.width
         height: 1
         color: Theme.borderSubtle
+    }
+    // Where the keyboard is.
+    Rectangle {
+        objectName: "passiveProgressFocusRing"
+        anchors.fill: parent
+        visible: root.activeFocus
+        color: "transparent"
+        border.color: Theme.accent
+        border.width: 1
+    }
+
+    // Under the strip's buttons, over the rest: a click anywhere else
+    // opens and closes the strip.
+    MouseArea {
+        objectName: "passiveProgressArea"
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.expanded = !root.expanded
     }
 
     ColumnLayout {
@@ -81,6 +119,18 @@ Rectangle {
                 text: root.expanded ? qsTr("Less") : qsTr("More")
                 font.pointSize: Theme.fontSmall
                 color: Theme.accent
+            }
+            Repeater {
+                model: root.actions
+                delegate: Button {
+                    required property var modelData
+                    objectName: "passiveProgressAction_" + modelData.key
+                    text: modelData.text
+                    font.pointSize: Theme.fontSmall
+                    onClicked: root.actionTriggered(modelData.key)
+                    Keys.onReturnPressed: root.actionTriggered(modelData.key)
+                    Keys.onEnterPressed: root.actionTriggered(modelData.key)
+                }
             }
         }
         ProgressTrack {
@@ -190,14 +240,6 @@ Rectangle {
         font.pointSize: Theme.fontSmall
     }
 
-    // Under the button, over the rest: a click anywhere else opens and
-    // closes the strip.
-    MouseArea {
-        objectName: "passiveProgressArea"
-        anchors.fill: parent
-        cursorShape: Qt.PointingHandCursor
-        onClicked: root.expanded = !root.expanded
-    }
     Button {
         id: cancelButton
         objectName: "passiveProgressCancel"
@@ -209,5 +251,7 @@ Rectangle {
         text: qsTr("Cancel")
         font.pointSize: Theme.fontSmall
         onClicked: root.cancelRequested()
+        Keys.onReturnPressed: root.cancelRequested()
+        Keys.onEnterPressed: root.cancelRequested()
     }
 }

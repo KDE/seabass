@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -36,6 +37,11 @@ struct ImportRequest
     // Source files the plan called a possible duplicate, to import all
     // the same.
     std::set<std::string> importAnyway;
+    // Source files the person took back out of the batch one by one
+    // ("Don't import"): not offered again when the batch is prepared
+    // again (more files joined to it, its possible duplicates asked for),
+    // a folder's among them.
+    std::set<std::string> leftOutByPerson;
     // The day of the import, "YYYY-MM-DD".
     std::string date;
     // Reads a file's cover (ImportTrackChange::setCover). Unset: no
@@ -73,6 +79,11 @@ struct PreparedImport
     // The staged files whose grid follows a moving tempo, by name: the
     // ones to look at.
     std::vector<std::string> followedGrids;
+    // The cover of each staged track that has one, by its change's id:
+    // the smallest of CoverPictures (80 pixels a side, JPEG), for the
+    // track list to show the row before Save. Read with the request's
+    // coverReader, as the save reads it.
+    std::map<QString, std::string> covers;
 };
 
 // How far the preparing of an import is, for a bar that is not in the
@@ -100,11 +111,71 @@ struct ImportProgress
     // Every file in hand now, by name: one while files are read, as many
     // as there are workers in the analysis.
     std::vector<std::string> inHand;
+    // In the analysis: the bytes of the files done and of them all, so
+    // that an hour long mix weighs as much on the bar as it takes.
+    std::uint64_t doneBytes = 0;
+    std::uint64_t totalBytes = 0;
+    // Where the whole preparing is on its one bar (ImportBar), in planned
+    // units: never less than the report before, barTotal at the end of
+    // the work. Both 0 until the work is planned.
+    std::uint64_t barDone = 0;
+    std::uint64_t barTotal = 0;
 };
 
 // Called on the thread that prepares, often, and never from two threads
 // at once: a sink for another thread passes it on itself.
 using ImportProgressSink = std::function<void(const ImportProgress &)>;
+
+// One operation, one bar (application::PhasedProgress, #58), for the
+// preparing of an import and of Analyse again: from the offer to what is
+// staged, each step a stretch of the bar as long as the work planned for
+// it, end to end. The steps' own counts start at 0 each; the bar does not
+// (ImportProgress::barDone). The plan is made once the work can be counted
+// (the stick read, the offered folders walked, the files to analyse
+// known); until then the bar stays at its start. A stretch moves by its
+// step's count (the files read), by bytes in the analysis, or not at all
+// before it ends (reading the stick, the check); a later step reported
+// means the ones before it are done. The bar never goes back, and only
+// end() takes it to its end.
+class ImportBar
+{
+public:
+    // Planned units: about a millisecond of work each on a computer of
+    // today. Reading a stick's libraries and its files takes seconds, a
+    // file's tags a few milliseconds, the check half a second (more when
+    // a possible duplicate's bytes are compared), and the analysis about
+    // 150 ms for each MiB of audio.
+    static constexpr std::uint64_t StickUnits = 2000;
+    static constexpr std::uint64_t UnitsPerFileRead = 10;
+    static constexpr std::uint64_t CheckUnits = 500;
+    static constexpr std::uint64_t AnalysisUnitsPerMiB = 150;
+    // The analysis of `bytes` of audio, at least a unit per file.
+    static std::uint64_t analysisUnits(std::uint64_t bytes, std::size_t files);
+
+    // Passes each report on to `sink`, the bar filled in.
+    explicit ImportBar(ImportProgressSink sink);
+
+    // The stretches in their order, each step with its planned units; a
+    // step not named takes none. Made once: a second plan is ignored.
+    void plan(const std::vector<std::pair<ImportProgress::Step, std::uint64_t>> &stretches);
+    void report(ImportProgress at);
+    // The work has ended: the bar at its end, reported as `step`.
+    void end(ImportProgress::Step step);
+    // A sink that reports through this, for analyseFiles(). It holds this
+    // bar by reference.
+    ImportProgressSink sink();
+
+    std::uint64_t total() const { return m_total; }
+    std::uint64_t reached() const { return m_reached; }
+
+private:
+    std::uint64_t positionOf(const ImportProgress &at) const;
+
+    ImportProgressSink m_sink;
+    std::vector<std::pair<ImportProgress::Step, std::uint64_t>> m_stretches;
+    std::uint64_t m_total = 0;
+    std::uint64_t m_reached = 0;
+};
 
 // Analyses each of `files` with `analyser`, `jobs` at once, each worker a
 // thread of its own (the decoder runs an event loop in the thread that

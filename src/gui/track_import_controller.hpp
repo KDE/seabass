@@ -66,7 +66,15 @@ class TrackImportController : public QObject
     Q_PROPERTY(QString progressFile READ progressFile NOTIFY progressChanged)
     // Every file in hand now, by name: several while tracks are analysed.
     Q_PROPERTY(QStringList progressFiles READ progressFiles NOTIFY progressChanged)
+    // The whole run on one bar, 0 to 1, from the offer (or Analyse again)
+    // to what is staged: each step a stretch of it as long as its work
+    // (ImportBar), never going back while busy, 1 when the work is done.
+    Q_PROPERTY(double progressFraction READ progressFraction NOTIFY progressChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
+    // What errorMessage is of: "import" (importFiles(), the possible
+    // duplicates, "Don't import") or "reanalysis" (Analyse again), so the
+    // page heads it as what did not happen.
+    Q_PROPERTY(QString errorSource READ errorSource NOTIFY errorMessageChanged)
     // Bumps whenever what is staged changes, so QML re-reads the queries.
     Q_PROPERTY(int pendingRevision READ pendingRevision NOTIFY pendingChanged)
     // How many tracks are staged to be imported.
@@ -75,6 +83,20 @@ class TrackImportController : public QObject
     // the save makes it.
     Q_PROPERTY(QString stagedPlaylist READ stagedPlaylist NOTIFY pendingChanged)
     Q_PROPERTY(bool stagedPlaylistIsNew READ stagedPlaylistIsNew NOTIFY pendingChanged)
+    // The staged batch as the track list shows it until Save, read from
+    // the changes the save will apply, in their order: {playlist (""
+    // for none), isNew, atIndex (where the save moves the run in the
+    // playlist, -1 for its end), rows: [{changeId, existing, filePath,
+    // title, artist, album, durationSeconds, bpm, key, artworkPath,
+    // bitrate}], landed: [the same]}. A row is one track: a new one
+    // (existing false: its import's change id, the file where the save
+    // puts it on the stick, what its tags and its analysis say, its
+    // cover as a data URL or "") or one the stick has, which the batch
+    // puts into the playlist (existing true: its playlist entry's change
+    // id and its file on the stick). `landed`: the rows the last save
+    // wrote, until the next batch is staged or the session discarded,
+    // for the list to show while it reads the stick again.
+    Q_PROPERTY(QVariantMap stagedImport READ stagedImport NOTIFY pendingChanged)
     // What the last import asked for came to, as {staged, addedToPlaylist
     // (tracks the stick already has, staged to go into the playlist),
     // analysed and withGrid (of the staged tracks: how many Seabass
@@ -140,7 +162,10 @@ public:
     int progressTotal() const { return m_progressTotal; }
     QString progressFile() const { return m_progressFile; }
     QStringList progressFiles() const { return m_progressFiles; }
+    double progressFraction() const { return m_progressFraction; }
     QString errorMessage() const { return m_errorMessage; }
+    QString errorSource() const { return m_errorSource; }
+    QVariantMap stagedImport() const { return m_stagedImport; }
     int pendingRevision() const { return m_pendingRevision; }
     int stagedCount() const { return m_stagedTracks; }
     QString stagedPlaylist() const { return !m_staged.empty() ? m_stagedPlaylist : QString(); }
@@ -177,7 +202,19 @@ public:
     Q_INVOKABLE void cancel();
     // Takes the staged batch back.
     Q_INVOKABLE void dropStaged();
-    // By how many tracks `playlist` grows at Save.
+    // "Don't import" for one row of stagedImport, by its changeId: a new
+    // track's import goes with its playlist entry (one unit), a track of
+    // the stick's loses its entry, and the rest of the batch stays as it
+    // will be saved: the move of the run to its place without it, the
+    // playlist the save makes tied to the next import. The last row of a
+    // batch takes the batch back whole (dropStaged()), the playlist it
+    // would make included. The file is not offered again when the batch
+    // is prepared again (ImportRequest::leftOutByPerson). False, nothing
+    // changed, for an id the batch does not have, and while a save is
+    // writing.
+    Q_INVOKABLE bool dropStagedTrack(const QString &changeId);
+    // By how many tracks `playlist` grows at Save; "" for the library
+    // ("All tracks"): by the new tracks.
     Q_INVOKABLE int trackCountChange(const QString &playlist) const;
     // A name to propose for a new playlist made of `files`: the folder's
     // own when one folder was offered, "" otherwise.
@@ -247,8 +284,14 @@ private:
     // Passes progress from the worker to the properties, for this run only.
     ImportProgressSink progressSink();
     void setBusy(bool busy);
-    void setProgress(const QString &step, int done, int total, const QString &file, const QStringList &inHand = {});
+    void setProgress(const QString &step, int done, int total, const QString &file, const QStringList &inHand = {},
+                     double fraction = 0.0);
     void setErrorMessage(const QString &message);
+    // Sets what the next errorMessage is of.
+    void setErrorSource(const QString &source) { m_errorSource = source; }
+    // stagedImport from the session's changes of the batch, as they are
+    // now; a row each save change applied moves to `landed`.
+    void refreshStagedImport();
     void forgetStaged();
     void forgetReanalysis();
     // Drops from the cue review the changes no longer staged.
@@ -276,7 +319,17 @@ private:
     int m_progressTotal = 0;
     QString m_progressFile;
     QStringList m_progressFiles;
+    double m_progressFraction = 0.0;
     QString m_errorMessage;
+    QString m_errorSource = QStringLiteral("import");
+    // The source errorMessage was last told with.
+    QString m_shownErrorSource = m_errorSource;
+    QVariantMap m_stagedImport;
+    QVariantList m_landed;
+    // Each staged track's cover for its row (a data URL), and each row's
+    // source file on the computer, by change id.
+    std::map<QString, QString> m_covers;
+    std::map<QString, std::string> m_sourceOf;
     int m_pendingRevision = 0;
     std::set<QString> m_staged;  // change ids
     std::set<QString> m_stagedImports;  // those of them that are a track

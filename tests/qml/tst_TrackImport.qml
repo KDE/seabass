@@ -28,6 +28,17 @@ TestCase {
     }
 
     Component {
+        id: realImportComponent
+        TrackImportController {}
+    }
+
+    // tests/qml/ -> tests/fixtures/anonymized_library (see tst_JunkCuePage).
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    Component {
         id: fakeImportComponent
         QtObject {
             property var calls: []
@@ -37,9 +48,13 @@ TestCase {
             property int progressTotal: 0
             property string progressFile: ""
             property var progressFiles: []
+            property real progressFraction: 0
             function cancel() { calls.push(["cancel"]); }
             property string errorMessage: ""
+            property string errorSource: "import"
             property int pendingRevision: 0
+            property var stagedImport: ({})
+            function dropStagedTrack(changeId) { calls.push(["dropTrack", changeId]); return true; }
             property int stagedCount: 0
             property string stagedPlaylist: ""
             property bool stagedPlaylistIsNew: false
@@ -56,7 +71,11 @@ TestCase {
                 stagedCount = 0;
                 pendingRevision++;
             }
-            function trackCountChange(playlist) { return playlist === stagedPlaylist ? stagedCount : 0; }
+            // The new tracks "All tracks" grows by.
+            property int newTracks: 0
+            function trackCountChange(playlist) {
+                return playlist.length > 0 && playlist === stagedPlaylist ? stagedCount : playlist.length === 0 ? newTracks : 0;
+            }
             function suggestedPlaylistName(files) { return files.length === 1 ? "Crate" : ""; }
             function fileDialogFilter() { return "*.mp3 *.wav"; }
             // Analyse again.
@@ -163,6 +182,8 @@ TestCase {
 
     function cleanup() {
         realAppSettings.experimentalFeaturesEnabled = false;
+        // The playlist a test picked is remembered: not for the next.
+        realAppSettings.lastPlaylistName = "";
         browseFixture.restore();
     }
 
@@ -319,12 +340,14 @@ TestCase {
         fake.progressTotal = 40;
         fake.progressFile = "b two.wav";
         fake.progressFiles = ["b two.wav"];
+        fake.progressFraction = 0.2;
         fake.busy = true;
         tryCompare(strip, "visible", true);
         compare(findChild(strip, "passiveProgressSummary").text, "Import: reading file 12 of 40");
         const bar = findChild(strip, "passiveProgressBar");
         compare(bar.indeterminate, false);
-        fuzzyCompare(bar.value, 11 / 40, 0.0001);
+        // The whole run's bar, not the step's count.
+        fuzzyCompare(bar.value, 0.2, 0.0001);
         tryVerify(() => list.height < fullHeight, 1000, "the list makes room for the strip");
         compare(findChild(strip, "passiveProgressCancel").visible, false);
         compare(findChild(strip, "passiveProgressDetail").visible, false);
@@ -351,7 +374,9 @@ TestCase {
         compare(JSON.stringify(fake.calls), JSON.stringify([["cancel"]]));
         fake.progressStep = "check";
         fake.progressTotal = 0;
-        compare(bar.indeterminate, true);
+        fake.progressFraction = 0.3;
+        compare(bar.indeterminate, false);
+        fuzzyCompare(bar.value, 0.3, 0.0001);
         compare(findChild(strip, "passiveProgressSummary").text, "Import: checking against the stick");
         // The analysis, the last step, counts its tracks.
         fake.progressStep = "analysis";
@@ -365,6 +390,8 @@ TestCase {
         compare(findChild(strip, "passiveProgressDetail").text, "Last done: c three.wav");
         compare(findChild(strip, "passiveProgressDetail").visible, true);
         compare(strip.steps.map(s => s.state).join(" "), "done done done now");
+        // The step done keeps its count.
+        compare(strip.steps.map(s => s.count).join("|"), "|40 of 40 done||2 of 5 done");
         compare(bar.indeterminate, false);
         fake.busy = false;
         tryCompare(strip, "visible", false);
@@ -928,5 +955,471 @@ TestCase {
         compare(applyButton.enabled, true);
         review.close();
         tryCompare(review, "visible", false);
+    }
+
+    // ---- The staged batch in the track list, one bar, the keyboard ----
+
+    // An 8 by 8 picture, as the import's covers come: a data URL.
+    readonly property string tinyCover: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGPQWHAHK2IYWhIA2iBpAVZ6tYUAAAAASUVORK5CYII="
+    readonly property string newOneId: "addcue:import-track:/Contents/Newcomer/First/new one.mp3"
+    readonly property string newTwoId: "addcue:import-track:/Contents/Newcomer/First/new two.mp3"
+    function newRow(id, title, seconds, bpm, key, cover) {
+        return {changeId: id, existing: false, filePath: "/nonexistent/HELD" + id.substring(id.indexOf("/")),
+                title: title, artist: "Newcomer", album: "First", durationSeconds: seconds, bpm: bpm, key: key,
+                artworkPath: cover, bitrate: 320};
+    }
+
+    // A page on a library of four tracks with files, all in "Held
+    // Playlist", its scan done, a stand-in import controller on it.
+    function makeHeldPage() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        browseFixture.holdCues(4, false, true);
+        browseFixture.releaseCues();
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1000, height: 660, stickLabel: "TESTSTICK",
+            rekordboxPath: "/nonexistent/TESTSTICK/PIONEER", enginePath: "/nonexistent/TESTSTICK/Engine Library",
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        verify(page !== null);
+        page.trackImportController = createTemporaryObject(fakeImportComponent, testCase);
+        tryCompare(findChild(page, "trackListView"), "count", 4);
+        const scan = findChild(page, "scanController");
+        tryVerify(() => scan.playlistNames.indexOf("Held Playlist") >= 0 && !scan.busy && !scan.cuesPending);
+        // "All tracks", whatever an earlier test left remembered.
+        page.selectPlaylist(0, "");
+        return page;
+    }
+
+    // Two new tracks staged into "Held Playlist" at its second place.
+    function stageTwoIntoHeld(fake) {
+        fake.stagedPlaylist = "Held Playlist";
+        fake.stagedCount = 2;
+        fake.newTracks = 2;
+        fake.stagedImport = {playlist: "Held Playlist", isNew: false, atIndex: 1, landed: [],
+                             rows: [newRow(testCase.newOneId, "New One", 301, 125.5, "8A", testCase.tinyCover),
+                                    newRow(testCase.newTwoId, "New Two", 299, 0, "", "")]};
+        fake.pendingRevision++;
+    }
+
+    function sidebarRow(page, name) {
+        const list = findChild(page, "playlistList");
+        let found = null;
+        (function walk(item) {
+            if (found === null && item.acceptsFileDrop !== undefined && item.name === name) {
+                found = item;
+            }
+            for (let i = 0; found === null && i < item.children.length; ++i) {
+                walk(item.children[i]);
+            }
+        })(list.contentItem);
+        return found;
+    }
+
+    function titles(page) {
+        const tracks = findChild(page, "scanController").tracks;
+        const shown = [];
+        for (let i = 0; i < tracks.trackCount(); ++i) {
+            shown.push(tracks.trackAt(i).title);
+        }
+        return shown.join("|");
+    }
+
+    // The tracks of a staged import show in their playlist before Save,
+    // at the place the save gives them, with what is known of them, in
+    // the staged look and marked new; the playlist's count and "All
+    // tracks" count them. In "All tracks" they come last.
+    function test_stagedTracksShowInTheList() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        page.selectPlaylist(1, "Held Playlist");
+        tryCompare(list, "count", 4);
+        stageTwoIntoHeld(fake);
+        tryCompare(list, "count", 6);
+        compare(titles(page), "Held Track 1000|New One|New Two|Held Track 1001|Held Track 1002|Held Track 1003");
+        const tracks = findChild(page, "scanController").tracks;
+        const one = tracks.trackAt(1);
+        compare(one.pendingImport, true);
+        compare(one.importChangeId, testCase.newOneId);
+        compare(one.artist, "Newcomer");
+        compare(one.album, "First");
+        compare(one.durationSeconds, 301);
+        compare(one.bpm, 125.5);
+        compare(one.key, "8A");
+        compare(one.artworkPath, testCase.tinyCover);
+        compare(tracks.trackAt(0).pendingImport, false);
+        compare(tracks.trackAt(0).importChangeId, "");
+        verify(waitForPolish(page.Window.window), "the rows are laid out");
+        const stagedRow = list.itemAtIndex(1);
+        const savedRow = list.itemAtIndex(0);
+        verify(stagedRow !== null && savedRow !== null);
+        compare(findChild(stagedRow, "pendingImportBadge").visible, true);
+        compare(findChild(savedRow, "pendingImportBadge").visible, false);
+        const stagedTitle = findChild(stagedRow, "rowTitle");
+        compare(stagedTitle.font.italic, true, "the staged look, as a staged add has it");
+        compare(String(stagedTitle.color), String(Theme.textMuted));
+        verify(String(findChild(savedRow, "rowTitle").color) !== String(Theme.textMuted));
+        compare(findChild(savedRow, "rowTitle").font.italic, false);
+        tryCompare(findChild(stagedRow, "rowArtwork"), "drawn", true, 5000, "the file's cover shows");
+        // Counted where staged adds are: the playlist's count, and "All
+        // tracks" by the new tracks.
+        const held = sidebarRow(page, "Held Playlist");
+        verify(held !== null);
+        compare(findChild(held, "playlistRowCount").text, "4 (6)");
+        const all = sidebarRow(page, "All tracks");
+        verify(all !== null);
+        compare(findChild(all, "playlistRowCount").text, "4 (6)");
+        // The pointer off the rows: the picture shows them as they rest.
+        mouseMove(page, 2, page.height - 2);
+        waitForRendering(page);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(page).save(screenshotDir + "/browse_import_staged_rows.png");
+        }
+        page.selectPlaylist(0, "");
+        tryCompare(list, "count", 6);
+        compare(titles(page), "Held Track 1000|Held Track 1001|Held Track 1002|Held Track 1003|New One|New Two");
+        // Taken back: gone.
+        fake.stagedImport = ({});
+        fake.stagedCount = 0;
+        fake.newTracks = 0;
+        fake.pendingRevision++;
+        tryCompare(list, "count", 4);
+        compare(findChild(all, "playlistRowCount").text, "4");
+    }
+
+    // After Save the rows the save wrote stay as they were until the page
+    // has read the stick again, and one the stick's read already lists is
+    // never shown twice.
+    function test_savedRowsStayUntilTheStickIsReadAgain() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        const written = newRow(testCase.newOneId, "New One", 301, 125.5, "8A", "");
+        const alreadyRead = newRow("addcue:import-track:/Contents/held-1001.mp3", "Held Track 1001", 201, 0, "", "");
+        compare(alreadyRead.filePath, "/nonexistent/HELD/Contents/held-1001.mp3");
+        fake.stagedImport = {playlist: "", isNew: false, atIndex: -1, rows: [], landed: [written, alreadyRead]};
+        fake.pendingRevision++;
+        tryCompare(list, "count", 5);
+        compare(titles(page), "Held Track 1000|Held Track 1001|Held Track 1002|Held Track 1003|New One");
+        page.rescan();
+        tryVerify(() => !findChild(page, "scanController").busy, 10000);
+        tryCompare(list, "count", 4);
+        compare(titles(page), "Held Track 1000|Held Track 1001|Held Track 1002|Held Track 1003");
+    }
+
+    // A row not on the stick yet does not play, open its details or drag
+    // until Save, and says so; its menu has what waits disabled, and
+    // "Don't import", which takes that one track back.
+    function test_aStagedRowWaitsForTheSave() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        page.selectPlaylist(1, "Held Playlist");
+        stageTwoIntoHeld(fake);
+        tryCompare(list, "count", 6);
+        verify(waitForPolish(page.Window.window), "the rows are laid out");
+        const row = list.itemAtIndex(1);
+        const saved = list.itemAtIndex(0);
+        compare(row.pendingImport, true);
+        compare(page.trackDragCard.canDrag(row), false, "it is not dragged");
+        compare(page.trackDragCard.canDrag(saved), true);
+        mouseClick(findChild(row, "rowTitle"));
+        compare(page.trackPanelOpen, false, "no details of the stick's for it yet");
+        mouseClick(findChild(row, "rowArtwork"));
+        compare(realPlayback.hasTrack, false, "nothing plays");
+        mouseMove(findChild(row, "rowTitle"));
+        tryCompare(row, "waitTipShown", true);
+        compare(page.afterSaveText, "Not on the stick yet. Playing, editing and dragging it are available after saving.");
+        mouseMove(findChild(row, "rowArtwork"));
+        tryCompare(findChild(row, "rowPlayButton"), "visible", true);
+        compare(findChild(row, "rowPlayButton").enabled, false, "Play there, and not to be pressed");
+        compare(page.dontImportText(row), "Don't import", "what its menu button says");
+
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(row, row);
+        tryCompare(menu, "opened", true);
+        compare(findChild(page, "mergeTrackItem").enabled, false);
+        compare(findChild(page, "mergeTrackItem").text, "Merge with another track... (after saving)");
+        compare(findChild(page, "findMatchingItem").enabled, false);
+        compare(findChild(page, "addToAfterSaveItem").visible, true);
+        compare(findChild(page, "addToAfterSaveItem").enabled, false);
+        compare(findChild(page, "removeFromPlaylistItem").visible, false);
+        const dontImport = findChild(page, "dontImportItem");
+        compare(dontImport.visible, true);
+        compare(dontImport.text, "Don't import");
+        dontImport.triggered();
+        compare(JSON.stringify(fake.calls), JSON.stringify([["dropTrack", testCase.newOneId]]));
+        menu.close();
+        tryCompare(menu, "visible", false);
+        // A track of the stick's keeps its own menu.
+        page.openTrackMenu(saved, saved);
+        tryCompare(menu, "opened", true);
+        compare(findChild(page, "dontImportItem").visible, false);
+        compare(findChild(page, "removeFromPlaylistItem").visible, true);
+        compare(findChild(page, "addToAfterSaveItem").visible, false);
+        compare(findChild(page, "findMatchingItem").enabled, true);
+        menu.close();
+    }
+
+    // Into a playlist the save makes: a track of the stick's shows as an
+    // add does, and the last row's "Don't import" says the playlist goes
+    // with it.
+    function test_theLastRowTakesTheNewPlaylistBack() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        fake.stagedPlaylist = "Fresh";
+        fake.stagedPlaylistIsNew = true;
+        fake.stagedCount = 1;
+        fake.newTracks = 0;
+        fake.stagedImport = {playlist: "Fresh", isNew: true, atIndex: -1, landed: [],
+                             rows: [{changeId: "addcue:import:add-to-playlist:Fresh", existing: true,
+                                     filePath: "/nonexistent/HELD/Contents/held-1002.mp3", title: "Held Track 1002"}]};
+        fake.pendingRevision++;
+        page.selectPlaylist(-1, "Fresh");
+        tryCompare(list, "count", 1);
+        const tracks = findChild(page, "scanController").tracks;
+        compare(tracks.trackAt(0).title, "Held Track 1002");
+        compare(tracks.trackAt(0).pendingAddition, true, "the stick's track, staged into it");
+        compare(tracks.trackAt(0).pendingImport, false);
+        compare(tracks.trackAt(0).importChangeId, "addcue:import:add-to-playlist:Fresh");
+        verify(waitForPolish(page.Window.window), "the row is laid out");
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(list.itemAtIndex(0), list.itemAtIndex(0));
+        tryCompare(menu, "opened", true);
+        compare(findChild(page, "dontImportItem").text, "Don't add to \"Fresh\" (the new playlist is not made either)");
+        compare(findChild(page, "removeFromPlaylistItem").visible, false);
+        menu.close();
+        tryCompare(menu, "visible", false);
+        fake.stagedImport = {playlist: "Fresh", isNew: true, atIndex: -1, landed: [],
+                             rows: [newRow(testCase.newOneId, "New One", 301, 125.5, "8A", "")]};
+        fake.pendingRevision++;
+        tryVerify(() => tracks.trackAt(0).title === "New One");
+        verify(waitForPolish(page.Window.window), "the row is laid out");
+        page.openTrackMenu(list.itemAtIndex(0), list.itemAtIndex(0));
+        tryCompare(menu, "opened", true);
+        tryCompare(findChild(page, "dontImportItem"), "text", "Don't import (the new playlist \"Fresh\" is not made either)");
+        menu.close();
+    }
+
+    // One bar for the whole run: it follows the run's share
+    // (progressFraction), never the step's count, which starts again at
+    // each step; it never goes back and ends at the end. The steps done
+    // keep their counts in the panel.
+    function test_oneBarAcrossTheSteps() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const strip = findChild(page, "importProgress");
+        const bar = findChild(strip, "passiveProgressBar");
+        const samples = [];
+        const sample = () => samples.push(bar.value);
+        fake.busy = true;
+        tryCompare(strip, "visible", true);
+        const steps = [["stick", 0, 0, 0.0]];
+        for (let i = 0; i <= 10; ++i) {
+            steps.push(["files", i, 10, 0.05 + 0.01 * i]);
+        }
+        steps.push(["check", 0, 0, 0.2]);
+        for (let i = 0; i <= 5; ++i) {
+            steps.push(["analysis", i, 5, 0.25 + 0.15 * i]);
+        }
+        for (const [step, done, total, fraction] of steps) {
+            fake.progressStep = step;
+            fake.progressDone = done;
+            fake.progressTotal = total;
+            fake.progressFraction = fraction;
+            compare(bar.indeterminate, false, step + " " + done);
+            sample();
+            if (step === "analysis" && done === 2) {
+                mouseClick(strip, 20, 8);
+                compare(strip.expanded, true);
+                fake.progressFiles = ["d four.wav", "e five.wav"];
+                fake.progressFile = "c three.wav";
+                compare(strip.steps.map(s => s.count).join("|"), "|10 of 10 done||2 of 5 done");
+                verify(waitForPolish(page.Window.window), "the open panel is laid out");
+                waitForRendering(page);
+                if (screenshotDir && screenshotDir.length > 0) {
+                    grabImage(page).save(screenshotDir + "/browse_import_one_bar.png");
+                }
+            }
+        }
+        for (let i = 1; i < samples.length; ++i) {
+            verify(samples[i] >= samples[i - 1], "the bar never goes back: " + samples.join(" "));
+        }
+        fuzzyCompare(samples[samples.length - 1], 1, 0.0001);
+        verify(samples[samples.length - 2] < 1, "it ends at the end, not before");
+        fake.busy = false;
+        tryCompare(strip, "visible", false);
+    }
+
+    // The same with the real controller and the real work, on a copy of
+    // the fixture stick and three made-up WAV files: sampled on every move
+    // from the drop to what is staged.
+    function test_oneBarWithTheRealController() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture stick copies");
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1000, height: 660, stickLabel: "TESTSTICK",
+            rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library",
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        verify(page !== null);
+        const controller = createTemporaryObject(realImportComponent, testCase);
+        page.trackImportController = controller;
+        tryVerify(() => !findChild(page, "scanController").busy, 30000, "the stick is read");
+        const computer = stickFixture.scratchDirectory();
+        verify(computer.length > 0);
+        const files = [];
+        for (let i = 0; i < 3; ++i) {
+            const file = computer + "/bar " + i + ".wav";
+            verify(artworkFixture.writeNoiseWav(file, 4 + 3 * i, 0, 11 + i));
+            files.push("file://" + file);
+        }
+        const strip = findChild(page, "importProgress");
+        const bar = findChild(strip, "passiveProgressBar");
+        const samples = [];
+        const stepsSeen = [];
+        // The bar while the files are analysed: it moves there too.
+        const analysing = [];
+        const record = () => {
+            if (controller.busy) {
+                samples.push(controller.progressFraction);
+                if (controller.progressStep === "analysis" && controller.progressFraction < 1) {
+                    analysing.push(controller.progressFraction);
+                }
+                if (stepsSeen.indexOf(controller.progressStep) < 0) {
+                    stepsSeen.push(controller.progressStep);
+                }
+                // The strip shows the same.
+                if (strip.running) {
+                    fuzzyCompare(bar.value, controller.progressFraction, 0.0001);
+                }
+            }
+        };
+        controller.progressChanged.connect(record);
+        page.importFiles(files, "", false, -1);
+        verify(controller.busy, controller.errorMessage);
+        tryCompare(controller, "busy", false, 120000);
+        controller.progressChanged.disconnect(record);
+        compare(controller.errorMessage, "");
+        compare(controller.stagedCount, 3);
+        verify(stepsSeen.indexOf("files") >= 0 && stepsSeen.indexOf("analysis") >= 0, stepsSeen.join(" "));
+        verify(samples.length > 5, "sampled through the run: " + samples.length);
+        for (let i = 1; i < samples.length; ++i) {
+            verify(samples[i] >= samples[i - 1], "the bar never goes back: " + samples.join(" "));
+        }
+        fuzzyCompare(samples[samples.length - 1], 1, 0.0001);
+        verify(samples.filter(v => v >= 1).length === 1, "it reaches the end once, at the end: " + samples.join(" "));
+        verify(analysing.length > 1 && analysing[analysing.length - 1] > analysing[0],
+               "the analysis moves the bar: " + analysing.join(" "));
+        const dialog = findChild(page, "importResultDialog");
+        tryCompare(dialog, "opened", true);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+        controller.dropStaged();
+        compare(controller.stagedCount, 0);
+    }
+
+    // Analyse again's refusals are headed as Analyse again's, the import's
+    // as the import's.
+    function test_analyseAgainHasItsOwnHeadings() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const message = findChild(page, "playlistEditMessage");
+        fake.errorSource = "reanalysis";
+        fake.errorMessage = "Tracks are being analysed again already.";
+        tryCompare(message, "opened", true);
+        compare(message.title, "Not analysed again");
+        compare(message.headline, "Tracks are being analysed again already.");
+        message.close();
+        tryCompare(message, "visible", false);
+        fake.errorSource = "import";
+        fake.errorMessage = "An import is being prepared already.";
+        tryCompare(message, "opened", true);
+        compare(message.title, "Not imported");
+        message.close();
+    }
+
+    // By keyboard: Tab reaches the strip and, open, its Cancel; Return,
+    // Enter and Space open and close it, Escape closes it. Escape anywhere
+    // else on the page stops the run, but not in the search field, and not
+    // over a dialog, which keeps its Escape.
+    function test_theImportByKeyboard() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const strip = findChild(page, "importProgress");
+        fake.progressStep = "files";
+        fake.progressDone = 1;
+        fake.progressTotal = 4;
+        fake.busy = true;
+        tryCompare(strip, "visible", true);
+        verify(waitForPolish(page.Window.window), "the strip is laid out");
+        findChild(page, "trackListView").forceActiveFocus();
+        let presses = 0;
+        while (!strip.activeFocus && presses < 80) {
+            keyClick(Qt.Key_Tab);
+            ++presses;
+        }
+        verify(strip.activeFocus, "Tab reaches the strip");
+        keyClick(Qt.Key_Space);
+        compare(strip.expanded, true);
+        keyClick(Qt.Key_Return);
+        compare(strip.expanded, false);
+        keyClick(Qt.Key_Enter);
+        compare(strip.expanded, true);
+        const cancel = findChild(strip, "passiveProgressCancel");
+        keyClick(Qt.Key_Tab);
+        tryCompare(cancel, "activeFocus", true);
+        // Escape on the open panel closes it, and stops nothing.
+        keyClick(Qt.Key_Escape);
+        compare(strip.expanded, false);
+        compare(JSON.stringify(fake.calls), "[]");
+        // Return on Cancel stops the run.
+        strip.forceActiveFocus();
+        keyClick(Qt.Key_Space);
+        compare(strip.expanded, true);
+        keyClick(Qt.Key_Tab);
+        tryCompare(cancel, "activeFocus", true);
+        keyClick(Qt.Key_Return);
+        compare(JSON.stringify(fake.calls), JSON.stringify([["cancel"]]));
+        keyClick(Qt.Key_Escape);
+        compare(strip.expanded, false);
+        // Escape in the search field is the field's.
+        const search = findChild(page, "searchField");
+        search.forceActiveFocus();
+        tryCompare(search, "activeFocus", true);
+        keyClick(Qt.Key_Escape);
+        compare(JSON.stringify(fake.calls), JSON.stringify([["cancel"]]), "no cancel from a text field");
+        // Anywhere else on the page it stops the run.
+        findChild(page, "trackListView").forceActiveFocus();
+        keyClick(Qt.Key_Escape);
+        compare(JSON.stringify(fake.calls), JSON.stringify([["cancel"], ["cancel"]]));
+        // A dialog over the page keeps its Escape.
+        fake.lastResult = {staged: 1, megabytes: 1, playlist: "", playlistIsNew: false, note: "", notImported: [],
+                           possibleDuplicates: 0};
+        fake.resultReady();
+        const dialog = findChild(page, "importResultDialog");
+        tryCompare(dialog, "opened", true);
+        keyClick(Qt.Key_Escape);
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls), JSON.stringify([["cancel"], ["cancel"]]), "the dialog's Escape, not the run's");
+        // Its buttons by Tab and Return: Take back.
+        fake.resultReady();
+        tryCompare(dialog, "opened", true);
+        const takeBack = findChild(page, "importTakeBackButton");
+        presses = 0;
+        while (!takeBack.activeFocus && presses < 20) {
+            keyClick(Qt.Key_Tab);
+            ++presses;
+        }
+        verify(takeBack.activeFocus, "Tab reaches Take back");
+        keyClick(Qt.Key_Return);
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls), JSON.stringify([["cancel"], ["cancel"], ["drop"]]));
+        // Idle, Escape stops nothing.
+        fake.busy = false;
+        tryCompare(strip, "visible", false);
+        findChild(page, "trackListView").forceActiveFocus();
+        keyClick(Qt.Key_Escape);
+        compare(fake.calls.length, 3);
     }
 }

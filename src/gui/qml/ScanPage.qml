@@ -171,7 +171,10 @@ Page {
         }
         function onErrorMessageChanged() {
             if (root.trackImportController.errorMessage.length > 0) {
-                playlistEditMessage.show(root.trackImportController.errorMessage, true, qsTr("Not imported"));
+                // Headed as what did not happen: Analyse again imports nothing.
+                playlistEditMessage.show(root.trackImportController.errorMessage, true,
+                                         root.trackImportController.errorSource === "reanalysis"
+                                             ? qsTr("Not analysed again") : qsTr("Not imported"));
             }
         }
         function onResultReady() {
@@ -182,6 +185,32 @@ Page {
             reanalysisResultDialog.outcome = root.trackImportController.lastReanalysis;
             reanalysisResultDialog.open();
         }
+    }
+    // Escape stops the import (or Analyse again) being prepared, wherever
+    // the keyboard is on the page, as Escape backs out of anything not yet
+    // committed (Clean Up's staging): nothing is staged of it. Not while
+    // typing into a field, which keeps its own keys, nor while the open
+    // strip has the keyboard, where Escape closes it. A dialog or a menu
+    // open over the page keeps its Escape: Qt holds a window's shortcut
+    // back while a popup that closes on Escape is open.
+    readonly property Item keyboardItem: root.Window.activeFocusItem
+    readonly property bool typingInField: root.keyboardItem !== null && root.keyboardItem.hasOwnProperty("cursorPosition")
+    function within(item, ancestor) {
+        for (let at = item; at !== null; at = at.parent) {
+            if (at === ancestor) {
+                return true;
+            }
+        }
+        return false;
+    }
+    Shortcut {
+        objectName: "cancelImportShortcut"
+        sequences: [StandardKey.Cancel]
+        enabled: root.trackImportController.busy === true && root.visible
+            && (root.StackView.view === null || root.StackView.status === StackView.Active)
+            && !root.typingInField
+            && !(importProgress.expanded && root.within(root.keyboardItem, importProgress))
+        onActivated: root.trackImportController.cancel()
     }
     // `files` into `playlist` ("" for none), which the save makes when
     // `create`; atIndex below 0 for its end.
@@ -1124,9 +1153,15 @@ Page {
         onClosed: row = null
         readonly property string filePath: row ? row.filePath : ""
         readonly property bool streaming: row ? row.streamingSource.length > 0 : false
+        // A row of the track import's staged batch: a new track (not on
+        // the stick yet) or the stick's own, put into the playlist by it.
+        readonly property string importChangeId: row && row.importChangeId ? row.importChangeId : ""
+        readonly property bool pendingImport: row !== null && row.pendingImport === true
         // Only for a track in the playlist shown: a Matching result opens
-        // this menu too, and need not be in it.
+        // this menu too, and need not be in it. A row of the import's
+        // batch is taken back by its own entry below.
         readonly property bool canRemove: root.shownPlaylist.length > 0 && filePath.length > 0
+            && importChangeId.length === 0
             && (!row || !row.playlistNames || row.playlistNames.indexOf(root.shownPlaylist) >= 0)
         readonly property bool staged: canRemove && root.playlistEditController.pendingRevision >= 0
             && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
@@ -1137,7 +1172,7 @@ Page {
         // Adding to a playlist: the playlists this stick
         // has and the ones staged to be created, but not the one shown,
         // which already holds the track.
-        readonly property bool canAdd: filePath.length > 0 && !streaming
+        readonly property bool canAdd: filePath.length > 0 && !streaming && !pendingImport
         readonly property var addTargets: canAdd
             ? root.addTargetsFor(scanController.playlistNames, root.newPlaylistNames,
                                  row && row.playlistNames ? row.playlistNames : [], root.shownPlaylist) : []
@@ -1177,20 +1212,44 @@ Page {
         }
         MenuItem {
             objectName: "mergeTrackItem"
-            enabled: root.format !== "onelibrary" && !trackMenu.streaming
+            enabled: root.format !== "onelibrary" && !trackMenu.streaming && !trackMenu.pendingImport
             text: trackMenu.streaming ? qsTr("Merge with another track... (streaming track, no local file)")
+                : trackMenu.pendingImport ? qsTr("Merge with another track... (after saving)")
                 : root.format === "onelibrary" ? qsTr("Merge with another track... (not on OneLibrary yet)")
                 : qsTr("Merge with another track...")
             onTriggered: mergePickerPopup.showFor(trackMenu.row)
         }
         MenuItem {
             objectName: "findMatchingItem"
-            text: qsTr("Find matching tracks")
+            enabled: !trackMenu.pendingImport
+            text: trackMenu.pendingImport ? qsTr("Find matching tracks (after saving)") : qsTr("Find matching tracks")
             onTriggered: root.toggleAnchor(trackMenu.row)
         }
-        MenuSeparator {
-            visible: trackMenu.canRemove
+        // A new track's playlists are the import's: "Add to" waits for
+        // the save, said rather than left out.
+        MenuItem {
+            objectName: "addToAfterSaveItem"
+            visible: trackMenu.pendingImport
             height: visible ? implicitHeight : 0
+            enabled: false
+            text: qsTr("Add to... (after saving)")
+        }
+        MenuSeparator {
+            visible: trackMenu.canRemove || dontImportItem.visible
+            height: visible ? implicitHeight : 0
+        }
+        // Takes this one row out of the import's batch; the last row takes
+        // the batch back whole.
+        MenuItem {
+            id: dontImportItem
+            objectName: "dontImportItem"
+            // Not for a row the last save wrote, shown until the stick is
+            // read again: nothing of it waits any more.
+            visible: trackMenu.importChangeId.length > 0
+                && (root.stagedImport.rows ?? []).some(row => row.changeId === trackMenu.importChangeId)
+            height: visible ? implicitHeight : 0
+            text: trackMenu.row ? root.dontImportText(trackMenu.row) : ""
+            onTriggered: root.trackImportController.dropStagedTrack(trackMenu.importChangeId)
         }
         MenuItem {
             objectName: "removeFromPlaylistItem"
@@ -1361,6 +1420,31 @@ Page {
     readonly property var pendingMoves: ("pendingMoves" in root.playlistEditController)
         ? root.playlistEditController.pendingMoves : ({})
     onPendingMovesChanged: scanController.setPendingEdits(root.pendingAdditions, root.pendingMoves)
+    // The track import's staged batch shows in the list until Save: its
+    // new tracks as rows of their own, in "All tracks" and at their place
+    // in the playlist, greyed and marked new; the stick's tracks it puts
+    // into the playlist greyed there, as an add is. Read from the changes
+    // the save will apply (TrackImportController::stagedImport).
+    readonly property var stagedImport: ("stagedImport" in root.trackImportController)
+        ? root.trackImportController.stagedImport : ({})
+    onStagedImportChanged: scanController.setStagedImport(root.stagedImport)
+    // "Don't import" for one row of the batch: what its menu says, by
+    // what goes with it.
+    function dontImportText(row) {
+        const rows = (root.stagedImport.rows ?? []).length;
+        const last = rows <= 1;
+        const playlist = root.stagedImport.playlist ?? "";
+        const madeToo = last && root.stagedImport.isNew === true && playlist.length > 0;
+        if (row && row.pendingImport === true) {
+            return madeToo ? qsTr("Don't import (the new playlist \"%1\" is not made either)").arg(playlist)
+                           : qsTr("Don't import");
+        }
+        return madeToo ? qsTr("Don't add to \"%1\" (the new playlist is not made either)").arg(playlist)
+                       : qsTr("Don't add to \"%1\"").arg(playlist);
+    }
+    // What a row not on the stick yet cannot do until Save.
+    readonly property string afterSaveText: qsTr("Not on the stick yet. Playing, editing and dragging it are "
+                                                 + "available after saving.")
     // A playlist staged to be renamed is listed under its new name, its
     // tracks the scanned playlist's.
     readonly property var pendingRenames: ("pendingRenames" in root.playlistEditController)
@@ -2145,29 +2229,55 @@ Page {
                                                                        : ["stick", "files", "check", "analysis"]
                 readonly property int stepIndex: stepKeys.indexOf(step)
                 running: root.trackImportController.busy === true
-                done: root.trackImportController.progressDone ?? 0
-                total: root.trackImportController.progressTotal ?? 0
+                // One bar for the whole run (progressFraction); the steps'
+                // own counts are in the panel.
+                done: root.trackImportController.progressFraction ?? 0
+                total: 1
+                readonly property int stepDone: root.trackImportController.progressDone ?? 0
+                readonly property int stepTotal: root.trackImportController.progressTotal ?? 0
+                // Each step's count as it last had one, so the steps done
+                // keep theirs in the panel. Read from the controller itself:
+                // the step and its count change at once.
+                property var stepTotals: ({})
+                onStepTotalChanged: {
+                    const now = root.trackImportController.progressStep ?? "";
+                    const total = root.trackImportController.progressTotal ?? 0;
+                    if (now.length > 0 && total > 0) {
+                        const totals = Object.assign({}, importProgress.stepTotals);
+                        totals[now] = total;
+                        importProgress.stepTotals = totals;
+                    }
+                }
+                onRunningChanged: {
+                    if (!running) {
+                        importProgress.stepTotals = ({});
+                    }
+                }
                 readonly property string lastFile: root.trackImportController.progressFile ?? ""
                 detail: step === "analysis" && lastFile.length > 0 ? qsTr("Last done: %1").arg(lastFile) : ""
                 activity: (root.trackImportController.progressFiles ?? []).map(
                     file => step === "analysis" ? qsTr("Analysing %1").arg(file) : qsTr("Reading %1").arg(file))
                 note: qsTr("Nothing is written until you save.")
                 summary: reanalysing.length > 0
-                    ? (step === "analysis" && total > 0
+                    ? (step === "analysis" && stepTotal > 0
                         ? qsTr("Analysing the tracks of \"%1\" again: track %2 of %3").arg(reanalysing)
-                            .arg(Math.min(total, done + 1)).arg(total)
+                            .arg(Math.min(stepTotal, stepDone + 1)).arg(stepTotal)
                         : qsTr("Analysing the tracks of \"%1\" again").arg(reanalysing))
-                    : step === "files" && total > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(total, done + 1)).arg(total)
-                    : step === "analysis" && total > 0
-                        ? qsTr("Import: analysing track %1 of %2").arg(Math.min(total, done + 1)).arg(total)
+                    : step === "files" && stepTotal > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(stepTotal, stepDone + 1)).arg(stepTotal)
+                    : step === "analysis" && stepTotal > 0
+                        ? qsTr("Import: analysing track %1 of %2").arg(Math.min(stepTotal, stepDone + 1)).arg(stepTotal)
                     : step === "check" ? qsTr("Import: checking against the stick")
                     : qsTr("Import: reading the stick")
                 steps: (reanalysing.length > 0 ? [qsTr("Read the stick"), qsTr("Analyse the tracks")]
                         : [qsTr("Read the stick"), qsTr("Read the files"), qsTr("Check against the stick"),
                            qsTr("Analyse the tracks")]).map((label, index) => ({
                             label: label,
-                            count: index === importProgress.stepIndex && importProgress.total > 0
-                                ? qsTr("%1 of %2 done").arg(importProgress.done).arg(importProgress.total) : "",
+                            count: index === importProgress.stepIndex && importProgress.stepTotal > 0
+                                ? qsTr("%1 of %2 done").arg(importProgress.stepDone).arg(importProgress.stepTotal)
+                                : index < importProgress.stepIndex && (importProgress.stepTotals[importProgress.stepKeys[index]] ?? 0) > 0
+                                ? qsTr("%1 of %2 done").arg(importProgress.stepTotals[importProgress.stepKeys[index]])
+                                    .arg(importProgress.stepTotals[importProgress.stepKeys[index]])
+                                : "",
                             state: index < importProgress.stepIndex ? "done" : index === importProgress.stepIndex ? "now" : "later"
                         }))
                 onCancelRequested: root.trackImportController.cancel()
@@ -2411,6 +2521,10 @@ Page {
                     required property string fallbackArtworkPath
                     required property bool pendingAddition
                     required property bool pendingMove
+                    // A new track of the import's staged batch: not on the
+                    // stick until Save.
+                    required property bool pendingImport
+                    required property string importChangeId
 
                     readonly property bool isPlaying: playbackController.hasTrack
                         && playbackController.currentFormat === root.format
@@ -2438,6 +2552,11 @@ Page {
                     // MouseArea under the row's text never hears the
                     // pointer, so the row shaded only between its cells.
                     HoverHandler { id: rowHover }
+                    // What a row not on the stick yet cannot do, and when it can.
+                    readonly property bool waitTipShown: ToolTip.visible
+                    ToolTip.visible: trackDelegate.pendingImport && rowHover.hovered
+                    ToolTip.text: root.afterSaveText
+                    ToolTip.delay: 500
 
                     // Now-playing highlight, an accent-colored stripe,
                     // same idiom as most media players use for "this one."
@@ -2508,6 +2627,10 @@ Page {
                                 root.openTrackMenu(trackDelegate, trackDelegate);
                                 return;
                             }
+                            // Its details are the stick's, after the save.
+                            if (trackDelegate.pendingImport) {
+                                return;
+                            }
                             trackDetailPanel.showFor(trackDelegate);
                             root.trackPanelOpen = true;
                         }
@@ -2541,8 +2664,11 @@ Page {
                             playbackController: root.playbackController
                             playSource: ({format: root.format, libraryPath: root.currentPath(),
                                           sourceId: trackDelegate.sourceId})
-                            playFilePath: trackDelegate.streamingSource.length === 0 ? trackDelegate.filePath || "" : ""
-                            unavailableText: "No audio file for this track on the stick"
+                            // Not on the stick yet: there, and not to be pressed.
+                            playFilePath: trackDelegate.streamingSource.length === 0 && !trackDelegate.pendingImport
+                                ? trackDelegate.filePath || "" : ""
+                            unavailableText: trackDelegate.pendingImport ? root.afterSaveText
+                                : "No audio file for this track on the stick"
                             onPlayRequested: root.playRow(trackDelegate)
 
                             // At the narrowest tier (see root.browseTier's own
@@ -2554,7 +2680,8 @@ Page {
                             ToolTip.visible: artworkRect.coverHovered
                                 && (trackDelegate.streamingSource.length > 0 || !artworkRect.playKey.enabled
                                     || root.browseTier === 0)
-                            ToolTip.text: trackDelegate.streamingSource.length > 0
+                            ToolTip.text: trackDelegate.pendingImport ? root.afterSaveText
+                                : trackDelegate.streamingSource.length > 0
                                 ? "Streaming track (" + trackDelegate.streamingSource + ") - no local file, can't be played."
                                 : !artworkRect.playKey.enabled ? artworkRect.unavailableText
                                 : title + " - " + artist + "\n" + (key.length > 0 ? key : "--") + " · "
@@ -2584,7 +2711,7 @@ Page {
                                 onClicked: {
                                     if (artworkRect.playKey.enabled) {
                                         artworkRect.press();
-                                    } else if (trackDelegate.streamingSource.length === 0) {
+                                    } else if (trackDelegate.streamingSource.length === 0 && !trackDelegate.pendingImport) {
                                         trackDetailPanel.showFor(trackDelegate);
                                         root.trackPanelOpen = true;
                                     }
@@ -2601,13 +2728,15 @@ Page {
                                 Layout.fillWidth: true
                                 spacing: 6
                                 Label {
+                                    objectName: "rowTitle"
                                     text: title
                                     font.bold: true
                                     // Staged to be added to the playlist shown,
-                                    // or moved within it.
+                                    // or moved within it, or imported.
                                     font.italic: trackDelegate.pendingAddition || trackDelegate.pendingMove
+                                        || trackDelegate.pendingImport
                                     color: trackDelegate.pendingAddition || trackDelegate.pendingMove
-                                        ? Theme.textMuted : Theme.text
+                                        || trackDelegate.pendingImport ? Theme.textMuted : Theme.text
                                     // Staged to come out of the playlist shown.
                                     font.strikeout: root.shownPlaylist.length > 0
                                         && root.playlistEditController.pendingRevision >= 0
@@ -2620,6 +2749,26 @@ Page {
                                 // AboutPage.qml's trademark note). Just
                                 // tells you where a file-less row comes
                                 // from instead of it looking broken.
+                                // Not on the stick yet: "new", as the playlist
+                                // list marks a playlist staged to be made.
+                                Rectangle {
+                                    objectName: "pendingImportBadge"
+                                    visible: trackDelegate.pendingImport
+                                    radius: 3
+                                    color: Theme.groupBackground
+                                    border.color: Theme.borderSubtle
+                                    implicitWidth: pendingImportLabel.implicitWidth + 8
+                                    implicitHeight: pendingImportLabel.implicitHeight + 4
+                                    Label {
+                                        id: pendingImportLabel
+                                        anchors.centerIn: parent
+                                        text: qsTr("new")
+                                        font.pointSize: Theme.fontTiny
+                                        font.bold: true
+                                        font.italic: true
+                                        color: Theme.textMuted
+                                    }
+                                }
                                 Rectangle {
                                     visible: trackDelegate.streamingSource.length > 0
                                     radius: 3
@@ -2694,7 +2843,8 @@ Page {
                             iconName: "application-menu"
                             Layout.preferredWidth: root.actionsColumnWidth
                             ToolTip.visible: hovered
-                            ToolTip.text: "Merge, find matching tracks" + (root.shownPlaylist.length > 0
+                            ToolTip.text: trackDelegate.importChangeId.length > 0 ? root.dontImportText(trackDelegate)
+                                : "Merge, find matching tracks" + (root.shownPlaylist.length > 0
                                 ? ", remove from this playlist" : "")
                             onClicked: root.openTrackMenu(trackDelegate, rowMenuButton)
                         }

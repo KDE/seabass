@@ -121,6 +121,90 @@ std::string whyNot(const domain::ImportPlanEntry &entry, const std::string &root
 
 }  // namespace
 
+std::uint64_t ImportBar::analysisUnits(std::uint64_t bytes, std::size_t files)
+{
+    constexpr std::uint64_t MiB = 1024 * 1024;
+    return std::max<std::uint64_t>(bytes / MiB * AnalysisUnitsPerMiB + (bytes % MiB) * AnalysisUnitsPerMiB / MiB,
+                                   static_cast<std::uint64_t>(files));
+}
+
+ImportBar::ImportBar(ImportProgressSink sink)
+    : m_sink(std::move(sink))
+{
+}
+
+void ImportBar::plan(const std::vector<std::pair<ImportProgress::Step, std::uint64_t>> &stretches)
+{
+    if (!m_stretches.empty()) {
+        return;
+    }
+    m_stretches = stretches;
+    m_total = 0;
+    for (const auto &[step, units] : m_stretches) {
+        m_total += units;
+    }
+    // A plan of nothing still has an end to reach.
+    if (m_total == 0) {
+        m_total = 1;
+    }
+}
+
+std::uint64_t ImportBar::positionOf(const ImportProgress &at) const
+{
+    std::uint64_t start = 0;
+    for (const auto &[step, units] : m_stretches) {
+        if (step != at.step) {
+            start += units;
+            continue;
+        }
+        // How far into its stretch the step is, as a share.
+        double share = 0.0;
+        if (step == ImportProgress::Step::Analysis && at.totalBytes > 0) {
+            share = static_cast<double>(at.doneBytes) / static_cast<double>(at.totalBytes);
+        } else if ((step == ImportProgress::Step::Analysis || step == ImportProgress::Step::Files) && at.total > 0) {
+            share = static_cast<double>(at.done) / static_cast<double>(at.total);
+        }
+        share = std::clamp(share, 0.0, 1.0);
+        return start + static_cast<std::uint64_t>(std::floor(share * static_cast<double>(units)));
+    }
+    // A step the plan does not have: where the bar is.
+    return m_reached;
+}
+
+void ImportBar::report(ImportProgress at)
+{
+    if (m_total > 0) {
+        // Only end() reaches the end: the last file of the analysis done
+        // is not yet the work done.
+        m_reached = std::max(m_reached, std::min(positionOf(at), m_total - 1));
+    }
+    at.barDone = m_reached;
+    at.barTotal = m_total;
+    if (m_sink) {
+        m_sink(at);
+    }
+}
+
+void ImportBar::end(ImportProgress::Step step)
+{
+    if (m_total == 0) {
+        plan({});
+    }
+    m_reached = m_total;
+    ImportProgress at;
+    at.step = step;
+    at.barDone = m_reached;
+    at.barTotal = m_total;
+    if (m_sink) {
+        m_sink(at);
+    }
+}
+
+ImportProgressSink ImportBar::sink()
+{
+    return [this](const ImportProgress &at) { report(at); };
+}
+
 std::vector<std::shared_ptr<const ImportAnalysis>> analyseFiles(const std::vector<std::string> &files,
                                                                 const ImportAnalyser &analyser, int jobs,
                                                                 const application::CancellationToken &cancel,
@@ -137,9 +221,20 @@ std::vector<std::shared_ptr<const ImportAnalysis>> analyseFiles(const std::vecto
     // last done.
     std::vector<std::string> inHand;
     std::string lastDone;
+    // Each file weighs on the bar by its size.
+    std::vector<std::uint64_t> sizes(count);
+    std::uint64_t totalBytes = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        sizes[i] = sizeOf(pathFromUtf8(files[i]));
+        totalBytes += sizes[i];
+    }
+    std::uint64_t doneBytes = 0;
     const auto report = [&](std::size_t doneNow) {
         if (progress) {
-            progress({ImportProgress::Step::Analysis, doneNow, count, lastDone, inHand});
+            ImportProgress at{ImportProgress::Step::Analysis, doneNow, count, lastDone, inHand};
+            at.doneBytes = doneBytes;
+            at.totalBytes = totalBytes;
+            progress(at);
         }
     };
     const auto work = [&]() {
@@ -164,6 +259,7 @@ std::vector<std::shared_ptr<const ImportAnalysis>> analyseFiles(const std::vecto
                     inHand.erase(at);
                 }
                 lastDone = name;
+                doneBytes += sizes[index];
                 report(done.fetch_add(1) + 1);
             } catch (...) {
                 failed.store(true);
@@ -196,14 +292,16 @@ std::vector<std::shared_ptr<const ImportAnalysis>> analyseFiles(const std::vecto
     return made;
 }
 
-PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel,
-                                  const ImportProgressSink &progress)
+namespace
+{
+
+// prepareTrackImport()'s work, on its bar.
+PreparedImport prepareTrackImportOn(const ImportRequest &request, const application::CancellationToken &cancel,
+                                    ImportBar &bar)
 {
     const auto report = [&](ImportProgress::Step step, std::size_t done, std::size_t total, const std::string &file,
                             std::vector<std::string> inHand = {}) {
-        if (progress) {
-            progress({step, done, total, file, std::move(inHand)});
-        }
+        bar.report({step, done, total, file, std::move(inHand)});
     };
     report(ImportProgress::Step::Stick, 0, 0, {});
     PreparedImport prepared;
@@ -312,6 +410,24 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
             sources.push_back(offered);
         }
     }
+    // What the person took out of the batch is not offered again.
+    std::erase_if(sources, [&](const std::string &source) { return request.leftOutByPerson.count(source) > 0; });
+
+    // The work is known now: the bar's plan. The analysis is planned for
+    // every file offered; the ones that are not staged are not analysed,
+    // and the files that are move the bar the further each.
+    std::uint64_t offeredBytes = 0;
+    for (const std::string &source : sources) {
+        offeredBytes += sizeOf(pathFromUtf8(source));
+    }
+    std::vector<std::pair<ImportProgress::Step, std::uint64_t>> stretches{
+        {ImportProgress::Step::Stick, ImportBar::StickUnits},
+        {ImportProgress::Step::Files, ImportBar::UnitsPerFileRead * sources.size()},
+        {ImportProgress::Step::Check, ImportBar::CheckUnits}};
+    if (request.analyser) {
+        stretches.emplace_back(ImportProgress::Step::Analysis, ImportBar::analysisUnits(offeredBytes, sources.size()));
+    }
+    bar.plan(stretches);
 
 #ifdef SEABASS_HAVE_TAGLIB
     infrastructure::audio::TagLibMetadataProbe probe;
@@ -424,6 +540,21 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
             prepared.bytesToCopy += entry.offered.file.fileSizeBytes;
         }
     }
+    // Each staged track's cover, small, for its row in the track list
+    // until Save (which reads it again, at its own sizes, for the rows).
+    if (request.coverReader) {
+        for (const auto &change : prepared.staged.changes) {
+            cancel.throwIfCancelled();
+            const auto import = std::dynamic_pointer_cast<ImportTrackChange>(change);
+            if (!import || !import->withCover()) {
+                continue;
+            }
+            if (const std::optional<CoverPictures> pictures = request.coverReader(import->sourceFile());
+                pictures && !pictures->small.empty()) {
+                prepared.covers.emplace(import->id(), pictures->small);
+            }
+        }
+    }
     if (request.analyser) {
         std::vector<std::shared_ptr<ImportTrackChange>> imports;
         for (const auto &change : prepared.staged.changes) {
@@ -437,7 +568,7 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
         const std::vector<std::string> files(prepared.staged.staged.begin(),
                                              prepared.staged.staged.begin() + static_cast<std::ptrdiff_t>(count));
         std::vector<std::shared_ptr<const ImportAnalysis>> made =
-            analyseFiles(files, request.analyser, request.analysisJobs, cancel, progress);
+            analyseFiles(files, request.analyser, request.analysisJobs, cancel, bar.sink());
         for (std::size_t i = 0; i < count; ++i) {
             if (made[i]) {
                 ++prepared.analysed;
@@ -449,6 +580,21 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
             }
         }
     }
+    return prepared;
+}
+
+}  // namespace
+
+PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel,
+                                  const ImportProgressSink &progress)
+{
+    // One bar from the offer to what is staged.
+    ImportBar bar(progress);
+    PreparedImport prepared = prepareTrackImportOn(request, cancel, bar);
+    // Refused or staged, the work is done: the bar at its end, as the
+    // step it ended in.
+    bar.end(request.analyser && !prepared.staged.staged.empty() ? ImportProgress::Step::Analysis
+                                                               : ImportProgress::Step::Check);
     return prepared;
 }
 
