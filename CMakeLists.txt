@@ -1680,6 +1680,71 @@ if(SEABASS_GUI AND Qt6_FOUND)
         # run 1.7 times slower overall, two tests from its end.
         set(_seabass_qml_file_timeout 600)
         set(_seabass_qml_slow_files tst_CoverArtPage=1200)
+        set(_seabass_qml_serial_files)
+        if(WIN32)
+            # Seven files scan a fixture library and are slow in an MSVC
+            # Debug build. Measured on the Windows shakedown laptop (two
+            # cores, processor at full speed, 2026-11-20), each run alone:
+            # tst_StagedScanRequests 406 s, tst_ScanPage 407 s,
+            # tst_JunkCuePage 420 s, tst_ScanLifetime 492 s,
+            # tst_CueTablePage 512 s, tst_RekordboxExportSyncPage 579 s,
+            # and tst_LibraryHealthHub past 600 s. Under the rig's
+            # ctest -j6 all seven ran out of time in Round 16 without a
+            # case failing.
+            #
+            # A longer bound alone made it worse (tried the same day, 1800 s
+            # each): no longer cut off, the seven ran beside each other
+            # for 20 to 40 minutes, each three to four times slower than
+            # alone (tst_ScanLifetime 1683 s, tst_LibraryHealthHub 2333 s),
+            # two still ran out, the suite took 129 minutes where it had
+            # taken 76, and a backup test beside them went past the rig's
+            # 900 s.
+            #
+            # A lock between the seven, so that one runs at a time with
+            # short tests in the other slots, was not enough either
+            # (2026-11-21, processor at full speed throughout). The three
+            # that came last ran with nothing left beside them and took
+            # what they take alone (431 to 506 s). The four before them
+            # ran beside five other tests on average: tst_ScanPage took
+            # 827 s, and tst_CueTablePage, tst_RekordboxExportSyncPage
+            # (1200 s) and tst_LibraryHealthHub (2400 s) were cut off,
+            # every finished case passing. It is what runs beside them
+            # that slows them, whichever tests those are, so on Windows
+            # they run with nothing beside them (_seabass_qml_serial_files,
+            # below), with a bound of twice the figure alone.
+            list(APPEND _seabass_qml_slow_files
+                tst_CueTablePage=1200
+                tst_JunkCuePage=1200
+                tst_LibraryHealthHub=2400
+                tst_RekordboxExportSyncPage=1200
+                tst_ScanLifetime=1200
+                tst_ScanPage=1200
+                tst_StagedScanRequests=1200)
+            # These wait a fixed time for a cover to load or a scan to end
+            # and lost that wait beside five other tests in the same round
+            # ("property showing", "property visible", "the scan must
+            # end"), while each passes alone in 2 to 38 s. A longer bound
+            # does not help a test that fails before its bound, so on
+            # Windows they run with nothing beside them.
+            # tst_PlaylistSummary and tst_WaveformBeatGrid grab what was
+            # drawn and lost that the same way on 2026-11-21 (an empty
+            # mosaic, wrong tile colours, no ink where a beat number
+            # belongs), having passed in every run before.
+            set(_seabass_qml_serial_files
+                tst_ArtworkImage
+                tst_CueTablePage
+                tst_JunkCuePage
+                tst_LibraryHealthHub
+                tst_PlayerBar
+                tst_PlaylistSummary
+                tst_RekordboxExportSyncPage
+                tst_ScanLifetime
+                tst_ScanPage
+                tst_StagedScanRequests
+                tst_StickProgressBars
+                tst_TrackDetailPanel
+                tst_WaveformBeatGrid)
+        endif()
         # The files with a wall-clock bound in them get the label `timing`
         # as well as `qml` (see the label's own comment near the end of this
         # file): leaving a page within 1 s or 2.5 s while a read cannot stop
@@ -1744,6 +1809,12 @@ if(SEABASS_GUI AND Qt6_FOUND)
                     LABELS "${_labels}"
                     TIMEOUT ${_timeout}
                     PROCESSORS ${ARG_PROCESSORS})
+                if(_name IN_LIST _seabass_qml_serial_files)
+                    # First in the run as well: at the end they fell in the
+                    # hours a laptop left alone slows its processor down
+                    # (2026-11-21, nine of them never reached in 2.5 h).
+                    set_tests_properties(${_test} PROPERTIES RUN_SERIAL TRUE COST 100000)
+                endif()
             endforeach()
         endfunction()
 
@@ -3769,6 +3840,12 @@ if(TARGET seabass_edit)
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
     set_tests_properties(rekordbox_export_sync_controller_test PROPERTIES LABELS "integration"
         ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+    if(WIN32)
+        # 795 to 832 s in an MSVC Debug build on a two-core laptop with two
+        # tests beside it (2026-11-21, processor at full speed): too near
+        # the rig's 900 s to stay under it with five beside it.
+        set_tests_properties(rekordbox_export_sync_controller_test PROPERTIES TIMEOUT 2400)
+    endif()
 
     # #105: the track details' edit controller with the real session.
     add_executable(track_edit_controller_test
@@ -4034,6 +4111,12 @@ if(TARGET seabass_edit)
     endif()
     add_test(NAME moved_file_change_test COMMAND moved_file_change_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    if(WIN32)
+        # 935 to 989 s in an MSVC Debug build on a two-core laptop with two
+        # tests beside it (2026-11-21, processor at full speed): past the
+        # rig's 900 s without anything failing.
+        set_tests_properties(moved_file_change_test PROPERTIES TIMEOUT 2400)
+    endif()
 
     # #105: a track's rating and comment edited in Browse, written into
     # all three catalogs of a copy of the fixture, undone and rolled back.
@@ -4990,6 +5073,13 @@ add_test(NAME backup_fingerprint_describes_archive_test COMMAND backup_fingerpri
 # ordinary push, run on a schedule and on every tag, which is where a
 # backup's correctness has to hold.
 set_tests_properties(backup_fingerprint_describes_archive_test PROPERTIES LABELS "integration")
+if(WIN32)
+    # 866 s in an MSVC Debug build with five tests beside it on a two-core
+    # laptop (2026-11-21), under the rig's 900 s by 34 s, and past it the
+    # day before. A limit of its own, as mirror_failure_fails_the_change_test
+    # has.
+    set_tests_properties(backup_fingerprint_describes_archive_test PROPERTIES TIMEOUT 2400)
+endif()
 
 add_executable(backup_stick_test tests/backup_stick_test.cpp)
 target_link_libraries(backup_stick_test PRIVATE seabass_core_testing)
