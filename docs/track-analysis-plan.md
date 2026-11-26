@@ -1144,6 +1144,28 @@ Left on the playlist's tempo: four tracks still at half (their double
 folds under three quarters as sharply), and five at four thirds, two
 thirds or further off.
 
+### What an analysis costs
+
+Measured in an optimised build, one track at a time, a track of four
+minutes at the middle: decoding 0.3 s, the grid 1.47 s, the key 0.68 s,
+the waveform about 0.1 s. (The build the suite runs in is a Debug one
+with this file alone optimised: its times for the grid are real, its
+times for the key and for decoding three times too long.)
+
+Over half of the grid's time was its band filters, each pass over the
+whole track for one filter, and a tenth the smoothing of the folds,
+which worked out where every step lies by two divisions. With every
+sample through all the filters of a band in one pass each way, and the
+smoothing without the divisions away from the ends, the grid takes
+0.77 s, and on the 280 tracks of the indie playlist every beat is the
+same as before.
+
+What is left, largest first: the band filters still (0.35 s; the bands
+could run beside each other, or the low bands at a lower rate, which
+changes the numbers a little), the key's transforms (0.45 s; half of it
+would go with a transform made for real input, with the same proviso),
+reading the decoded audio, the grid's own transforms.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one
