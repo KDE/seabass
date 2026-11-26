@@ -753,6 +753,20 @@ int main(int argc, char **argv)
             assert(scalar(cdb, "SELECT count(*) FROM PerformanceData;") == 1568);
         };
         refused(libUtf8, makeTrack(wav48, "Again", rate48), "already names ../Music/Forty Eight.wav");
+        // #140: on exFAT the row for "Café Ä.wav" also names "Café ä.wav",
+        // and "Café Ä.wav" with the accent as a combining mark; SQLite's
+        // NOCASE folds neither. (Separate files here, on a filesystem that
+        // tells them apart.)
+        {
+            const fs::path lowerUmlaut = root / "Music" / pathFromUtf8("Caf\xc3\xa9 \xc3\xa4.wav");
+            const fs::path decomposed = root / "Music" / pathFromUtf8("Cafe\xcc\x81 \xc3\x84.wav");
+            writeWav(lowerUmlaut, 44100, 1);
+            writeWav(decomposed, 44100, 1);
+            refused(libUtf8, makeTrack(lowerUmlaut, "Lower umlaut", rate44), "already names ../Music/Caf\xc3\xa9 \xc3\x84.wav");
+            refused(libUtf8, makeTrack(decomposed, "Decomposed", rate44), "already names ../Music/Caf\xc3\xa9 \xc3\x84.wav");
+            fs::remove(lowerUmlaut);
+            fs::remove(decomposed);
+        }
         refused(pathToUtf8(root / "no such library"), makeTrack(wav48, "Nowhere", rate48), "no Engine 2.x or 3.x database");
         refused(pathToUtf8(png), makeTrack(wav48, "A file", rate48), "no Engine 2.x or 3.x database");
         refused(pathToUtf8(root), makeTrack(wav48, "Not a library", rate48), "no Engine 2.x or 3.x database");
@@ -798,7 +812,7 @@ int main(int argc, char **argv)
             assert(main && std::fabs(*main - expected) < 1e-3
                    && "the memory cue outside the lead-in is the main cue, moved onto Engine's timeline");
         }
-        std::cout << "case 12 (an existing path, no library, a missing file, no rate: refused, nothing added) OK\n";
+        std::cout << "case 12 (an existing path in any case or composition, no library, a missing file, no rate: refused, nothing added) OK\n";
 
         // 13. markForDeviceAnalysis refuses an unknown or repeated id, and
         //     a refused call rolls back the good id in it.

@@ -14,6 +14,7 @@
 #include <djinterop/djinterop.hpp>
 #include <sqlite3.h>
 
+#include "application/path_key.hpp"
 #include "domain/engine_cue_translation.hpp"
 #include "domain/junk_cue.hpp"
 #include "infrastructure/engine/engine_artwork.hpp"
@@ -550,26 +551,36 @@ std::int64_t createEngineTrack(const std::string &writeRoot, const NewEngineTrac
         return -1;
     }
     {
+        // One file, one row. A stick is exFAT or FAT32, where "Ä/Ö.mp3" and
+        // "ä/ö.mp3" are the same file, and SQLite's NOCASE folds the 26
+        // ASCII letters only, so every path is compared by
+        // normalizedPathKey, as the OneLibrary and DeviceLibrary writers
+        // do (#140). The table is a few thousand rows.
         Connection db(databaseFile, SQLITE_OPEN_READONLY);
         if (!db.ok()) {
             *error = "could not open " + databaseFile + ": " + db.why();
             return -1;
         }
+        const std::string wanted = application::normalizedPathKey(relativePath);
         sqlite3_stmt *stmt = nullptr;
-        if (sqlite3_prepare_v2(db.handle(), "SELECT id, path FROM Track WHERE path = ?1 COLLATE NOCASE LIMIT 1;", -1,
-                               &stmt, nullptr)
+        if (sqlite3_prepare_v2(db.handle(), "SELECT id, path FROM Track WHERE path IS NOT NULL ORDER BY id;", -1, &stmt,
+                               nullptr)
             != SQLITE_OK) {
             *error = std::string("could not look for the path in Track: ") + sqlite3_errmsg(db.handle());
             sqlite3_finalize(stmt);
             return -1;
         }
-        sqlite3_bind_text(stmt, 1, relativePath.c_str(), -1, SQLITE_TRANSIENT);
-        const int step = sqlite3_step(stmt);
-        if (step == SQLITE_ROW) {
+        int step = SQLITE_DONE;
+        while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
             const auto *existing = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
-            *error = "track id=" + std::to_string(sqlite3_column_int64(stmt, 0)) + " already names "
-                + (existing ? existing : "") + "; not adding a second row for " + relativePath;
-        } else if (step != SQLITE_DONE) {
+            const std::string existingPath = existing ? existing : "";
+            if (application::normalizedPathKey(existingPath) == wanted) {
+                *error = "track id=" + std::to_string(sqlite3_column_int64(stmt, 0)) + " already names "
+                    + existingPath + "; not adding a second row for " + relativePath;
+                break;
+            }
+        }
+        if (step != SQLITE_ROW && step != SQLITE_DONE) {
             *error = std::string("could not look for the path in Track: ") + sqlite3_errmsg(db.handle());
         }
         sqlite3_finalize(stmt);
