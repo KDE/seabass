@@ -77,8 +77,12 @@ TestCase {
             property var cueReview: []
             property var cueReviewTooDifferent: []
             signal moveCuesChanged(string changeId, bool move)
-            // The choices made since the list was, by id.
+            // The choices made since the list was, by id, and which of
+            // them the person made (as the controller: the threshold
+            // leaves those alone).
             property var choices: ({})
+            property var byHand: ({})
+            property bool saveWriting: false
             function movesCues(id) {
                 if (id in choices) {
                     return choices[id];
@@ -89,23 +93,34 @@ TestCase {
             function setMoveCues(id, move) {
                 calls.push(["moveCues", id, move]);
                 choices[id] = move;
+                byHand[id] = true;
                 moveCuesChanged(id, move);
+                return true;
             }
             function setMoveCuesForAll(move) {
                 calls.push(["moveCuesForAll", move]);
                 for (const track of cueReview) {
                     choices[track.id] = move;
+                    byHand[track.id] = true;
                     moveCuesChanged(track.id, move);
                 }
+                return true;
             }
             property int cueFollowThresholdMs: 10
             function applyCueThreshold(ms) {
                 calls.push(["applyCueThreshold", ms]);
                 cueFollowThresholdMs = ms;
+                let kept = 0;
                 for (const track of cueReview) {
-                    choices[track.id] = track.largestMoveMs < ms;
-                    moveCuesChanged(track.id, choices[track.id]);
+                    const follows = track.largestMoveMs < ms;
+                    if (byHand[track.id]) {
+                        kept += movesCues(track.id) !== follows ? 1 : 0;
+                        continue;
+                    }
+                    choices[track.id] = follows;
+                    moveCuesChanged(track.id, follows);
                 }
+                return kept;
             }
         }
     }
@@ -633,8 +648,11 @@ TestCase {
         compare(findChild(section, "cueReviewTrackTitle").text, "Opener, Somebody");
         compare(findChild(section, "cueReviewTrackShift").text,
                 "The cue points move by up to 40 ms. Tempo 120.00 BPM before, 120.50 BPM now.");
-        // No track under the threshold: no such section.
+        // No track under the threshold: no such section; the asked ones
+        // are headed by the size of their moves.
         compare(findChild(page, "cueReviewOwnHeading").visible, false);
+        compare(findChild(page, "cueReviewAskedHeading").visible, true);
+        compare(findChild(page, "cueReviewAskedHeading").text, "Moves of 10 ms or more: 1 track(s)");
         compare(findChild(section, "cueReviewRowLabel").text, "Hot cue 1, drop");
         compare(findChild(section, "cueReviewRowTimes").text, "0:04.247 now, 0:04.287 on the new grid (+40 ms)");
         compare(findChild(section, "cueReviewOffBeat").text, "2 cue point(s) not on a beat stay where they are.");
@@ -815,10 +833,13 @@ TestCase {
         const heading = findChild(page, "cueReviewOwnHeading");
         const own = findChild(page, "cueReviewOwnTracks");
         compare(heading.visible, true);
-        compare(heading.text, "Moved on their own (less than 10 ms): 2 track(s)");
+        compare(heading.text, "Moves of less than 10 ms: 2 track(s)");
+        compare(findChild(page, "cueReviewAskedHeading").text, "Moves of 10 ms or more: 1 track(s)");
+        const keptLine = findChild(page, "cueReviewKeptByHand");
+        compare(keptLine.visible, false);
         compare(own.count, 0);
-        // A choice made while it is closed (Move none, say) is what its
-        // switch shows once opened, not the list as it was made.
+        // A choice made while it is closed is what its switch shows once
+        // opened, not the list as it was made.
         fake.setMoveCues("edge", false);
         fake.calls = [];
         // By the keyboard: below the first track it may sit outside the
@@ -853,13 +874,32 @@ TestCase {
         spin.value = 50;
         findChild(page, "cueReviewApplyThreshold").clicked();
         compare(JSON.stringify(fake.calls), JSON.stringify([["applyCueThreshold", 50]]));
-        // Every track is under 50 now: all in the section, all on.
+        // Every track is under 50 now: all in the section, under a heading
+        // that says the size of their moves. Those the threshold decides
+        // are on; the one switched off by hand stays off, and a line
+        // under the buttons says one track kept its choice.
         tryCompare(asked, "count", 0);
-        compare(heading.text, "Moved on their own (less than 50 ms): 3 track(s)");
+        compare(findChild(page, "cueReviewAskedHeading").visible, false);
+        compare(heading.text, "Moves of less than 50 ms: 3 track(s)");
         tryCompare(own, "count", 3);
-        for (let t = 0; t < 3; ++t) {
-            compare(findChild(own.itemAt(t), "moveCuesSwitch").checked, true);
-        }
+        const ownSwitch = title => {
+            for (let t = 0; t < own.count; ++t) {
+                if (findChild(own.itemAt(t), "cueReviewTrackTitle").text === title) {
+                    return findChild(own.itemAt(t), "moveCuesSwitch");
+                }
+            }
+            return null;
+        };
+        compare(ownSwitch("Far, Somebody").checked, true);
+        compare(ownSwitch("Near, Somebody").checked, true);
+        compare(ownSwitch("Edge, Somebody").checked, false);
+        compare(keptLine.visible, true);
+        compare(keptLine.text, "1 track(s) kept the choice you made by hand.");
+        verify(waitForPolish(page.Window.window));
+        verify(keptLine.width > 0 && keptLine.height > 0, "the line has room: " + keptLine.width + "x" + keptLine.height);
+        const applyButton = findChild(page, "cueReviewApplyThreshold");
+        verify(keptLine.mapToItem(null, 0, 0).y >= applyButton.mapToItem(null, 0, applyButton.height).y,
+               "the line sits under the buttons");
         // A choice made in the section stays the section's: the switch
         // turns, the list is not made again.
         const first = own.itemAt(0);
@@ -868,6 +908,21 @@ TestCase {
         compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["moveCues", "far", false]]));
         verify(own.itemAt(0) === first, "the section not made again");
         compare(findChild(first, "moveCuesSwitch").checked, false);
+        // Move all is the person's choice for every track: the line goes.
+        findChild(page, "cueReviewAllOn").clicked();
+        compare(keptLine.visible, false);
+        compare(ownSwitch("Edge, Somebody").checked, true);
+        // While a save writes, no switch or button can be used.
+        fake.saveWriting = true;
+        for (const name of ["cueReviewApplyThreshold", "cueReviewAllOn", "cueReviewAllOff"]) {
+            compare(findChild(page, name).enabled, false, name);
+        }
+        for (let t = 0; t < own.count; ++t) {
+            compare(findChild(own.itemAt(t), "moveCuesSwitch").enabled, false);
+        }
+        fake.saveWriting = false;
+        compare(findChild(first, "moveCuesSwitch").enabled, true);
+        compare(applyButton.enabled, true);
         review.close();
         tryCompare(review, "visible", false);
     }

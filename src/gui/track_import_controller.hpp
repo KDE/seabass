@@ -103,13 +103,19 @@ class TrackImportController : public QObject
     // starts on. From the settings (CueFollowThresholdKey); 0 to 100, 0
     // asks about every track. Set by applyCueThreshold().
     Q_PROPERTY(int cueFollowThresholdMs READ cueFollowThresholdMs NOTIFY cueFollowThresholdChanged)
+    // A save is writing to the stick: the review's switches cannot change
+    // until it has finished (setMoveCues() and the others refuse).
+    Q_PROPERTY(bool saveWriting READ saveWriting NOTIFY saveWritingChanged)
     // The review of the cues on the old grid: one entry per track whose
     // Analyse again change still waits and whose cues would move, of this
     // run and earlier ones: {id, title (with the artist), gridShiftMs,
     // oldBpm, newBpm, moveCues (as the list was made: movesCues() says it
     // now), largestMoveMs (the largest move of its cues, a loop's end
-    // too, as an amount: what the threshold is compared with), offBeat,
-    // rows: [{label, name, color, isLoop, oldText, newText, diffMs,
+    // too, as an amount and as stored in whole ms, the larger: what the
+    // threshold is compared with, application::largestCueMoveMs()),
+    // offBeat, rows: [{label, name, color, isLoop, oldText, newText,
+    // diffMs (the start's move the same way, cut to whole ms, with its
+    // sign: never more than largestMoveMs, never less than the stored move),
     // oldEndText, newEndText, strip: {spanMs, columns: [{low, mid, high}],
     // oldBeats, newBeats, oldCueMs, newCueMs, oldEndMs, newEndMs}}]}, the
     // strip's times in ms from its start, all on one timeline.
@@ -136,6 +142,7 @@ public:
     QString reanalysingPlaylist() const { return m_reanalysingPlaylist; }
     QVariantMap lastReanalysis() const { return m_lastReanalysis; }
     int cueFollowThresholdMs() const;
+    bool saveWriting() const;
     QVariantList cueReview() const;
     QStringList cueReviewTooDifferent() const;
 
@@ -170,18 +177,25 @@ public:
     // How many tracks of `playlist` wait for Save with a new analysis.
     Q_INVOKABLE int reanalysisCount(const QString &playlist) const;
     // Whether the save moves the cues of the track whose change is
-    // `changeId` onto its new grid; all of the review's at once.
-    Q_INVOKABLE void setMoveCues(const QString &changeId, bool move);
-    Q_INVOKABLE void setMoveCuesForAll(bool move);
+    // `changeId` onto its new grid; all of the review's at once. Each is
+    // the person's choice for the track (or for every track), which the
+    // threshold leaves alone from then on. Refused (false, nothing
+    // changed) while a save is writing: the save reads each switch at its
+    // own change.
+    Q_INVOKABLE bool setMoveCues(const QString &changeId, bool move);
+    Q_INVOKABLE bool setMoveCuesForAll(bool move);
     // Whether the save moves the cues of the track whose change is
     // `changeId`, as it is now.
     Q_INVOKABLE bool movesCues(const QString &changeId) const;
     // `ms` (0 to 100) as the threshold from now on, kept in the settings,
-    // and applied to every track of the review: those whose largest move
-    // is under it switched on, the rest off. Like setMoveCuesForAll(),
-    // each switch that turns is told by moveCuesChanged(), and the list
-    // is not made again.
-    Q_INVOKABLE void applyCueThreshold(int ms);
+    // and applied to every track of the review whose switch the person
+    // has not set (setMoveCues(), setMoveCuesForAll()): those whose
+    // largest move is under it switched on, the rest off. Like
+    // setMoveCuesForAll(), each switch that turns is told by
+    // moveCuesChanged(), and the list is not made again. Returns how many
+    // tracks kept a choice made by hand that the threshold would have
+    // turned; -1, with nothing changed, while a save is writing.
+    Q_INVOKABLE int applyCueThreshold(int ms);
     // The audio file extensions a file dialog should offer, as
     // "*.mp3 *.flac ...".
     Q_INVOKABLE QString fileDialogFilter() const;
@@ -199,6 +213,7 @@ signals:
     // review updates that switch alone, not the whole list.
     void moveCuesChanged(const QString &changeId, bool move);
     void cueFollowThresholdChanged();
+    void saveWritingChanged();
     // A save wrote at least one imported track: the page should rescan.
     void tracksImported();
 

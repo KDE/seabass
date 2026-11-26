@@ -428,9 +428,13 @@ Page {
     // grid, each such cue where it is and where the new grid would take
     // it, and a switch per track. Nothing moves for a track whose switch
     // is off. The tracks whose every move is under the threshold come
-    // last, switched on already: they follow on their own unless the
-    // person switches them off. A threshold set here applies only when
-    // "Apply to all" is pressed, so turning the spin box moves nothing.
+    // last, in a section of their own by the size of their moves; their
+    // switches started on, and say what each will do now. A threshold set
+    // here applies only when "Apply to all" is pressed, so turning the
+    // spin box moves nothing, and it leaves alone a switch the person set:
+    // the line under the buttons says how many kept such a choice. Move
+    // all and Move none are the person's choice for every track. While a
+    // save writes, nothing here can be changed.
     SeabassDialog {
         id: cueReviewDialog
         objectName: "cueReviewDialog"
@@ -447,8 +451,13 @@ Page {
         // Closed until asked for: each of its cues has a picture, and a
         // long playlist can have many tracks in it.
         property bool ownTracksOpen: false
+        // How many tracks the last Apply to all left as the person set
+        // them, against the threshold; 0 once anything else is chosen.
+        property int keptByHand: 0
+        readonly property bool locked: root.trackImportController.saveWriting ?? false
         onAboutToShow: {
             ownTracksOpen = false;
+            keptByHand = 0;
             thresholdSpin.value = thresholdMs;
         }
         severity: SeabassDialog.Question
@@ -492,18 +501,38 @@ Page {
             Button {
                 objectName: "cueReviewApplyThreshold"
                 text: qsTr("Apply to all")
-                onClicked: root.trackImportController.applyCueThreshold(thresholdSpin.value)
+                enabled: !cueReviewDialog.locked
+                onClicked: {
+                    const kept = root.trackImportController.applyCueThreshold(thresholdSpin.value);
+                    cueReviewDialog.keptByHand = kept > 0 ? kept : 0;
+                }
             }
             Button {
                 objectName: "cueReviewAllOn"
                 text: qsTr("Move all")
-                onClicked: root.trackImportController.setMoveCuesForAll(true)
+                enabled: !cueReviewDialog.locked
+                onClicked: {
+                    cueReviewDialog.keptByHand = 0;
+                    root.trackImportController.setMoveCuesForAll(true);
+                }
             }
             Button {
                 objectName: "cueReviewAllOff"
                 text: qsTr("Move none")
-                onClicked: root.trackImportController.setMoveCuesForAll(false)
+                enabled: !cueReviewDialog.locked
+                onClicked: {
+                    cueReviewDialog.keptByHand = 0;
+                    root.trackImportController.setMoveCuesForAll(false);
+                }
             }
+        }
+        Label {
+            objectName: "cueReviewKeptByHand"
+            visible: cueReviewDialog.keptByHand > 0
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            text: qsTr("%n track(s) kept the choice you made by hand.", "", cueReviewDialog.keptByHand)
         }
         // One track of the review: its title, by how much its cues move,
         // its switch, and each cue with both times and a picture.
@@ -544,6 +573,7 @@ Page {
                     // made: a section made later (the closed one opened,
                     // the threshold applied) shows the choices since.
                     checked: root.trackImportController.movesCues(reviewTrack.modelData.id)
+                    enabled: !cueReviewDialog.locked
                     onToggled: root.trackImportController.setMoveCues(reviewTrack.modelData.id, checked)
                     // Only this switch follows a choice: the list and its
                     // pictures stay as they are, and so does where it is
@@ -620,6 +650,17 @@ Page {
                 id: cueReviewColumn
                 width: parent.width
                 spacing: Theme.rowSpacing * 2
+                // The tracks by the size of their moves, not by their
+                // switches: each switch says what its track will do.
+                Label {
+                    objectName: "cueReviewAskedHeading"
+                    visible: cueReviewDialog.thresholdMs > 0 && cueReviewDialog.askedTracks.length > 0
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    font.bold: true
+                    text: qsTr("Moves of %1 ms or more: %n track(s)", "", cueReviewDialog.askedTracks.length)
+                        .arg(cueReviewDialog.thresholdMs)
+                }
                 Repeater {
                     objectName: "cueReviewTracks"
                     model: cueReviewDialog.askedTracks
@@ -636,7 +677,7 @@ Page {
                         // Opened from the keyboard as any button is.
                         focusPolicy: Qt.StrongFocus
                         onClicked: cueReviewDialog.ownTracksOpen = !cueReviewDialog.ownTracksOpen
-                        text: qsTr("Moved on their own (less than %1 ms): %n track(s)", "", cueReviewDialog.ownTracks.length)
+                        text: qsTr("Moves of less than %1 ms: %n track(s)", "", cueReviewDialog.ownTracks.length)
                             .arg(cueReviewDialog.thresholdMs)
                         Accessible.name: text
                         contentItem: RowLayout {

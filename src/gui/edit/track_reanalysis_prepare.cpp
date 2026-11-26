@@ -251,9 +251,7 @@ PreparedReanalysis prepareReanalysis(const ReanalysisRequest &request, const app
         review.oldBpm = file.bpm;
         const bool onTheirOwn = application::cuesFollowOnTheirOwn(review.plan, request.cueFollowThresholdMs);
         change->setCueReview(std::move(review));
-        if (onTheirOwn) {
-            change->setMoveCuesOnTheirOwn(request.cueFollowThresholdMs);
-        }
+        change->setMoveCuesByThreshold(onTheirOwn, request.cueFollowThresholdMs);
         prepared.changes.push_back(std::move(change));
     }
     return prepared;

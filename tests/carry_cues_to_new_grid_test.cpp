@@ -19,6 +19,8 @@
 //    end counted, earlier moves by their amount, under the threshold (at
 //    it is not under); a threshold of 0 asks always; a plan that moves
 //    nothing, or whose grid changed too much, never follows.
+// 8. A move counts as stored too: rekordbox keeps whole ms, each position
+//    cut, so 1100.0 to 1090.7 is a move of 10, not of 9.3.
 
 #include <cassert>
 #include <cmath>
@@ -199,6 +201,33 @@ int main()
         assert(!application::cuesFollowOnTheirOwn(tooMuch, 100.0));
         std::cout << "case 7 (the largest move, a loop's end too, under the threshold follows on its own; at it, or "
                      "at 0, asks) OK\n";
+    }
+
+    // 8.
+    {
+        // The new grid 9.3 ms earlier. A cue at 1100.0 lands at 1090.7,
+        // stored as 1090: a move of 10 whole ms, not under 10.
+        const std::vector<double> earlier = grid(90.7, 500.0, 40);
+        const CueGridPlan whole = application::planCueGridMoves({hot(1, 1100.0)}, oldGrid, earlier);
+        assert(whole.verdict == CueGridPlan::Verdict::Moves && whole.moves.size() == 1);
+        assert(near(whole.moves[0].newMs - whole.moves[0].oldMs, -9.3));
+        assert(near(application::cueMoveMs(1100.0, 1090.7), 10.0));
+        assert(near(application::largestCueMoveMs(whole), 10.0));
+        assert(!application::cuesFollowOnTheirOwn(whole, 10.0));
+        assert(application::cuesFollowOnTheirOwn(whole, 11.0));
+        // From 1100.5 to 1091.2 is stored as 1100 to 1091: 9 whole ms, and
+        // the move itself, 9.3, is the larger.
+        const CueGridPlan under = application::planCueGridMoves({hot(1, 1100.5)}, oldGrid, earlier);
+        assert(near(application::largestCueMoveMs(under), 9.3));
+        assert(application::cuesFollowOnTheirOwn(under, 10.0));
+        // A loop whose start is stored 9 ms earlier and whose end 10: the
+        // end decides.
+        const CueGridPlan withLoop = application::planCueGridMoves({loop(2100.5, 3100.0)}, oldGrid, earlier);
+        assert(withLoop.moves.size() == 1 && withLoop.moves[0].isLoop);
+        assert(near(application::largestCueMoveMs(withLoop), 10.0));
+        assert(!application::cuesFollowOnTheirOwn(withLoop, 10.0));
+        std::cout << "case 8 (a move just under the threshold that is stored as a whole ms at it does not follow on "
+                     "its own; a loop's stored end counts) OK\n";
     }
 
     std::cout << "carry_cues_to_new_grid_test: all cases passed\n";

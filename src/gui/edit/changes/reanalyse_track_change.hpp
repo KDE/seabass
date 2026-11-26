@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -63,7 +64,7 @@ namespace seabass::gui
 // (application::planCueGridMoves()), only where the person asked for it
 // for this track (setMoveCues(), off until then, settable until the
 // save), or where every move is under the threshold the person set for
-// moves that need no asking (setMoveCuesOnTheirOwn(), which the review
+// moves that need no asking (setMoveCuesByThreshold(), which the review
 // shows and the person can switch off). At the save, before anything is
 // written, every library's cues for the file are read as they are then,
 // for this file alone (the
@@ -193,25 +194,27 @@ public:
     const CueReview &cueReview() const { return m_cueReview; }
     // Whether the save moves the cues that sit on the old grid; off by
     // default. Set on the GUI thread while the change waits, read by the
-    // save's. setMoveCues() is the person's choice for this track;
-    // setMoveCuesOnTheirOwn() turns the move on by the threshold rule
-    // (application::cuesFollowOnTheirOwn() under `thresholdMs`), which the
-    // save's log says, so a move nobody asked for one by one is named as
-    // such. A choice made afterwards takes the rule's place.
-    void setMoveCues(bool move)
+    // save's. setMoveCues() is the person's choice for this track, and
+    // stays theirs: moveCuesChosen() says so, and the threshold rule
+    // leaves such a track alone. setMoveCuesByThreshold() is the rule's
+    // (application::cuesFollowOnTheirOwn() under `thresholdMs`): on with
+    // the threshold kept, which the save's log names, or off. A switch the
+    // person set is never said to have moved on its own. One value holds
+    // the switch and whose it is, so the save reads both at once.
+    void setMoveCues(bool move) { m_cueSwitch.store(move ? OnByPerson : OffByPerson); }
+    void setMoveCuesByThreshold(bool follows, int thresholdMs)
     {
-        m_onTheirOwnUnderMs.store(0);
-        m_moveCues.store(move);
+        m_cueSwitch.store(follows && thresholdMs > 0 ? thresholdMs : OffByRule);
     }
-    void setMoveCuesOnTheirOwn(int thresholdMs)
+    bool moveCues() const { return isOn(m_cueSwitch.load()); }
+    bool moveCuesChosen() const
     {
-        m_onTheirOwnUnderMs.store(thresholdMs);
-        m_moveCues.store(true);
+        const int now = m_cueSwitch.load();
+        return now == OnByPerson || now == OffByPerson;
     }
-    bool moveCues() const { return m_moveCues.load(); }
     // The threshold the cues follow on their own under; 0 when they move
-    // (or stay) by the person's choice.
-    int movesOnTheirOwnUnderMs() const { return m_moveCues.load() ? m_onTheirOwnUnderMs.load() : 0; }
+    // (or stay) by the person's choice, or stay by the rule.
+    int movesOnTheirOwnUnderMs() const { return std::max(m_cueSwitch.load(), 0); }
 
     // The review's picture of one planned move (TrackImportController::
     // cueReview): {spanMs, columns: [{low, mid, high}], oldBeats, newBeats,
@@ -249,8 +252,13 @@ private:
     QString m_artist;
     int m_itemCountHint = 1;
     CueReview m_cueReview;
-    std::atomic<bool> m_moveCues{false};
-    std::atomic<int> m_onTheirOwnUnderMs{0};
+    // The switch: OffByRule, OnByPerson, OffByPerson, or a threshold in
+    // ms (above 0) the cues follow on their own under.
+    static constexpr int OffByRule = 0;
+    static constexpr int OnByPerson = -1;
+    static constexpr int OffByPerson = -2;
+    static bool isOn(int cueSwitch) { return cueSwitch > 0 || cueSwitch == OnByPerson; }
+    std::atomic<int> m_cueSwitch{OffByRule};
     std::optional<RekordboxWrite> m_written;
 };
 

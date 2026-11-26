@@ -27,6 +27,22 @@
 namespace seabass::gui
 {
 
+namespace
+{
+
+// A cue's move as the review shows it, in whole ms with its sign: the move
+// as application::cueMoveMs() counts it (the larger of the move and the
+// move as stored), cut to whole ms the way the track's largest move is,
+// so a row never reads more than its track and never less than the files
+// will hold.
+int shownMoveMs(double oldMs, double newMs)
+{
+    const int amount = static_cast<int>(std::floor(application::cueMoveMs(oldMs, newMs)));
+    return newMs < oldMs ? -amount : amount;
+}
+
+}  // namespace
+
 TrackImportController::TrackImportController(QObject *parent)
     : QObject(parent)
 {
@@ -129,7 +145,9 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
         forgetStaged();
         forgetReanalysis();
         m_session = session;
+        emit saveWritingChanged();
         if (m_session) {
+            connect(m_session, &LibraryEditSession::stateChanged, this, &TrackImportController::saveWritingChanged);
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
                 if (m_reanalysed.erase(changeId) > 0) {
                     ++m_pendingRevision;
@@ -620,24 +638,45 @@ void TrackImportController::dropReanalysis(const QString &playlist)
     }
 }
 
-void TrackImportController::setMoveCues(const QString &changeId, bool move)
+bool TrackImportController::saveWriting() const
 {
-    for (const auto &change : m_reviewed) {
-        if (change->id() == changeId && change->moveCues() != move) {
-            change->setMoveCues(move);
-            emit moveCuesChanged(changeId, move);
-        }
-    }
+    return m_session && m_session->writing();
 }
 
-void TrackImportController::setMoveCuesForAll(bool move)
+bool TrackImportController::setMoveCues(const QString &changeId, bool move)
 {
+    if (saveWriting()) {
+        return false;
+    }
     for (const auto &change : m_reviewed) {
-        if (!change->cueReview().plan.moves.empty() && change->moveCues() != move) {
+        if (change->id() == changeId) {
+            const bool was = change->moveCues();
             change->setMoveCues(move);
+            if (was != move) {
+                emit moveCuesChanged(changeId, move);
+            }
+        }
+    }
+    return true;
+}
+
+bool TrackImportController::setMoveCuesForAll(bool move)
+{
+    if (saveWriting()) {
+        return false;
+    }
+    for (const auto &change : m_reviewed) {
+        if (change->cueReview().plan.moves.empty()) {
+            continue;
+        }
+        // The person's choice for every track, those already so included.
+        const bool was = change->moveCues();
+        change->setMoveCues(move);
+        if (was != move) {
             emit moveCuesChanged(change->id(), move);
         }
     }
+    return true;
 }
 
 bool TrackImportController::movesCues(const QString &changeId) const
@@ -651,8 +690,11 @@ int TrackImportController::cueFollowThresholdMs() const
     return storedCueFollowThresholdMs(openSeabassSettings());
 }
 
-void TrackImportController::applyCueThreshold(int ms)
+int TrackImportController::applyCueThreshold(int ms)
 {
+    if (saveWriting()) {
+        return -1;
+    }
     ms = clampedCueFollowThresholdMs(ms);
     if (ms != cueFollowThresholdMs()) {
         QSettings settings = openSeabassSettings();
@@ -660,21 +702,24 @@ void TrackImportController::applyCueThreshold(int ms)
         settings.sync();
         emit cueFollowThresholdChanged();
     }
+    int keptByHand = 0;
     for (const auto &change : m_reviewed) {
         const auto &plan = change->cueReview().plan;
         if (plan.moves.empty()) {
             continue;
         }
+        const bool follows = application::cuesFollowOnTheirOwn(plan, ms);
         const bool was = change->moveCues();
-        if (application::cuesFollowOnTheirOwn(plan, ms)) {
-            change->setMoveCuesOnTheirOwn(ms);
-        } else {
-            change->setMoveCues(false);
+        if (change->moveCuesChosen()) {
+            keptByHand += was != follows ? 1 : 0;
+            continue;
         }
+        change->setMoveCuesByThreshold(follows, ms);
         if (change->moveCues() != was) {
             emit moveCuesChanged(change->id(), change->moveCues());
         }
     }
+    return keptByHand;
 }
 
 QVariantList TrackImportController::cueReview() const
@@ -694,7 +739,7 @@ QVariantList TrackImportController::cueReview() const
                 {QStringLiteral("isLoop"), move.isLoop},
                 {QStringLiteral("oldText"), ReanalyseTrackChange::clockText(move.oldMs)},
                 {QStringLiteral("newText"), ReanalyseTrackChange::clockText(move.newMs)},
-                {QStringLiteral("diffMs"), static_cast<int>(std::lround(move.newMs - move.oldMs))},
+                {QStringLiteral("diffMs"), shownMoveMs(move.oldMs, move.newMs)},
                 {QStringLiteral("strip"), change->reviewStrip(move)},
             };
             if (move.isLoop) {

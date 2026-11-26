@@ -2227,6 +2227,7 @@ int main(int argc, char **argv)
                 (void)firstBeat;
                 const bool near = name == "q near.wav";
                 const std::vector<domain::Track> rows = rowsOf(name);
+                assert(rows.size() == 3);
                 for (std::size_t i = 0; i < rows.size(); ++i) {
                     const double hot = cueAt(rows[i], true);
                     std::cerr << "  " << name << " " << libraries[i] << ": hot cue " << onBeat[name] << " to " << hot
@@ -2251,6 +2252,170 @@ int main(int argc, char **argv)
             assert(lineOf("q far").find("moved Hot cue 1") == std::string::npos);
             std::cout << "case 16q (the threshold: a 5 ms track follows on its own and says so in the log, a 40 ms one "
                          "is asked; Apply to all at 50 and 0, kept for the next run) OK\n";
+        }
+
+        // Tracks imported into `playlist` and saved, each given hot cue 1 on
+        // its ninth beat in all three libraries, then their audio on the
+        // stick replaced by the same music with its first beat at the
+        // given second (0.25 before) and analysed again. The review's ids
+        // by name, and the cue's place before.
+        struct ShiftedTrack
+        {
+            std::string name;
+            int seconds = 0;
+            double firstBeat = 0.25;
+        };
+        const auto shiftedTracks = [&](const std::vector<ShiftedTrack> &tracks, const QString &playlist) {
+            QVariantList files;
+            for (const ShiftedTrack &track : tracks) {
+                writeBeatChordWav(computer / track.name, track.seconds, 120.0, aMinor);
+                files.push_back(pathToQString(computer / track.name));
+            }
+            assert(offer(files, playlist, true));
+            assert(controller.lastResult().value("staged").toInt() == static_cast<int>(tracks.size()));
+            assert(saveNow().value("error").toString().isEmpty());
+            std::map<std::string, std::pair<QString, double>> placed;
+            for (const ShiftedTrack &track : tracks) {
+                const std::vector<domain::Track> rows = rowsOf(track.name);
+                const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), rows[0].sourceId);
+                placed[track.name].second = std::round(grid[8].timeMs);
+                stageCue(QStringLiteral("rekordbox"), rows[0], placed[track.name].second, true, 1);
+                stageCue(QStringLiteral("engine"), rows[2], placed[track.name].second, true, 1);
+            }
+            assert(saveNow().value("written").toInt() == 2 * static_cast<int>(tracks.size()));
+            for (const ShiftedTrack &track : tracks) {
+                writeBeatChordWav(onStick / track.name, track.seconds, 120.0, aMinor, track.firstBeat);
+            }
+            analyseAgainOn(playlist);
+            for (const QVariant &entry : controller.cueReview()) {
+                const QVariantMap review = entry.toMap();
+                for (const ShiftedTrack &track : tracks) {
+                    const std::string stem = track.name.substr(0, track.name.size() - 4);
+                    if (review.value("title").toString().startsWith(QString::fromStdString(stem))) {
+                        placed[track.name].first = review.value("id").toString();
+                        std::cerr << "  " << stem << ": largest move " << review.value("largestMoveMs").toDouble()
+                                  << " ms" << std::endl;
+                    }
+                }
+            }
+            for (const ShiftedTrack &track : tracks) {
+                assert(!placed[track.name].first.isEmpty());
+            }
+            return placed;
+        };
+        const auto logLineOf = [](const std::string &log, const std::string &title) {
+            const auto at = log.find("track-reanalysis: analysed \"" + title + "\"");
+            assert(at != std::string::npos);
+            return log.substr(at, log.find('\n', at) - at);
+        };
+
+        // 16r. The person's own switches. Two tracks as in 16q, about 5 ms
+        //      and 40 ms, at the threshold of 10: the near one switched off
+        //      by hand, the far one on. Apply to all leaves both as the
+        //      person set them, at 50, 0 and 10, and says how many kept a
+        //      choice the threshold would have turned; Move none and Move
+        //      all reach them all the same, and are the person's choice
+        //      too. While the save writes, every switch change is refused.
+        //      Saved: the near track's cue exactly where it was in all
+        //      three libraries and its log line without "on their own";
+        //      the far one moved, by the person's choice.
+        {
+            assert(controller.cueFollowThresholdMs() == DefaultCueFollowThresholdMs);
+            const auto placed = shiftedTracks({{"x near.wav", 71, 0.255}, {"x far.wav", 72, 0.29}}, QStringLiteral("Hand"));
+            const QString nearId = placed.at("x near.wav").first;
+            const QString farId = placed.at("x far.wav").first;
+            assert(controller.movesCues(nearId) && !controller.movesCues(farId));
+            assert(controller.setMoveCues(nearId, false) && controller.setMoveCues(farId, true));
+            {
+                QSignalSpy choice(&controller, &TrackImportController::moveCuesChanged);
+                // At 50 the threshold would turn the near one on, at 0 the
+                // far one off, at 10 both.
+                assert(controller.applyCueThreshold(50) == 1);
+                assert(!controller.movesCues(nearId) && controller.movesCues(farId));
+                assert(controller.applyCueThreshold(0) == 1);
+                assert(!controller.movesCues(nearId) && controller.movesCues(farId));
+                assert(controller.applyCueThreshold(DefaultCueFollowThresholdMs) == 2);
+                assert(!controller.movesCues(nearId) && controller.movesCues(farId));
+                assert(choice.count() == 0);
+            }
+            assert(controller.setMoveCuesForAll(false));
+            assert(!controller.movesCues(nearId) && !controller.movesCues(farId));
+            assert(controller.setMoveCuesForAll(true));
+            assert(controller.movesCues(nearId) && controller.movesCues(farId));
+            // Move all was the person's: at 10 the far one stays on.
+            assert(controller.applyCueThreshold(DefaultCueFollowThresholdMs) == 1);
+            assert(controller.movesCues(nearId) && controller.movesCues(farId));
+            assert(controller.setMoveCues(nearId, false));
+
+            const std::vector<domain::Track> before = rowsOf("x near.wav");
+            assert(before.size() == 3);
+            // While the save writes (inside its first change, on the GUI
+            // thread as the review would): every change refused, nothing
+            // turned, the threshold kept.
+            bool tried = false;
+            bool refused = false;
+            ReanalyseTrackChange::setStepHookForTesting([&](const std::string &step) {
+                if (tried || step.rfind("engine-grid:", 0) != 0) {
+                    return;
+                }
+                tried = true;
+                QMetaObject::invokeMethod(
+                    &controller,
+                    [&] {
+                        refused = controller.saveWriting() && !controller.setMoveCues(nearId, true)
+                                  && !controller.setMoveCuesForAll(true) && controller.applyCueThreshold(50) == -1
+                                  && !controller.movesCues(nearId) && controller.movesCues(farId)
+                                  && controller.cueFollowThresholdMs() == DefaultCueFollowThresholdMs;
+                    },
+                    Qt::BlockingQueuedConnection);
+            });
+            const std::size_t logFrom = logSize();
+            const QVariantMap saved = saveNow();
+            ReanalyseTrackChange::setStepHookForTesting({});
+            assert(tried && refused);
+            assert(!controller.saveWriting());
+            assert(saved.value("written").toInt() == 2);
+            const char *libraries[] = {"DeviceLibrary", "OneLibrary", "Engine"};
+            const std::vector<domain::Track> after = rowsOf("x near.wav");
+            assert(after.size() == 3);
+            for (std::size_t i = 0; i < after.size(); ++i) {
+                std::cerr << "  x near " << libraries[i] << ": hot cue " << cueAt(before[i], true) << " to "
+                          << cueAt(after[i], true) << std::endl;
+                assert(!cuesOf(before[i]).empty() && cuesOf(after[i]) == cuesOf(before[i]));
+            }
+            const std::vector<domain::Track> far = rowsOf("x far.wav");
+            assert(far.size() == 3);
+            for (const domain::Track &row : far) {
+                assert(std::abs(cueAt(row, true) - (placed.at("x far.wav").second + 40.0)) < 4.0);
+            }
+            const std::string log = logSince(logFrom);
+            const std::string nearLine = logLineOf(log, "x near");
+            assert(nearLine.find("on their own") == std::string::npos);
+            assert(nearLine.find("moved Hot cue") == std::string::npos);
+            const std::string farLine = logLineOf(log, "x far");
+            assert(farLine.find("moved Hot cue 1") != std::string::npos);
+            assert(farLine.find("on their own") == std::string::npos);
+            std::cout << "case 16r (switches set by hand: Apply to all leaves them and counts them, Move all and Move "
+                         "none reach them; refused while the save writes; a small track switched off keeps its cues "
+                         "in all three libraries) OK\n";
+        }
+
+        // 16s. A track the threshold switched on, then Move all: the move is
+        //      the person's, and the log does not say it moved on its own.
+        {
+            const auto placed = shiftedTracks({{"y near.wav", 73, 0.255}}, QStringLiteral("Mine"));
+            const QString nearId = placed.at("y near.wav").first;
+            assert(controller.movesCues(nearId));
+            assert(controller.setMoveCuesForAll(true));
+            const std::size_t logFrom = logSize();
+            assert(saveNow().value("written").toInt() == 1);
+            const std::string line = logLineOf(logSince(logFrom), "y near");
+            std::cerr << "  y near: ..." << line.substr(line.find("; its cue points") == std::string::npos ? 0 : line.find("; its cue points"), 160)
+                      << std::endl;
+            assert(line.find("moved Hot cue 1") != std::string::npos);
+            assert(line.find("on their own") == std::string::npos);
+            std::cout << "case 16s (a track the threshold switched on, then Move all: moved, and not said to have "
+                         "moved on its own) OK\n";
         }
     }
 

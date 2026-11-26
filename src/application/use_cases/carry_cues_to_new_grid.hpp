@@ -83,9 +83,14 @@ struct CueGridPlan
 CueGridPlan planCueGridMoves(const std::vector<domain::CuePoint> &cues, const std::vector<double> &oldBeats,
                              const std::vector<double> &newBeats);
 
-// The largest move of the plan, in ms and as an amount (earlier and later
-// alike): of every move's start and of a loop's end. 0 for a plan that
-// moves nothing.
+// One move from `oldMs` to `newMs` as an amount (earlier and later
+// alike), and as it is stored: rekordbox's analysis files keep whole ms,
+// each position cut to the whole ms below it, so a move of 9.3 ms from
+// 1000.0 to 990.7 is stored as 1000 to 990, 10 ms. The larger of the two.
+double cueMoveMs(double oldMs, double newMs);
+
+// The largest move of the plan (cueMoveMs()): of every move's start and
+// of a loop's end. 0 for a plan that moves nothing.
 double largestCueMoveMs(const CueGridPlan &plan);
 
 // Whether the track's cues follow the new grid without the person being

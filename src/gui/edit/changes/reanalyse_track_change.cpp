@@ -760,7 +760,9 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         std::vector<std::pair<std::int64_t, std::vector<domain::CuePoint>>> engineCues;
         std::vector<application::CueGridMove> movedForLog;
         bool cuesMove = false;
-        if (moveCues() && m_cueReview.plan.verdict == application::CueGridPlan::Verdict::Moves) {
+        // The switch and whose it is, read once for the whole change.
+        const int cueSwitch = m_cueSwitch.load();
+        if (isOn(cueSwitch) && m_cueReview.plan.verdict == application::CueGridPlan::Verdict::Moves) {
             const double tolerance = domain::cueToleranceMsFor(m_cueReview.oldBpm, m_cueReview.oldBpm);
             std::string whyNot;
             const auto refuse = [&](const std::string &why) {
@@ -980,8 +982,9 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
         }
 
         if (cuesMove) {
-            // A move nobody chose for this track alone is said to be one.
-            if (const int under = movesOnTheirOwnUnderMs(); under > 0) {
+            // A move the threshold turned on, not the person, is said to
+            // be one.
+            if (const int under = std::max(cueSwitch, 0); under > 0) {
                 done.push_back("its cue points moved on their own, every move under " + std::to_string(under) + " ms");
             }
             const auto said = [&](const std::string &library) {
