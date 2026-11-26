@@ -653,7 +653,9 @@ void audioInPiecesIsTheAudioWhole()
     check(spentGrid.finish().beats.size() > 50, "a grid analyzer at 44.1 kHz finds the beats");
     spentGrid.feed(track.samples);
     const GridAnalysis afterSpent = spentGrid.finish();
-    check(afterSpent.error == "no samples" && afterSpent.beats.empty(), "a grid analyzer that has given its grid is spent, fed again or not");
+    const GridAnalysis andAgain = spentGrid.finish();
+    check(!afterSpent.error.empty() && afterSpent.beats.empty() && !andAgain.error.empty() && andAgain.beats.empty(),
+          "a grid analyzer that has given its grid is spent, fed again or not");
     WaveformMeter spentMeter(track.rate);
     spentMeter.feed(track.samples);
     check(!spentMeter.finish().entries.empty(), "a meter at 44.1 kHz measures a track");

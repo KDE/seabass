@@ -127,8 +127,9 @@ void fft(std::vector<std::complex<double>> &data, bool inverse)
     // call to call, one each way, for the lengths that come again and
     // again: the listening and the tempo curve transform 16384 values
     // many times a track. The one long transform of a whole track
-    // builds a table of its own and lets go of it: kept, it would hold
-    // 64 MB a thread after a mix of an hour, until the thread ends.
+    // builds a table of its own and lets go of it: kept, the thread held
+    // 70 MB after a mix of an hour, until it ended (measured). A table
+    // has half as many entries as the transform has values.
     constexpr std::size_t LargestKept = 16384;
     thread_local std::array<std::vector<std::complex<double>>, 2> tables;
     std::vector<std::complex<double>> once;

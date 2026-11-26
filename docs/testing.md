@@ -554,8 +554,9 @@ replaced: a new fixture gets a new name and a new pin.
 
 `real_analysis_fixture_test` is registered only when one of the two is
 given (configure says "Real-analysis fixture: none" and names both
-switches otherwise; the test is still built), and fails when the
-directory's `MANIFEST.json` is missing or the tree does not match it: every file's size and
+switches otherwise; the test is still built, wherever Qt is), and fails
+when the directory's `MANIFEST.json` is missing or the tree does not
+match it: every file's size and
 SHA-256, and no file the manifest does not list. With a good tree it
 reads every paired track through the app's own readers (rekordbox's
 beat grid, PWAV, PWV4, PWV6, the scrolling and detail waveforms;

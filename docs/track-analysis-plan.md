@@ -1381,6 +1381,61 @@ as well (and none from the pictures on tempo), rekordbox is right on
 2,710 (95.9 %) and ours on 2,398 (84.9 %); on the collection 1,399 and
 1,368.
 
+### How sure the analyser is of itself, and the key against keys given by people
+
+The analysis says how sure it is: the grid a confidence from 0 to 1 (how
+much of the track the grid explains) and whether it follows a moving
+tempo, the key a margin (how far the best key's score is ahead of the
+second best's). The waveform says nothing of the kind: it is a
+measurement. The use Sebastian has in mind (26 November) is a list of
+tracks that had better be analysed again, by a later Seabass or by
+another program. Where the numbers are kept: in Seabass's own record on
+the stick, for now. Looked at and not taken: a section of our own in
+rekordbox's `.EXT` analysis file (the format is a chain of tagged
+sections, and rekordbox's own files differ in which they hold: of 2,851
+real ones 1,073 have `PVB2` and 24 lack `PSSI`; no player has been tried
+with one it cannot know), Engine's database (no spare field, and
+libdjinterop refuses a table or column it does not expect), and the tags
+of the music file itself (the only place that survives an import into
+another program, and a change to the user's music, which Seabass never
+makes).
+
+**What the grid's confidence is worth**, on the 2,808 tracks of the five
+sets judged right or wrong by the count above (480 wrong, 17 %). Of the
+269 tracks with a confidence under 0.3, 124 are wrong (46 %); between
+0.95 and 1, 153 of 1,562 (10 %). The least sure tenth of the tracks
+holds 26 % of the wrong grids, the least sure half 71 %. It sees a grid
+at another tempo sometimes (214 wrong grids, middle confidence 0.66, a
+quarter of them at 0), a grid over 10 ms off hardly (155, 0.89), and a
+grid half a beat out not at all (107, 0.95, where the right grids have
+0.97): a grid on the off-beats explains the track as well as one on the
+beats. So it marks the worst cases and is no ranking. A better number
+would say how close the choice between a tempo and its double was, and
+between the beat and the off-beat. Followed grids are wrong more often
+than straight ones (168 of 613, 27 %, against 312 of 2,195, 14 %).
+(`analysis_benchmark` writes the confidence and the margin beside each
+result.)
+
+**The key against keys given by people.** The GiantSteps key set (604
+two-minute clips of electronic music) and the GiantSteps-MTG set (1,159
+clips whose key the annotators were sure of) have keys given by people,
+not by a program; rekordbox 7 and Engine DJ analysed the same clips.
+Right, rekordbox / Engine DJ / the weights the key detector was ported
+with: 58.8 / 59.4 / 61.4 % on the first set, 57.6 / 54.4 / 57.5 % on the
+second. The two programs agree with each other on 67 and 53 % of the
+clips. So neither is a truth, ours is at their level, and a key "as
+rekordbox has it" (the 68 % above) measures what a DJ is used to, not
+what is right. The weights are fitted to rekordbox's keys; fitting them
+to the keys given by people has not been tried. Flattening each frame's
+spectrum first, the one change that had gained against rekordbox, gains
+2.5 points on one set and loses 1 on the other: not taken.
+
+The margin, against the same 1,763 keys (ours wrong on 41 %): wrong on
+65 % of the least sure fifth of the clips and on 16 % of the surest
+fifth; the least sure half holds 70 % of the wrong keys. Worth a list,
+and no more exact than that. (Clips of two minutes at a low bit rate,
+and electronic music only.)
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one

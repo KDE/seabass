@@ -1133,6 +1133,11 @@ struct AudioResult
     int sampleRate = 0;
     BeatGridComparison comparison;
     std::string keyFound;
+    // What the analyser says of its own result, where it says anything
+    // (Seabass's grid: 0 to 1; Seabass's key: how far the best key is
+    // ahead of the second best). Under 0: nothing said.
+    double confidence = -1.0;
+    double keyMargin = -1.0;
 };
 
 double msSince(std::chrono::steady_clock::time_point start)
@@ -1180,6 +1185,7 @@ std::vector<AudioResult> analyseJob(const AudioJob &job, const std::vector<std::
             result.analyseMs = msSince(analyseStart);
             result.error = key.error;
             result.keyFound = key.key ? domain::keyName(*key.key) : std::string();
+            result.keyMargin = key.key ? key.margin : -1.0;
         } else if (result.key) {
             const baseline::KeyAnalysis key = baseline::makeBaselineKeyAnalyser(name)->analyse(source);
             result.analyseMs = msSince(analyseStart);
@@ -1191,6 +1197,7 @@ std::vector<AudioResult> analyseJob(const AudioJob &job, const std::vector<std::
             result.error = grid.error;
             if (grid.error.empty()) {
                 result.comparison = domain::compareBeatGrids(grid.beats, job.reference);
+                result.confidence = grid.confidence;
                 writeBeats(beatsDir, job.rekordboxId, name, grid.beats);
             }
         }
@@ -1274,11 +1281,12 @@ void writeAudioTsvHeader(std::ofstream &out)
            "max_abs_ms\thit_1ms\thit_3ms\thit_8ms\thit_20ms\ttempo\ttempo_ratio\tcover\trekordbox_shape\t"
            "rekordbox_bpm\tcandidate_shape\tcandidate_bpm\tcandidate_runs\tdrift_ms\tdrift_start_ms\t"
            "drift_end_ms\tagreed_subset\tkey_found\tkey_rekordbox\tkey_engine\tkey_vs_rekordbox\tkey_vs_engine\t"
-           "file\n";
+           "confidence\tkey_margin\tfile\n";
 }
 
 // The lines of one track, one per analyser. drift_ms and its two ends
-// are "-" where the drift is not known (another tempo, too few beats).
+// are "-" where the drift is not known (another tempo, too few beats),
+// confidence and key_margin where the analyser gave none.
 void writeAudioTsvRows(std::ofstream &out, const std::vector<AudioResult> &results)
 {
     char line[2048];
@@ -1319,6 +1327,14 @@ void writeAudioTsvRows(std::ofstream &out, const std::vector<AudioResult> &resul
                 << (r.error.empty() ? keyClass(r.keyFound, job.engineKey) : "-") << "\t";
         } else {
             out << "-\t-\t-\t-\t-\t";
+        }
+        for (const double sure : {r.confidence, r.keyMargin}) {
+            if (sure >= 0.0) {
+                std::snprintf(line, sizeof line, "%.4f\t", sure);
+                out << line;
+            } else {
+                out << "-\t";
+            }
         }
         out << job.file << "\n";
     }
