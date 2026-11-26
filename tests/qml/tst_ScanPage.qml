@@ -1150,6 +1150,39 @@ TestCase {
         compare(findChild(t.page, "trackListEmptyState").visible, false);
     }
 
+    // The playlist shown, hidden by the sidebar filter: the track list and
+    // the playlist shown stay as they are, no row is current while it is
+    // hidden, and clearing the filter makes its row current again (#106).
+    function test_hidingTheShownPlaylistKeepsItShown() {
+        const t = makeFilterPage();
+        const names = playlistNamesShown(t.playlists);
+        verify(names.length === 3, "All tracks and two playlists");
+        const shown = names[1];
+        const other = names[2];
+        t.page.selectPlaylist(1, shown);
+        tryCompare(t.playlists, "currentIndex", 1);
+        waitForRendering(t.page);
+        const tracksShown = t.tracks.count;
+
+        typeInto(t.playlistFilter, other.slice(-4));
+        tryCompare(t.playlists, "count", 2);
+        compare(JSON.stringify(playlistNamesShown(t.playlists)), JSON.stringify(["All tracks", other]));
+        compare(t.page.shownPlaylist, shown, "the playlist shown stays shown");
+        compare(t.tracks.count, tracksShown, "and so do its tracks");
+        compare(t.playlists.currentIndex, -1, "no row stands for it while it is hidden");
+
+        t.playlistFilter.text = "";
+        tryCompare(t.playlists, "count", 3);
+        compare(t.playlists.currentIndex, 1, "cleared, its row is current again");
+        compare(t.page.shownPlaylist, shown);
+    }
+
+    function test_theFiltersHaveNamesForScreenReaders() {
+        const t = makeFilterPage();
+        compare(t.playlistFilter.Accessible.name, "Filter playlists");
+        compare(t.search.Accessible.name, "Search tracks");
+    }
+
     function test_theTrackSearchNarrowsTheTracksOnly() {
         const t = makeFilterPage();
         typeInto(t.search, "1003");

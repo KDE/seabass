@@ -238,7 +238,19 @@ ListView {
     model: root.searchQuery.length === 0
         ? allNames
         : allNames.filter((n, i) => i === 0 || n.toLowerCase().includes(root.searchQuery.toLowerCase()))
-    currentIndex: root.selectedIndex
+    // Unfiltered, the row selectedIndex names, as always. Filtered, the
+    // row of the playlist shown, found by name in the list as it is
+    // narrowed (selectedIndex counts the unfiltered list), or none (-1)
+    // while the filter hides it; clearing the filter changes searchQuery,
+    // so selectedIndex is taken again (#106).
+    currentIndex: {
+        if (root.searchQuery.length === 0) {
+            return root.selectedIndex;
+        }
+        const wanted = root.shownPlaylist.length > 0 ? root.shownPlaylist
+            : root.selectedIndex === 0 ? "All tracks" : "";
+        return wanted.length > 0 ? root.model.indexOf(wanted) : -1;
+    }
 
     delegate: PlaylistRowDelegate {
         // index isn't redeclared here -- PlaylistRowDelegate's own root

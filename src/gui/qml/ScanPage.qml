@@ -1187,6 +1187,10 @@ Page {
         id: filterField
         property string clearText: "Clear filter"
         property string clearObjectName: ""
+        // What a screen reader calls the field: the placeholder is only
+        // its description.
+        property string accessibleName: placeholderText
+        Accessible.name: accessibleName
         rightPadding: filterClearButton.visible ? filterClearButton.width + Theme.tightSpacing : 0
         // As tall as the combo in the header, and on a ground Theme chose:
         // left to the style, a field sat 25 px taller than the combo and
@@ -1207,10 +1211,10 @@ Page {
             objectName: filterField.clearObjectName
             visible: filterField.text.length > 0
             anchors.right: parent.right
-            anchors.rightMargin: 2
+            anchors.rightMargin: Theme.scaled(2)
             anchors.verticalCenter: parent.verticalCenter
-            implicitWidth: Theme.iconSizeSmall + 8
-            implicitHeight: Theme.iconSizeSmall + 8
+            implicitWidth: Theme.iconSizeSmall + Theme.scaled(8)
+            implicitHeight: Theme.iconSizeSmall + Theme.scaled(8)
             flat: true
             text: filterField.clearText
             iconName: "edit-clear"
@@ -1493,6 +1497,7 @@ Page {
                     Layout.topMargin: Theme.tightSpacing
                     Layout.bottomMargin: Theme.tightSpacing
                     placeholderText: "Filter playlists..."
+                    accessibleName: "Filter playlists"
                     clearText: "Clear playlist filter"
                     clearObjectName: "playlistFilterClearButton"
                 }
@@ -1568,6 +1573,7 @@ Page {
                 Layout.topMargin: Theme.tightSpacing
                 Layout.bottomMargin: Theme.tightSpacing
                 placeholderText: "Search title, artist, or album..."
+                accessibleName: "Search tracks"
                 clearText: "Clear search"
                 clearObjectName: "searchClearButton"
                 onTextChanged: scanController.search(text)
