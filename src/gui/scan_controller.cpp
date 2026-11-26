@@ -1013,9 +1013,10 @@ void ScanController::applyFilters(bool inPlace)
         QString query = m_currentSearchQuery.toLower();
         std::vector<domain::Track> filtered;
         for (const auto &track : result) {
-            QString title = QString::fromStdString(track.title).toLower();
-            QString artist = QString::fromStdString(track.artist).toLower();
-            if (title.contains(query) || artist.contains(query)) {
+            const QString title = QString::fromStdString(track.title).toLower();
+            const QString artist = QString::fromStdString(track.artist).toLower();
+            const QString album = QString::fromStdString(track.album).toLower();
+            if (title.contains(query) || artist.contains(query) || album.contains(query)) {
                 filtered.push_back(track);
             }
         }

@@ -277,7 +277,7 @@ public:
     // by when the names change.
     Q_INVOKABLE QString currentPlaylistName(const QString &name) const;
 
-    // Matches against title or artist, case-insensitive substring. Empty
+    // Matches against title, artist or album, case-insensitive substring. Empty
     // clears the search.
     Q_INVOKABLE void search(const QString &query);
 

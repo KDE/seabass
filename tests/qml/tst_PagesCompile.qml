@@ -160,8 +160,9 @@ TestCase {
     // The gap under the breadcrumb, on two pages that build their body
     // differently. Bounded rather than exact: the numbers here were 16
     // and 19 against one platform's fonts, and the second is 16 on a
-    // real display, where the search field's height follows the desktop
-    // font. Neither number was the point -- the point is that the body
+    // real display, where the header's second row followed the desktop
+    // font (measured at the sidebar button, which leads that row since
+    // the search moved over the track list, #106). Neither number was the point -- the point is that the body
     // clears the crumb by about a page margin and does not drift into
     // either a collision or a hole. It also no longer skips itself when
     // the style is not the suite's default, which is how a test that had
@@ -185,11 +186,11 @@ TestCase {
         verify(scan !== null);
         waitForRendering(scan);
         var scanCrumb = crumbIn(scan.header);
-        var search = findChild(scan, "searchField");
-        verify(scanCrumb !== null && search !== null);
-        const scanGap = Math.round(search.mapToItem(scan, 0, 0).y - scanCrumb.mapToItem(scan, 0, scanCrumb.height).y);
+        const secondRow = findChild(scan, "playlistSidebarButton");
+        verify(scanCrumb !== null && secondRow !== null);
+        const scanGap = Math.round(secondRow.mapToItem(scan, 0, 0).y - scanCrumb.mapToItem(scan, 0, scanCrumb.height).y);
         verify(scanGap >= floor && scanGap <= ceiling,
-               "ScanPage: " + scanGap + " px between the crumb and the search field, wanted between "
+               "ScanPage: " + scanGap + " px between the crumb and the header's second row, wanted between "
                + floor + " and " + ceiling);
     }
 

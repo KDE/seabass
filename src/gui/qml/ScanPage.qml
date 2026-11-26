@@ -98,7 +98,7 @@ Page {
 
     // The playlist the list is showing, by name: set where the selection
     // is made, since the row number is the FILTERED list's when the
-    // playlist search is in use.
+    // playlist filter is in use.
     property string shownPlaylist: ""
     property var playlistEditController: PlaylistEditController {}
     Connections {
@@ -1178,6 +1178,48 @@ Page {
         return oneDecimal.endsWith(".0") ? oneDecimal.slice(0, -2) : oneDecimal;
     }
 
+    // A filter field with its own clear button: the playlist sidebar has
+    // one for playlist names and the track list one for its tracks, each
+    // over what it narrows (#106). One text used to narrow both, so a
+    // playlist's name typed to find it emptied the track list, and an
+    // artist typed to find tracks hid the playlist being looked at.
+    component FilterField: TextField {
+        id: filterField
+        property string clearText: "Clear filter"
+        property string clearObjectName: ""
+        rightPadding: filterClearButton.visible ? filterClearButton.width + Theme.tightSpacing : 0
+        // As tall as the combo in the header, and on a ground Theme chose:
+        // left to the style, a field sat 25 px taller than the combo and
+        // square beside its rounded neighbours.
+        implicitHeight: Theme.compactControlHeight
+        color: Theme.text
+        placeholderTextColor: Theme.textMuted
+        leftPadding: Theme.tightSpacing
+        background: Rectangle {
+            radius: Theme.cornerRadius
+            color: Theme.surface
+            border.color: filterField.activeFocus ? Theme.accent : Theme.border
+            border.width: 1
+        }
+
+        IconToolButton {
+            id: filterClearButton
+            objectName: filterField.clearObjectName
+            visible: filterField.text.length > 0
+            anchors.right: parent.right
+            anchors.rightMargin: 2
+            anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: Theme.iconSizeSmall + 8
+            implicitHeight: Theme.iconSizeSmall + 8
+            flat: true
+            text: filterField.clearText
+            iconName: "edit-clear"
+            ToolTip.visible: hovered
+            ToolTip.text: filterField.clearText
+            onClicked: filterField.text = ""
+        }
+    }
+
     header: ToolBar {
         // Every side zeroed so the header's inset is Theme.pageMargin
         // and nothing else. `padding` alone does not do it: styles set
@@ -1240,48 +1282,6 @@ Page {
                     ToolTip.visible: hovered
                     ToolTip.text: root.playlistSidebarOpen ? "Collapse the playlist sidebar" : "Show the playlist sidebar"
                     onClicked: root.playlistSidebarOpen = !root.playlistSidebarOpen
-                }
-                TextField {
-                    id: searchField
-                    objectName: "searchField"
-                    Layout.preferredWidth: 260
-                    // Also filters the playlist list below (see its own
-                    // model binding) -- one search field instead of two,
-                    // since "search" and "filter playlists" were doing
-                    // the same job on two different, easy-to-miss fields.
-                    placeholderText: "Search title, artist, or playlist..."
-                    rightPadding: searchClearButton.visible ? searchClearButton.width + 4 : 0
-                    // As tall as the combo beside it, and on a ground
-                    // Theme chose: left to the style, this sat 25 px
-                    // taller than the combo and square beside its
-                    // rounded neighbours.
-                    implicitHeight: Theme.compactControlHeight
-                    color: Theme.text
-                    placeholderTextColor: Theme.textMuted
-                    leftPadding: 8
-                    background: Rectangle {
-                        radius: Theme.cornerRadius
-                        color: Theme.surface
-                        border.color: searchField.activeFocus ? Theme.accent : Theme.border
-                        border.width: 1
-                    }
-                    onTextChanged: scanController.search(text)
-
-                    IconToolButton {
-                        id: searchClearButton
-                        visible: searchField.text.length > 0
-                        anchors.right: parent.right
-                        anchors.rightMargin: 2
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: Theme.iconSizeSmall + 8
-                        implicitHeight: Theme.iconSizeSmall + 8
-                        flat: true
-                        text: "Clear search"
-                        iconName: "edit-clear"
-                        ToolTip.visible: hovered
-                        ToolTip.text: "Clear search"
-                        onClicked: searchField.text = ""
-                    }
                 }
                 Item { Layout.fillWidth: true }
                 Label { text: "Sort by" }
@@ -1448,7 +1448,7 @@ Page {
     RowLayout {
         anchors.fill: parent
         // The header's inset, so the list starts on the same left line
-        // as the breadcrumb and the search field above it.
+        // as the breadcrumb and the sidebar button above it.
         anchors.leftMargin: Theme.pageMargin
         anchors.rightMargin: Theme.pageMargin
         spacing: 0
@@ -1479,43 +1479,75 @@ Page {
             SplitView.minimumWidth: 160
             padding: 0
 
-            PlaylistListView {
-                id: playlistSidebarList
-                objectName: "playlistList"
+            ColumnLayout {
                 anchors.fill: parent
-                scanController: scanController
-                searchQuery: searchField.text
-                selectedIndex: root.selectedPlaylistIndex
-                onPlaylistPicked: (index, name) => root.selectPlaylist(index, name)
-                isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
-                isRenamed: name => ("isRenameStaged" in root.playlistEditController)
-                    && root.playlistEditController.isRenameStaged(name)
-                isEdited: name => ("isPlaylistEdited" in root.playlistEditController)
-                    && root.playlistEditController.isPlaylistEdited(name)
-                trackCountChange: name => ("trackCountChange" in root.playlistEditController)
-                    ? root.playlistEditController.trackCountChange(name) : 0
-                pendingRevision: root.playlistEditController.pendingRevision
-                onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
-                canCreate: true
-                newPlaylists: root.newPlaylistNames
-                shownPlaylist: root.shownPlaylist
-                keyNotation: root.appSettingsController.keyNotation
-                onNewPlaylistPicked: name => root.selectPlaylist(-1, name)
-                onCreateRequested: root.openCreatePlaylistDialog()
-                // A dragged track is dropped on a playlist row; the card
-                // then asks what to do (TrackDragItem).
-                trackDropsEnabled: true
-                // The playlist shown takes no drop of a track that is in it
-                // (a Browse row of it), and is a target like any other for
-                // one that is not (a Matching result).
-                droppedTrackPlaylists: root.draggedTrack && root.draggedTrack.playlistNames
-                    ? root.draggedTrack.playlistNames : []
-                heldDropTarget: trackDrag.confirming ? trackDrag.targetPlaylist : ""
-                onTrackDropped: name => trackDrag.dropOn(name, root.dropSourceFor(name))
-                onSpringLoaded: name => root.springLoad(name)
-                // No summary over the rows while a track is dragged onto
-                // them, or while the card asks what the drop should do.
-                summariesEnabled: !root.dragging && !trackDrag.confirming
+                spacing: 0
+
+                // Narrows the playlists below by name, and nothing else: the
+                // track list keeps its own search (searchField).
+                FilterField {
+                    id: playlistFilterField
+                    objectName: "playlistFilterField"
+                    Layout.fillWidth: true
+                    Layout.rightMargin: Theme.tightSpacing
+                    Layout.topMargin: Theme.tightSpacing
+                    Layout.bottomMargin: Theme.tightSpacing
+                    placeholderText: "Filter playlists..."
+                    clearText: "Clear playlist filter"
+                    clearObjectName: "playlistFilterClearButton"
+                }
+
+                PlaylistListView {
+                    id: playlistSidebarList
+                    objectName: "playlistList"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    scanController: scanController
+                    searchQuery: playlistFilterField.text
+                    selectedIndex: root.selectedPlaylistIndex
+                    onPlaylistPicked: (index, name) => root.selectPlaylist(index, name)
+                    isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
+                    isRenamed: name => ("isRenameStaged" in root.playlistEditController)
+                        && root.playlistEditController.isRenameStaged(name)
+                    isEdited: name => ("isPlaylistEdited" in root.playlistEditController)
+                        && root.playlistEditController.isPlaylistEdited(name)
+                    trackCountChange: name => ("trackCountChange" in root.playlistEditController)
+                        ? root.playlistEditController.trackCountChange(name) : 0
+                    pendingRevision: root.playlistEditController.pendingRevision
+                    onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
+                    canCreate: true
+                    newPlaylists: root.newPlaylistNames
+                    shownPlaylist: root.shownPlaylist
+                    keyNotation: root.appSettingsController.keyNotation
+                    onNewPlaylistPicked: name => root.selectPlaylist(-1, name)
+                    onCreateRequested: root.openCreatePlaylistDialog()
+                    // A dragged track is dropped on a playlist row; the card
+                    // then asks what to do (TrackDragItem).
+                    trackDropsEnabled: true
+                    // The playlist shown takes no drop of a track that is in it
+                    // (a Browse row of it), and is a target like any other for
+                    // one that is not (a Matching result).
+                    droppedTrackPlaylists: root.draggedTrack && root.draggedTrack.playlistNames
+                        ? root.draggedTrack.playlistNames : []
+                    heldDropTarget: trackDrag.confirming ? trackDrag.targetPlaylist : ""
+                    onTrackDropped: name => trackDrag.dropOn(name, root.dropSourceFor(name))
+                    onSpringLoaded: name => root.springLoad(name)
+                    // No summary over the rows while a track is dragged onto
+                    // them, or while the card asks what the drop should do.
+                    summariesEnabled: !root.dragging && !trackDrag.confirming
+
+                    // "All tracks" stays at the top whatever the filter, so
+                    // one row left means no playlist's name matched.
+                    EmptyState {
+                        objectName: "playlistFilterEmptyState"
+                        // Over the list, not in its content, which is only as
+                        // tall as its few rows.
+                        parent: playlistSidebarList
+                        visible: playlistFilterField.text.length > 0 && playlistSidebarList.count <= 1
+                        iconName: "edit-find"
+                        text: "No playlists match."
+                    }
+                }
             }
         }
 
@@ -1523,6 +1555,23 @@ Page {
             id: browseColumn
             SplitView.fillWidth: true
             spacing: 0
+
+            // Narrows the tracks of the playlist shown, by title, artist
+            // or album; the sidebar's playlists have their own filter
+            // (playlistFilterField). On the same line as that one, and on
+            // the left line of the columns under it.
+            FilterField {
+                id: searchField
+                objectName: "searchField"
+                Layout.preferredWidth: Theme.scaled(260)
+                Layout.leftMargin: root.trackRowInset
+                Layout.topMargin: Theme.tightSpacing
+                Layout.bottomMargin: Theme.tightSpacing
+                placeholderText: "Search title, artist, or album..."
+                clearText: "Clear search"
+                clearObjectName: "searchClearButton"
+                onTextChanged: scanController.search(text)
+            }
 
             RowLayout {
                 // The track rows' column geometry (root.trackRowInset and
@@ -1949,10 +1998,15 @@ Page {
                     }
                 }
 
+                // A search that matches nothing says so, and where: in the
+                // playlist shown, or in the whole library.
                 EmptyState {
+                    objectName: "trackListEmptyState"
                     visible: trackListView.count === 0 && !scanController.busy
                     iconName: "edit-find"
-                    text: "No tracks found."
+                    text: searchField.text.length === 0 ? "No tracks found."
+                        : root.shownPlaylist.length > 0 ? "No tracks in this playlist match."
+                        : "No tracks match."
                 }
 
                 // Dropping a track of the playlist shown between two rows

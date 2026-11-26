@@ -6,9 +6,9 @@ import QtQuick
 import QtQuick.Controls
 import SeabassGui
 
-// The playlist list -- filter-by-name (see the shared search field's own
-// comment in ScanPage.qml for why this reuses that field instead of a
-// second one), delegated to PlaylistRowDelegate.qml (also used by the
+// The playlist list, narrowed by name with searchQuery (Browse's sidebar
+// filter, which filters nothing else: see FilterField in ScanPage.qml),
+// delegated to PlaylistRowDelegate.qml (also used by the
 // "This Playlist" ComboBox's own popup, so both pickers render
 // identically). Used in two places in ScanPage.qml: always in the left
 // Pane when the Matching panel is off, or inside

@@ -1629,6 +1629,9 @@ public:
                     track.sourceId = std::to_string(i + 1);
                     track.title = "Held Track " + std::to_string(1000 + i);
                     track.artist = "Held Artist";
+                    // Two albums, so a search by album narrows the list
+                    // without narrowing it to one row.
+                    track.album = i % 2 == 0 ? "Even Side" : "Odd Side";
                     track.durationSeconds = 200 + i;
                     if (withFiles) {
                         track.filePath = "/nonexistent/HELD/Contents/held-" + std::to_string(1000 + i) + ".mp3";

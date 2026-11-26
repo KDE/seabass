@@ -1078,24 +1078,189 @@ TestCase {
         compare(combo.height, toggle.height);
     }
 
-    // One left line: the search field and the list below it -- the
-    // playlist column, which is the list's left edge -- start at the same
-    // x. The list used to run to the window edge, 16 px left of the search.
     // One left line for the page. Since Matching graduated (2026-09-17) the
-    // header row starts with the sidebar's own pill button rather than the
-    // search field, and the playlists sidebar -- open by default, where the
-    // classic playlist column used to be -- is the list's left edge.
+    // header row starts with the sidebar's own pill button, and the
+    // playlists sidebar -- open by default, where the classic playlist
+    // column used to be -- is the list's left edge; its filter starts
+    // there too (#106).
     function test_theHeaderAndTheListShareOneLeftLine() {
-        var page = makePage();
-        var pill = findChild(page, "playlistSidebarButton");
-        var search = findChild(page, "searchField");
-        var sidebar = findChild(page, "playlistSidebar");
-        verify(pill !== null && search !== null && sidebar !== null);
+        const page = makePage();
+        const pill = findChild(page, "playlistSidebarButton");
+        const filter = findChild(page, "playlistFilterField");
+        const sidebar = findChild(page, "playlistSidebar");
+        verify(pill !== null && filter !== null && sidebar !== null);
+        waitForPolish(page.Window.window);
         compare(sidebar.visible, true, "the playlists sidebar is the list's left edge");
         compare(Math.round(pill.mapToItem(page, 0, 0).x), Math.round(sidebar.mapToItem(page, 0, 0).x));
         compare(Math.round(sidebar.mapToItem(page, 0, 0).x), Theme.pageMargin);
-        verify(search.mapToItem(page, 0, 0).x > pill.mapToItem(page, 0, 0).x,
-               "the search field follows the pill in the same row");
+        compare(Math.round(filter.mapToItem(page, 0, 0).x), Theme.pageMargin);
+    }
+
+    // ---- Two filters (#106): the sidebar's narrows playlists by name,
+    // the track list's narrows its tracks, and neither touches the other.
+    // Six held tracks ("Held Track 1000" on, albums "Even Side" and "Odd
+    // Side") in "Held Playlist" and "Held Reversed". ----
+
+    function makeFilterPage() {
+        realAppSettings.lastPlaylistName = "";
+        browseFixture.holdCues(6, true, false);
+        const page = makePage();
+        const controller = findChild(page, "scanController");
+        const tracks = findChild(page, "trackListView");
+        tryCompare(tracks, "count", 6);
+        tryCompare(controller, "busy", false);
+        browseFixture.releaseCues();
+        tryCompare(controller, "cuesPending", false);
+        const t = {page: page, controller: controller, tracks: tracks,
+                   playlists: findChild(page, "playlistList"),
+                   playlistFilter: findChild(page, "playlistFilterField"),
+                   search: findChild(page, "searchField")};
+        verify(t.playlists !== null && t.playlistFilter !== null && t.search !== null);
+        tryCompare(t.playlists, "count", 3);
+        waitForRendering(page);
+        return t;
+    }
+
+    // Typed, key by key, the way a user fills it.
+    function typeInto(field, text) {
+        mouseClick(field);
+        tryCompare(field, "activeFocus", true);
+        for (const ch of text) {
+            keyClick(ch);
+        }
+        compare(field.text, text);
+    }
+
+    function playlistNamesShown(list) {
+        const names = [];
+        for (let i = 0; i < list.count; ++i) {
+            names.push(list.model[i]);
+        }
+        return names;
+    }
+
+    function test_thePlaylistFilterNarrowsThePlaylistsOnly() {
+        const t = makeFilterPage();
+        typeInto(t.playlistFilter, "reversed");
+        tryCompare(t.playlists, "count", 2);
+        compare(JSON.stringify(playlistNamesShown(t.playlists)), JSON.stringify(["All tracks", "Held Reversed"]));
+        compare(t.search.text, "", "the track search is left alone");
+        waitForRendering(t.page);
+        compare(t.tracks.count, 6, "the track list is left alone");
+        compare(findChild(t.page, "trackListEmptyState").visible, false);
+    }
+
+    function test_theTrackSearchNarrowsTheTracksOnly() {
+        const t = makeFilterPage();
+        typeInto(t.search, "1003");
+        tryCompare(t.tracks, "count", 1);
+        compare(t.tracks.itemAtIndex(0).title, "Held Track 1003");
+        compare(t.playlistFilter.text, "", "the playlist filter is left alone");
+        compare(t.playlists.count, 3, "the sidebar is left alone");
+
+        // By album too, case aside.
+        t.search.text = "";
+        tryCompare(t.tracks, "count", 6);
+        typeInto(t.search, "ODD side");
+        tryCompare(t.tracks, "count", 3);
+        for (let i = 0; i < 3; ++i) {
+            compare(t.tracks.itemAtIndex(i).album, "Odd Side");
+        }
+        compare(t.playlists.count, 3, "the sidebar is left alone");
+    }
+
+    function test_eachClearButtonClearsItsOwnField() {
+        const t = makeFilterPage();
+        typeInto(t.playlistFilter, "held p");
+        typeInto(t.search, "1002");
+        tryCompare(t.playlists, "count", 2);
+        tryCompare(t.tracks, "count", 1);
+
+        const playlistClear = findChild(t.page, "playlistFilterClearButton");
+        const searchClear = findChild(t.page, "searchClearButton");
+        verify(playlistClear !== null && searchClear !== null);
+        verify(playlistClear !== searchClear);
+        tryCompare(playlistClear, "visible", true);
+        tryCompare(searchClear, "visible", true);
+
+        mouseClick(playlistClear);
+        compare(t.playlistFilter.text, "");
+        compare(t.search.text, "1002", "the playlist filter's clear leaves the search");
+        tryCompare(t.playlists, "count", 3);
+        compare(t.tracks.count, 1);
+        tryCompare(playlistClear, "visible", false);
+
+        typeInto(t.playlistFilter, "rev");
+        tryCompare(t.playlists, "count", 2);
+        mouseClick(searchClear);
+        compare(t.search.text, "");
+        compare(t.playlistFilter.text, "rev", "the search's clear leaves the playlist filter");
+        tryCompare(t.tracks, "count", 6);
+        compare(t.playlists.count, 2);
+        tryCompare(searchClear, "visible", false);
+    }
+
+    function test_anEmptyFilterResultSaysSo() {
+        const t = makeFilterPage();
+        const playlistsEmpty = findChild(t.page, "playlistFilterEmptyState");
+        const tracksEmpty = findChild(t.page, "trackListEmptyState");
+        verify(playlistsEmpty !== null && tracksEmpty !== null);
+        compare(playlistsEmpty.visible, false);
+        compare(tracksEmpty.visible, false);
+
+        typeInto(t.playlistFilter, "nothing like it");
+        tryCompare(playlistsEmpty, "visible", true);
+        compare(playlistsEmpty.text, "No playlists match.");
+        compare(tracksEmpty.visible, false, "the track list still has its tracks");
+        // In the sidebar, under "All tracks", which every filter keeps.
+        const allTracksRow = t.playlists.itemAtIndex(0);
+        verify(allTracksRow !== null);
+        const cardTop = playlistsEmpty.mapToItem(t.page, 0, 0);
+        verify(cardTop.y >= allTracksRow.mapToItem(t.page, 0, allTracksRow.height).y,
+               "below the All tracks row: " + cardTop.y);
+        const sidebar = findChild(t.page, "playlistSidebar");
+        const sidebarLeft = sidebar.mapToItem(t.page, 0, 0).x;
+        verify(cardTop.x >= sidebarLeft && cardTop.x + playlistsEmpty.width <= sidebarLeft + sidebar.width,
+               "inside the sidebar");
+
+        t.playlistFilter.text = "";
+        tryCompare(playlistsEmpty, "visible", false);
+
+        typeInto(t.search, "nothing like it");
+        tryCompare(t.tracks, "count", 0);
+        tryCompare(tracksEmpty, "visible", true);
+        compare(tracksEmpty.text, "No tracks match.");
+        compare(playlistsEmpty.visible, false, "the sidebar still has its playlists");
+
+        t.page.selectPlaylist(1, "Held Playlist", false);
+        tryCompare(t.page, "shownPlaylist", "Held Playlist");
+        tryCompare(tracksEmpty, "text", "No tracks in this playlist match.");
+        compare(tracksEmpty.visible, true);
+    }
+
+    // Each field stands with the list it filters: the playlist filter
+    // over the sidebar, the track search over the track list.
+    function test_eachFilterSitsWithItsOwnList() {
+        const t = makeFilterPage();
+        waitForPolish(t.page.Window.window);
+        const sidebar = findChild(t.page, "playlistSidebar");
+        const sidebarLeft = sidebar.mapToItem(t.page, 0, 0).x;
+        const tracksLeft = t.tracks.mapToItem(t.page, 0, 0).x;
+        const filterAt = t.playlistFilter.mapToItem(t.page, 0, 0);
+        const searchAt = t.search.mapToItem(t.page, 0, 0);
+        verify(t.playlistFilter.width > 0 && t.search.width > 0);
+
+        verify(filterAt.x >= sidebarLeft && filterAt.x + t.playlistFilter.width <= sidebarLeft + sidebar.width,
+               "the playlist filter within the sidebar: " + filterAt.x + " in " + sidebarLeft + ".." + (sidebarLeft + sidebar.width));
+        verify(searchAt.x >= tracksLeft && searchAt.x + t.search.width <= tracksLeft + t.tracks.width,
+               "the track search within the track list: " + searchAt.x + " in " + tracksLeft + ".." + (tracksLeft + t.tracks.width));
+        // Over their lists, on one line.
+        verify(filterAt.y + t.playlistFilter.height <= t.playlists.mapToItem(t.page, 0, 0).y + 1, "over the playlists");
+        verify(searchAt.y + t.search.height <= t.tracks.mapToItem(t.page, 0, 0).y + 1, "over the tracks");
+        compare(Math.round(filterAt.y), Math.round(searchAt.y));
+        compare(t.playlistFilter.height, t.search.height);
+        // The search on the columns' left line.
+        compare(Math.round(searchAt.x), Math.round(findChild(t.page, "headerCell_artwork").mapToItem(t.page, 0, 0).x));
     }
 
     // The pane is where the playing track is shown. A track played from
