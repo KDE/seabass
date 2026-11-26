@@ -380,7 +380,10 @@ CommentLimit StickPathIndex::limitFor(const TrackRows &rows) const
         const auto capacity = it == m_data->comments.end() ? std::nullopt : it->second;
         const std::size_t units = capacity ? capacity->units : 0;
         limit.units = limit.limited ? std::min(limit.units, units) : units;
-        limit.asciiOnly = limit.asciiOnly || !capacity || !capacity->utf16;
+        limit.asciiOnly = limit.asciiOnly || (capacity && !capacity->utf16);
+        // A row the writer does not rebuild takes no comment at all, and
+        // the reason says so rather than "no room" (#108).
+        limit.unwritable = limit.unwritable || !capacity;
         limit.limited = true;
     }
     limit.reason = limitReason(limit);
@@ -689,11 +692,14 @@ std::string limitReason(const CommentLimit &limit)
     if (!limit.limited) {
         return {};
     }
+    if (limit.unwritable) {
+        return "export.pdb keeps this track's row in a form Seabass does not rewrite, so its comment cannot be "
+               "written here.";
+    }
     return limit.units == 0
-        ? "export.pdb keeps no room for a comment on this track, and Seabass cannot make its row larger."
-        : "export.pdb keeps room for " + std::to_string(limit.units) + " characters in this track's comment"
-              + (limit.asciiOnly ? ", plain ASCII only (no accented letters)," : "")
-              + " and Seabass cannot make its row larger.";
+        ? "export.pdb has no room for a comment on this track."
+        : "export.pdb has room for " + std::to_string(limit.units) + " characters in this track's comment"
+              + (limit.asciiOnly ? ", plain ASCII only (no accented letters)." : ".");
 }
 
 CommentLimit commentLimitFor(const QString &pioneerRoot, const TrackRows &rows)

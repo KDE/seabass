@@ -377,22 +377,19 @@ void expectCommentEverywhere(const FixtureStick &s, const std::string &file, con
     }
 }
 
-// The fixture track in all three catalogs whose export.pdb comment has the
-// most room, with that room.
-std::pair<domain::Track, infrastructure::rekordbox::PdbRowWriter::TrackCommentCapacity>
-roomiestComment(FixtureStick &s, bool utf16)
+// The first fixture track in all three catalogs, with the room export.pdb
+// gives its comment (#108: wherever the row can be moved to).
+std::pair<domain::Track, infrastructure::rekordbox::PdbRowWriter::TrackCommentCapacity> commentTrack(FixtureStick &s)
 {
     const infrastructure::rekordbox::PdbRowWriter pdb(pathToUtf8(s.pdb()));
-    std::optional<std::pair<domain::Track, infrastructure::rekordbox::PdbRowWriter::TrackCommentCapacity>> best;
     for (const auto &t : s.inBothRekordbox()) {
-        const auto capacity = pdb.trackCommentCapacity(static_cast<uint32_t>(std::stoul(t.sourceId)));
-        if (capacity && capacity->utf16 == utf16 && (!best || capacity->units > best->second.units)) {
-            best = {t, *capacity};
+        if (const auto capacity = pdb.trackCommentCapacity(static_cast<uint32_t>(std::stoul(t.sourceId)))) {
+            s.plantEngineCopy(t);
+            return {t, *capacity};
         }
     }
-    assert(best && best->second.units >= 8 && "the fixture has a track with room for a comment in export.pdb");
-    s.plantEngineCopy(best->first);
-    return *best;
+    assert(false && "the fixture has a track whose comment export.pdb can take");
+    return {};
 }
 
 }  // namespace
@@ -429,59 +426,59 @@ int main(int argc, char **argv)
         std::cout << "case 1 (rating set, changed, cleared in all three catalogs) OK\n";
     }
 
-    // 2. export.pdb's comment: the same length, shorter and empty are
-    //    written in place (padded, read back trimmed) in all three; longer
-    //    and, in an ASCII field, non-ASCII are refused by the writer, fail
-    //    the save, and leave every catalog as it was.
-    for (const bool utf16 : {false, true}) {
-        if (!runs(2)) {
-            break;
-        }
-        FixtureStick s(fixture, utf16 ? "seabass_track_edit_comment16" : "seabass_track_edit_comment");
-        const auto [track, capacity] = roomiestComment(s, utf16);
+    // 2. export.pdb's comment at any length (#108): longer than the span
+    //    the export gave it (95 of the fixture's 100 rows have none),
+    //    shorter, accented and with an emoji, and empty all land in all
+    //    three catalogs, export.pdb's row rebuilt or moved; only more than
+    //    the row can take anywhere is refused, and then the save rolls
+    //    back and leaves every catalog as it was.
+    if (runs(2)) {
+        FixtureStick s(fixture, "seabass_track_edit_comment");
+        const auto [track, capacity] = commentTrack(s);
         const std::string file = track.filePath;
-        const std::string originalComment = s.copiesOf(file).at("rekordbox").comment;
+        assert(capacity.utf16 && capacity.units > 1000);
         const auto save = [&](const std::string &text) {
             return saveChanges({commentChange(s, file, text)}, s.pioneerQ(), s.engineQ());
         };
-        // The same length as the exported comment (the span holds exactly
-        // it, so it fills the span): written.
-        const std::string full(capacity.units, 'c');
-        assert(originalComment.size() <= full.size());
-        assert(save(full).error.isEmpty());
-        expectCommentEverywhere(s, file, full);
-        assert(save("short").error.isEmpty());
-        expectCommentEverywhere(s, file, "short");
-
-        // Longer: refused, the save rolled back, nothing changed anywhere.
+        const std::string accented = "Caf\xc3\xa9 \xf0\x9f\x8e\xb6";  // "Café 🎶": 7 UTF-16 units
+        for (const std::string &text : {std::string(300, 'c'), std::string("short"), accented,
+                                        std::string(capacity.units, 'u'), std::string()}) {
+            const auto result = save(text);
+            if (!result.error.isEmpty()) {
+                std::cerr << result.error.toStdString() << "\n";
+            }
+            assert(result.error.isEmpty());
+            expectCommentEverywhere(s, file, text);
+        }
         const std::string pdbBefore = fileBytes(s.pdb());
         const std::string engineBefore = fileBytes(s.mdb());
-        const auto longer = save(full + "x");
-        assert(!longer.error.isEmpty() && longer.rolledBack && "a comment longer than the row holds is refused");
+        const auto longer = save(std::string(capacity.units + 1, 'x'));
+        assert(!longer.error.isEmpty() && longer.rolledBack && "a comment longer than the row can take is refused");
         assert(longer.error.contains("room for"));
         assert(fileBytes(s.pdb()) == pdbBefore && fileBytes(s.mdb()) == engineBefore);
-        expectCommentEverywhere(s, file, "short");
-
-        // Non-ASCII: written into a UTF-16 field, a character outside the
-        // BMP counting two units there; refused by an ASCII field.
-        const std::string accented = "Caf\xc3\xa9 \xf0\x9f\x8e\xb6";  // "Café 🎶": 7 UTF-16 units
-        const auto nonAscii = save(accented);
-        if (utf16) {
-            assert(capacity.units >= 7);
-            assert(nonAscii.error.isEmpty());
-            expectCommentEverywhere(s, file, accented);
-            const std::string tooMany(capacity.units - 1, 'e');
-            const auto overByEmoji = save(tooMany + "\xf0\x9f\x8e\xb6");  // units + 1
-            assert(!overByEmoji.error.isEmpty() && "an emoji is two units in a UTF-16 field");
-        } else {
-            assert(!nonAscii.error.isEmpty() && nonAscii.error.contains("ASCII"));
-            expectCommentEverywhere(s, file, "short");
-        }
-        assert(save("").error.isEmpty());
         expectCommentEverywhere(s, file, "");
-        std::cout << "case 2 (export.pdb comment in a" << (utf16 ? " UTF-16" : "n ASCII") << " field of "
-                  << capacity.units << " units: same length, shorter, empty written; longer"
-                  << (utf16 ? "" : " and non-ASCII") << " refused) OK\n";
+        // Twenty tracks given long comments in one save: export.pdb's rows
+        // move to other pages and new ones, and every reader reads each.
+        std::vector<std::shared_ptr<PendingChange>> many;
+        std::vector<std::pair<std::string, std::string>> wanted;
+        for (const auto &t : s.inBothRekordbox()) {
+            if (wanted.size() == 20) {
+                break;
+            }
+            const std::string text = "comment " + std::to_string(wanted.size()) + " " + std::string(250, 'm');
+            many.push_back(commentChange(s, t.filePath, text));
+            wanted.emplace_back(t.filePath, text);
+        }
+        const auto batch = saveChanges(many, s.pioneerQ(), s.engineQ());
+        if (!batch.error.isEmpty()) {
+            std::cerr << batch.error.toStdString() << "\n";
+        }
+        assert(batch.error.isEmpty() && batch.appliedIds.size() == wanted.size());
+        for (const auto &[path, text] : wanted) {
+            assert(s.copiesOf(path).at("rekordbox").comment == text);
+        }
+        std::cout << "case 2 (export.pdb comment up to " << capacity.units
+                  << " units, accented and emoji, written in all three; one more refused) OK\n";
     }
 
     // 3. The limit Browse holds the field to is what the writer takes: at
@@ -489,10 +486,10 @@ int main(int argc, char **argv)
     //    by the limit's own rule and by the writer.
     if (runs(3)) {
         FixtureStick s(fixture, "seabass_track_edit_limit");
-        const auto [track, capacity] = roomiestComment(s, false);
+        const auto [track, capacity] = commentTrack(s);
         const CommentLimit limit = commentLimitFor(s.pioneerQ(), findTrackRows(s.pioneerQ(), s.engineQ(), track.filePath));
-        assert(limit.limited && limit.units == capacity.units && limit.asciiOnly == !capacity.utf16);
-        assert(!limit.reason.empty());
+        assert(limit.limited && limit.units == capacity.units && !limit.asciiOnly && !limit.unwritable);
+        assert(limit.reason.find("room for " + std::to_string(limit.units)) != std::string::npos);
         const std::string atLimit(limit.units, 'L');
         assert(commentLimitRefusal(atLimit, limit).empty());
         assert(!commentLimitRefusal(atLimit + "L", limit).empty());
@@ -502,20 +499,11 @@ int main(int argc, char **argv)
         std::string refusal;
         assert(!pdb.setTrackComment(static_cast<uint32_t>(std::stoul(track.sourceId)), atLimit + "L", &refusal));
         assert(!refusal.empty() && "the writer refuses one over the limit as a second line of defence");
-        // A track with no room: the limit says so, and 0.
-        const infrastructure::rekordbox::PdbRowWriter reader(pathToUtf8(s.pdb()));
-        bool sawNoRoom = false;
-        for (const auto &t : s.inBothRekordbox()) {
-            const auto c = reader.trackCommentCapacity(static_cast<uint32_t>(std::stoul(t.sourceId)));
-            if (c && c->units == 0) {
-                const CommentLimit none = commentLimitFor(s.pioneerQ(), findTrackRows(s.pioneerQ(), s.engineQ(), t.filePath));
-                assert(none.limited && none.units == 0 && none.reason.find("no room") != std::string::npos);
-                assert(commentLimitRefusal("", none).empty() && !commentLimitRefusal("a", none).empty());
-                sawNoRoom = true;
-                break;
-            }
-        }
-        assert(sawNoRoom && "the fixture has a track with no room for a comment");
+        // A row the writer does not rebuild: unwritable, said so, not "no room".
+        CommentLimit unwritable;
+        unwritable.limited = true;
+        unwritable.unwritable = true;
+        assert(limitReason(unwritable).find("cannot be written here") != std::string::npos);
         std::cout << "case 3 (the comment limit matches what the writer takes, " << limit.units << " units) OK\n";
     }
 
@@ -617,7 +605,7 @@ int main(int argc, char **argv)
     //    reaches export.pdb too, and its comment limit comes from it.
     if (runs(8)) {
         FixtureStick s(fixture, "seabass_track_edit_case");
-        const auto [track, capacity] = roomiestComment(s, false);
+        const auto [track, capacity] = commentTrack(s);
         const Copies copies = s.copiesOf(track.filePath);
         const std::string stored = oneLibraryPathOf(s, track.filePath);
         const std::string upper = upperFolder(stored);
@@ -731,7 +719,7 @@ int main(int argc, char **argv)
     //     three; and with a playlist created in the same save.
     if (runs(12)) {
         FixtureStick s(fixture, "seabass_track_edit_both");
-        const auto [track, capacity] = roomiestComment(s, false);
+        const auto [track, capacity] = commentTrack(s);
         const std::string file = track.filePath;
         const int stars = track.rating.value_or(0) == 3 ? 4 : 3;
         const QStringList all{QStringLiteral("rekordbox"), QStringLiteral("onelibrary"), QStringLiteral("engine")};

@@ -65,13 +65,11 @@ Pane {
     // The track can be edited: its rows in every catalog are known and
     // none of them is ambiguous.
     // The stick's index is being read: nothing can be edited yet.
-    // Whether the comment can be edited here, not only the rating. Off
-    // (Sebastian, 2026-11-21: ratings only for now): export.pdb's rows
-    // cannot grow, so a comment fits only into the span the old one had,
-    // and on the sticks measured 95 to 99.9 % of tracks have none, so a
-    // comment could almost never be added there. The editor stays, read
-    // only, and its tests switch it on.
-    property bool commentEditingEnabled: false
+    // Whether the comment can be edited here, not only the rating. On
+    // since export.pdb's track rows are rebuilt and moved to take a longer
+    // comment (#108); it was off while a comment could only go into the
+    // span the exported one had, which 95 to 99.9 % of tracks lack.
+    property bool commentEditingEnabled: true
     readonly property bool readingStick: panel.canEditTrack && panel.commentLimit.known !== true
         && panel.commentLimit.failed !== true
     readonly property bool trackEditable: panel.canEditTrack && panel.commentLimit.known === true

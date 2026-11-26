@@ -189,9 +189,9 @@ private:
 // The longest comment every catalog holding the file can take (#105).
 // OneLibrary's djComment and Engine's Track.comment are SQLite TEXT
 // columns with no length of their own, so the limit comes from export.pdb
-// alone: the span its row's comment string takes (it cannot grow), in
-// plain ASCII characters or in UTF-16 code units as that field is
-// encoded. No limit when export.pdb is absent or does not list the file.
+// alone: what its track row can take wherever it can be moved to (#108),
+// in UTF-16 code units (PdbRowWriter::trackCommentCapacity()). No limit
+// when export.pdb is absent or does not list the file.
 struct CommentLimit
 {
     bool limited = false;
@@ -199,6 +199,9 @@ struct CommentLimit
     std::size_t units = 0;
     // The field takes plain ASCII only (units are then characters too).
     bool asciiOnly = false;
+    // export.pdb's row is one Seabass does not rewrite: no comment can be
+    // written, whatever its length (units is 0).
+    bool unwritable = false;
     // Why there is a limit, one plain sentence for a tooltip; empty when
     // there is none.
     std::string reason;

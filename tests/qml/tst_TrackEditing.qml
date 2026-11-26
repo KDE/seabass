@@ -41,14 +41,11 @@ TestCase {
                                   beatTicksFor: function() { return []; },
                                   cuesOnGridTimeline: (format, path, cues) => cues})
             format: "rekordbox"
-            // Off in the app (ratings only, 2026-11-21); these tests keep
-            // the comment editor covered for when it is switched on.
-            commentEditingEnabled: true
         }
     }
     Component {
         id: plainPanelComponent
-        // As panelComponent, without switching the comment editor on.
+        // As panelComponent, as the page makes it: nothing set.
         TrackDetailPanel {
             width: 500
             height: 880
@@ -143,25 +140,26 @@ TestCase {
         tryVerify(() => session.pendingCount === staged + 1, 5000, "the click staged the rating");
     }
 
-    // The track whose export.pdb comment has the most room, in an ASCII
-    // field (asciiOnly true) or a UTF-16 one.
-    function roomiest(env, asciiOnly) {
-        let best = null;
-        let bestUnits = -1;
-        for (const t of tracks(env)) {
-            if (!t.filePath || t.comment.length === 0) {
-                continue;
-            }
-            show(env, t);
-            const limit = env.panel.commentLimit;
-            if (limit.limited && limit.asciiOnly === asciiOnly && limit.units > bestUnits) {
-                best = t;
-                bestUnits = limit.units;
-            }
-        }
-        verify(best !== null, "the fixture has a track with a comment in a" + (asciiOnly ? "n ASCII" : " UTF-16") + " field");
-        show(env, best);
-        return best;
+    // A track with a comment whose export.pdb row takes another one (#108:
+    // the row is rebuilt and moved, so its room is far beyond any comment
+    // typed here), shown.
+    function commented(env) {
+        const found = tracks(env).find(t => t.filePath && t.comment.length > 0);
+        verify(found !== undefined, "the fixture has a track with a comment");
+        show(env, found);
+        verify(env.panel.commentLimit.limited && env.panel.commentLimit.units > 1000,
+               "export.pdb's row takes a long comment: " + JSON.stringify(env.panel.commentLimit));
+        return found;
+    }
+
+    // Holds the shown track's editor to `units` (ASCII only, or UTF-16),
+    // as a limit from export.pdb would: the editor's rules for a limit,
+    // tested where typing to the real one (about 1,800) would take minutes.
+    function holdTo(env, units, asciiOnly) {
+        const editor = findChild(env.panel, "trackCommentEditor");
+        editor.limit = Object.assign({}, env.panel.commentLimit,
+                                     {limited: true, units: units, asciiOnly: asciiOnly, reason: "held for the test"});
+        return units;
     }
 
     function shot(item, name) {
@@ -252,13 +250,13 @@ TestCase {
         compare(env.session.pendingCount, 0);
     }
 
-    // In the app the comment is shown, not edited (ratings only for now,
-    // 2026-11-21): a panel as the page makes it has no edit button on
-    // the comment, while its stars still stage.
-    function test_0_theCommentIsReadOnlyByDefault() {
+    // Comment editing is on in the app (#108); switched off, the comment
+    // is shown and not edited, with no edit button, while its stars still
+    // stage.
+    function test_0_theCommentIsReadOnlyWhenSwitchedOff() {
         const plain = createTemporaryObject(plainPanelComponent, testCase);
         verify(plain !== null);
-        compare(plain.commentEditingEnabled, false, "off unless switched on, as the page makes it");
+        compare(plain.commentEditingEnabled, true, "on as the page makes it");
         const env = setUp();
         env.panel.commentEditingEnabled = false;
         const track = tracks(env).find(t => t.filePath && t.comment.length > 0);
@@ -280,7 +278,7 @@ TestCase {
 
     function test_2_commentEditsInPlace() {
         const env = setUp();
-        const track = roomiest(env, true);
+        const track = commented(env);
         const editor = findChild(env.panel, "trackCommentEditor");
         const button = findChild(editor, "commentEditButton");
         mouseMove(env.panel, 2, 2);
@@ -312,14 +310,15 @@ TestCase {
         verify(findChild(env.panel, "commentPendingMark").visible, "marked as unsaved");
         // Staged values survive another track shown, and come back.
         const other = tracks(env).find(t => t.filePath && t.filePath !== track.filePath);
-        mouseClick(findChild(env.panel, "ratingStar2"));
+        const stars = track.rating === 2 ? 3 : 2;
+        mouseClick(findChild(env.panel, "ratingStar" + stars));
         show(env, other);
         compare(findChild(editor, "commentText").text, other.comment.length > 0 ? other.comment
             : env.panel.commentLimit.limited && env.panel.commentLimit.units === 0 ? "No comment" : "Add a comment");
         verify(!findChild(env.panel, "commentPendingMark").visible);
         show(env, track);
         compare(findChild(editor, "commentText").text, "new");
-        compare(env.panel.shownRating, 2);
+        compare(env.panel.shownRating, stars);
         shot(env.panel, "rating-comment-staged");
         // The original text again takes the change back.
         field = beginEditing(env);
@@ -334,9 +333,8 @@ TestCase {
     // hold is not taken; near the limit a counter says how near.
     function test_3_asciiFieldIsHeldToTheLimit() {
         const env = setUp();
-        const track = roomiest(env, true);
-        const units = env.panel.commentLimit.units;
-        verify(units >= 12, "room enough to test with");
+        const track = commented(env);
+        const units = holdTo(env, 12, true);
         const field = beginEditing(env);
         field.selectAll();
         keyClick(Qt.Key_Delete);
@@ -377,9 +375,8 @@ TestCase {
 
     function test_4_utf16FieldCountsUnits() {
         const env = setUp();
-        const track = roomiest(env, false);
-        const units = env.panel.commentLimit.units;
-        verify(units >= 6);
+        const track = commented(env);
+        const units = holdTo(env, 8, false);
         const field = beginEditing(env);
         field.selectAll();
         keyClick(Qt.Key_Delete);
@@ -403,7 +400,7 @@ TestCase {
     // again has them.
     function test_5_saveWritesAndTheRescanShowsIt() {
         const env = setUp();
-        const track = roomiest(env, true);
+        const track = commented(env);
         const stars = track.rating === 4 ? 2 : 4;
         mouseClick(findChild(env.panel, "ratingStar" + stars));
         const field = beginEditing(env);
@@ -440,7 +437,7 @@ TestCase {
     // showFor()) is staged for A, with A's text, and B is left alone.
     function test_6_switchingTracksMidEditStagesForTheTrackEdited() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         const b = tracks(env).find(t => t.filePath && t.filePath !== a.filePath);
         const field = beginEditing(env);
         clearField(field);
@@ -460,7 +457,7 @@ TestCase {
     // test makes rather than one it hopes to catch.
     function test_6b_nothingIsEditableWhileTheStickIsRead() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         env.controller.holdIndexForTesting = true;
         env.controller.invalidate();
         compare(env.panel.commentLimit.known, false);
@@ -483,7 +480,7 @@ TestCase {
     // line goes with the next track shown.
     function test_6c_aCommentThatCannotBeStagedOnASwitchIsNamed() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         const tracksNow = tracks(env);
         const b = tracksNow.find(t => t.filePath && t.filePath !== a.filePath);
         const c = tracksNow.find(t => t.filePath && t.filePath !== a.filePath && t.filePath !== b.filePath);
@@ -507,7 +504,7 @@ TestCase {
     // read again after the save, and the track can be edited once it is.
     function test_6d_theTrackShownCanBeEditedAgainAfterASave() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         const first = a.rating === 3 ? 2 : 3;
         mouseClick(findChild(env.panel, "ratingStar" + first));
         verify(env.controller.hasStagedRating(a.filePath));
@@ -531,7 +528,7 @@ TestCase {
     // focus) and a track played while A's comment is open.
     function test_7_onThePageARowClickedOrPlayedEndsTheEditForA() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         const page = createTemporaryObject(pageComponent, testCase, {
             width: 1000, height: 880, stickLabel: "TESTSTICK", rekordboxPath: env.stick + "/PIONEER",
             enginePath: env.stick + "/Engine Library", playbackController: realPlayback,
@@ -577,7 +574,7 @@ TestCase {
     // by the Save shortcut on the page, and by the session's save().
     function test_8_aSaveStagesTheOpenEditFirst() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         let field = beginEditing(env);
         clearField(field);
         keyClick(Qt.Key_S);
@@ -630,7 +627,7 @@ TestCase {
     // only growth past the limit is refused.
     function test_9_aCommentTooLongCanBeShortened() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         const units = env.panel.commentLimit.units;
         const longer = Object.assign({}, a);
         longer.comment = "w".repeat(units + 6);
@@ -655,7 +652,7 @@ TestCase {
     // trailing spaces.
     function test_10_anUntouchedFieldStagesNothing() {
         const env = setUp();
-        const a = roomiest(env, false);
+        const a = commented(env);
         for (const comment of ["line one\nline two", "trailing  "]) {
             const shown = Object.assign({}, a);
             shown.comment = comment;
@@ -699,7 +696,7 @@ TestCase {
         tryVerify(() => env.panel.commentLimit.failed === true, 30000);
     }
 
-    // With comment editing off (as in the app), a track with no comment
+    // With comment editing switched off, a track with no comment
     // has no comment block, and the rating's own notes still show: the
     // failed read in a sentence and Read Again, outside that block.
     function test_11b_theNotesShowWithoutACommentBlock() {
@@ -722,7 +719,7 @@ TestCase {
     // after it; none for switching the catalog shown.
     function test_12_oneReadPerSaveAndNoneForAFormatToggle() {
         const env = setUp();
-        const a = roomiest(env, true);
+        const a = commented(env);
         const page = createTemporaryObject(pageComponent, testCase, {
             width: 1000, height: 880, stickLabel: "TESTSTICK", rekordboxPath: env.stick + "/PIONEER",
             enginePath: env.stick + "/Engine Library", playbackController: realPlayback,
@@ -755,5 +752,36 @@ TestCase {
         tryVerify(() => list.count > 1, 120000);
         wait(500);
         compare(controller.indexBuildsForTesting, before + 1, "none for the catalog shown changing");
+    }
+
+    // A track whose export.pdb row has no room for a comment (95 of the
+    // fixture's 100) takes one, long and accented (#108): staged, saved,
+    // and read back from the stick.
+    function test_13_aCommentIsAddedWhereExportPdbHadNoRoom() {
+        const env = setUp();
+        const track = tracks(env).find(t => t.filePath && t.comment.length === 0);
+        verify(track !== undefined, "a track with no comment");
+        show(env, track);
+        const limit = env.panel.commentLimit;
+        verify(limit.limited && limit.units > 1000 && !limit.asciiOnly, JSON.stringify(limit));
+        const text = "Gr\u00fc\u00dfe aus K\u00f6ln " + "x".repeat(280) + " \ud83c\udfb6";
+        const field = beginEditing(env);
+        clearField(field);
+        paste(field, text);
+        compare(field.text, text, "taken whole");
+        keyClick(Qt.Key_Return);
+        compare(env.controller.stagedComment(track.filePath), text);
+        let summary = null;
+        const done = (result) => { summary = result; };
+        env.session.saveFinished.connect(done);
+        env.session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        env.session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        env.scan.scan("rekordbox", env.stick + "/PIONEER");
+        tryVerify(() => !env.scan.busy && env.scan.tracks.trackCount() > 0, 120000, "the rescan finishes");
+        const again = tracks(env).find(t => t.filePath === track.filePath);
+        verify(again !== undefined);
+        compare(again.comment, text, "the stick has the comment");
     }
 }
