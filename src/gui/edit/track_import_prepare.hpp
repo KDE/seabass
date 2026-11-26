@@ -8,12 +8,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/track_import_staging.hpp"
 
 namespace seabass::gui
@@ -102,6 +104,18 @@ struct ImportProgress
 // Called on the thread that prepares, often, and never from two threads
 // at once: a sink for another thread passes it on itself.
 using ImportProgressSink = std::function<void(const ImportProgress &)>;
+
+// Analyses each of `files` with `analyser`, `jobs` at once, each worker a
+// thread of its own (the decoder runs an event loop in the thread that
+// reads it), reporting Step::Analysis with every file in hand by name.
+// One result per file, in order, null where the analyser made none. The
+// first analyser that throws stops the rest from starting and is thrown
+// again here; a cancel throws application::OperationCancelled. Shared by
+// the import and Analyse again.
+std::vector<std::shared_ptr<const ImportAnalysis>> analyseFiles(const std::vector<std::string> &files,
+                                                                const ImportAnalyser &analyser, int jobs,
+                                                                const application::CancellationToken &cancel,
+                                                                const ImportProgressSink &progress);
 
 // From what was dropped to the changes of one save: the offered folders
 // are walked, each file's tags read, the stick's libraries and audio

@@ -268,6 +268,44 @@ infrastructure::engine::LibdjinteropEngineCueWriter &engineAnalysisWriterFor(Sav
     return analysisWriterFor(ctx, session, stickRoot);
 }
 
+const std::map<std::string, std::string> &saveBeatGridLedger(SaveContext &ctx, const std::string &stickRoot)
+{
+    return ctx.sharedForWholeSave<infrastructure::local::BeatGridLedger>(
+        "beat-grid-ledger:read:" + application::normalizedPathKey(stickRoot), [&]() {
+            std::string error;
+            auto ledger = std::make_unique<infrastructure::local::BeatGridLedger>(
+                infrastructure::local::readBeatGridLedger(pathFromUtf8(stickRoot), &error));
+            if (!error.empty()) {
+                ledger->clear();
+            }
+            return ledger;
+        });
+}
+
+void recordGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                                   const std::string &ledgerKey, const std::string &gridFingerprint)
+{
+    if (ledgerKey.empty() || gridFingerprint.empty()) {
+        return;
+    }
+    recordLedgerAfterCommit(ctx, stickRoot);
+    if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(stickRoot))) {
+        record->byChange[changeId].emplace_back(ledgerKey, std::optional<std::string>(gridFingerprint));
+    }
+}
+
+std::string beatGridLedgerFileOf(const std::string &stickRoot)
+{
+    return ledgerFileOf(stickRoot);
+}
+
+std::string keptEngineAnalysisFileOf(const std::string &stickRoot, const std::string &ledgerKey)
+{
+    return ledgerKey.empty()
+        ? std::string()
+        : pathToUtf8(infrastructure::local::keptEngineAnalysisFile(pathFromUtf8(stickRoot), ledgerKey));
+}
+
 namespace
 {
 

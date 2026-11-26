@@ -39,10 +39,13 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <tuple>
 #include <unordered_set>
 
 #include "gui/analysis_settings.hpp"
+#include "gui/edit/changes/add_cue_change.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
+#include "gui/edit/changes/reanalyse_track_change.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
@@ -56,6 +59,7 @@
 #include "infrastructure/rekordbox/anlz_builder.hpp"
 #include "infrastructure/rekordbox/rekordbox_beat_grid_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
+#include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 
@@ -163,6 +167,38 @@ void writeChordWav(const fs::path &file, int seconds)
             }
         }
         samples[i] = static_cast<std::int16_t>(1500.0 * struck * sum);
+    }
+    writeMonoWav(file, samples);
+}
+
+// A WAV of `seconds` with a kick on every beat at `bpm` (as writeBeatWav(),
+// the first at `firstBeatSeconds`) over a chord of `notes` (Hz, each with
+// two overtones): a tempo and a key to hear.
+void writeBeatChordWav(const fs::path &file, int seconds, double bpm, const std::vector<double> &notes,
+                       double firstBeatSeconds = 0.25)
+{
+    const std::uint32_t frames = static_cast<std::uint32_t>(seconds) * 44100;
+    std::vector<double> mix(frames, 0.0);
+    const double beat = 60.0 / bpm * 44100.0;
+    for (double at = firstBeatSeconds * 44100.0; at < frames; at += beat) {
+        for (std::uint32_t i = 0; i < 6615 && static_cast<std::uint32_t>(at) + i < frames; ++i) {
+            const double t = i / 44100.0;
+            mix[static_cast<std::uint32_t>(at) + i] += 20000.0 * std::exp(-t * 30.0) * std::sin(2.0 * 3.14159265358979 * 60.0 * t);
+        }
+    }
+    for (std::uint32_t i = 0; i < frames; ++i) {
+        const double t = i / 44100.0;
+        double sum = 0.0;
+        for (const double note : notes) {
+            for (int overtone = 1; overtone <= 3; ++overtone) {
+                sum += std::sin(2.0 * 3.14159265358979 * note * overtone * t) / overtone;
+            }
+        }
+        mix[i] += 600.0 * sum;
+    }
+    std::vector<std::int16_t> samples(frames);
+    for (std::uint32_t i = 0; i < frames; ++i) {
+        samples[i] = static_cast<std::int16_t>(std::clamp(mix[i], -32000.0, 32000.0));
     }
     writeMonoWav(file, samples);
 }
@@ -850,6 +886,453 @@ int main(int argc, char **argv)
         check("OneLibrary", keysOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer))));
         check("Engine", keysOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8())));
         std::cout << "case 14 (the analyser's key in all three libraries, a tag's key kept) OK\n";
+    }
+
+
+    // 15. Analyse again. Three tracks imported into a playlist and saved,
+    //     one given a hot cue; then two files on the stick are replaced
+    //     by audio of another tempo and chord (same length) and the third
+    //     is taken away. Analyse again on the playlist stages one change
+    //     for each of the two and leaves the third as it is, counted;
+    //     staging again replaces, Take back takes them all. Saved: the new
+    //     tempo and grid in all three libraries, the hot cue still there,
+    //     the analyser's key where the tags name none and the tag's key
+    //     kept, a .2EX that was gone made again. A second Analyse again
+    //     is not taken for a grid moved on the player.
+    {
+        const std::vector<double> aMinor{110.0, 130.81, 164.81, 220.0, 261.63, 329.63};
+        const std::vector<double> eMinor{82.41, 98.0, 123.47, 164.81, 196.0, 246.94};
+        writeBeatChordWav(computer / "p plain.wav", 30, 120.0, aMinor);
+        writeBeatChordWav(computer / "p tagged.wav", 31, 120.0, aMinor);
+        appendId3Frame(computer / "p tagged.wav", "TKEY", std::string(1, '\0') + "Dm");
+        writeBeatChordWav(computer / "p gone.wav", 32, 120.0, aMinor);
+        assert(offer(QVariantList{pathToQString(computer / "p plain.wav"), pathToQString(computer / "p tagged.wav"),
+                                  pathToQString(computer / "p gone.wav")},
+                     QStringLiteral("Again"), true));
+        assert(controller.lastResult().value("withGrid").toInt() == 3);
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        assert(session->lastSummary().value("written").toInt() == 3 + 1 + 3);
+
+        const auto rowOf = [](auto &&reader, const std::string &name) {
+            for (const auto &track : reader.readAll()) {
+                if (pathToUtf8(pathFromUtf8(track.filePath).filename()) == name) {
+                    return track;
+                }
+            }
+            assert(false && "the track is in the library");
+            return domain::Track{};
+        };
+        const auto pdbRow = [&](const std::string &name) {
+            return rowOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)), name);
+        };
+        const auto oneRow = [&](const std::string &name) {
+            return rowOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)), name);
+        };
+        const auto engineRow = [&](const std::string &name) {
+            return rowOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()), name);
+        };
+        const domain::Track plainBefore = pdbRow("p plain.wav");
+        const std::string engineKeyBefore = engineRow("p plain.wav").key;
+
+        // A hot cue through the app's own cue writer.
+        assert(session->stage(std::make_unique<AddCueChange>(
+            QStringLiteral("rekordbox"), pioneer, QString::fromStdString(plainBefore.sourceId), 1234.0,
+            QStringLiteral("hot"), 2, QStringLiteral("#FF0000"), QStringLiteral("drop"), false, 0.0,
+            QStringLiteral("p plain"))));
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        assert(session->lastSummary().value("written").toInt() == 1);
+        const auto hasTheCue = [](const domain::Track &track) {
+            for (const auto &cue : track.cues) {
+                if (cue.kind == domain::CuePoint::Kind::Hot && cue.hotCueNumber == 2
+                    && std::abs(cue.positionMs - 1234.0) < 1.0) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        assert(hasTheCue(pdbRow("p plain.wav")) && hasTheCue(oneRow("p plain.wav")));
+
+        // The files on the stick, replaced; one gone; one .2EX gone.
+        const fs::path onStick = stick.root / "Contents" / "UnknownArtist" / "UnknownAlbum";
+        writeBeatChordWav(onStick / "p plain.wav", 30, 140.0, eMinor);
+        writeBeatChordWav(onStick / "p tagged.wav", 31, 140.0, eMinor);
+        appendId3Frame(onStick / "p tagged.wav", "TKEY", std::string(1, '\0') + "Dm");
+        fs::remove(onStick / "p gone.wav");
+        const std::string plainDat = plainBefore.analysisFile;
+        assert(!plainDat.empty());
+        const fs::path plainTwoEx = stick.root / pathFromUtf8(plainDat.substr(1, plainDat.size() - 4) + "2EX");
+        assert(fs::is_regular_file(plainTwoEx));
+        fs::remove(plainTwoEx);
+        const auto heard = analyseForImport(pathToUtf8(onStick / "p plain.wav"), application::CancellationToken{});
+        assert(heard && !heard->key.empty() && heard->key != plainBefore.key && heard->key != "Dm");
+        std::cerr << "  key before " << plainBefore.key << ", heard now " << heard->key << std::endl;
+
+        QSignalSpy reanalysed(&controller, &TrackImportController::reanalysisReady);
+        const auto analyseAgain = [&] {
+            const int before = reanalysed.count();
+            assert(controller.analyseAgain(pioneer, engine, QStringLiteral("Again")));
+            assert(controller.busy() && controller.reanalysingPlaylist() == QLatin1String("Again"));
+            assert(waitFor(&controller, &TrackImportController::busyChanged, [&] { return !controller.busy(); }));
+            if (!controller.errorMessage().isEmpty()) {
+                std::cerr << controller.errorMessage().toStdString() << "\n";
+            }
+            return reanalysed.count() > before;
+        };
+        assert(analyseAgain());
+        QVariantMap again = controller.lastReanalysis();
+        assert(again.value("analysed").toInt() == 2 && again.value("leftAlone").toInt() == 1);
+        assert(again.value("playlist").toString() == QLatin1String("Again"));
+        assert(session->pendingCount() == 2 && controller.reanalysisCount(QStringLiteral("Again")) == 2);
+        // While it runs, an import waits.
+        assert(controller.analyseAgain(pioneer, engine, QStringLiteral("Again")));
+        assert(!controller.importFiles(pioneer, engine, one, QString(), false));
+        assert(controller.errorMessage().contains(QLatin1String("analysed again")));
+        assert(waitFor(&controller, &TrackImportController::busyChanged, [&] { return !controller.busy(); }));
+        // Twice: still one change a track.
+        assert(session->pendingCount() == 2 && controller.reanalysisCount(QStringLiteral("Again")) == 2);
+        controller.dropReanalysis(QStringLiteral("Again"));
+        assert(session->pendingCount() == 0 && controller.reanalysisCount(QStringLiteral("Again")) == 0);
+        assert(analyseAgain() && session->pendingCount() == 2);
+        std::cout << "case 15a (Analyse again: two staged, the missing file left as it is and counted, again replaces, "
+                     "Take back takes them all) OK\n";
+
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        if (!session->lastSummary().value("error").toString().isEmpty()) {
+            std::cerr << "save: " << session->lastSummary().value("error").toString().toStdString() << "\n";
+        }
+        assert(session->lastSummary().value("written").toInt() == 2);
+        assert(session->pendingCount() == 0 && controller.reanalysisCount(QStringLiteral("Again")) == 0);
+
+        const auto checkGrid = [](const std::vector<domain::Beat> &beats, double spacing, const char *library) {
+            std::cerr << "  " << library << ": " << beats.size() << " beats, "
+                      << (beats.size() > 1 ? beats[1].timeMs - beats[0].timeMs : 0.0) << " ms apart" << std::endl;
+            assert(beats.size() > 20);
+            for (std::size_t i = 1; i < beats.size(); ++i) {
+                assert(std::abs(beats[i].timeMs - beats[i - 1].timeMs - spacing) < 2.0);
+            }
+        };
+        for (const char *name : {"p plain.wav", "p tagged.wav"}) {
+            const domain::Track d = pdbRow(name);
+            const domain::Track o = oneRow(name);
+            const domain::Track e = engineRow(name);
+            std::cerr << "  " << name << " bpm " << d.bpm << " | " << o.bpm << " | " << e.bpm << std::endl;
+            assert(std::abs(d.bpm - 140.0) < 0.3 && std::abs(o.bpm - 140.0) < 0.3 && std::abs(e.bpm - 140.0) < 0.3);
+            checkGrid(infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), d.sourceId), 60000.0 / 140.0,
+                      "rekordbox");
+            checkGrid(infrastructure::engine::readBeatGrid(stick.engineUtf8(), e.sourceId), 60000.0 / 140.0, "Engine");
+        }
+        // The cue stayed, in both rekordbox libraries.
+        assert(hasTheCue(pdbRow("p plain.wav")) && hasTheCue(oneRow("p plain.wav")));
+        // The key: the analyser's where the tags name none, the tag's kept.
+        assert(pdbRow("p plain.wav").key == heard->key && oneRow("p plain.wav").key == heard->key);
+        assert(pdbRow("p tagged.wav").key == "Dm" && oneRow("p tagged.wav").key == "Dm");
+        assert(engineRow("p tagged.wav").key == "Dm");
+        // Engine's row the player could have analysed keeps its key: it
+        // lives in the analysis record (ReanalyseTrackChange says why).
+        assert(engineRow("p plain.wav").key == engineKeyBefore);
+        assert(fs::is_regular_file(plainTwoEx));
+        // The track that is gone is as it was.
+        assert(std::abs(pdbRow("p gone.wav").bpm - 120.0) < 0.3);
+        // The save's log names the track and what each library got.
+        {
+            std::ifstream in(stick.root / "Seabass" / "seabass.log", std::ios::binary);
+            std::string line;
+            std::string found;
+            while (std::getline(in, line)) {
+                if (line.find("track-reanalysis: analysed") != std::string::npos
+                    && line.find("p plain.wav") != std::string::npos) {
+                    found = line;
+                }
+            }
+            std::cerr << "  log: " << found << std::endl;
+            assert(found.find("export.pdb: tempo and key") != std::string::npos);
+            assert(found.find("exportLibrary.db: tempo and key") != std::string::npos);
+            assert(found.find("Engine id") != std::string::npos && found.find("grid written") != std::string::npos);
+            assert(found.find(".2EX made") != std::string::npos);
+        }
+        std::cout << "case 15b (saved: 140 BPM and its grid in all three libraries, the hot cue kept, the analyser's key "
+                     "only where no tag names one, a missing .2EX made) OK\n";
+
+        // Once more at another tempo: the grid Seabass wrote last time is
+        // known for its own, not taken for one moved on the player.
+        writeBeatChordWav(onStick / "p plain.wav", 30, 125.0, eMinor);
+        assert(analyseAgain() && controller.lastReanalysis().value("analysed").toInt() == 2);
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        assert(session->lastSummary().value("written").toInt() == 2);
+        const domain::Track e = engineRow("p plain.wav");
+        std::cerr << "  again at 125: Engine bpm " << e.bpm << std::endl;
+        assert(std::abs(e.bpm - 125.0) < 0.3 && std::abs(pdbRow("p plain.wav").bpm - 125.0) < 0.3);
+        checkGrid(infrastructure::engine::readBeatGrid(stick.engineUtf8(), e.sourceId), 480.0, "Engine");
+        assert(hasTheCue(pdbRow("p plain.wav")));
+        std::cout << "case 15c (Analyse again twice: Seabass's own grid replaced the second time too) OK\n";
+    }
+
+
+    // 16. Cues on the old grid, carried onto the new one when the person
+    //     asks. Two tracks, each with a hot cue on a beat and a memory cue
+    //     off the beats in all three libraries; their audio replaced by
+    //     the same music 40 ms later. Analyse again counts them and the
+    //     review shows each cue where it is and where it would go, every
+    //     switch off; all on and all off reach the changes. Saved with
+    //     one track switched on: its hot cue is 40 ms later in all three
+    //     libraries, its memory cue where it was; the other track's cues
+    //     are untouched.
+    {
+        const std::vector<double> aMinor{110.0, 130.81, 164.81, 220.0, 261.63, 329.63};
+        writeBeatChordWav(computer / "r on.wav", 30, 120.0, aMinor);
+        writeBeatChordWav(computer / "r off.wav", 31, 120.0, aMinor);
+        assert(offer(QVariantList{pathToQString(computer / "r on.wav"), pathToQString(computer / "r off.wav")},
+                     QStringLiteral("Cues"), true));
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        assert(session->lastSummary().value("written").toInt() == 2 + 1 + 2);
+        const auto rowOf = [](auto &&reader, const std::string &name) {
+            for (const auto &track : reader.readAll()) {
+                if (pathToUtf8(pathFromUtf8(track.filePath).filename()) == name) {
+                    return track;
+                }
+            }
+            assert(false && "the track is in the library");
+            return domain::Track{};
+        };
+        const auto rowsOf = [&](const std::string &name) {
+            return std::vector<domain::Track>{
+                rowOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(stick.pioneer)), name),
+                rowOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)), name),
+                rowOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()), name)};
+        };
+        std::map<std::string, std::pair<double, double>> placed;  // name: on a beat, off the beats
+        for (const char *name : {"r on.wav", "r off.wav"}) {
+            const std::vector<domain::Track> rows = rowsOf(name);
+            const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), rows[0].sourceId);
+            assert(grid.size() > 20);
+            const double onBeat = std::round(grid[8].timeMs);
+            const double offBeat = std::round(grid[10].timeMs) + 180.0;
+            placed[name] = {onBeat, offBeat};
+            for (const auto &[format, path, row] :
+                 {std::tuple{QStringLiteral("rekordbox"), pioneer, rows[0]}, std::tuple{QStringLiteral("engine"), engine, rows[2]}}) {
+                assert(session->stage(std::make_unique<AddCueChange>(format, path, QString::fromStdString(row.sourceId),
+                                                                     onBeat, QStringLiteral("hot"), 1,
+                                                                     QStringLiteral("#00FF00"), QStringLiteral("drop"),
+                                                                     false, 0.0, QStringLiteral("r"))));
+                assert(session->stage(std::make_unique<AddCueChange>(format, path, QString::fromStdString(row.sourceId),
+                                                                     offBeat, QStringLiteral("memory"), 0, QString(),
+                                                                     QString(), false, 0.0, QStringLiteral("r"))));
+            }
+        }
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        if (!session->lastSummary().value("error").toString().isEmpty()) {
+            std::cerr << "save: " << session->lastSummary().value("error").toString().toStdString() << "\n";
+        }
+        // The hot cue and the memory cue of a track, in each library, by
+        // position: what each library holds now.
+        const auto cueAt = [](const domain::Track &track, bool hotCue) {
+            for (const auto &cue : track.cues) {
+                if ((cue.kind == domain::CuePoint::Kind::Hot) == hotCue && !cue.isLoop) {
+                    return cue.positionMs;
+                }
+            }
+            return -1.0;
+        };
+        for (const char *name : {"r on.wav", "r off.wav"}) {
+            for (const domain::Track &row : rowsOf(name)) {
+                assert(std::abs(cueAt(row, true) - placed[name].first) < 1.0);
+                assert(std::abs(cueAt(row, false) - placed[name].second) < 1.0);
+            }
+        }
+
+        const fs::path onStick = stick.root / "Contents" / "UnknownArtist" / "UnknownAlbum";
+        writeBeatChordWav(onStick / "r on.wav", 30, 120.0, aMinor, 0.29);
+        writeBeatChordWav(onStick / "r off.wav", 31, 120.0, aMinor, 0.29);
+        assert(controller.analyseAgain(pioneer, engine, QStringLiteral("Cues")));
+        assert(waitFor(&controller, &TrackImportController::busyChanged, [&] { return !controller.busy(); }));
+        const QVariantMap again = controller.lastReanalysis();
+        std::cerr << "  cues: " << again.value("cueTracks").toInt() << " tracks, " << again.value("cuesToMove").toInt()
+                  << " to move, " << again.value("gridChangedTooMuch").toInt() << " too different" << std::endl;
+        assert(again.value("analysed").toInt() == 2 && again.value("cueTracks").toInt() == 2);
+        assert(again.value("cuesToMove").toInt() == 2 && again.value("gridChangedTooMuch").toInt() == 0);
+        assert(controller.cueReviewTooDifferent().isEmpty());
+
+        // The review: per track its one cue on a beat, every switch off.
+        QVariantList review = controller.cueReview();
+        assert(review.size() == 2);
+        QString onId;
+        for (const QVariant &entry : review) {
+            const QVariantMap track = entry.toMap();
+            const bool isOn = track.value("title").toString().startsWith(QLatin1String("r on"));
+            if (isOn) {
+                onId = track.value("id").toString();
+            }
+            const auto &[onBeat, offBeat] = placed[isOn ? "r on.wav" : "r off.wav"];
+            std::cerr << "  " << track.value("title").toString().toStdString() << ": grid moved "
+                      << track.value("gridShiftMs").toInt() << " ms" << std::endl;
+            assert(std::abs(track.value("gridShiftMs").toInt() - 40) <= 3);
+            assert(!track.value("moveCues").toBool() && track.value("offBeat").toInt() == 1);
+            const QVariantList rows = track.value("rows").toList();
+            assert(rows.size() == 1);
+            const QVariantMap row = rows[0].toMap();
+            std::cerr << "  row: " << row.value("label").toString().toStdString() << " \""
+                      << row.value("name").toString().toStdString() << "\" " << row.value("oldText").toString().toStdString()
+                      << " to " << row.value("newText").toString().toStdString() << std::endl;
+            assert(row.value("label").toString() == QLatin1String("Hot cue 1"));
+            assert(row.value("oldText").toString() == ReanalyseTrackChange::clockText(onBeat));
+            const int diff = row.value("diffMs").toInt();
+            assert(std::abs(diff - 40) <= 3);
+            assert(row.value("newText").toString() == ReanalyseTrackChange::clockText(onBeat + diff)
+                   || std::abs(diff - 40) <= 3);
+            // The strip: in its window, in order, the old place before the
+            // new one by the move.
+            const QVariantMap strip = row.value("strip").toMap();
+            const double span = strip.value("spanMs").toDouble();
+            assert(span > 1000.0 && strip.value("columns").toList().size() > 100);
+            for (const char *grid : {"oldBeats", "newBeats"}) {
+                const QVariantList beats = strip.value(grid).toList();
+                assert(beats.size() >= 3);
+                for (int i = 0; i < beats.size(); ++i) {
+                    assert(beats[i].toDouble() >= 0.0 && beats[i].toDouble() <= span);
+                    assert(i == 0 || beats[i].toDouble() > beats[i - 1].toDouble());
+                }
+            }
+            const double oldCue = strip.value("oldCueMs").toDouble();
+            const double newCue = strip.value("newCueMs").toDouble();
+            assert(oldCue > 0.0 && newCue < span && std::abs(newCue - oldCue - diff) < 1.0);
+        }
+        assert(!onId.isEmpty());
+        const auto switches = [&] {
+            QStringList on;
+            for (const QVariant &entry : controller.cueReview()) {
+                if (entry.toMap().value("moveCues").toBool()) {
+                    on << entry.toMap().value("id").toString();
+                }
+            }
+            return on;
+        };
+        controller.setMoveCuesForAll(true);
+        assert(switches().size() == 2);
+        controller.setMoveCuesForAll(false);
+        assert(switches().isEmpty());
+        controller.setMoveCues(onId, true);
+        assert(switches() == QStringList{onId});
+        std::cout << "case 16a (cues on the old grid: counted, reviewed with old and new times and a strip, every switch "
+                     "off until turned on) OK\n";
+
+        finished.clear();
+        session->save();
+        assert(waitFor(session, &LibraryEditSession::saveFinished, [&] { return !finished.isEmpty(); }));
+        if (!session->lastSummary().value("error").toString().isEmpty()) {
+            std::cerr << "save: " << session->lastSummary().value("error").toString().toStdString() << "\n";
+        }
+        assert(session->lastSummary().value("written").toInt() == 2);
+        assert(controller.cueReview().isEmpty());
+        const char *libraries[] = {"DeviceLibrary", "OneLibrary", "Engine"};
+        for (const char *name : {"r on.wav", "r off.wav"}) {
+            const bool moved = std::string(name) == "r on.wav";
+            const std::vector<domain::Track> rows = rowsOf(name);
+            for (std::size_t i = 0; i < rows.size(); ++i) {
+                const double hotCue = cueAt(rows[i], true);
+                std::cerr << "  " << name << " " << libraries[i] << ": hot cue " << placed[name].first << " to " << hotCue
+                          << ", memory cue " << placed[name].second << " to " << cueAt(rows[i], false) << std::endl;
+                assert(std::abs(hotCue - (placed[name].first + (moved ? 40.0 : 0.0))) < (moved ? 4.0 : 1.0));
+                assert(std::abs(cueAt(rows[i], false) - placed[name].second) < 1.0);
+            }
+        }
+        // OneLibrary's cue table, kept in step with its analysis file.
+        for (const char *name : {"r on.wav", "r off.wav"}) {
+            const bool moved = std::string(name) == "r on.wav";
+            infrastructure::onelibrary::OneLibraryCueWriter table(pathToUtf8(stick.pioneer));
+            const auto ids = table.contentIdsForFile(pathToUtf8(onStick / name));
+            assert(ids.size() == 1);
+            double hotCue = -1.0;
+            for (const auto &entry : table.cueTableOf(ids.front())) {
+                if (entry.understood() && entry.cue.kind == domain::CuePoint::Kind::Hot) {
+                    hotCue = entry.cue.positionMs;
+                }
+            }
+            std::cerr << "  " << name << " OneLibrary cue table: hot cue at " << hotCue << std::endl;
+            assert(std::abs(hotCue - (placed[name].first + (moved ? 40.0 : 0.0))) < (moved ? 4.0 : 1.0));
+        }
+        {
+            std::ifstream in(stick.root / "Seabass" / "seabass.log", std::ios::binary);
+            std::string line;
+            bool named = false;
+            while (std::getline(in, line)) {
+                named = named
+                        || (line.find("track-reanalysis: analysed \"r on\"") != std::string::npos
+                            && line.find("moved Hot cue 1 from " + ReanalyseTrackChange::clockText(placed["r on.wav"].first).toStdString())
+                                   != std::string::npos);
+            }
+            assert(named);
+        }
+        std::cout << "case 16b (saved: the switched-on track's cue on a beat moved 40 ms in all three libraries, the one "
+                     "off the beats kept; the other track's cues untouched) OK\n";
+    }
+
+
+    // 17. The review's strip on one timeline: an MP3's analysis is on the
+    //     decoder's, 26 ms earlier than rekordbox's where grid and cues
+    //     are. A kick the decoder hears at 2.000 s sits under the new
+    //     grid's beat at 2.026 s in the strip, the cue moved onto it.
+    {
+        auto analysis = std::make_shared<ImportAnalysis>();
+        analysis->waveform.sampleRateHz = 44100;
+        analysis->waveform.sampleCount = 10 * 44100;
+        analysis->waveform.entries.assign(1500, domain::WaveformEntry{});
+        analysis->waveform.entries[300] = {1.0f, 1.0f, 1.0f, 1.0f};  // 2.000 s as decoded
+        for (int i = 0; i < 20; ++i) {
+            analysis->beats.push_back({i * 500.0, i % 4 + 1});
+        }
+        analysis->bpm = 120.0;
+        ReanalyseTrackChange change(pathToUtf8(stick.root / "Contents" / "x.mp3"), "/Contents/x.mp3", pathToQString(stick.root),
+                                    pioneer, QString(), {}, analysis, {}, QStringLiteral("x"), QString(), 1);
+        ReanalyseTrackChange::CueReview review;
+        const double offset = 26.0;
+        for (int i = 0; i < 20; ++i) {
+            review.oldBeats.push_back(i * 500.0);           // the old grid, on rekordbox's timeline
+            review.newBeats.push_back(i * 500.0 + offset);  // the analysis's, moved onto it
+        }
+        domain::CuePoint cue;
+        cue.kind = domain::CuePoint::Kind::Hot;
+        cue.hotCueNumber = 3;
+        cue.positionMs = 2000.0;
+        review.cues = {cue};
+        review.plan = application::planCueGridMoves(review.cues, review.oldBeats, review.newBeats);
+        review.waveformOffsetMs = offset;
+        change.setCueReview(review);
+        assert(review.plan.moves.size() == 1 && std::abs(review.plan.moves[0].newMs - 2026.0) < 1e-6);
+        const QVariantMap strip = change.reviewStrip(review.plan.moves[0]);
+        const QVariantList columns = strip.value("columns").toList();
+        int loudest = -1;
+        for (int i = 0; i < columns.size(); ++i) {
+            if (columns[i].toMap().value("low").toDouble() > 0.5) {
+                loudest = i;
+            }
+        }
+        assert(loudest >= 0);
+        const double columnMs = 1000.0 / 150.0;
+        const double kickInStrip = loudest * columnMs;
+        const double newCue = strip.value("newCueMs").toDouble();
+        std::cerr << "  strip: the kick at " << kickInStrip << " ms, the new cue at " << newCue << " ms, the old at "
+                  << strip.value("oldCueMs").toDouble() << std::endl;
+        assert(std::abs(kickInStrip - newCue) < columnMs);
+        assert(std::abs(newCue - strip.value("oldCueMs").toDouble() - offset) < 1e-6);
+        bool onBeat = false;
+        for (const QVariant &beat : strip.value("newBeats").toList()) {
+            onBeat = onBeat || std::abs(beat.toDouble() - newCue) < 1e-6;
+        }
+        assert(onBeat && std::abs(change.gridShiftMs() - offset) < 1e-6);
+        std::cout << "case 17 (the strip of an MP3: waveform, grids and cues on rekordbox's timeline, the kick under "
+                     "the new beat) OK\n";
     }
 
     std::cout << "track_import_controller_test: all cases passed\n";

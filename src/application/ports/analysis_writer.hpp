@@ -84,6 +84,14 @@ struct AnalysisImportOptions
     // player's own analysis of the row is kept before Seabass replaces any
     // of it, when the writer has a KeptEngineAnalysisStore.
     std::string keepKey;
+    // On a row the player has analysed, the tempo (analysis.bpm) goes in
+    // with the grid, in the same write, when the grid part is written:
+    // for a grid that is Seabass's own analysis of the file (Analyse
+    // again), whose tempo the old one would contradict. Off, as for
+    // rekordbox's grid, the tempo stays what the row has. Never without
+    // the grid: a grid left alone (locked, moved on the player) keeps its
+    // tempo too. A row being completed takes the tempo either way.
+    bool tempoWithGrid = false;
     // Every check, no write, no file and no hook; the result is the one the
     // same call would give without it.
     bool previewOnly = false;

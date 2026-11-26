@@ -454,4 +454,22 @@ class SaveContext;
 infrastructure::engine::LibdjinteropEngineCueWriter &engineAnalysisWriterFor(SaveContext &ctx, FormatWriteSession &session,
                                                                              const std::string &stickRoot);
 
+// For another change of a save that writes a grid into an Engine row the
+// player may have analysed (Analyse again), so it is recognised as
+// Seabass's own by the next write, as Beat Grids & Waveforms' are:
+// - the stick's beat grid ledger (ledger key to grid fingerprint), read
+//   once per save; a ledger that cannot be read is an empty one, the safe
+//   side (a grid Seabass wrote then reads as one set on the player);
+// - the grid a change left on a row, recorded in the ledger after the
+//   commit with the changes of Beat Grids & Waveforms, if the change
+//   landed;
+// - the ledger's file and a track's kept analysis, which a change that
+//   may write them declares in filesToBackup() (absent: Undo removes a
+//   new one).
+const std::map<std::string, std::string> &saveBeatGridLedger(SaveContext &ctx, const std::string &stickRoot);
+void recordGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                                   const std::string &ledgerKey, const std::string &gridFingerprint);
+std::string beatGridLedgerFileOf(const std::string &stickRoot);
+std::string keptEngineAnalysisFileOf(const std::string &stickRoot, const std::string &ledgerKey);
+
 }  // namespace seabass::gui

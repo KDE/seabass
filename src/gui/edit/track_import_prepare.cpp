@@ -116,6 +116,81 @@ std::string whyNot(const domain::ImportPlanEntry &entry, const std::string &root
 
 }  // namespace
 
+std::vector<std::shared_ptr<const ImportAnalysis>> analyseFiles(const std::vector<std::string> &files,
+                                                                const ImportAnalyser &analyser, int jobs,
+                                                                const application::CancellationToken &cancel,
+                                                                const ImportProgressSink &progress)
+{
+    const std::size_t count = files.size();
+    std::vector<std::shared_ptr<const ImportAnalysis>> made(count);
+    std::atomic<std::size_t> next{0};
+    std::atomic<std::size_t> done{0};
+    std::mutex reporting;
+    std::exception_ptr thrown;
+    std::atomic<bool> failed{false};
+    // Under `reporting`: the files the workers have in hand, and the one
+    // last done.
+    std::vector<std::string> inHand;
+    std::string lastDone;
+    const auto report = [&](std::size_t doneNow) {
+        if (progress) {
+            progress({ImportProgress::Step::Analysis, doneNow, count, lastDone, inHand});
+        }
+    };
+    const auto work = [&]() {
+        for (;;) {
+            const std::size_t index = next.fetch_add(1);
+            // One that failed fails the run: the rest of the files are
+            // not analysed for nothing.
+            if (index >= count || cancel.cancelled() || failed.load()) {
+                return;
+            }
+            // The report too: nothing may leave a thread's function.
+            try {
+                const std::string name = nameOf(files[index]);
+                {
+                    const std::lock_guard<std::mutex> lock(reporting);
+                    inHand.push_back(name);
+                    report(done.load());
+                }
+                made[index] = analyser(files[index], cancel);
+                const std::lock_guard<std::mutex> lock(reporting);
+                if (const auto at = std::find(inHand.begin(), inHand.end(), name); at != inHand.end()) {
+                    inHand.erase(at);
+                }
+                lastDone = name;
+                report(done.fetch_add(1) + 1);
+            } catch (...) {
+                failed.store(true);
+                const std::lock_guard<std::mutex> lock(reporting);
+                if (!thrown) {
+                    thrown = std::current_exception();
+                }
+                return;
+            }
+        }
+    };
+    report(0);
+    const int workers = static_cast<int>(std::min<std::size_t>(std::max(1, jobs), std::max<std::size_t>(count, 1)));
+    if (workers <= 1) {
+        work();
+    } else {
+        std::vector<std::unique_ptr<QThread>> threads;
+        for (int w = 0; w < workers; ++w) {
+            threads.emplace_back(QThread::create(work));
+            threads.back()->start();
+        }
+        for (const auto &thread : threads) {
+            thread->wait();
+        }
+    }
+    if (thrown) {
+        std::rethrow_exception(thrown);
+    }
+    cancel.throwIfCancelled();
+    return made;
+}
+
 PreparedImport prepareTrackImport(const ImportRequest &request, const application::CancellationToken &cancel,
                                   const ImportProgressSink &progress)
 {
@@ -349,70 +424,12 @@ PreparedImport prepareTrackImport(const ImportRequest &request, const applicatio
             }
         }
         // prepared.staged.staged names their source files, in the same
-        // order. Several at once, each worker a thread of its own (the
-        // decoder runs an event loop in the thread that reads it).
+        // order.
         const std::size_t count = std::min(imports.size(), prepared.staged.staged.size());
-        std::vector<std::shared_ptr<const ImportAnalysis>> made(count);
-        std::atomic<std::size_t> next{0};
-        std::atomic<std::size_t> done{0};
-        std::mutex reporting;
-        std::exception_ptr thrown;
-        std::atomic<bool> failed{false};
-        // Under `reporting`: the files the workers have in hand, and the
-        // one last done.
-        std::vector<std::string> inHand;
-        std::string lastDone;
-        const auto work = [&]() {
-            for (;;) {
-                const std::size_t index = next.fetch_add(1);
-                // One that failed fails the import: the rest of the
-                // files are not analysed for nothing.
-                if (index >= count || cancel.cancelled() || failed.load()) {
-                    return;
-                }
-                // The report too: nothing may leave a thread's function.
-                try {
-                    const std::string name = nameOf(prepared.staged.staged[index]);
-                    {
-                        const std::lock_guard<std::mutex> lock(reporting);
-                        inHand.push_back(name);
-                        report(ImportProgress::Step::Analysis, done.load(), count, lastDone, inHand);
-                    }
-                    made[index] = request.analyser(prepared.staged.staged[index], cancel);
-                    const std::lock_guard<std::mutex> lock(reporting);
-                    if (const auto at = std::find(inHand.begin(), inHand.end(), name); at != inHand.end()) {
-                        inHand.erase(at);
-                    }
-                    lastDone = name;
-                    report(ImportProgress::Step::Analysis, done.fetch_add(1) + 1, count, lastDone, inHand);
-                } catch (...) {
-                    failed.store(true);
-                    const std::lock_guard<std::mutex> lock(reporting);
-                    if (!thrown) {
-                        thrown = std::current_exception();
-                    }
-                    return;
-                }
-            }
-        };
-        report(ImportProgress::Step::Analysis, 0, count, {});
-        const int jobs = static_cast<int>(std::min<std::size_t>(std::max(1, request.analysisJobs), count));
-        if (jobs <= 1) {
-            work();
-        } else {
-            std::vector<std::unique_ptr<QThread>> workers;
-            for (int w = 0; w < jobs; ++w) {
-                workers.emplace_back(QThread::create(work));
-                workers.back()->start();
-            }
-            for (const auto &worker : workers) {
-                worker->wait();
-            }
-        }
-        if (thrown) {
-            std::rethrow_exception(thrown);
-        }
-        cancel.throwIfCancelled();
+        const std::vector<std::string> files(prepared.staged.staged.begin(),
+                                             prepared.staged.staged.begin() + static_cast<std::ptrdiff_t>(count));
+        std::vector<std::shared_ptr<const ImportAnalysis>> made =
+            analyseFiles(files, request.analyser, request.analysisJobs, cancel, progress);
         for (std::size_t i = 0; i < count; ++i) {
             if (made[i]) {
                 ++prepared.analysed;

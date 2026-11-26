@@ -69,7 +69,18 @@ AnlzFile AnlzFile::readRaw(const std::string &path)
         throw std::runtime_error("could not open " + path);
     }
     std::string data((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-    validateAnlzBytes(data, path);
+    AnlzFile result = fromBytes(data, path);
+
+    result.m_sourcePath = path;
+    std::error_code ec;
+    result.m_sourceFileSize = fs::file_size(pathFromUtf8(path), ec);
+    result.m_sourceMtime = fs::last_write_time(pathFromUtf8(path), ec);
+    return result;
+}
+
+AnlzFile AnlzFile::fromBytes(const std::string &data, const std::string &context)
+{
+    validateAnlzBytes(data, context);
 
     uint32_t lenHeader = readU32BE(data, 4);
 
@@ -83,11 +94,6 @@ AnlzFile AnlzFile::readRaw(const std::string &path)
         result.sections.push_back({fourcc, data.substr(pos, lenTag)});
         pos += lenTag;
     }
-
-    result.m_sourcePath = path;
-    std::error_code ec;
-    result.m_sourceFileSize = fs::file_size(pathFromUtf8(path), ec);
-    result.m_sourceMtime = fs::last_write_time(pathFromUtf8(path), ec);
     return result;
 }
 

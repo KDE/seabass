@@ -309,6 +309,17 @@ public:
     // trusted, like the annotation above.
     void writePlayCountForPath(const std::string &filePath, int playCount);
 
+    // Every content row listing `filePath` given the tempo and key of a
+    // new analysis of its audio (Browse's Analyse again): bpmx100 always,
+    // and with a `key` that is not empty key_id, the key row spelled
+    // exactly `key`, made where there is none as addTrack() makes one. In
+    // one transaction, read back before it is trusted, like the play
+    // count above. Throws std::invalid_argument for a tempo outside 0 to
+    // 1000 or a key that is not storable text, OneLibraryRowMissing when no
+    // row lists the file, and on any other failure. Returns how many rows
+    // were written.
+    int setTempoAndKeyForPath(const std::string &filePath, double bpm, const std::string &key);
+
     // Points every content row listing `filePath` at `newFilePath`
     // instead (content.path, converted the way every path here is, and
     // content.fileName, which the reader shows as the file's name), for

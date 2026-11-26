@@ -39,6 +39,11 @@ class AnlzFile
 {
 public:
     static AnlzFile readRaw(const std::string &path);
+    // The same from bytes in memory (a file buildAnlzFiles() made): no
+    // source file, so writeRaw() has nothing to check staleness against.
+    // Throws std::runtime_error, naming `context`, on bytes that are not
+    // a valid ANLZ file.
+    static AnlzFile fromBytes(const std::string &data, const std::string &context);
 
     // Recomputes len_file from the current header+sections size, then
     // writes the file out. Throws std::runtime_error if the file at

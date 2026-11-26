@@ -2156,6 +2156,69 @@ void OneLibraryCueWriter::writePlayCountForPath(const std::string &filePath, int
     refreshStalenessBaseline();
 }
 
+int OneLibraryCueWriter::setTempoAndKeyForPath(const std::string &filePath, double bpm, const std::string &key)
+{
+    if (!(bpm >= 0.0) || bpm >= 1000.0) {
+        throw std::invalid_argument("onelibrary: not a tempo a content row holds");
+    }
+    if (!domain::isStorableText(key)) {
+        throw std::invalid_argument("onelibrary: the key \"" + key + "\" is not UTF-8, or ends in a blank");
+    }
+    checkNotStale();
+
+    const std::string contentPath = toContentPath(m_stickRoot, filePath);
+    SqlCipherDb &db = writeConnection();
+    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
+    if (contentIds.empty()) {
+        throw OneLibraryRowMissing("onelibrary: no content row for path " + contentPath);
+    }
+    if (!key.empty()) {
+        requireColumns(db, "key", {"key_id", "name"});
+    }
+
+    const int64_t bpmx100 = static_cast<int64_t>(bpm * 100.0 + 0.5);
+    std::optional<int64_t> keyId;
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+        std::vector<MadeRow> made;
+        keyId = lookupRow(db, "key", "key_id", "name", key, made);
+        for (int64_t contentId : contentIds) {
+            SqlCipherStatement set(db, keyId ? "UPDATE content SET bpmx100 = ?, key_id = ? WHERE content_id = ?"
+                                             : "UPDATE content SET bpmx100 = ? WHERE content_id = ?");
+            int at = 1;
+            set.bindInt64(at++, bpmx100);
+            if (keyId) {
+                set.bindInt64(at++, *keyId);
+            }
+            set.bindInt64(at, contentId);
+            set.run();
+        }
+        db.exec("COMMIT;");
+    } catch (...) {
+        try {
+            db.exec("ROLLBACK;");
+        } catch (...) {
+        }
+        throw;
+    }
+
+    // Read back through the verify connection before the staleness
+    // baseline moves, for the reason writeAnnotationForPath gives.
+    for (int64_t contentId : contentIds) {
+        SqlCipherStatement verify(verifyConnection(), "SELECT c.bpmx100, k.name FROM content c LEFT JOIN key k ON "
+                                                      "k.key_id = c.key_id WHERE c.content_id = ?");
+        verify.bindInt64(1, contentId);
+        if (!verify.step() || verify.columnIsNull(0) || verify.columnInt64(0) != bpmx100
+            || (keyId && verify.columnText(1) != key)) {
+            throw std::runtime_error("onelibrary: post-write verification failed, tempo or key did not land for "
+                                     + contentPath);
+        }
+    }
+
+    refreshStalenessBaseline();
+    return static_cast<int>(contentIds.size());
+}
+
 int OneLibraryCueWriter::setTrackPath(const std::string &filePath, const std::string &newFilePath)
 {
     checkNotStale();

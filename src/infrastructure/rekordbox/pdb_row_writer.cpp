@@ -2712,6 +2712,67 @@ std::string PdbRowWriter::newTrackRefusal(const NewTrack &track)
     return {};
 }
 
+bool PdbRowWriter::setTrackTempoAndKey(uint32_t trackId, double bpm, const std::string &key)
+{
+    if (m_format != Format::Export) {
+        throw std::logic_error("tracks live in export.pdb");
+    }
+    // Not clamped, as for a new row: a number its field cannot hold would
+    // be another number in the row.
+    if (!(bpm >= 0.0) || bpm >= 1000.0) {
+        throw std::invalid_argument("export.pdb: not a tempo a track row holds");
+    }
+    if (!domain::isStorableText(key)) {
+        throw std::invalid_argument("export.pdb: the key \"" + key + "\" is not UTF-8, or ends in a blank");
+    }
+    if (!findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+            auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+            return t != nullptr && t->id() == trackId;
+        })) {
+        return false;
+    }
+    const std::string bufferBefore = m_buffer;
+    const std::set<uint32_t> editedBefore = m_editedPageIndices;
+    const std::set<uint32_t> appendedBefore = m_appendedPages;
+    try {
+        std::optional<uint32_t> keyId;
+        if (!key.empty()) {
+            uint32_t found = 0;
+            forEachPresentRow(m_buffer, Pdb::PAGE_TYPE_KEYS, [&](kaitai::kstruct *body) {
+                auto *row = dynamic_cast<Pdb::key_row_t *>(body);
+                if (row && row->id() != 0 && sqlText(row->name()) == key && (found == 0 || row->id() < found)) {
+                    found = row->id();
+                }
+            });
+            if (found == 0) {
+                found = idAfter(highestIdEverIn(m_buffer, KeysTableType, 0), "lookup");
+                addRow(KeysTableType, [&](uint32_t) { return encodePdbKeyRow(found, key); });
+            }
+            keyId = found;
+        }
+        // Found after the key row is placed: addRow() may grow the
+        // buffer by a page, and an offset taken before is not trusted.
+        auto row = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+            auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+            return t != nullptr && t->id() == trackId;
+        });
+        if (!row) {
+            throw std::logic_error("export.pdb: the track row went while its key was added");
+        }
+        writeU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset, static_cast<uint32_t>(bpm * 100.0 + 0.5));
+        if (keyId) {
+            writeU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset, *keyId);
+        }
+        m_editedPageIndices.insert(row->pageIndex);
+    } catch (...) {
+        m_buffer = bufferBefore;
+        m_editedPageIndices = editedBefore;
+        m_appendedPages = appendedBefore;
+        throw;
+    }
+    return true;
+}
+
 uint32_t PdbRowWriter::nextArtworkId() const
 {
     return idAfter(highestIdEverIn(m_buffer, ArtworkTableType, 0), "lookup");

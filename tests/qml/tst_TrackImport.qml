@@ -59,6 +59,47 @@ TestCase {
             function trackCountChange(playlist) { return playlist === stagedPlaylist ? stagedCount : 0; }
             function suggestedPlaylistName(files) { return files.length === 1 ? "Crate" : ""; }
             function fileDialogFilter() { return "*.mp3 *.wav"; }
+            // Analyse again.
+            property string reanalysingPlaylist: ""
+            property var lastReanalysis: ({})
+            property var reanalysed: ({})
+            signal reanalysisReady()
+            function analyseAgain(rekordboxPath, enginePath, playlist) {
+                calls.push(["analyseAgain", rekordboxPath, enginePath, playlist]);
+                return true;
+            }
+            function dropReanalysis(playlist) {
+                calls.push(["dropReanalysis", playlist]);
+                delete reanalysed[playlist];
+                pendingRevision++;
+            }
+            function reanalysisCount(playlist) { return reanalysed[playlist] ?? 0; }
+            property var cueReview: []
+            property var cueReviewTooDifferent: []
+            function setMoveCues(id, move) { calls.push(["moveCues", id, move]); }
+            function setMoveCuesForAll(move) { calls.push(["moveCuesForAll", move]); }
+        }
+    }
+
+    // Just enough of the playlist edits for the menu to tell a playlist
+    // staged to be made from one on the stick.
+    Component {
+        id: fakePlaylistEditComponent
+        QtObject {
+            property int pendingRevision: 0
+            property string errorMessage: ""
+            property var newPlaylists: []
+            property var pendingMoves: ({})
+            property var pendingAdditions: ({})
+            property string lastAddPlaylist: ""
+            signal pendingChanged()
+            function isNewPlaylistStaged(name) { return newPlaylists.indexOf(name) >= 0; }
+            function isPlaylistStaged(name) { return false; }
+            function isRemovalStaged() { return false; }
+            function isAdditionStaged() { return false; }
+            function isRenameStaged() { return false; }
+            function isPlaylistEdited() { return false; }
+            function trackCountChange() { return 0; }
         }
     }
 
@@ -396,5 +437,219 @@ TestCase {
         item.triggered();
         compare(JSON.stringify(page.trackImportController.calls), JSON.stringify([["drop"]]));
         menu.close();
+    }
+
+    // Analyse again: offered beside the import for a playlist on the stick,
+    // not for one the save is still to make, and not while something runs.
+    function test_thePlaylistMenuAnalysesAgain() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const menu = findChild(page, "playlistMenu");
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        const item = findChild(page, "playlistAnalyseAgainItem");
+        compare(item.visible, true);
+        compare(item.enabled, true);
+        compare(item.text, "Analyse again");
+        compare(findChild(page, "takeBackReanalysisItem").visible, false);
+        item.triggered();
+        compare(JSON.stringify(fake.calls), JSON.stringify([["analyseAgain"].concat(testCase.stick, ["Peak"])]));
+        menu.close();
+        tryCompare(menu, "visible", false);
+        // While an import or an analysis runs it waits.
+        fake.busy = true;
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, true);
+        compare(item.enabled, false);
+        menu.close();
+        tryCompare(menu, "visible", false);
+        fake.busy = false;
+        // A playlist the save is still to make has no tracks on the stick.
+        const edits = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        edits.newPlaylists = ["Fresh"];
+        page.playlistEditController = edits;
+        page.openPlaylistMenu("Fresh", page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, false);
+        compare(findChild(page, "importTracksItem").visible, false);
+        menu.close();
+        tryCompare(menu, "visible", false);
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        compare(item.visible, true);
+        menu.close();
+    }
+
+    // Experimental off: no Analyse again either.
+    function test_withoutExperimentalNoAnalyseAgain() {
+        const page = makePage(false);
+        page.openPlaylistMenu("Peak", page);
+        const menu = findChild(page, "playlistMenu");
+        tryCompare(menu, "opened", true);
+        compare(findChild(page, "playlistAnalyseAgainItem").visible, false);
+        menu.close();
+    }
+
+    // While it runs the import's panel shows it, with its own two steps.
+    function test_theProgressStripShowsAnalyseAgain() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const strip = findChild(page, "importProgress");
+        fake.reanalysingPlaylist = "Peak";
+        fake.progressStep = "stick";
+        fake.busy = true;
+        tryCompare(strip, "visible", true);
+        compare(findChild(strip, "passiveProgressSummary").text, "Analysing the tracks of \"Peak\" again");
+        compare(strip.steps.map(s => s.label).join("|"), "Read the stick|Analyse the tracks");
+        compare(strip.steps.map(s => s.state).join(" "), "now later");
+        fake.progressStep = "analysis";
+        fake.progressDone = 1;
+        fake.progressTotal = 4;
+        fake.progressFiles = ["b two.wav"];
+        compare(findChild(strip, "passiveProgressSummary").text, "Analysing the tracks of \"Peak\" again: track 2 of 4");
+        compare(strip.activity.join("|"), "Analysing b two.wav");
+        compare(strip.steps.map(s => s.state).join(" "), "done now");
+        compare(strip.steps.map(s => s.count).join("|"), "|1 of 4 done");
+        fake.busy = false;
+        fake.reanalysingPlaylist = "";
+        tryCompare(strip, "visible", false);
+    }
+
+    // The result: counts only, the note about Save, and Take back; the
+    // playlist's menu takes them back too.
+    function test_theAnalyseAgainResult() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const dialog = findChild(page, "reanalysisResultDialog");
+        fake.lastReanalysis = {playlist: "Peak", analysed: 5, leftAlone: 2};
+        fake.reanalysed = {"Peak": 5};
+        fake.pendingRevision++;
+        fake.reanalysisReady();
+        tryCompare(dialog, "opened", true);
+        compare(dialog.headline, "5 track(s) analysed again.");
+        compare(dialog.detailText, "2 track(s) left as they are. Nothing is written until you save.");
+        compare(findChild(page, "reanalysisTakeBackButton").visible, true);
+        findChild(page, "reanalysisTakeBackButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls), JSON.stringify([["dropReanalysis", "Peak"]]));
+
+        // None left alone: not said.
+        fake.lastReanalysis = {playlist: "Peak", analysed: 3, leftAlone: 0};
+        fake.reanalysisReady();
+        tryCompare(dialog, "opened", true);
+        compare(dialog.detailText, "Nothing is written until you save.");
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+
+        // Nothing analysed: said, no Take back.
+        fake.lastReanalysis = {playlist: "Peak", analysed: 0, leftAlone: 4};
+        fake.reanalysisReady();
+        tryCompare(dialog, "opened", true);
+        compare(dialog.headline, "No track of \"Peak\" could be analysed again.");
+        compare(dialog.detailText, "4 track(s) left as they are.");
+        compare(findChild(page, "reanalysisTakeBackButton").visible, false);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+
+        fake.reanalysed = {"Peak": 3};
+        fake.pendingRevision++;
+        page.openPlaylistMenu("Peak", page);
+        const menu = findChild(page, "playlistMenu");
+        tryCompare(menu, "opened", true);
+        const item = findChild(page, "takeBackReanalysisItem");
+        compare(item.visible, true);
+        compare(item.text, "Don't analyse the 3 track(s) again");
+        item.triggered();
+        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["dropReanalysis", "Peak"]]));
+        menu.close();
+    }
+
+    // The cues on the old grid: the result counts them and offers the
+    // review; the review lists the track, its cue with both times, a strip
+    // with both grids and both places, and the switches reach the
+    // controller.
+    function test_theCueReview() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const strip = {spanMs: 2000, columns: [{low: 0.2, mid: 0.1, high: 0.05}, {low: 0.9, mid: 0.3, high: 0.1}],
+                       oldBeats: [200, 700, 1200, 1700], newBeats: [240, 740, 1240, 1740],
+                       oldCueMs: 700, newCueMs: 740};
+        fake.cueReview = [{id: "addcue:reanalyse-track:/contents/a.wav", title: "Opener, Somebody", gridShiftMs: 40,
+                           oldBpm: 120, newBpm: 120.5, moveCues: false, offBeat: 2,
+                           rows: [{label: "Hot cue 1", name: "drop", color: "#00FF00", isLoop: false,
+                                   oldText: "0:04.247", newText: "0:04.287", diffMs: 40, strip: strip}]}];
+        fake.cueReviewTooDifferent = ["Closer, Somebody Else"];
+        fake.lastReanalysis = {playlist: "Peak", analysed: 2, leftAlone: 0, cueTracks: 1, cuesToMove: 1,
+                               gridChangedTooMuch: 1};
+        fake.reanalysisReady();
+        const result = findChild(page, "reanalysisResultDialog");
+        tryCompare(result, "opened", true);
+        verify(result.detailText.indexOf("On 1 track(s) the new grid sits elsewhere than the old one, and 1 cue point(s) "
+                                         + "and loop(s) sat on the old grid.") >= 0, result.detailText);
+        verify(result.detailText.indexOf("On 1 track(s) the grid changed too much to carry cue points") >= 0,
+               result.detailText);
+        const reviewButton = findChild(page, "reanalysisReviewCuesButton");
+        compare(reviewButton.visible, true);
+        reviewButton.clicked();
+        const review = findChild(page, "cueReviewDialog");
+        tryCompare(review, "opened", true);
+        tryVerify(() => review.opacity === 1 && review.scale === 1);
+        // The track's section, made by the review's Repeater.
+        const tracks = findChild(page, "cueReviewTracks");
+        compare(tracks.count, 1);
+        const section = tracks.itemAt(0);
+        compare(findChild(section, "cueReviewTrackTitle").text, "Opener, Somebody");
+        compare(findChild(section, "cueReviewTrackShift").text,
+                "The grid moved by 40 ms. Tempo 120.00 BPM before, 120.50 BPM now.");
+        compare(findChild(section, "cueReviewRowLabel").text, "Hot cue 1, drop");
+        compare(findChild(section, "cueReviewRowTimes").text, "0:04.247 now, 0:04.287 on the new grid (+40 ms)");
+        compare(findChild(section, "cueReviewOffBeat").text, "2 cue point(s) not on a beat stay where they are.");
+        compare(findChild(page, "cueReviewTooDifferentList").text, "Closer, Somebody Else");
+        const cueStrip = findChild(section, "cueReviewStrip");
+        verify(cueStrip.width > 100, "the strip has room: " + cueStrip.width);
+        // Both grids and both places, in order and inside the strip.
+        for (const beats of [cueStrip.oldBeats, cueStrip.newBeats]) {
+            compare(beats.length, 4);
+            for (let i = 0; i < beats.length; ++i) {
+                verify(beats[i] >= 0 && beats[i] <= cueStrip.spanMs);
+                verify(i === 0 || beats[i] > beats[i - 1]);
+            }
+        }
+        compare(cueStrip.oldCueMs, 700);
+        compare(cueStrip.newCueMs, 740);
+        verify(cueStrip.xOf(cueStrip.oldCueMs) < cueStrip.xOf(cueStrip.newCueMs));
+        verify(cueStrip.xOf(cueStrip.newCueMs) <= cueStrip.width);
+        // Old and new are said in words beside their markers, old first.
+        const oldLabel = findChild(cueStrip, "cueStripOldLabel");
+        const newLabel = findChild(cueStrip, "cueStripNewLabel");
+        compare(oldLabel.text, "old");
+        compare(newLabel.text, "new");
+        verify(oldLabel.x < newLabel.x);
+        compare(findChild(cueStrip, "cueStripWaveform").waveformData.length, 2);
+        waitForRendering(page);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(page).save(screenshotDir + "/browse_cue_review.png");
+        }
+        // Off by default; the switch and the two buttons reach the
+        // controller.
+        const moveSwitch = findChild(section, "moveCuesSwitch");
+        compare(moveSwitch.checked, false);
+        mouseClick(moveSwitch);
+        findChild(page, "cueReviewAllOn").clicked();
+        findChild(page, "cueReviewAllOff").clicked();
+        compare(JSON.stringify(fake.calls), JSON.stringify([["moveCues", "addcue:reanalyse-track:/contents/a.wav", true],
+                                                            ["moveCuesForAll", true], ["moveCuesForAll", false]]));
+        review.close();
+        tryCompare(review, "visible", false);
+
+        // Nothing on the old grid: no review offered, nothing said.
+        fake.lastReanalysis = {playlist: "Peak", analysed: 2, leftAlone: 0, cueTracks: 0, cuesToMove: 0,
+                               gridChangedTooMuch: 0};
+        fake.reanalysisReady();
+        tryCompare(result, "opened", true);
+        compare(reviewButton.visible, false);
+        compare(result.detailText, "Nothing is written until you save.");
+        result.close();
     }
 }

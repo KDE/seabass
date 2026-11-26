@@ -18,6 +18,7 @@
 #include "domain/imported_track.hpp"
 #include "domain/waveform_from_audio.hpp"
 #include "gui/edit/pending_change.hpp"
+#include "infrastructure/rekordbox/anlz_builder.hpp"
 
 namespace seabass::gui
 {
@@ -164,6 +165,29 @@ struct ImportAnalysis
 // application::OperationCancelled on a cancel.
 using ImportAnalyser = std::function<std::shared_ptr<const ImportAnalysis>(const std::string &audioFile,
                                                                          const application::CancellationToken &cancel)>;
+
+// An analysis as rekordbox's three analysis files of a track, as the
+// import writes them and Analyse again merges them into a track's own:
+// the grid moved onto rekordbox's timeline (an MP3's lead-in, read from
+// `audioFile`) and cut to the track, the waveform moved with it by whole
+// entries, the track's length kept.
+struct RekordboxAnalysisFiles
+{
+    // None when the analysis has no waveform, or the builder refused it
+    // (`error` says why).
+    std::optional<infrastructure::rekordbox::NewAnlzFiles> files;
+    std::string error;
+    // The grid on rekordbox's timeline; empty without one, and for an MP3
+    // whose lead-in cannot be read, which has no known place on it.
+    std::vector<domain::Beat> beats;
+    // The file's own sample count where its container says it exactly.
+    std::optional<std::uint64_t> sampleCount;
+    bool isMp3 = false;
+};
+// `stickPath`: the file's place on the stick, as PPTH spells it;
+// `durationSeconds`: its length where the waveform does not say.
+RekordboxAnalysisFiles rekordboxAnalysisFilesFor(const ImportAnalysis &analysis, const std::string &audioFile,
+                                                 const std::string &stickPath, double durationSeconds);
 
 class ImportTrackChange : public PendingChange
 {

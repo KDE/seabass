@@ -10,6 +10,7 @@
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #include "domain/track_import_plan.hpp"
@@ -30,6 +31,8 @@ TrackImportController::TrackImportController(QObject *parent)
     : QObject(parent)
 {
     connect(&m_watcher, &QFutureWatcher<PreparedImport>::finished, this, &TrackImportController::onPrepared);
+    connect(&m_reanalysisWatcher, &QFutureWatcher<PreparedReanalysis>::finished, this,
+            &TrackImportController::onReanalysed);
 }
 
 TrackImportController::~TrackImportController()
@@ -38,6 +41,7 @@ TrackImportController::~TrackImportController()
     // nothing of this object is used after it.
     m_cancel.cancel();
     awaitQuietly(m_watcher);
+    awaitQuietly(m_reanalysisWatcher);
 }
 
 void TrackImportController::setBusy(bool busy)
@@ -77,6 +81,29 @@ void TrackImportController::setErrorMessage(const QString &message)
     }
 }
 
+void TrackImportController::pruneCueReview()
+{
+    const std::size_t before = m_reviewed.size();
+    std::erase_if(m_reviewed, [this](const auto &change) { return m_reanalysed.count(change->id()) == 0; });
+    if (m_reviewed.size() != before) {
+        emit cueReviewChanged();
+    }
+}
+
+void TrackImportController::forgetReanalysis()
+{
+    if (!m_reviewed.empty()) {
+        m_reviewed.clear();
+        emit cueReviewChanged();
+    }
+    if (m_reanalysed.empty()) {
+        return;
+    }
+    m_reanalysed.clear();
+    ++m_pendingRevision;
+    emit pendingChanged();
+}
+
 void TrackImportController::forgetStaged()
 {
     if (m_staged.empty() && m_stagedTracks == 0) {
@@ -100,9 +127,15 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
             disconnect(m_session, nullptr, this, nullptr);
         }
         forgetStaged();
+        forgetReanalysis();
         m_session = session;
         if (m_session) {
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
+                if (m_reanalysed.erase(changeId) > 0) {
+                    ++m_pendingRevision;
+                    emit pendingChanged();
+                    pruneCueReview();
+                }
                 if (m_staged.erase(changeId) > 0) {
                     // Every change of the batch is something the page
                     // has to read again.
@@ -124,12 +157,26 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
                     emit tracksImported();
                 }
             });
-            connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() { forgetStaged(); });
+            connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
+                forgetStaged();
+                forgetReanalysis();
+            });
             // A change of the batch taken back elsewhere (the session's
             // own list): what is left of it is no longer what was
             // rehearsed, so the count follows the session.
             connect(m_session, &LibraryEditSession::pendingChanged, this, [this]() {
-                if (m_staged.empty() || !m_session || m_session->writing()) {
+                if (!m_session || m_session->writing()) {
+                    return;
+                }
+                // A new analysis taken back elsewhere is no longer waiting.
+                const std::size_t reanalysed = m_reanalysed.size();
+                std::erase_if(m_reanalysed, [this](const auto &entry) { return !m_session->hasChange(entry.first); });
+                if (m_reanalysed.size() != reanalysed) {
+                    ++m_pendingRevision;
+                    emit pendingChanged();
+                    pruneCueReview();
+                }
+                if (m_staged.empty()) {
                     return;
                 }
                 int tracks = 0;
@@ -216,7 +263,9 @@ bool TrackImportController::importPossibleDuplicates()
 bool TrackImportController::start(ImportRequest request)
 {
     if (m_busy) {
-        setErrorMessage(QStringLiteral("An import is being prepared already."));
+        setErrorMessage(!m_reanalysingPlaylist.isEmpty()
+                            ? QStringLiteral("Tracks are being analysed again. Import when that has finished.")
+                            : QStringLiteral("An import is being prepared already."));
         return false;
     }
     if (!attachSession(request.rekordboxPath, request.enginePath)) {
@@ -267,11 +316,19 @@ bool TrackImportController::start(ImportRequest request)
     m_cancel = application::CancellationToken();
     setBusy(true);
     setProgress(QStringLiteral("stick"), 0, 0, {});
-    // Passed on to this thread; one of an offer that was cancelled or
-    // has finished meanwhile is not shown.
+    const ImportProgressSink progress = progressSink();
+    m_watcher.setFuture(QtConcurrent::run(
+        [request, cancel = m_cancel, progress]() { return prepareTrackImport(request, cancel, progress); }));
+    return true;
+}
+
+ImportProgressSink TrackImportController::progressSink()
+{
+    // Passed on to this thread; one of a run that was cancelled or has
+    // finished meanwhile is not shown.
     const QPointer<TrackImportController> self(this);
     const int offer = ++m_offer;
-    const ImportProgressSink progress = [self, offer](const ImportProgress &at) {
+    return [self, offer](const ImportProgress &at) {
         static const char *const steps[] = {"stick", "files", "check", "analysis"};
         const QString step = QLatin1String(steps[static_cast<int>(at.step)]);
         const QString file = QString::fromStdString(at.file);
@@ -290,9 +347,6 @@ bool TrackImportController::start(ImportRequest request)
             },
             Qt::QueuedConnection);
     };
-    m_watcher.setFuture(QtConcurrent::run(
-        [request, cancel = m_cancel, progress]() { return prepareTrackImport(request, cancel, progress); }));
-    return true;
 }
 
 void TrackImportController::onPrepared()
@@ -425,6 +479,204 @@ void TrackImportController::dropStaged()
         m_session->unstageAll(ids);
     }
     forgetStaged();
+}
+
+bool TrackImportController::analyseAgain(const QString &rekordboxPath, const QString &enginePath,
+                                        const QString &playlist)
+{
+    setErrorMessage({});
+    if (m_busy) {
+        setErrorMessage(!m_reanalysingPlaylist.isEmpty()
+                            ? QStringLiteral("Tracks are being analysed again already.")
+                            : QStringLiteral("An import is being prepared. Analyse again when it has finished."));
+        return false;
+    }
+    if (playlist.isEmpty()) {
+        setErrorMessage(QStringLiteral("Analyse again takes the tracks of a playlist."));
+        return false;
+    }
+    if (!attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    ReanalysisRequest request;
+    request.rekordboxPath = rekordboxPath;
+    request.enginePath = enginePath;
+    request.playlist = playlist.toStdString();
+    request.analysisJobs = importAnalysisJobs();
+    // The tempo range as Preferences has it now, as for an import.
+    const QSettings settings = openSeabassSettings();
+    const domain::TempoRange range = storedAnalysisTempoRange(settings);
+    request.analyser = [range](const std::string &file, const application::CancellationToken &cancel) {
+        return analyseForImport(file, cancel, range);
+    };
+    m_reanalysing = request;
+    m_reanalysingPlaylist = playlist;
+    m_cancel = application::CancellationToken();
+    setBusy(true);
+    setProgress(QStringLiteral("stick"), 0, 0, {});
+    const ImportProgressSink progress = progressSink();
+    m_reanalysisWatcher.setFuture(QtConcurrent::run(
+        [request, cancel = m_cancel, progress]() { return prepareReanalysis(request, cancel, progress); }));
+    return true;
+}
+
+void TrackImportController::onReanalysed()
+{
+    QString thrown;
+    PreparedReanalysis prepared = takeResult(m_reanalysisWatcher, &thrown);
+    const QString playlist = m_reanalysingPlaylist;
+    m_reanalysingPlaylist.clear();
+    setBusy(false);
+    setProgress({}, 0, 0, {});
+    if (m_cancel.cancelled()) {
+        return;
+    }
+    if (!thrown.isEmpty()) {
+        setErrorMessage(QStringLiteral("The tracks could not be analysed: %1").arg(thrown));
+        return;
+    }
+    if (!prepared.refusal.empty()) {
+        setErrorMessage(QString::fromStdString(prepared.refusal));
+        return;
+    }
+    // The stick may have started a save meanwhile.
+    if (!attachSession(m_reanalysing.rekordboxPath, m_reanalysing.enginePath)) {
+        return;
+    }
+    if (!prepared.changes.empty()) {
+        std::vector<std::shared_ptr<PendingChange>> changes(prepared.changes.begin(), prepared.changes.end());
+        if (!m_session->stageAll(std::move(changes))) {
+            // The session said why (a lock another instance holds, another
+            // page's edits, a browsed backup).
+            setErrorMessage(QStringLiteral("The new analyses could not be staged on this stick."));
+            return;
+        }
+        for (const auto &change : prepared.changes) {
+            m_reanalysed[change->id()] = playlist;
+        }
+        m_reviewed = prepared.changes;
+        ++m_pendingRevision;
+        emit pendingChanged();
+    }
+    if (prepared.changes.empty()) {
+        m_reviewed.clear();
+    }
+    int cueTracks = 0;
+    int cuesToMove = 0;
+    int tooMuch = 0;
+    for (const auto &change : m_reviewed) {
+        const auto &plan = change->cueReview().plan;
+        cueTracks += plan.moves.empty() ? 0 : 1;
+        cuesToMove += static_cast<int>(plan.moves.size());
+        tooMuch += plan.verdict == application::CueGridPlan::Verdict::GridChangedTooMuch ? 1 : 0;
+    }
+    m_lastReanalysis = QVariantMap{
+        {QStringLiteral("playlist"), playlist},
+        {QStringLiteral("analysed"), static_cast<int>(prepared.changes.size())},
+        {QStringLiteral("leftAlone"), static_cast<int>(prepared.leftAlone.size())},
+        {QStringLiteral("cueTracks"), cueTracks},
+        {QStringLiteral("cuesToMove"), cuesToMove},
+        {QStringLiteral("gridChangedTooMuch"), tooMuch},
+    };
+    emit cueReviewChanged();
+    emit reanalysisReady();
+}
+
+void TrackImportController::dropReanalysis(const QString &playlist)
+{
+    QStringList ids;
+    for (const auto &[id, from] : m_reanalysed) {
+        if (from == playlist) {
+            ids << id;
+        }
+    }
+    if (ids.isEmpty()) {
+        return;
+    }
+    if (m_session && !m_session->writing()) {
+        m_session->unstageAll(ids);
+    }
+}
+
+void TrackImportController::setMoveCues(const QString &changeId, bool move)
+{
+    for (const auto &change : m_reviewed) {
+        if (change->id() == changeId && change->moveCues() != move) {
+            change->setMoveCues(move);
+            emit cueReviewChanged();
+        }
+    }
+}
+
+void TrackImportController::setMoveCuesForAll(bool move)
+{
+    bool changed = false;
+    for (const auto &change : m_reviewed) {
+        if (!change->cueReview().plan.moves.empty() && change->moveCues() != move) {
+            change->setMoveCues(move);
+            changed = true;
+        }
+    }
+    if (changed) {
+        emit cueReviewChanged();
+    }
+}
+
+QVariantList TrackImportController::cueReview() const
+{
+    QVariantList tracks;
+    for (const auto &change : m_reviewed) {
+        const auto &review = change->cueReview();
+        if (review.plan.moves.empty()) {
+            continue;
+        }
+        QVariantList rows;
+        for (const application::CueGridMove &move : review.plan.moves) {
+            QVariantMap row{
+                {QStringLiteral("label"), ReanalyseTrackChange::cueLabel(move.kind, move.hotCueNumber, move.isLoop)},
+                {QStringLiteral("name"), QString::fromStdString(move.comment)},
+                {QStringLiteral("color"), QString::fromStdString(move.color)},
+                {QStringLiteral("isLoop"), move.isLoop},
+                {QStringLiteral("oldText"), ReanalyseTrackChange::clockText(move.oldMs)},
+                {QStringLiteral("newText"), ReanalyseTrackChange::clockText(move.newMs)},
+                {QStringLiteral("diffMs"), static_cast<int>(std::lround(move.newMs - move.oldMs))},
+                {QStringLiteral("strip"), change->reviewStrip(move)},
+            };
+            if (move.isLoop) {
+                row.insert(QStringLiteral("oldEndText"), ReanalyseTrackChange::clockText(move.oldEndMs));
+                row.insert(QStringLiteral("newEndText"), ReanalyseTrackChange::clockText(move.newEndMs));
+            }
+            rows << row;
+        }
+        tracks << QVariantMap{
+            {QStringLiteral("id"), change->id()},
+            {QStringLiteral("title"), change->subject()},
+            {QStringLiteral("gridShiftMs"), static_cast<int>(std::lround(change->gridShiftMs()))},
+            {QStringLiteral("oldBpm"), review.oldBpm},
+            {QStringLiteral("newBpm"), change->analysis()->bpm},
+            {QStringLiteral("moveCues"), change->moveCues()},
+            {QStringLiteral("offBeat"), review.plan.offBeat},
+            {QStringLiteral("rows"), rows},
+        };
+    }
+    return tracks;
+}
+
+QStringList TrackImportController::cueReviewTooDifferent() const
+{
+    QStringList titles;
+    for (const auto &change : m_reviewed) {
+        if (change->cueReview().plan.verdict == application::CueGridPlan::Verdict::GridChangedTooMuch) {
+            titles << change->subject();
+        }
+    }
+    return titles;
+}
+
+int TrackImportController::reanalysisCount(const QString &playlist) const
+{
+    return static_cast<int>(std::count_if(m_reanalysed.begin(), m_reanalysed.end(),
+                                          [&](const auto &entry) { return entry.second == playlist; }));
 }
 
 int TrackImportController::trackCountChange(const QString &playlist) const

@@ -175,6 +175,10 @@ Page {
             importResultDialog.outcome = root.trackImportController.lastResult;
             importResultDialog.open();
         }
+        function onReanalysisReady() {
+            reanalysisResultDialog.outcome = root.trackImportController.lastReanalysis;
+            reanalysisResultDialog.open();
+        }
     }
     // `files` into `playlist` ("" for none), which the save makes when
     // `create`; atIndex below 0 for its end.
@@ -347,6 +351,223 @@ Page {
         }
     }
 
+    // What Analyse again came to: how many tracks wait for Save with a new
+    // analysis, and how many were left as they are (counted, not named).
+    SeabassDialog {
+        id: reanalysisResultDialog
+        objectName: "reanalysisResultDialog"
+        property var outcome: ({})
+        readonly property int analysed: outcome.analysed ?? 0
+        readonly property int leftAlone: outcome.leftAlone ?? 0
+        readonly property string playlist: outcome.playlist ?? ""
+        readonly property int cueTracks: outcome.cueTracks ?? 0
+        readonly property int cuesToMove: outcome.cuesToMove ?? 0
+        readonly property int gridChangedTooMuch: outcome.gridChangedTooMuch ?? 0
+        severity: analysed > 0 ? SeabassDialog.Info : SeabassDialog.Warning
+        title: qsTr("Analyse again")
+        headline: analysed > 0 ? qsTr("%n track(s) analysed again.", "", analysed)
+            : qsTr("No track of \"%1\" could be analysed again.").arg(playlist)
+        detailText: (leftAlone > 0 ? qsTr("%n track(s) left as they are.", "", leftAlone) : "")
+            + (analysed > 0 ? (leftAlone > 0 ? " " : "") + qsTr("Nothing is written until you save.") : "")
+            + (cueTracks > 0
+                ? "\n\n" + qsTr("On %n track(s) the new grid sits elsewhere than the old one, and %1 cue point(s) and "
+                                 + "loop(s) sat on the old grid. They stay where they are unless you choose to move them.",
+                                 "", cueTracks).arg(cuesToMove) : "")
+            + (gridChangedTooMuch > 0
+                ? "\n\n" + qsTr("On %n track(s) the grid changed too much to carry cue points; they stay where they are.",
+                                 "", gridChangedTooMuch) : "")
+        footer: DialogButtonBox {
+            Button {
+                objectName: "reanalysisReviewCuesButton"
+                visible: reanalysisResultDialog.cueTracks > 0
+                text: qsTr("Review the cue points...")
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: {
+                    reanalysisResultDialog.close();
+                    cueReviewDialog.open();
+                }
+            }
+            Button {
+                objectName: "reanalysisTakeBackButton"
+                visible: reanalysisResultDialog.analysed > 0
+                text: qsTr("Take back")
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                onClicked: {
+                    root.trackImportController.dropReanalysis(reanalysisResultDialog.playlist);
+                    reanalysisResultDialog.close();
+                }
+            }
+            Button {
+                objectName: "reanalysisResultOkButton"
+                text: qsTr("OK")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+    }
+
+    // Analyse again's cue review: each track whose cues sat on the old
+    // grid, each such cue where it is and where the new grid would take
+    // it, and a switch per track, off until the person turns it on.
+    // Nothing moves for a track whose switch is off.
+    SeabassDialog {
+        id: cueReviewDialog
+        objectName: "cueReviewDialog"
+        readonly property var tracks: root.trackImportController.cueReview ?? []
+        readonly property var tooDifferent: root.trackImportController.cueReviewTooDifferent ?? []
+        severity: SeabassDialog.Question
+        title: qsTr("Cue points on the old grid")
+        headline: qsTr("Move cue points onto the new grid?")
+        detailText: qsTr("These cue points and loops sat on a beat of the old grid. Switched on for a track, its cue "
+                         + "points move to the same beat of the new grid when you save. Nothing moves for a track whose "
+                         + "switch is off.")
+        width: Math.min(root.width - 2 * Theme.pageMargin, Theme.scaled(900))
+        Label {
+            objectName: "cueReviewLegend"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            text: qsTr("In each picture: dashed grey lines are the old grid, solid lines the new grid. The open marker "
+                       + "labelled old is where the cue is now, the filled marker labelled new where it would go.")
+        }
+        RowLayout {
+            spacing: Theme.rowSpacing
+            Button {
+                objectName: "cueReviewAllOn"
+                text: qsTr("Move all")
+                onClicked: root.trackImportController.setMoveCuesForAll(true)
+            }
+            Button {
+                objectName: "cueReviewAllOff"
+                text: qsTr("Move none")
+                onClicked: root.trackImportController.setMoveCuesForAll(false)
+            }
+        }
+        ScrollView {
+            objectName: "cueReviewScroll"
+            Layout.fillWidth: true
+            Layout.preferredHeight: Math.min(cueReviewColumn.implicitHeight, root.height * 0.55)
+            clip: true
+            contentWidth: availableWidth
+            ColumnLayout {
+                id: cueReviewColumn
+                width: parent.width
+                spacing: Theme.rowSpacing * 2
+                Repeater {
+                    objectName: "cueReviewTracks"
+                    model: cueReviewDialog.tracks
+                    delegate: ColumnLayout {
+                        id: reviewTrack
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: Theme.tightSpacing
+                        Label {
+                            objectName: "cueReviewTrackTitle"
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            font.bold: true
+                            text: reviewTrack.modelData.title
+                        }
+                        Label {
+                            objectName: "cueReviewTrackShift"
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.textMuted
+                            readonly property real oldBpm: reviewTrack.modelData.oldBpm ?? 0
+                            readonly property real newBpm: reviewTrack.modelData.newBpm ?? 0
+                            text: qsTr("The grid moved by %1 ms.").arg(reviewTrack.modelData.gridShiftMs)
+                                + (oldBpm > 0 && Math.abs(oldBpm - newBpm) >= 0.01
+                                    ? " " + qsTr("Tempo %1 BPM before, %2 BPM now.").arg(oldBpm.toFixed(2))
+                                        .arg(newBpm.toFixed(2)) : "")
+                        }
+                        Switch {
+                            objectName: "moveCuesSwitch"
+                            text: qsTr("Move these cue points onto the new grid")
+                            checked: reviewTrack.modelData.moveCues
+                            onToggled: root.trackImportController.setMoveCues(reviewTrack.modelData.id, checked)
+                        }
+                        Repeater {
+                            model: reviewTrack.modelData.rows
+                            delegate: ColumnLayout {
+                                id: reviewRow
+                                required property var modelData
+                                Layout.fillWidth: true
+                                spacing: Theme.tightSpacing / 2
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Theme.tightSpacing
+                                    Rectangle {
+                                        visible: (reviewRow.modelData.color ?? "").length > 0
+                                        implicitWidth: Theme.scaled(10)
+                                        implicitHeight: Theme.scaled(10)
+                                        radius: Theme.scaled(2)
+                                        color: visible ? reviewRow.modelData.color : "transparent"
+                                    }
+                                    Label {
+                                        objectName: "cueReviewRowLabel"
+                                        text: reviewRow.modelData.label
+                                            + ((reviewRow.modelData.name ?? "").length > 0 ? ", " + reviewRow.modelData.name : "")
+                                    }
+                                    Label {
+                                        objectName: "cueReviewRowTimes"
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideRight
+                                        color: Theme.textMuted
+                                        readonly property int diff: reviewRow.modelData.diffMs
+                                        text: qsTr("%1 now, %2 on the new grid (%3 ms)").arg(reviewRow.modelData.oldText)
+                                                .arg(reviewRow.modelData.newText).arg((diff > 0 ? "+" : "") + diff)
+                                            + (reviewRow.modelData.isLoop
+                                                ? ", " + qsTr("ends %1 now, %2 on the new grid").arg(reviewRow.modelData.oldEndText)
+                                                    .arg(reviewRow.modelData.newEndText) : "")
+                                    }
+                                }
+                                ReanalysisCueStrip {
+                                    objectName: "cueReviewStrip"
+                                    Layout.fillWidth: true
+                                    strip: reviewRow.modelData.strip
+                                }
+                            }
+                        }
+                        Label {
+                            objectName: "cueReviewOffBeat"
+                            visible: (reviewTrack.modelData.offBeat ?? 0) > 0
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: Theme.textMuted
+                            text: qsTr("%n cue point(s) not on a beat stay where they are.", "", reviewTrack.modelData.offBeat ?? 0)
+                        }
+                    }
+                }
+                ColumnLayout {
+                    visible: cueReviewDialog.tooDifferent.length > 0
+                    Layout.fillWidth: true
+                    spacing: Theme.tightSpacing
+                    Label {
+                        objectName: "cueReviewTooDifferentHeading"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: qsTr("On these tracks the grid changed too much to carry cue points; they stay where they are.")
+                    }
+                    Label {
+                        objectName: "cueReviewTooDifferentList"
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: Theme.textMuted
+                        text: cueReviewDialog.tooDifferent.join("\n")
+                    }
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                objectName: "cueReviewDoneButton"
+                text: qsTr("Done")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+    }
+
     Menu {
         id: playlistMenu
         objectName: "playlistMenu"
@@ -363,6 +584,10 @@ Page {
         // Tracks waiting to be imported into this playlist.
         readonly property int importing: root.trackImportController.pendingRevision >= 0 && playlist.length > 0
             ? root.trackImportController.trackCountChange(playlist) : 0
+        // Tracks of this playlist waiting for Save with a new analysis.
+        readonly property int reanalysing: root.trackImportController.pendingRevision >= 0 && playlist.length > 0
+            && ("reanalysisCount" in root.trackImportController)
+            ? root.trackImportController.reanalysisCount(playlist) : 0
         MenuItem {
             objectName: "importTracksItem"
             visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
@@ -389,6 +614,21 @@ Page {
             height: visible ? implicitHeight : 0
             text: qsTr("Don't import the %n track(s)", "", playlistMenu.importing)
             onTriggered: root.trackImportController.dropStaged()
+        }
+        MenuItem {
+            objectName: "playlistAnalyseAgainItem"
+            visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
+            height: visible ? implicitHeight : 0
+            enabled: root.trackImportController.busy !== true
+            text: qsTr("Analyse again")
+            onTriggered: root.trackImportController.analyseAgain(root.rekordboxPath, root.enginePath, playlistMenu.playlist)
+        }
+        MenuItem {
+            objectName: "takeBackReanalysisItem"
+            visible: playlistMenu.reanalysing > 0
+            height: visible ? implicitHeight : 0
+            text: qsTr("Don't analyse the %n track(s) again", "", playlistMenu.reanalysing)
+            onTriggered: root.trackImportController.dropReanalysis(playlistMenu.playlist)
         }
         MenuSeparator {
             visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
@@ -1727,7 +1967,12 @@ Page {
                 width: expanded ? Math.max(parent.width, Math.min(Theme.scaled(460), root.width - 2 * Theme.pageMargin))
                                 : parent.width
                 readonly property string step: root.trackImportController.progressStep ?? ""
-                readonly property int stepIndex: ["stick", "files", "check", "analysis"].indexOf(step)
+                // Analyse again reads the stick and analyses; it has no files
+                // to read in or plan to check.
+                readonly property string reanalysing: root.trackImportController.reanalysingPlaylist ?? ""
+                readonly property var stepKeys: reanalysing.length > 0 ? ["stick", "analysis"]
+                                                                       : ["stick", "files", "check", "analysis"]
+                readonly property int stepIndex: stepKeys.indexOf(step)
                 running: root.trackImportController.busy === true
                 done: root.trackImportController.progressDone ?? 0
                 total: root.trackImportController.progressTotal ?? 0
@@ -1736,13 +1981,19 @@ Page {
                 activity: (root.trackImportController.progressFiles ?? []).map(
                     file => step === "analysis" ? qsTr("Analysing %1").arg(file) : qsTr("Reading %1").arg(file))
                 note: qsTr("Nothing is written until you save.")
-                summary: step === "files" && total > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(total, done + 1)).arg(total)
+                summary: reanalysing.length > 0
+                    ? (step === "analysis" && total > 0
+                        ? qsTr("Analysing the tracks of \"%1\" again: track %2 of %3").arg(reanalysing)
+                            .arg(Math.min(total, done + 1)).arg(total)
+                        : qsTr("Analysing the tracks of \"%1\" again").arg(reanalysing))
+                    : step === "files" && total > 0 ? qsTr("Import: reading file %1 of %2").arg(Math.min(total, done + 1)).arg(total)
                     : step === "analysis" && total > 0
                         ? qsTr("Import: analysing track %1 of %2").arg(Math.min(total, done + 1)).arg(total)
                     : step === "check" ? qsTr("Import: checking against the stick")
                     : qsTr("Import: reading the stick")
-                steps: [qsTr("Read the stick"), qsTr("Read the files"), qsTr("Check against the stick"),
-                        qsTr("Analyse the tracks")].map((label, index) => ({
+                steps: (reanalysing.length > 0 ? [qsTr("Read the stick"), qsTr("Analyse the tracks")]
+                        : [qsTr("Read the stick"), qsTr("Read the files"), qsTr("Check against the stick"),
+                           qsTr("Analyse the tracks")]).map((label, index) => ({
                             label: label,
                             count: index === importProgress.stepIndex && importProgress.total > 0
                                 ? qsTr("%1 of %2 done").arg(importProgress.done).arg(importProgress.total) : "",

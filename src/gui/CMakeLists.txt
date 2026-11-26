@@ -187,6 +187,7 @@ set(SEABASS_GUI_QML_FILES
     qml/DonationPage.qml
     qml/PlayerBar.qml
     qml/WaveformView.qml
+    qml/ReanalysisCueStrip.qml
     qml/WaveformZoomPopup.qml
     qml/TrackTimeLabel.qml
     qml/SettingsPage.qml
@@ -242,6 +243,8 @@ set(SEABASS_GUI_SOURCES
     track_import_cover.cpp
     edit/track_import_prepare.hpp
     edit/track_import_prepare.cpp
+    edit/track_reanalysis_prepare.hpp
+    edit/track_reanalysis_prepare.cpp
     library_consistency_controller.hpp
     library_consistency_controller.cpp
     beat_grids_controller.hpp

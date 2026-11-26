@@ -564,6 +564,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/open_stick_backup.cpp
     src/application/use_cases/manage_stick_backups.cpp
     src/infrastructure/stick_backup/archive_anlz_source.cpp
+    src/infrastructure/rekordbox/anlz_analysis_merge.cpp
     src/infrastructure/rekordbox/anlz_builder.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
@@ -668,6 +669,7 @@ add_library(seabass_core STATIC
     src/application/use_cases/unreferenced_tracks.cpp
     src/application/use_cases/plan_engine_update.cpp
     src/application/use_cases/copy_beat_grids.cpp
+    src/application/use_cases/carry_cues_to_new_grid.cpp
     src/application/sync_analysis_policy.cpp
     src/application/use_cases/summarize_engine_update.cpp
     src/infrastructure/local/engine_update_stick_facts.cpp
@@ -731,6 +733,7 @@ add_library(seabass_core_testing STATIC
     src/application/use_cases/restore_stick_backup.cpp
     src/application/use_cases/plan_engine_update.cpp
     src/application/use_cases/copy_beat_grids.cpp
+    src/application/use_cases/carry_cues_to_new_grid.cpp
     src/application/sync_analysis_policy.cpp
     src/application/use_cases/summarize_engine_update.cpp
     src/domain/engine_overview.cpp
@@ -795,6 +798,7 @@ add_library(seabass_core_testing STATIC
     src/infrastructure/long_paths.cpp
     src/infrastructure/paths/seabass_paths.cpp
     src/infrastructure/rekordbox/anlz_cue_codec.cpp
+    src/infrastructure/rekordbox/anlz_analysis_merge.cpp
     src/infrastructure/rekordbox/anlz_file.cpp
     src/infrastructure/rekordbox/anlz_legacy_cue_codec.cpp
     src/infrastructure/rekordbox/anlz_path_index.cpp
@@ -1269,6 +1273,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/add_engine_track_change.hpp
         src/gui/edit/changes/add_engine_track_change.cpp
         src/gui/edit/changes/import_track_change.cpp
+        src/gui/edit/changes/reanalyse_track_change.hpp
+        src/gui/edit/changes/reanalyse_track_change.cpp
         src/gui/edit/changes/remove_engine_track_change.hpp
         src/gui/edit/changes/remove_engine_track_change.cpp
         src/gui/edit/changes/engine_playlist_changes.hpp
@@ -2460,6 +2466,19 @@ target_include_directories(anlz_builder_test PRIVATE src tests)
 target_link_libraries(anlz_builder_test PRIVATE seabass_core DjInterop)
 target_compile_definitions(anlz_builder_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 add_test(NAME anlz_builder_test COMMAND anlz_builder_test)
+
+# A new analysis merged into a track's own analysis files (Analyse again).
+add_executable(anlz_analysis_merge_test tests/anlz_analysis_merge_test.cpp)
+target_include_directories(anlz_analysis_merge_test PRIVATE src tests)
+target_link_libraries(anlz_analysis_merge_test PRIVATE seabass_core DjInterop)
+target_compile_definitions(anlz_analysis_merge_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+add_test(NAME anlz_analysis_merge_test COMMAND anlz_analysis_merge_test)
+
+# Cues on a beat of the old grid, carried to the new one (Analyse again).
+add_executable(carry_cues_to_new_grid_test tests/carry_cues_to_new_grid_test.cpp)
+target_include_directories(carry_cues_to_new_grid_test PRIVATE src tests)
+target_link_libraries(carry_cues_to_new_grid_test PRIVATE seabass_core)
+add_test(NAME carry_cues_to_new_grid_test COMMAND carry_cues_to_new_grid_test)
 
 # Issue #38: how many tracks an Engine player will have to analyse. Takes
 # the fixture path, because its real distribution (1214 of 1564) is what
@@ -3954,6 +3973,7 @@ if(TARGET seabass_edit)
             src/gui/track_import_analysis.cpp
             src/gui/track_import_cover.cpp
             src/gui/edit/track_import_prepare.cpp
+            src/gui/edit/track_reanalysis_prepare.cpp
             src/gui/stick_catalogs.cpp
             tests/track_import_controller_test.cpp
         )

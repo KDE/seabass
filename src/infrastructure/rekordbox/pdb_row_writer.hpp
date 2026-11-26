@@ -118,6 +118,18 @@ public:
     // with this id exists.
     bool setTrackPlayCount(uint32_t trackId, int playCount);
 
+    // A track row's tempo and key from a new analysis of its audio
+    // (Browse's Analyse again): tempo (BPM, stored times 100) always, and
+    // with a `key` that is not empty the key, as the id of the keys-table
+    // row spelled exactly `key`, made the way addTrack() makes one where
+    // there is none. Two u4 fields every row has, overwritten in place.
+    // All or nothing: a key row that cannot be placed leaves the buffer as
+    // it was. Returns false when no present track row has this id; throws
+    // std::invalid_argument for a tempo the field cannot hold (as
+    // newTrackRefusal() refuses one) or a key that is not storable text,
+    // and what addRow() throws when the keys table cannot take a row.
+    bool setTrackTempoAndKey(uint32_t trackId, double bpm, const std::string &key);
+
     // A track's free-text fields, to be written into the row's existing
     // device_sql_string spans in place -- see overwriteTrackText()'s own
     // doc comment for how each is fit into its field's fixed byte budget.

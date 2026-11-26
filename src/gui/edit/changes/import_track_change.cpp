@@ -159,6 +159,63 @@ std::string mediumPictureOf(const std::string &small)
 
 }  // namespace
 
+RekordboxAnalysisFiles rekordboxAnalysisFilesFor(const ImportAnalysis &analysis, const std::string &audioFile,
+                                                 const std::string &stickPath, double durationSeconds)
+{
+    RekordboxAnalysisFiles out;
+    out.isMp3 = domain::hasMp3Extension(audioFile);
+    if (analysis.waveform.entries.empty()) {
+        return out;
+    }
+    const std::optional<double> offset = infrastructure::audio::cueTimelineOffsetMs(audioFile);
+    const double lengthMs = analysis.waveform.sampleRateHz > 0
+                                ? 1000.0 * static_cast<double>(analysis.waveform.sampleCount) / analysis.waveform.sampleRateHz
+                                : durationSeconds * 1000.0;
+    if (offset) {
+        for (domain::Beat beat : analysis.beats) {
+            beat.timeMs += *offset;
+            // Inside the track: the builder does not ask.
+            if (beat.timeMs >= 0.0 && beat.timeMs <= lengthMs) {
+                out.beats.push_back(beat);
+            }
+        }
+    }
+#ifdef SEABASS_HAVE_TAGLIB
+    if (const auto exact = infrastructure::audio::readExactSampleCount(audioFile)) {
+        out.sampleCount = exact->samples;
+    }
+#endif
+    infrastructure::rekordbox::NewAnlzInput input;
+    input.trackPath = stickPath;
+    input.beats = out.beats;
+    input.waveform = analysis.waveform;
+    if (offset && *offset != 0.0 && !input.waveform.entries.empty()) {
+        // The waveform with the grid: moved by as many entries as the
+        // beats were moved by milliseconds, the track's length kept.
+        auto &entries = input.waveform.entries;
+        const auto shift = static_cast<std::ptrdiff_t>(std::llround(*offset * domain::WaveformEntriesPerSecond / 1000.0));
+        const auto count = static_cast<std::ptrdiff_t>(entries.size());
+        if (shift > 0 && shift < count) {
+            entries.insert(entries.begin(), static_cast<std::size_t>(shift), domain::WaveformEntry{});
+            entries.resize(static_cast<std::size_t>(count));
+        } else if (shift < 0 && -shift < count) {
+            entries.erase(entries.begin(), entries.begin() - shift);
+            entries.resize(static_cast<std::size_t>(count));
+        }
+    }
+    input.sampleRateHz = analysis.waveform.sampleRateHz;
+    input.durationMs = lengthMs;
+    if (out.isMp3 && out.sampleCount && *out.sampleCount <= 0xFFFFFFFFull) {
+        input.mp3SampleCount = static_cast<std::uint32_t>(*out.sampleCount);
+    }
+    try {
+        out.files = infrastructure::rekordbox::buildAnlzFiles(input);
+    } catch (const std::invalid_argument &e) {
+        out.error = e.what();
+    }
+    return out;
+}
+
 struct ImportRehearsal::Rows
 {
     explicit Rows(const std::string &pdb)
@@ -530,57 +587,15 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     std::vector<domain::Beat> rekordboxBeats;
     std::optional<std::uint64_t> sampleCount;
     const bool isMp3 = domain::hasMp3Extension(source);
-    if (m_analysis && !m_analysis->waveform.entries.empty()) {
-        const std::optional<double> offset = infrastructure::audio::cueTimelineOffsetMs(source);
-        const double lengthMs = m_analysis->waveform.sampleRateHz > 0
-                                    ? 1000.0 * static_cast<double>(m_analysis->waveform.sampleCount)
-                                          / m_analysis->waveform.sampleRateHz
-                                    : m_track.durationSeconds * 1000.0;
-        if (offset) {
-            for (domain::Beat beat : m_analysis->beats) {
-                beat.timeMs += *offset;
-                // Inside the track: the builder does not ask.
-                if (beat.timeMs >= 0.0 && beat.timeMs <= lengthMs) {
-                    rekordboxBeats.push_back(beat);
-                }
-            }
-        }
-#ifdef SEABASS_HAVE_TAGLIB
-        if (const auto exact = infrastructure::audio::readExactSampleCount(source)) {
-            sampleCount = exact->samples;
-        }
-#endif
-        infrastructure::rekordbox::NewAnlzInput input;
-        input.trackPath = m_track.stickPath;
-        input.beats = rekordboxBeats;
-        input.waveform = m_analysis->waveform;
-        if (offset && *offset != 0.0 && !input.waveform.entries.empty()) {
-            // The waveform with the grid: moved by as many entries as the
-            // beats were moved by milliseconds, the track's length kept.
-            auto &entries = input.waveform.entries;
-            const auto shift = static_cast<std::ptrdiff_t>(std::llround(*offset * domain::WaveformEntriesPerSecond / 1000.0));
-            const auto count = static_cast<std::ptrdiff_t>(entries.size());
-            if (shift > 0 && shift < count) {
-                entries.insert(entries.begin(), static_cast<std::size_t>(shift), domain::WaveformEntry{});
-                entries.resize(static_cast<std::size_t>(count));
-            } else if (shift < 0 && -shift < count) {
-                entries.erase(entries.begin(), entries.begin() - shift);
-                entries.resize(static_cast<std::size_t>(count));
-            }
-        }
-        input.sampleRateHz = m_analysis->waveform.sampleRateHz;
-        input.durationMs = input.sampleRateHz > 0
-                               ? 1000.0 * static_cast<double>(m_analysis->waveform.sampleCount) / input.sampleRateHz
-                               : m_track.durationSeconds * 1000.0;
-        if (isMp3 && sampleCount && *sampleCount <= 0xFFFFFFFFull) {
-            input.mp3SampleCount = static_cast<std::uint32_t>(*sampleCount);
-        }
-        try {
-            anlz = infrastructure::rekordbox::buildAnlzFiles(input);
-        } catch (const std::invalid_argument &e) {
+    if (m_analysis) {
+        RekordboxAnalysisFiles built = rekordboxAnalysisFilesFor(*m_analysis, source, m_track.stickPath, m_track.durationSeconds);
+        anlz = std::move(built.files);
+        rekordboxBeats = std::move(built.beats);
+        sampleCount = built.sampleCount;
+        if (!built.error.empty()) {
             // A grid or a path the files cannot hold: the track goes in
             // unanalysed, and the log says so.
-            ctx.log().record(std::string(Label) + ": no analysis files for " + m_track.stickPath + ": " + e.what());
+            ctx.log().record(std::string(Label) + ": no analysis files for " + m_track.stickPath + ": " + built.error);
         }
     }
     std::string analysisFile;  // "/PIONEER/USBANLZ/.../ANLZ0000.DAT"

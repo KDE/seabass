@@ -1548,6 +1548,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         const auto apply = [&](EngineAnalysisColumns &after) {
             if (gridWrite) {
                 after.beatData = EngineSqlValue::ofBlob(textOf(gridWrite->to_blob()));
+                if (options.tempoWithGrid && analysis.bpm && *analysis.bpm > 0.0 && std::isfinite(*analysis.bpm)) {
+                    after.bpm = EngineSqlValue::ofInteger(std::llround(*analysis.bpm));
+                    after.bpmAnalyzed = EngineSqlValue::ofReal(*analysis.bpm);
+                }
             }
             if (overviewWrite) {
                 after.overviewWaveFormData = EngineSqlValue::ofBlob(textOf(overviewWrite->to_blob()));

@@ -13,11 +13,13 @@
 #include <QUrl>
 #include <QVariantMap>
 
+#include <map>
 #include <optional>
 #include <set>
 
 #include "application/ports/cancellation_token.hpp"
 #include "gui/edit/track_import_prepare.hpp"
+#include "gui/edit/track_reanalysis_prepare.hpp"
 
 namespace seabass::gui
 {
@@ -43,6 +45,13 @@ class LibraryEditSession;
 // batch is checked against the stick as it is (which playlist exists,
 // what export.pdb still has room for), and edits staged before it would
 // make that another stick by the time the save reaches the imports.
+//
+// Analyse again (analyseAgain()): the tracks of a playlist analysed by
+// Seabass from their audio on the stick, one ReanalyseTrackChange staged
+// per track that took it. It runs where the import does (`busy`, the same
+// progress, the same cancel; never both at once) and stages beside what
+// waits, since it plans nothing against the stick's rows: a track staged
+// again replaces its earlier change.
 class TrackImportController : public QObject
 {
     Q_OBJECT
@@ -76,6 +85,27 @@ class TrackImportController : public QObject
     // `notImported` ones are not, `possibleDuplicates` of those may be
     // asked for all the same (importPossibleDuplicates).
     Q_PROPERTY(QVariantMap lastResult READ lastResult NOTIFY resultReady)
+    // While Analyse again runs: the playlist it analyses; "" otherwise,
+    // and while an import is prepared.
+    Q_PROPERTY(QString reanalysingPlaylist READ reanalysingPlaylist NOTIFY busyChanged)
+    // What the last Analyse again came to: {playlist, analysed (tracks
+    // staged with a new analysis), leftAlone (tracks left as they are)}.
+    // What the last Analyse again came to: {playlist, analysed (tracks
+    // staged with a new analysis), leftAlone (tracks left as they are),
+    // cueTracks (tracks with cues on the old grid that would move),
+    // cuesToMove (how many), gridChangedTooMuch (tracks whose grid
+    // changed too much to carry cues)}.
+    Q_PROPERTY(QVariantMap lastReanalysis READ lastReanalysis NOTIFY reanalysisReady)
+    // The review of those cues, one entry per track of the last Analyse
+    // again whose cues would move and whose change still waits:
+    // {id, title, artist, gridShiftMs, oldBpm, newBpm, moveCues, offBeat,
+    // rows: [{label, name, color, isLoop, oldText, newText, diffMs,
+    // oldEndText, newEndText, strip: {spanMs, columns: [{low, mid, high}],
+    // oldBeats, newBeats, oldCueMs, newCueMs, oldEndMs, newEndMs}}]}, the
+    // strip's times in ms from its start, all on one timeline.
+    Q_PROPERTY(QVariantList cueReview READ cueReview NOTIFY cueReviewChanged)
+    // The titles of the tracks whose grid changed too much to carry cues.
+    Q_PROPERTY(QStringList cueReviewTooDifferent READ cueReviewTooDifferent NOTIFY cueReviewChanged)
 
 public:
     explicit TrackImportController(QObject *parent = nullptr);
@@ -93,6 +123,10 @@ public:
     QString stagedPlaylist() const { return !m_staged.empty() ? m_stagedPlaylist : QString(); }
     bool stagedPlaylistIsNew() const { return !m_staged.empty() && m_stagedPlaylistIsNew; }
     QVariantMap lastResult() const { return m_lastResult; }
+    QString reanalysingPlaylist() const { return m_reanalysingPlaylist; }
+    QVariantMap lastReanalysis() const { return m_lastReanalysis; }
+    QVariantList cueReview() const;
+    QStringList cueReviewTooDifferent() const;
 
     // Offers `files` (local files and folders, as urls or paths) for
     // import onto the stick whose PIONEER folder is rekordboxPath and
@@ -115,6 +149,19 @@ public:
     // A name to propose for a new playlist made of `files`: the folder's
     // own when one folder was offered, "" otherwise.
     Q_INVOKABLE QString suggestedPlaylistName(const QVariantList &files) const;
+    // Analyse again: every track of `playlist` (its path, as the libraries
+    // name it) analysed from its audio file on the stick, and a new
+    // analysis staged for each that took one. False, with errorMessage,
+    // for a request refused at once.
+    Q_INVOKABLE bool analyseAgain(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
+    // Takes back the new analyses staged from `playlist`.
+    Q_INVOKABLE void dropReanalysis(const QString &playlist);
+    // How many tracks of `playlist` wait for Save with a new analysis.
+    Q_INVOKABLE int reanalysisCount(const QString &playlist) const;
+    // Whether the save moves the cues of the track whose change is
+    // `changeId` onto its new grid; all of the review's at once.
+    Q_INVOKABLE void setMoveCues(const QString &changeId, bool move);
+    Q_INVOKABLE void setMoveCuesForAll(bool move);
     // The audio file extensions a file dialog should offer, as
     // "*.mp3 *.flac ...".
     Q_INVOKABLE QString fileDialogFilter() const;
@@ -125,6 +172,9 @@ signals:
     void errorMessageChanged();
     void pendingChanged();
     void resultReady();
+    // Analyse again has staged what it could (lastReanalysis).
+    void reanalysisReady();
+    void cueReviewChanged();
     // A save wrote at least one imported track: the page should rescan.
     void tracksImported();
 
@@ -132,13 +182,20 @@ private:
     bool attachSession(const QString &rekordboxPath, const QString &enginePath);
     bool start(ImportRequest request);
     void onPrepared();
+    void onReanalysed();
+    // Passes progress from the worker to the properties, for this run only.
+    ImportProgressSink progressSink();
     void setBusy(bool busy);
     void setProgress(const QString &step, int done, int total, const QString &file, const QStringList &inHand = {});
     void setErrorMessage(const QString &message);
     void forgetStaged();
+    void forgetReanalysis();
+    // Drops from the cue review the changes no longer staged.
+    void pruneCueReview();
 
     QPointer<LibraryEditSession> m_session;
     QFutureWatcher<PreparedImport> m_watcher;
+    QFutureWatcher<PreparedReanalysis> m_reanalysisWatcher;
     application::CancellationToken m_cancel;
     // The offer being prepared, and the last one that was prepared: the
     // one the staged batch is of.
@@ -169,6 +226,14 @@ private:
     QString m_stagedPlaylist;
     bool m_stagedPlaylistIsNew = false;
     QVariantMap m_lastResult;
+    // Analyse again: the request in hand, and the changes staged by it,
+    // by id, with the playlist they were asked for from.
+    ReanalysisRequest m_reanalysing;
+    QString m_reanalysingPlaylist;
+    std::map<QString, QString> m_reanalysed;
+    // The last run's changes, for the cue review, in playlist order.
+    std::vector<std::shared_ptr<ReanalyseTrackChange>> m_reviewed;
+    QVariantMap m_lastReanalysis;
 };
 
 }  // namespace seabass::gui
