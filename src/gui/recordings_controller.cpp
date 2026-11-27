@@ -211,6 +211,8 @@ std::vector<RecordingListModel::HeaderState> headerStates(const std::vector<appl
             const auto rate = static_cast<double>(wav.layout().sampleRate);
             states[i].unfinished = true;
             states[i].heldSeconds = static_cast<double>(unfinished->framesHeld) / rate;
+            states[i].framesHeld = unfinished->framesHeld;
+            states[i].sampleRateHz = rate;
             if (unfinished->kind != infrastructure::audio::WavUnfinished::Kind::NoSize) {
                 states[i].declaredUnusable = !unfinished->declaredUsable;
                 states[i].missingBytes = static_cast<double>(unfinished->bytesMissing);

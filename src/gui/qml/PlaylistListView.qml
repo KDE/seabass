@@ -49,6 +49,10 @@ ListView {
     // A playlist row's context menu was asked for ("All tracks" never
     // asks). Browse answers it with the playlist's menu.
     signal playlistContextRequested(string name, Item row)
+    // ...and a fixed row's that stands for a playlist: no playlist menu
+    // (it is not renamed or deleted), only what takes back what is staged
+    // for it, which the host offers when there is any.
+    signal fixedRowContextRequested(string kind, Item row)
     // Whether a playlist is staged for deletion; re-read when
     // pendingRevision moves.
     property var isPendingDelete: name => false
@@ -322,8 +326,11 @@ ListView {
     // they are what is being put together, and at the end of a long
     // list they sat below the window's edge, where a track dragged in
     // from the right could not reach them.
+    // A new playlist the stick has in some library already (made where
+    // the others lack it, Own Recordings') is listed once, as the stick's.
     property var allNames: root.fixedRows.map(row => row.name)
-        .concat((root.canCreate ? root.newPlaylists : []).concat(scanController.playlistNames)
+        .concat((root.canCreate ? root.newPlaylists.filter(name => scanController.playlistNames.indexOf(name) < 0) : [])
+                .concat(scanController.playlistNames)
                 .filter(name => root.fixedPlaylists.indexOf(name) < 0))
     model: root.searchQuery.length === 0
         ? allNames
@@ -375,6 +382,7 @@ ListView {
         // Staged to be created: not on the stick yet, so no count, no
         // summary, nothing to delete or rename; its menu takes it back.
         readonly property bool isNew: !isFixed && root.canCreate && root.newPlaylists.indexOf(modelData) >= 0
+            && root.scanController.playlistNames.indexOf(modelData) < 0
         pendingNew: isNew
         // "All tracks" counts what it lists: the rows a save wrote too,
         // until the stick has been read again.
@@ -390,7 +398,10 @@ ListView {
         isCurrent: isFixed ? root.shownFixedRow === fixedKind
             : root.shownFixedRow.length === 0 && modelData === root.shownPlaylist
         onDropTargetChanged: root.noteDropTarget(playlist, dropTarget)
-        pendingDelete: !isFixed && !isNew && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
+        // A fixed row that is a playlist shows its delete as that
+        // playlist's row would, and takes nothing while it waits.
+        pendingDelete: (!isFixed || (!isAll && hasPlaylist)) && !isNew && root.pendingRevision >= 0
+            && root.isPendingDelete(playlist)
         // "All tracks" changes by the tracks an import brings, a fixed
         // row's playlist as that playlist.
         edited: !isFixed ? !isNew && root.pendingRevision >= 0 && root.isEdited(modelData)
@@ -447,6 +458,8 @@ ListView {
         onContextRequested: {
             if (!isFixed) {
                 root.playlistContextRequested(modelData, this);
+            } else if (hasPlaylist && !isAll) {
+                root.fixedRowContextRequested(fixedKind, this);
             }
         }
     }

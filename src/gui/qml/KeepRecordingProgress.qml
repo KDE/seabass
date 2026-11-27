@@ -141,9 +141,9 @@ PassiveProgress {
         return lines.concat(root.endedLines());
     }
     // A saved job's notes (an unfinished recording and how much was saved,
-    // leftovers swept); a failure's message before them.
-    note: root.finishedShown ? [root.endState === "kept" ? "" : (root.last.message ?? "")].concat(root.last.notes ?? [])
-            .filter(line => line.length > 0).join("\n")
+    // leftovers swept). A failure's reason is its line above (endedLine())
+    // and is not said a second time here.
+    note: root.finishedShown ? (root.last.notes ?? []).filter(line => line.length > 0).join("\n")
         : qsTr("The recording on the stick is only read. The work goes on when you leave this page.")
     actions: !root.finishedShown ? []
         : root.endState === "kept" ? [{key: "show", text: qsTr("Show in Folder")}, {key: "close", text: qsTr("Close")}]

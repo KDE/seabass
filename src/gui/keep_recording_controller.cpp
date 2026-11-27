@@ -894,6 +894,22 @@ QVariantMap KeepRecordingController::outcomeFor(const QString &stickRoot, const 
     return outcome.value("stickRoot").toString() == stickKey(stickRoot) ? outcome : QVariantMap();
 }
 
+namespace
+{
+// Asked of the disk now: a FLAC moved, deleted, changed, or on a drive
+// that is gone is not the copy that was saved any more.
+bool keptCopyAsSaved(const QVariantMap &copy)
+{
+    const QString path = copy.value("flacPath").toString();
+    if (path.isEmpty()) {
+        return false;
+    }
+    const QFileInfo flac(path);
+    return flac.exists() && flac.isFile() && flac.size() == copy.value("flacSize").toLongLong()
+        && flac.lastModified().toMSecsSinceEpoch() == copy.value("flacModified").toLongLong();
+}
+}  // namespace
+
 QVariantMap KeepRecordingController::keepNotesFor(const QString &stickRoot, const QStringList &wavPaths) const
 {
     const QString stick = stickKey(stickRoot);
@@ -913,13 +929,7 @@ QVariantMap KeepRecordingController::keepNotesFor(const QString &stickRoot, cons
                 {"fileName", copy.value("fileName")},
                 {"folder", copy.value("folder")},
             };
-            // Asked of the disk now: a FLAC moved, deleted, changed, or on
-            // a drive that is gone is not a kept copy any more.
-            const QFileInfo flac(copy.value("flacPath").toString());
-            const bool stillThere = flac.exists() && flac.isFile()
-                && flac.size() == copy.value("flacSize").toLongLong()
-                && flac.lastModified().toMSecsSinceEpoch() == copy.value("flacModified").toLongLong();
-            (stillThere ? kept : keptGone).append(named);
+            (keptCopyAsSaved(copy) ? kept : keptGone).append(named);
             continue;
         }
         const QVariantMap outcome = m_outcomes.value(key);
@@ -937,8 +947,17 @@ QString KeepRecordingController::keptFlacFor(const QString &stickRoot, const QSt
     if (copy.isEmpty() || copy.value("stickRoot").toString() != stickKey(stickRoot)) {
         return {};
     }
+    return keptCopyAsSaved(copy) ? copy.value("flacPath").toString() : QString();
+}
+
+bool KeepRecordingController::keptFlacChanged(const QString &stickRoot, const QString &wavPath) const
+{
+    const QVariantMap copy = m_keptCopies.value(wavKey(localPath(wavPath)));
+    if (copy.isEmpty() || copy.value("stickRoot").toString() != stickKey(stickRoot)) {
+        return false;
+    }
     const QString flac = copy.value("flacPath").toString();
-    return !flac.isEmpty() && QFileInfo(flac).isFile() ? flac : QString();
+    return !flac.isEmpty() && QFileInfo(flac).exists() && !keptCopyAsSaved(copy);
 }
 
 void KeepRecordingController::dismissFinishedFor(const QString &stickRoot)

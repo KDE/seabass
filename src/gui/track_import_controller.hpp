@@ -203,6 +203,15 @@ public:
     // refused at once.
     Q_INVOKABLE bool importFiles(const QString &rekordboxPath, const QString &enginePath, const QVariantList &files,
                                  const QString &playlist = QString(), bool create = false, int atIndex = -1);
+    // As importFiles(), into `playlist` made by the save in every library
+    // that lacks it (ImportPlaylist::createWhereMissing), for Browse's
+    // Own Recordings: a playlist the person did not name, which a library
+    // may be without. While an import into it waits, these files join it
+    // and, given a place, go there before the waiting ones, which follow
+    // them: the files added last come first.
+    Q_INVOKABLE bool importMakingPlaylistWhereMissing(const QString &rekordboxPath, const QString &enginePath,
+                                                      const QVariantList &files, const QString &playlist,
+                                                      int atIndex = -1);
     // The last offer again, its possible duplicates imported too. The
     // batch staged from it waits until the new one is ready and takes its
     // place then; an offer refused or cancelled leaves it as it was.
@@ -288,7 +297,12 @@ private:
     bool attachSession(const QString &rekordboxPath, const QString &enginePath);
     // `replacesStaged`: the request is the staged batch's own offer, to
     // be prepared again as it is (importPossibleDuplicates()).
-    bool start(ImportRequest request, bool replacesStaged = false);
+    // `joinsFirst`: joining the batch that waits, the request's files go
+    // before its files, at the request's place when it names one.
+    bool start(ImportRequest request, bool replacesStaged = false, bool joinsFirst = false);
+    // The request importFiles() and importMakingPlaylistWhereMissing()
+    // make of what was offered; false, with errorMessage, for nothing.
+    bool requestFor(const QVariantList &files, ImportRequest &request);
     // The analysis to run on each file.
     ImportAnalyser analyser() const;
     // False, with errorMessage, while experimental features are off.

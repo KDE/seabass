@@ -286,19 +286,36 @@ from day one.
   (Engine OS 16 and 24 bit, an unfinished one, a Pioneer REC file)
   and a Bluesound player has shown the cover. "Add to the library" on a
   recording's menu in Browse (2026-11-27) imports the FLAC Save as FLAC
-  made, while it is there (never the WAV), through the track import into
-  the stick playlist "Own Recordings", at its top, made in every library
-  at the first add; a playlist of that name already on the stick is that
-  playlist. Browse's fixed row Own Recordings is then that playlist: its
-  tracks as any playlist's (staged ones before Save included), the
-  recordings after them, the playlist not listed a second time; a WAV
-  whose FLAC is in it (as long to the sample at the same rate) is marked
-  "In the library as FLAC". Files dropped on the row or its list and
-  tracks dragged onto the row go into that playlist (made first when the
-  stick has none), a track taken out of the row leaves the playlist only,
-  the row has no playlist menu (no rename, no delete) and its summary is
-  the playlist's. Verified on a scratch stick through Save in
-  all three libraries (`tst_OwnRecordings`). Still owed: Free Up Space
+  made, while it is there as it was saved (its size and time; never the
+  WAV), through the track import into the stick playlist "Own
+  Recordings", at its top; a playlist of that name already on the stick
+  is that playlist. One rule for every way into it (Add to the library,
+  files dropped, a track dragged): the save that puts tracks into it
+  first makes it in every library that lacks it (none, some or all,
+  whichever library Browse shows), then the tracks go into it in all of
+  them (`ImportPlaylist::createWhereMissing`,
+  `PlaylistEditController::createPlaylistWhereMissing`). A second add
+  before Save joins the import that waits and goes on top of it: the
+  newest added first, the files of the waiting import after it. While a
+  track dragged onto the row waits to make the playlist, Add to the
+  library and files dropped wait for Save and say so (an import is
+  checked against the stick as it is, so it cannot join playlist edits);
+  while an import waits to make it, a dragged track waits likewise.
+  Browse's fixed row Own Recordings is then that playlist: its tracks as
+  any playlist's (staged ones before Save included), the recordings
+  after them, the playlist not listed a second time; a WAV whose FLAC is
+  in it (as long to the sample at the same rate, or for an unfinished
+  WAV as the whole frames it holds, which is what "Keep the audio the
+  file holds" saves) is marked "In the library as FLAC" and offers no
+  second add, nor does one whose FLAC waits in the import. A track taken
+  out of the row leaves the playlist only. The row has no playlist menu
+  (no rename, no delete): its menu takes back what waits for its
+  playlist ("Don't create this playlist", "Don't import the tracks",
+  "Keep this playlist" for a delete staged with Experimental off), and
+  shows a staged delete as the playlist's row would, taking nothing in
+  and saying why. Its summary is the playlist's. Verified on a scratch
+  stick through Save in all three libraries, with the playlist in some
+  libraries only, both ways round (`tst_OwnRecordings`). Still owed: Free Up Space
   naming a recording that is in the library as FLAC, and Windows and
   macOS.
 

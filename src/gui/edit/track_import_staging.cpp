@@ -80,17 +80,21 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
                              + ", so the tracks cannot be put into one of them by name.";
             return staged;
         }
-        if (playlist->create && playlist->path.find('/') != std::string::npos) {
+        QStringList lacking;
+        for (const QString &library : where.onStick) {
+            if (!where.having.contains(library)) {
+                lacking << library;
+            }
+        }
+        const bool makes = playlist->create || (playlist->createWhereMissing && !lacking.isEmpty());
+        if (makes && playlist->path.find('/') != std::string::npos) {
             staged.refusal = "A new playlist is made at the top level; \"" + playlist->path + "\" names a folder.";
             return staged;
         }
-        if (!playlist->create && asSet(where.having) != asSet(where.onStick)) {
-            QStringList lacking;
-            for (const QString &library : where.onStick) {
-                if (!where.having.contains(library)) {
-                    lacking << library;
-                }
-            }
+        if (makes) {
+            staged.createdIn = playlist->create ? target.libraries : lacking;
+        }
+        if (!playlist->create && !playlist->createWhereMissing && asSet(where.having) != asSet(where.onStick)) {
             staged.refusal = "The playlist \"" + playlist->path + "\" is not in every library on the stick (not in "
                              + lacking.join(QStringLiteral(", ")).toStdString()
                              + "), so the tracks would be listed in some libraries and not in others.";
@@ -113,7 +117,8 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
     // each with its playlist entry.
     ImportRehearsal rehearsal(target.libraries.contains(QStringLiteral("rekordbox")) ? target.pioneerRoot : QString());
     if (playlist) {
-        if (const std::string why = rehearsal.usePlaylist(playlist->path, playlist->create); !why.empty()) {
+        if (const std::string why = rehearsal.usePlaylist(playlist->path, playlist->create || playlist->createWhereMissing);
+            !why.empty()) {
             staged.refusal = "The playlist \"" + playlist->path + "\" cannot take the tracks: " + why + ".";
             return staged;
         }
@@ -260,14 +265,15 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
     }
 
     if (entered.empty()) {
+        staged.createdIn.clear();
         return staged;
     }
-    if (playlist && playlist->create) {
+    if (playlist && !staged.createdIn.isEmpty()) {
         // The batch's size, so the save's scratch-copy decision is made
         // for the batch; and one unit with the first import, so a cancel
         // does not leave the playlist behind empty.
         auto made = std::make_shared<CreatePlaylistChange>(target.pioneerRoot, target.enginePath, playlist->path,
-                                                           target.libraries, toImport);
+                                                           staged.createdIn, toImport);
         made->stageForImport();
         for (const Entered &first : entered) {
             if (first.import) {

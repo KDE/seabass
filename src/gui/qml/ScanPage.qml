@@ -125,7 +125,8 @@ Page {
     // playlist's tracks as any playlist, and after them the recordings
     // (ScanController.showRecordings()); the playlist is not listed a
     // second time. "Add to the library" on a recording saved as FLAC
-    // imports the FLAC into it, made at the first. Off, the sidebar and
+    // imports the FLAC into it, made in every library that lacks it by
+    // the same save. Off, the sidebar and
     // the list are as they were without it, the playlist an ordinary one.
     readonly property bool ownRecordingsEnabled: root.appSettingsController.experimentalFeaturesEnabled === true
     readonly property string ownRecordingsPlaylist: "Own Recordings"
@@ -146,6 +147,24 @@ Page {
             // The playlist shown is the row now.
             root.showOwnRecordings();
         }
+    }
+    // What waits for Save about the row's playlist, which the row's menu
+    // takes back and the ways into it heed: a delete of the stick
+    // playlist (staged with Experimental off, say), and its making by a
+    // track dragged onto the row or by the import that waits.
+    readonly property bool ownRecordingsPendingDelete: root.playlistEditController.pendingRevision >= 0
+        && root.playlistEditController.isPlaylistStaged(root.ownRecordingsPlaylist) === true
+    readonly property bool ownRecordingsMadeByDrag: root.playlistEditController.pendingRevision >= 0
+        && root.playlistEditController.isNewPlaylistStaged(root.ownRecordingsPlaylist) === true
+    readonly property bool ownRecordingsMadeByImport: root.trackImportController.stagedPlaylistIsNew === true
+        && root.trackImportController.stagedPlaylist === root.ownRecordingsPlaylist
+    // Why nothing can be added to the row's playlist now, "" when it can.
+    function ownRecordingsRefusal() {
+        if (root.ownRecordingsPendingDelete) {
+            return qsTr("\"%1\" is to be deleted when you Save. Keep it first (the row's menu), then add to it.")
+                .arg(root.ownRecordingsPlaylist);
+        }
+        return "";
     }
     readonly property var sidebarFixedRows: [{kind: "all", name: "All tracks"}]
         .concat(root.ownRecordingsListed
@@ -296,6 +315,28 @@ Page {
     // `files` into `playlist` ("" for none), which the save makes when
     // `create`; atIndex below 0 for its end.
     function importFiles(files, playlist, create, atIndex) {
+        // Own Recordings' playlist, whichever way the files came: made by
+        // the same save in every library that lacks it, the files then in
+        // it in all of them (TrackImportController::
+        // importMakingPlaylistWhereMissing()). An import that waits for it
+        // is joined, the files added last first.
+        if (playlist === root.ownRecordingsPlaylist && root.ownRecordingsEnabled) {
+            const refusal = root.ownRecordingsRefusal();
+            if (refusal.length > 0) {
+                playlistEditMessage.show(refusal, true, qsTr("Not imported"));
+                return;
+            }
+            // Made with the tracks dragged onto the row: an import is
+            // checked against the stick as it is, so it cannot join them.
+            if (root.ownRecordingsMadeByDrag) {
+                playlistEditMessage.show(qsTr("\"%1\" waits to be made by Save, with the tracks dragged onto it. Save "
+                                              + "first, then add to it.").arg(playlist), true, qsTr("Not imported"));
+                return;
+            }
+            root.trackImportController.importMakingPlaylistWhereMissing(root.rekordboxPath, root.enginePath, files,
+                                                                        playlist, atIndex);
+            return;
+        }
         // More for the playlist an import that waits will make: the
         // controller joins the two.
         const joins = playlist.length > 0 && root.trackImportController.stagedPlaylistIsNew === true
@@ -309,11 +350,7 @@ Page {
                                      true, qsTr("Not imported"));
             return;
         }
-        // Own Recordings' playlist is made by the first import into it,
-        // whichever way the files came, at the top level.
-        const makes = create || (playlist === root.ownRecordingsPlaylist && root.ownRecordingsListed
-                                 && !root.ownRecordingsPlaylistOnStick);
-        root.trackImportController.importFiles(root.rekordboxPath, root.enginePath, files, playlist, makes, atIndex);
+        root.trackImportController.importFiles(root.rekordboxPath, root.enginePath, files, playlist, create, atIndex);
     }
     // The dropped files go into a playlist still to be named.
     function importIntoNewPlaylist(files) {
@@ -1691,6 +1728,47 @@ Page {
         trackMenu.popup(at);
     }
 
+    // Own Recordings' row has no playlist menu (no rename, no delete):
+    // only the taking back of what waits for Save about its playlist, in
+    // the words a staged playlist's menu has for it. None: no menu.
+    function openOwnRecordingsMenu(row) {
+        if (root.ownRecordingsMadeByDrag || root.ownRecordingsPendingDelete
+                || root.trackImportController.trackCountChange(root.ownRecordingsPlaylist) > 0) {
+            ownRecordingsMenu.popup(row);
+        }
+    }
+    Menu {
+        id: ownRecordingsMenu
+        objectName: "ownRecordingsMenu"
+        // Read when it opens, and while open as the staging changes.
+        readonly property int importing: root.trackImportController.pendingRevision >= 0
+            ? root.trackImportController.trackCountChange(root.ownRecordingsPlaylist) : 0
+        MenuItem {
+            objectName: "ownRecordingsDontCreateItem"
+            visible: root.ownRecordingsMadeByDrag
+            enabled: visible
+            height: visible ? implicitHeight : 0
+            text: qsTr("Don't create this playlist")
+            onTriggered: root.playlistEditController.dropNewPlaylist(root.ownRecordingsPlaylist)
+        }
+        MenuItem {
+            objectName: "ownRecordingsDontImportItem"
+            visible: ownRecordingsMenu.importing > 0
+            enabled: visible
+            height: visible ? implicitHeight : 0
+            text: qsTr("Don't import the %n track(s)", "", ownRecordingsMenu.importing)
+            onTriggered: root.trackImportController.dropStaged()
+        }
+        MenuItem {
+            objectName: "ownRecordingsKeepItem"
+            visible: root.ownRecordingsPendingDelete
+            enabled: visible
+            height: visible ? implicitHeight : 0
+            text: qsTr("Keep this playlist")
+            onTriggered: root.playlistEditController.keepPlaylist(root.ownRecordingsPlaylist)
+        }
+    }
+
     // A recording of Own Recordings: saved as FLAC with the Recordings
     // page's form, or shown there, where it is deleted. Nothing else.
     Menu {
@@ -1722,10 +1800,24 @@ Page {
                 ? ((root.keepController.revision,
                     root.keepController.outcomeFor(scanController.recordingsRoot, recordingMenu.filePath)).state ?? "")
                 : ""
-            enabled: flac.length > 0 && inLibraryAs.length === 0
+            // That FLAC is in the import that waits for Save already.
+            readonly property bool waits: flac.length > 0 && root.trackImportController.pendingRevision >= 0
+                && (root.stagedImport.rows ?? []).some(staged => staged.sourceFile === flac)
+            readonly property bool changed: saveState === "kept" && flac.length === 0 && root.keepController !== null
+                && ("keptFlacChanged" in root.keepController)
+                && (root.keepController.revision,
+                    root.keepController.keptFlacChanged(scanController.recordingsRoot, recordingMenu.filePath)) === true
+            enabled: flac.length > 0 && inLibraryAs.length === 0 && !waits && !root.ownRecordingsPendingDelete
+                && !root.ownRecordingsMadeByDrag
             text: inLibraryAs.length > 0 ? qsTr("Add to the library (it is there as \"%1\")").arg(inLibraryAs)
+                : waits ? qsTr("Add to the library (waits for Save)")
+                : flac.length > 0 && root.ownRecordingsPendingDelete
+                    ? qsTr("Add to the library (\"%1\" is to be deleted when you Save)").arg(root.ownRecordingsPlaylist)
+                : flac.length > 0 && root.ownRecordingsMadeByDrag
+                    ? qsTr("Add to the library (once Save has made \"%1\")").arg(root.ownRecordingsPlaylist)
                 : flac.length > 0 ? qsTr("Add to the library")
                 : saveState === "queued" || saveState === "running" ? qsTr("Add to the library (once saved as FLAC)")
+                : changed ? qsTr("Add to the library (its FLAC is no longer the one that was saved)")
                 : saveState === "kept" ? qsTr("Add to the library (its FLAC is no longer where it was saved)")
                 : qsTr("Add to the library (save it as FLAC first)")
             onTriggered: root.addRecordingToLibrary(recordingMenu.filePath)
@@ -2818,6 +2910,11 @@ Page {
                     onFilesDropped: (name, urls) => root.importFiles(urls, name, false, -1)
                     onFilesDroppedForNew: urls => root.importIntoNewPlaylist(urls)
                     onPlaylistContextRequested: (name, row) => root.openPlaylistMenu(name, row)
+                    onFixedRowContextRequested: (kind, row) => {
+                        if (kind === "recordings") {
+                            root.openOwnRecordingsMenu(row);
+                        }
+                    }
                     canCreate: true
                     newPlaylists: root.newPlaylistNames
                     shownPlaylist: root.shownPlaylist
@@ -3948,12 +4045,28 @@ Page {
         if (trackDrag.targetIndex >= 0) {
             root.settle(trackDrag.targetIndex);
         }
-        // Own Recordings' playlist, not made yet: staged to be made first,
-        // as "Create new playlist" stages it, and the add goes into it.
-        if (playlist === root.ownRecordingsPlaylist && root.ownRecordingsListed && !root.ownRecordingsPlaylistOnStick
-                && root.newPlaylistNames.indexOf(playlist) < 0
-                && !root.playlistEditController.createPlaylist(root.rekordboxPath, root.enginePath, playlist)) {
-            return;
+        // Own Recordings' playlist: staged to be made first in every
+        // library that lacks it (none, some or all, whichever library is
+        // browsed), as "Create new playlist" stages one, so that the add
+        // goes into it in all of them.
+        if (playlist === root.ownRecordingsPlaylist && root.ownRecordingsListed) {
+            const refusal = root.ownRecordingsRefusal();
+            // Made by the import that waits: the add would find it only
+            // where it is already, and be left out of the others.
+            const why = refusal.length > 0 ? refusal : root.ownRecordingsMadeByImport
+                ? qsTr("\"%1\" is made by the import waiting for Save. Save first, then add tracks to it.")
+                    .arg(playlist)
+                : "";
+            if (why.length > 0) {
+                root.settled();
+                playlistEditMessage.show(why, true, qsTr("Not added"));
+                return;
+            }
+            if (!root.ownRecordingsMadeByDrag
+                    && !root.playlistEditController.createPlaylistWhereMissing(root.rekordboxPath, root.enginePath, playlist)) {
+                root.settled();
+                return;
+            }
         }
         root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
                                                   trackDrag.filePath, trackDrag.title, trackDrag.targetIndex,

@@ -16,7 +16,8 @@ namespace seabass::gui
 // own level: the call that staged it, not the PendingChange it made.
 // Kept so the call can be made again (see StagedEditsStore).
 //
-//   kind: "create", "delete", "deleteWithTracks", "add", "remove", "move" or "rename"
+//   kind: "create", "create-where-missing", "delete", "deleteWithTracks",
+//         "add", "remove", "move" or "rename"
 //   playlist: the playlist as the page named it; for a rename, the path
 //             the stick has
 //   file: the track's file, absolute in memory, relative to the stick's

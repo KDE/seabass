@@ -929,6 +929,8 @@ void keptCopiesAndIdentity(const QString &scratch)
           "and its notes say the header was not completed and the file was read to its end: "
               + kept.value("notes").toStringList().join(QLatin1Char(' ')).toStdString());
     const QString flac = kept.value("flacPath").toString();
+    check(controller.keptFlacFor(stick, wavPath) == flac && !controller.keptFlacChanged(stick, wavPath),
+          "the FLAC as saved is the one Browse offers to add");
 
     // Kept once, then a second keep that fails: the first copy still counts.
     const QVariantMap second = runJob(form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Again")));
@@ -947,6 +949,8 @@ void keptCopiesAndIdentity(const QString &scratch)
     notes = controller.keepNotesFor(stick, {wavPath});
     check(notes.value("kept").toList().isEmpty() && notes.value("keptGone").toList().size() == 1,
           "a kept FLAC whose size changed: not counted as kept, said as gone");
+    check(controller.keptFlacFor(stick, wavPath).isEmpty() && controller.keptFlacChanged(stick, wavPath),
+          "a FLAC changed since it was saved: not offered to add, said to be another file");
     // The FLAC gone.
     QFile::remove(flac);
     notes = controller.keepNotesFor(stick, {wavPath});
@@ -954,6 +958,8 @@ void keptCopiesAndIdentity(const QString &scratch)
               && notes.value("keptGone").toList().first().toMap().value("fileName").toString()
                   == QFileInfo(flac).fileName(),
           "a kept FLAC that is gone: not counted as kept, said with its name");
+    check(controller.keptFlacFor(stick, wavPath).isEmpty() && !controller.keptFlacChanged(stick, wavPath),
+          "a FLAC that is gone: not offered, and not another file");
 
     // Another recording under the same path: not the one kept.
     recording_test::WavSpec other;

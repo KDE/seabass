@@ -215,6 +215,9 @@ void TrackImportController::refreshStagedImport()
                 {QStringLiteral("changeId"), import.id()},
                 {QStringLiteral("existing"), false},
                 {QStringLiteral("filePath"), QString::fromStdString(import.destinationFile())},
+                // The file on the computer it is copied from: what waits
+                // is not offered again (Browse's "Add to the library").
+                {QStringLiteral("sourceFile"), QString::fromStdString(import.sourceFile())},
                 {QStringLiteral("title"), QString::fromStdString(track.title)},
                 {QStringLiteral("artist"), QString::fromStdString(track.artist)},
                 {QStringLiteral("album"), QString::fromStdString(track.album)},
@@ -485,21 +488,8 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
 bool TrackImportController::importFiles(const QString &rekordboxPath, const QString &enginePath,
                                         const QVariantList &files, const QString &playlist, bool create, int atIndex)
 {
-    setErrorSource(QStringLiteral("import"));
-    setErrorMessage({});
-    if (!allowedToStage()) {
-        return false;
-    }
     ImportRequest request;
-    for (const QVariant &file : files) {
-        const QUrl url = file.toUrl();
-        const QString path = url.isLocalFile() ? url.toLocalFile() : (url.scheme().isEmpty() ? file.toString() : QString());
-        if (!path.isEmpty()) {
-            request.offered.push_back(QFileInfo(path).absoluteFilePath().toStdString());
-        }
-    }
-    if (request.offered.empty()) {
-        setErrorMessage(tr("Nothing that was dropped is a file on this computer."));
+    if (!requestFor(files, request)) {
         return false;
     }
     request.rekordboxPath = rekordboxPath;
@@ -514,6 +504,51 @@ bool TrackImportController::importFiles(const QString &rekordboxPath, const QStr
         request.playlist = into;
     }
     return start(std::move(request));
+}
+
+bool TrackImportController::importMakingPlaylistWhereMissing(const QString &rekordboxPath, const QString &enginePath,
+                                                             const QVariantList &files, const QString &playlist,
+                                                             int atIndex)
+{
+    ImportRequest request;
+    if (!requestFor(files, request)) {
+        return false;
+    }
+    if (playlist.isEmpty() || playlist.contains(QLatin1Char('/'))) {
+        setErrorMessage(tr("The playlist is made at the top level; \"%1\" is no name for it.").arg(playlist));
+        return false;
+    }
+    request.rekordboxPath = rekordboxPath;
+    request.enginePath = enginePath;
+    ImportPlaylist into;
+    into.path = playlist.toStdString();
+    into.createWhereMissing = true;
+    if (atIndex >= 0) {
+        into.atIndex = atIndex;
+    }
+    request.playlist = into;
+    return start(std::move(request), false, true);
+}
+
+bool TrackImportController::requestFor(const QVariantList &files, ImportRequest &request)
+{
+    setErrorSource(QStringLiteral("import"));
+    setErrorMessage({});
+    if (!allowedToStage()) {
+        return false;
+    }
+    for (const QVariant &file : files) {
+        const QUrl url = file.toUrl();
+        const QString path = url.isLocalFile() ? url.toLocalFile() : (url.scheme().isEmpty() ? file.toString() : QString());
+        if (!path.isEmpty()) {
+            request.offered.push_back(QFileInfo(path).absoluteFilePath().toStdString());
+        }
+    }
+    if (request.offered.empty()) {
+        setErrorMessage(tr("Nothing that was dropped is a file on this computer."));
+        return false;
+    }
+    return true;
 }
 
 bool TrackImportController::importPossibleDuplicates()
@@ -531,7 +566,7 @@ bool TrackImportController::importPossibleDuplicates()
     return start(std::move(again), true);
 }
 
-bool TrackImportController::start(ImportRequest request, bool replacesStaged)
+bool TrackImportController::start(ImportRequest request, bool replacesStaged, bool joinsFirst)
 {
     if (m_busy) {
         setErrorMessage(!m_reanalysingPlaylist.isEmpty()
@@ -560,8 +595,26 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged)
                 for (const std::string &offered : request.offered) {
                     // Offered again by the person: no longer left out.
                     joined.leftOutByPerson.erase(offered);
-                    if (std::find(joined.offered.begin(), joined.offered.end(), offered) == joined.offered.end()) {
-                        joined.offered.push_back(offered);
+                }
+                if (joinsFirst) {
+                    // The new files first, the waiting ones after them, the
+                    // run at the place the new offer names: the files added
+                    // last come first.
+                    std::vector<std::string> order = request.offered;
+                    for (const std::string &waiting : m_request.offered) {
+                        if (std::find(order.begin(), order.end(), waiting) == order.end()) {
+                            order.push_back(waiting);
+                        }
+                    }
+                    joined.offered = std::move(order);
+                    if (request.playlist && request.playlist->atIndex && joined.playlist) {
+                        joined.playlist->atIndex = request.playlist->atIndex;
+                    }
+                } else {
+                    for (const std::string &offered : request.offered) {
+                        if (std::find(joined.offered.begin(), joined.offered.end(), offered) == joined.offered.end()) {
+                            joined.offered.push_back(offered);
+                        }
                     }
                 }
                 request = std::move(joined);
@@ -697,7 +750,9 @@ void TrackImportController::onPrepared()
                                    {QStringLiteral("onStick"), left.onStick}};
     }
     const QString playlist = m_request.playlist ? QString::fromStdString(m_request.playlist->path) : QString();
-    const bool isNew = m_request.playlist && m_request.playlist->create;
+    // Made by the save in at least one library: for Own Recordings' playlist
+    // (createWhereMissing) only where a library lacks it.
+    const bool isNew = m_request.playlist && (m_request.playlist->create || !prepared.staged.createdIn.isEmpty());
     int stagedTracks = 0;
     if (!prepared.staged.changes.empty()) {
         std::set<QString> ids;

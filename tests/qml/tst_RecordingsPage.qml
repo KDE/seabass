@@ -1139,7 +1139,12 @@ TestCase {
         compare(findChild(strip, "passiveProgressSummary").text, "Milkshaken.wav was not saved");
         compare(findChild(strip, "passiveProgressAction_show"), null, "nothing to show");
         mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
-        compare(findChild(strip, "passiveProgressNote").text, "There is not enough room in /home/dj/Music/Own Recordings.");
+        verify(waitForPolish(page.Window.window));
+        // The reason once, on the job's own line; the note does not repeat it.
+        const reason = "There is not enough room in /home/dj/Music/Own Recordings.";
+        compare(findAll(strip, "passiveProgressActivityLine").map(l => l.text),
+                ["Not saved: Milkshaken.wav: " + reason]);
+        compare(findChild(strip, "passiveProgressNote").text, "");
         compare(findChild(row(page, 0), "keptLabel").text,
                 "Not saved: There is not enough room in /home/dj/Music/Own Recordings.");
         compare(findChild(row(page, 0), "showKeptButton").visible, false);

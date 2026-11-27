@@ -76,6 +76,11 @@ public:
         bool declaredUnusable = false;
         double missingBytes = -1.0;
         bool holdsNoAudio = false;
+        // An unfinished WAV's whole frames, and its rate: what Save as
+        // FLAC with "Keep the audio the file holds" encodes, which is how
+        // its FLAC is known in the library (Browse's Own Recordings).
+        std::uint64_t framesHeld = 0;
+        double sampleRateHz = 0.0;
     };
     void setRecordings(std::vector<application::Recording> recordings, std::vector<HeaderState> states = {});
     // A recording's value for `role` as a row of this model gives it (every

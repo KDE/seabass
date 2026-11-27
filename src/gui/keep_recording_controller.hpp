@@ -267,10 +267,16 @@ public:
     // FLAC is not there like that any more]}.
     Q_INVOKABLE QVariantMap keepNotesFor(const QString &stickRoot, const QStringList &wavPaths) const;
     // The FLAC the recording at `wavPath`, on the stick at `stickRoot`, was
-    // last saved as in this session, while a file is there under its
-    // path (tags changed since or not); "" otherwise. What Browse adds to
-    // the library for the recording.
+    // last saved as in this session, while it is there as it was saved
+    // (its size and modification time, as keepNotesFor() asks); ""
+    // otherwise. What Browse adds to the library for the recording: a
+    // file changed since, or another one under that name, is not the
+    // audio that was checked against the recording.
     Q_INVOKABLE QString keptFlacFor(const QString &stickRoot, const QString &wavPath) const;
+    // The recording was saved as FLAC in this session, and a file is under
+    // that FLAC's path that is no longer the one saved; false when the
+    // FLAC is as saved, gone, or was never made.
+    Q_INVOKABLE bool keptFlacChanged(const QString &stickRoot, const QString &wavPath) const;
     // Takes the stick's jobs off finishedJobs (the strip is closed).
     Q_INVOKABLE void dismissFinishedFor(const QString &stickRoot);
     // Opens the folder of a kept FLAC in the file manager.

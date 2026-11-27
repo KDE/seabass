@@ -50,6 +50,12 @@ struct ImportPlaylist
     // Where the first track goes, from 0; the rest follow it. None: at
     // the end.
     std::optional<int> atIndex;
+    // Made by the save in each library that lacks it, whichever those are
+    // (none, some, all), and the tracks go into it in every one: for a
+    // playlist that stands for a fixed row of Browse (Own Recordings),
+    // which the person never made by name and so may be missing from a
+    // library a player or rekordbox left without it.
+    bool createWhereMissing = false;
 };
 
 // A file the plan would import that is left out of the save, and why, in
@@ -104,6 +110,9 @@ struct StagedImport
     // go into the playlist, in order. Nothing of them is copied.
     std::vector<std::string> addedToPlaylist;
     std::vector<LeftOut> leftOut;
+    // The libraries the save makes the playlist in ("rekordbox", ...):
+    // every one for `create`, those lacking it for `createWhereMissing`.
+    QStringList createdIn;
 };
 
 // Turns the plan's Import entries into the changes of one save. For each
@@ -129,6 +138,8 @@ struct StagedImport
 // top level in the libraries that lack it. Otherwise nothing is staged
 // and `refusal` says why: tracks listed in a playlist in two libraries
 // and not in the third is the disagreement this app is for removing.
+// With createWhereMissing it is made in the libraries that lack it, in
+// the same save, and is a playlist in the others.
 //
 // A file the plan found on the stick already (AlreadyOnStick) is not
 // imported again, and with a playlist and `onStick` given it is put into

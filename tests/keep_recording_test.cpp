@@ -9,6 +9,7 @@
 // log of every call, reads and writes apart, so the recording on the
 // stick is proven never to be named in a write.
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -355,6 +356,29 @@ KeepRecordingRequest request()
     return r;
 }
 
+// `message` with every path and name of the request taken out, the
+// longest first, so that what is left is the message's own words.
+std::string ownWords(std::string message, const KeepRecordingRequest &r)
+{
+    std::vector<std::string> names{r.wavPath, r.folder, r.fileName, r.stickRoot, r.coverPicturePath,
+                                   r.tags.artist, r.tags.title, r.tags.album, r.tags.genre};
+    for (const std::string &path : std::vector<std::string>(names)) {
+        if (const auto slash = path.rfind('/'); slash != std::string::npos) {
+            names.push_back(path.substr(slash + 1));
+        }
+    }
+    std::sort(names.begin(), names.end(), [](const std::string &a, const std::string &b) { return a.size() > b.size(); });
+    for (const std::string &name : names) {
+        if (name.empty()) {
+            continue;
+        }
+        for (auto at = message.find(name); at != std::string::npos; at = message.find(name, at)) {
+            message.replace(at, name.size(), " ");
+        }
+    }
+    return message;
+}
+
 struct Run
 {
     FakeFiles files;
@@ -379,8 +403,9 @@ struct Run
         });
         // A failure is a reason, which the pages frame as "Not saved: ...":
         // it says neither "kept" (the action is Save as FLAC) nor that it
-        // was not saved a second time.
-        const std::string &said = result.message;
+        // was not saved a second time. In its own words: the names it
+        // quotes (a folder, a file) are the test's, not the message's.
+        const std::string said = ownWords(result.message, r);
         check(said.find("kept") == std::string::npos && said.find("not saved") == std::string::npos
                   && said.find("Not saved") == std::string::npos,
               "a reason in the words of Save as FLAC: " + said);
@@ -562,6 +587,18 @@ void testFreeSpace()
               "one byte short: refused, saying how much is needed and free");
         check(!run.called("encode"), "one byte short: nothing encoded");
         check(run.nothingLeft(), "one byte short: nothing left");
+    }
+    {
+        // A folder whose name says "kept": the message names it, and is
+        // still in the words of Save as FLAC (Run::go()'s check).
+        Run run;
+        run.files.free = needed - 1;
+        KeepRecordingRequest r = request();
+        r.folder = "/home/dj/kept";
+        run.go(r);
+        check(run.result.status == KeepRecordingResult::Status::Failed
+                  && run.result.message.find("/home/dj/kept") != std::string::npos,
+              "a folder named kept: refused, naming it: " + run.result.message);
     }
     {
         Run run;

@@ -1833,7 +1833,7 @@ public:
     // when empty, none at all for "none", a cover of its own for each
     // track for "distinct" (distinctArtwork(i)); another one is a stick
     // whose covers changed. extraPlaylist: one more playlist of that
-    // name, holding every track in scan order.
+    // name, holding every track in scan order ("A|B": one each).
     Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false, bool withFiles = false,
                               const QString &artwork = QString(), const QString &extraPlaylist = QString())
     {
@@ -1875,8 +1875,9 @@ public:
                     if (reversedPlaylist) {
                         track.playlists.push_back({"Held Reversed", trackCount - 1 - i});
                     }
-                    if (!extra.empty()) {
-                        track.playlists.push_back({extra, i});
+                    // "A|B": one more playlist each.
+                    for (const QString &name : QString::fromStdString(extra).split(QLatin1Char('|'), Qt::SkipEmptyParts)) {
+                        track.playlists.push_back({name.toStdString(), i});
                     }
                     // Engine names art that is not on the stick; the
                     // rekordbox copy of the same song has a real one.

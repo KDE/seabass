@@ -63,9 +63,10 @@ QString aliasedPlaylistName(const QVariantMap &aliases, const QString &name)
 // the sample, at its rate. Save as FLAC proves its FLAC sample for
 // sample, and the import copies the file as it is, so a recording saved
 // and added is found by its length alone, after a restart too. A WAV the
-// player did not finish states no length to compare, and one without
-// audio matches nothing; each FLAC stands for one recording. Reads the
-// files' headers: not for the GUI thread.
+// player did not finish states no usable length: its FLAC holds the whole
+// frames the file holds ("Keep the audio the file holds"), so that is its
+// length here. One without audio matches nothing; each FLAC stands for
+// one recording. Reads the files' headers: not for the GUI thread.
 std::vector<std::string> libraryCopiesOf(const RecordingsListResult &listed, const std::vector<std::string> &flacs)
 {
     std::vector<std::string> copies(listed.listing.recordings.size());
@@ -79,10 +80,18 @@ std::vector<std::string> libraryCopiesOf(const RecordingsListResult &listed, con
     }
     std::vector<bool> taken(flacs.size(), false);
     for (std::size_t i = 0; i < copies.size(); ++i) {
-        if (i < listed.states.size() && (listed.states[i].unfinished || listed.states[i].holdsNoAudio)) {
+        const RecordingListModel::HeaderState *state = i < listed.states.size() ? &listed.states[i] : nullptr;
+        if (state && state->holdsNoAudio) {
             continue;
         }
-        const auto wav = infrastructure::audio::readExactSampleCount(listed.listing.recordings[i].path);
+        std::optional<infrastructure::audio::ExactSampleCount> wav;
+        if (state && state->unfinished) {
+            if (state->framesHeld > 0 && state->sampleRateHz > 0) {
+                wav = infrastructure::audio::ExactSampleCount{state->framesHeld, state->sampleRateHz, {}};
+            }
+        } else {
+            wav = infrastructure::audio::readExactSampleCount(listed.listing.recordings[i].path);
+        }
         if (!wav || wav->samples == 0) {
             continue;
         }
@@ -911,11 +920,20 @@ void ScanController::setRecordingsPlaylist(const QString &playlist)
     if (m_recordingsPlaylist == playlist) {
         return;
     }
+    const QString before = m_recordingsPlaylist;
     m_recordingsPlaylist = playlist;
     emit recordingsPlaylistChanged();
-    // Shown already: with the playlist it is shown with now.
     if (m_showRecordings) {
-        m_currentPlaylistFilter = playlist;
+        if (playlist.isEmpty()) {
+            // No playlist to show them with (Experimental off): the view
+            // of the recordings is left in the same step, for the
+            // playlist it showed, rather than showing the recordings alone.
+            m_currentPlaylistFilter = before;
+            setShowRecordings(false);
+        } else {
+            // Shown already: with the playlist it is shown with now.
+            m_currentPlaylistFilter = playlist;
+        }
         applyFilters();
     }
     refreshRecordings();
@@ -1642,13 +1660,17 @@ void ScanController::applyFilters(bool inPlace)
     const int recordingsShown = static_cast<int>(std::count_if(
         result.begin(), result.end(), [&recordingRows](const domain::Track &t) { return recordingRows.count(t.sourceId) > 0; }));
     m_model.setRecordingRows(std::move(recordingRows));
+    // The count before the rows: a binding the model's signals wake (the
+    // drop gap's rowCount, the list's count less the recordings) reads it
+    // with the rows it counts. Told after, when both are in place.
+    const bool recordingsShownChanged = recordingsShown != m_recordingRowsShown;
+    m_recordingRowsShown = recordingsShown;
     if (inPlace) {
         m_model.updateTracks(std::move(result));
     } else {
         m_model.setTracks(std::move(result));
     }
-    if (recordingsShown != m_recordingRowsShown) {
-        m_recordingRowsShown = recordingsShown;
+    if (recordingsShownChanged) {
         emit recordingRowsShownChanged();
     }
 }

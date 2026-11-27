@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QQmlEngine>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
@@ -97,6 +98,15 @@ public:
     // "/" (a folder path) or a ";" (Engine takes none), or that a library
     // on the stick or an earlier create already has.
     Q_INVOKABLE bool createPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &name);
+    // `name` made in each library on the stick that lacks it, whichever
+    // those are, so that what is added to it after goes into every
+    // library (Browse's Own Recordings, a playlist the person never
+    // named, which some libraries may be without). Stages nothing where
+    // every library has it already. Staged, it is a new playlist as
+    // createPlaylist's is (newPlaylists, dropNewPlaylist), and is not
+    // renamed until saved: the libraries that have it keep their name.
+    Q_INVOKABLE bool createPlaylistWhereMissing(const QString &rekordboxPath, const QString &enginePath,
+                                                const QString &name);
     Q_INVOKABLE void dropNewPlaylist(const QString &name);
     Q_INVOKABLE bool isNewPlaylistStaged(const QString &name) const;
     Q_INVOKABLE bool deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
@@ -337,6 +347,9 @@ private:
     // change's id, spelt as paths are compared (normalizedPathKey).
     std::map<QString, std::set<std::string>> m_trackDeletes;
     QStringList m_newPlaylists;
+    // The new playlists made only where a library lacked them
+    // (createPlaylistWhereMissing()).
+    QSet<QString> m_madeWhereMissing;
     // One edit of a track's place in a playlist, as staged: `remake`
     // makes its change again for the playlist under another name (a new
     // playlist renamed in place), `sequence` says when it was staged
