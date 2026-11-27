@@ -1624,10 +1624,9 @@ void BeatGridsController::describe(BeatGridTrackListModel::Row &row) const
     row.waveformState = waveform.text;
     row.waveformTone = waveform.tone;
     row.waveformTip = waveform.tip;
-    if (s.result.completedRow) {
-        row.note = QStringLiteral("Loads without analysis");
-        row.noteTone = QStringLiteral("good");
-    } else if (notAnalysed(s)) {
+    // A row completed says so in its two columns ("New"); a note under
+    // the artist repeating it on every such row was noise.
+    if (!s.result.completedRow && notAnalysed(s)) {
         row.note = whyLeftForThePlayer(s);
         row.noteTone = QStringLiteral("warn");
     }

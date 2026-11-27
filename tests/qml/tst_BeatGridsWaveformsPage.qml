@@ -516,7 +516,7 @@ TestCase {
         // B01: not analysed, completed from rekordbox.
         compare(row(o.c, b01).gridState, "New");
         compare(row(o.c, b01).waveformState, "New");
-        compare(row(o.c, b01).note, "Loads without analysis");
+        compare(row(o.c, b01).note, "", "the two columns say it: no note repeating them");
         // B04: analysed, no grid in rekordbox: Engine's grid stays, and
         // its waveform with it.
         compare(row(o.c, b04).gridState, "No beat grid in rekordbox");
@@ -531,7 +531,7 @@ TestCase {
         waitSettled(o.c);
         verify(waitForPolish(o.page.Window.window));
         compare(JSON.stringify(shownBadges(trackDelegate(o.page, b01))), JSON.stringify(["New", "New"]));
-        compare(findChild(trackDelegate(o.page, b01), "rowNote").text, "Loads without analysis");
+        compare(findChild(trackDelegate(o.page, b01), "rowNote").text.trim(), "", "its line stays, empty");
         compare(JSON.stringify(shownBadges(trackDelegate(o.page, b02))),
                 JSON.stringify(["No beat grid in rekordbox", "Left for the player"]));
         compare(findChild(trackDelegate(o.page, b04), "bpmLabel").text, "108 BPM");
@@ -624,7 +624,7 @@ TestCase {
         compare(o.c.tickedCount, 6, "the others unticked");
         for (let i = 0; i < o.c.tracks.count; ++i) {
             const r = o.c.tracks.get(i);
-            compare(r.ticked, r.note === "Loads without analysis", r.rekordboxId);
+            compare(r.ticked, r.gridState === "New", r.rekordboxId);
         }
         compare(unanalysed.enabled, true, "enabled while it has tracks to tick");
 
@@ -983,7 +983,7 @@ TestCase {
         // As for a track the player has not analysed: completed from rekordbox.
         compare(row(o.c, n1).gridState, "New");
         compare(row(o.c, n1).waveformState, "New");
-        compare(row(o.c, n1).note, "Loads without analysis. Engine's analysis kept");
+        compare(row(o.c, n1).note, "Engine's analysis kept");
         compare(o.c.analysedTickedCount, 0);
         compare(button.enabled, false, "nothing analysed left to mark");
         compare(o.c.restorableCount, 3, "and it can still be put back");

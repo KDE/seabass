@@ -72,7 +72,7 @@ Rectangle {
     // needed). Hidden when empty.
     property string note: ""
     // The note's colour, for a page whose note says how a row stands (Beat
-    // Grids & Waveforms: "Loads without analysis").
+    // Grids & Waveforms: why a track is left for the player to analyse).
     property color noteColor: Theme.textMuted
     // The note on exactly one line: kept on a row without one, and a long
     // one elided, the whole of it on hover. For a list whose rows mostly
