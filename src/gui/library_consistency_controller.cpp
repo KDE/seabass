@@ -1671,6 +1671,7 @@ void LibraryConsistencyController::attachSession()
                 }
             });
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
+                cancelPendingDelete(QString());
                 m_stagedIssues.clear();
                 m_stagedJunk.clear();
                 m_stagedArtwork.clear();
@@ -2376,6 +2377,7 @@ void LibraryConsistencyController::alignPlaylist(const QString &playlist, const 
         return;
     }
     const QString id = AlignPlaylistChange::idFor(name);
+    cancelPendingDelete(playlist);
     unstagePlaylistResolution(name);
     if (!m_session->stage(std::make_unique<AlignPlaylistChange>(m_rekordboxPath, m_enginePath, name, ref,
                                                                 alignments->second, 1))) {
@@ -2440,13 +2442,25 @@ void LibraryConsistencyController::onDeleteLookupFinished()
     QString thrown;
     const PlaylistWhereabouts where = gui::takeResult(m_deleteLookupWatcher, &thrown);
     emit playlistsChanged();
-    // Asked of findings a scan has since cleared or replaced, or of
-    // another stick: what it read is no longer about what the page lists.
-    if (asked.generation != m_playlistGeneration || asked.rekordboxPath != m_rekordboxPath
-        || asked.enginePath != m_enginePath) {
+    // A later choice for the playlist, or a discard, came first.
+    if (asked.cancelled) {
         return;
     }
     const QString &playlist = asked.playlist;
+    // Asked of findings a scan has since cleared or replaced, or of
+    // another stick: what it read is no longer about what the page lists.
+    if (asked.rekordboxPath != m_rekordboxPath || asked.enginePath != m_enginePath) {
+        setStatusMessage(QStringLiteral("\"%1\" is not deleted: another stick was opened while Seabass read it. "
+                                        "Choose Delete Playlist again on that stick if you still want it gone.")
+                             .arg(playlist));
+        return;
+    }
+    if (asked.generation != m_playlistGeneration) {
+        setStatusMessage(QStringLiteral("\"%1\" is not deleted: the stick was checked again while Seabass read it. "
+                                        "Choose Delete Playlist again if you still want it gone.")
+                             .arg(playlist));
+        return;
+    }
     const std::string name = playlist.toStdString();
     if (!thrown.isEmpty()) {
         setErrorMessage(QStringLiteral("\"%1\" is not deleted: the stick's playlists could not be read (%2).")
@@ -2516,6 +2530,15 @@ void LibraryConsistencyController::onDeleteLookupFinished()
     setStagedStatusMessage(stays.join(QLatin1Char(' ')));
 }
 
+void LibraryConsistencyController::cancelPendingDelete(const QString &playlist)
+{
+    // m_deletingPlaylist, not the watcher: a read done on its worker is
+    // still pending until onDeleteLookupFinished runs.
+    if (!m_deletingPlaylist.isEmpty() && (playlist.isEmpty() || m_deleteLookup.playlist == playlist)) {
+        m_deleteLookup.cancelled = true;
+    }
+}
+
 bool LibraryConsistencyController::unstagePlaylistResolution(const std::string &playlist)
 {
     bool any = false;
@@ -2534,6 +2557,7 @@ bool LibraryConsistencyController::unstagePlaylistResolution(const std::string &
 
 void LibraryConsistencyController::unstagePlaylist(const QString &playlist)
 {
+    cancelPendingDelete(playlist);
     if (!unstagePlaylistResolution(playlist.toStdString())) {
         return;
     }

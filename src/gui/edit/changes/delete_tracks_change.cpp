@@ -207,14 +207,19 @@ ChangeOutcome DeleteTracksChange::apply(SaveContext &ctx)
                         r.rekordboxIds.push_back(id);
                     }
                 } else if (row.format == "onelibrary" && oneLibrary) {
-                    // Browse names the file in every library on the stick
-                    // (see the class comment): one OneLibrary has no row
-                    // for is in none of its playlists, and has nothing to
-                    // remove. Thrown, it failed the whole save.
+                    // A stand-in row (Browse names the file in every
+                    // library on the stick, see Entry::standIns) that
+                    // OneLibrary still has no row for: in none of its
+                    // playlists, nothing to remove. A real row that is
+                    // gone, or answers in two spellings, fails the save.
+                    const bool standIn = std::find(e.standIns.begin(), e.standIns.end(), "onelibrary") != e.standIns.end();
                     try {
                         listed = listed || oneLibrary->isInAnyPlaylist(row.filePath);
                         r.oneLibraryPaths.push_back(row.filePath);
                     } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+                        if (!standIn) {
+                            throw;
+                        }
                     }
                 } else if (row.format == "engine" && engineSession) {
                     for (const std::int64_t id :

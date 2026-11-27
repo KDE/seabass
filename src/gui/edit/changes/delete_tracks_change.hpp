@@ -44,6 +44,11 @@ public:
         std::string title;
         std::string artist;
         std::vector<domain::Track> rows;  // every library's row for the file
+        // The libraries whose row in `rows` only names the file: they had
+        // no row for it when Browse asked (entriesOf). One of these still
+        // without a row at Save has nothing to remove; a real row missing
+        // by then fails the save.
+        std::vector<std::string> standIns;
     };
 
     DeleteTracksChange(QString pioneerRoot, QString enginePath, std::vector<Entry> entries);

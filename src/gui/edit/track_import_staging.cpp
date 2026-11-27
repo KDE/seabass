@@ -12,6 +12,7 @@
 
 #include "domain/import_field_checks.hpp"
 #include "domain/imported_track.hpp"
+#include "domain/sync_planning.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "infrastructure/audio/embedded_artwork.hpp"
@@ -68,22 +69,29 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         const QString name = QString::fromStdString(playlist->path);
         const PlaylistWhereabouts where = playlistWhereabouts(target.pioneerRoot, target.enginePath, playlist->path);
         const auto asSet = [](const QStringList &list) { return QSet<QString>(list.begin(), list.end()); };
+        // "rekordbox, OneLibrary, Engine": the libraries as the UI names them.
+        const auto names = [](const QStringList &libraries) {
+            std::string out;
+            for (const QString &library : libraries) {
+                out += (out.empty() ? "" : ", ") + domain::catalogDisplayName(library.toStdString());
+            }
+            return out;
+        };
         if (!where.unreadable.isEmpty()) {
-            staged.refusal = "The playlists of " + where.unreadable.join(QStringLiteral(", ")).toStdString()
+            staged.refusal = "The playlists of " + names(where.unreadable)
                              + " on the stick could not be read, so the tracks cannot be put into \"" + playlist->path
                              + "\" in every library. Check the stick, then try again.";
             return staged;
         }
         if (asSet(where.onStick) != asSet(target.libraries)) {
-            staged.refusal = "The libraries on the stick (" + where.onStick.join(QStringLiteral(", ")).toStdString()
+            staged.refusal = "The libraries on the stick (" + names(where.onStick)
                              + ") are not the ones this import was planned for ("
-                             + target.libraries.join(QStringLiteral(", ")).toStdString() + ").";
+                             + names(target.libraries) + ").";
             return staged;
         }
         if (!where.several.isEmpty()) {
             staged.refusal = "More than one playlist is called \"" + playlist->path + "\" in "
-                             + where.several.join(QStringLiteral(", ")).toStdString()
-                             + ", so the tracks cannot be put into one of them by name.";
+                             + names(where.several) + ", so the tracks cannot be put into one of them by name.";
             return staged;
         }
         QStringList lacking;
@@ -102,8 +110,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         }
         if (!playlist->create && !playlist->createWhereMissing && asSet(where.having) != asSet(where.onStick)) {
             staged.refusal = "The playlist \"" + playlist->path + "\" is not in every library on the stick (not in "
-                             + lacking.join(QStringLiteral(", ")).toStdString()
-                             + "), so the tracks would be listed in some libraries and not in others.";
+                             + names(lacking) + "), so the tracks would be listed in some libraries and not in others.";
             return staged;
         }
         // A folder at that path counts as "having" it and takes no
@@ -113,7 +120,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             const std::vector<std::string> playlists = playlistPathsIn(
                 catalog, (catalog == "engine" ? target.enginePath : target.pioneerRoot).toStdString());
             if (std::find(playlists.begin(), playlists.end(), playlist->path) == playlists.end()) {
-                staged.refusal = "\"" + playlist->path + "\" is a folder in " + catalog
+                staged.refusal = "\"" + playlist->path + "\" is a folder in " + domain::catalogDisplayName(catalog)
                                  + ", not a playlist, so it takes no tracks.";
                 return staged;
             }

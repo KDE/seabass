@@ -752,6 +752,27 @@ TestCase {
                 "no answer sent for a void ask");
         cleanupExperimental();
     }
+    // The page's own stick changes while an ask is open: the page closes
+    // it and tells the controller to drop its asks as well, so the same
+    // track dragged onto the same playlist later is asked again.
+    function test_aStickChangeDropsTheControllersAsks_data() {
+        return [{tag: "rekordbox path", property: "rekordboxPath"}, {tag: "Engine path", property: "enginePath"}];
+    }
+    function test_aStickChangeDropsTheControllersAsks(data) {
+        const page = makeEditingPage();
+        const fake = page.playlistEditController;
+        const dialog = findChild(page, "missingLibrariesDialog");
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/a.mp3", "A Track", -1);
+        tryCompare(dialog, "opened", true);
+        compare(fake.calls.filter(c => c[0] === "dropWaiting").length, 0, "precondition");
+        page[data.property] = page[data.property] + "-other";
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls.filter(c => c[0] === "dropWaiting" || c[0] === "dropAddition"
+                                                    || c[0] === "addAnyway")),
+                JSON.stringify([["dropWaiting"]]), "the controller drops its asks, none answered");
+        cleanupExperimental();
+    }
     function test_anAddTheControllerAsksAboutOpensTheDialog() {
         const page = makeEditingPage();
         const fake = page.playlistEditController;

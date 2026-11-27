@@ -712,8 +712,9 @@ public:
     // staged alignPlaylist() of it, and that replaces this. Where it is a
     // folder or a playlist holding others is read from the stick first,
     // off the GUI thread (deletingPlaylist meanwhile); a call while one is
-    // read is ignored, and what is read is dropped when a scan or another
-    // stick has come since.
+    // read is ignored. What is read is dropped when a scan or another
+    // stick has come since (the status says so), and when the playlist
+    // was matched or unstaged, or the edits discarded, meanwhile.
     Q_INVOKABLE void deletePlaylistEverywhere(const QString &playlist);
     QString deletingPlaylist() const { return m_deletingPlaylist; }
     // Takes back whichever of the two is staged for `playlist`.
@@ -875,8 +876,14 @@ private:
         QString rekordboxPath;
         QString enginePath;
         std::uint64_t generation = 0;
+        // A later choice for the playlist, or a discard, came while it
+        // read: what it read is dropped, nothing staged.
+        bool cancelled = false;
     };
     DeleteLookup m_deleteLookup;
+    // Cancels the delete being read for `playlist` (any playlist when
+    // empty), if one is.
+    void cancelPendingDelete(const QString &playlist);
     QString m_deletingPlaylist;
     QFutureWatcher<PlaylistWhereabouts> m_deleteLookupWatcher;
     void onDeleteLookupFinished();

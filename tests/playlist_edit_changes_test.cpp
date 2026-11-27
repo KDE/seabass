@@ -1071,10 +1071,16 @@ int main(int argc, char **argv)
         fs::remove(oneLibrary);
         fs::create_directory(oneLibrary);
         fs::remove(engineDb);
+#if !defined(_WIN32)
         fs::create_symlink(engineDb.filename(), engineDb);  // a link to itself: asking about it fails
         std::error_code ec;
         (void)fs::exists(engineDb, ec);
         assert(ec && "precondition: whether m.db is there cannot even be asked");
+#else
+        // Windows makes no symlink without rights a test cannot count on:
+        // a folder where m.db should be, as for the other two.
+        fs::create_directory(engineDb);
+#endif
         PlaylistWhereabouts where;
         try {
             where = playlistWhereabouts(brokenPioneer, brokenLibrary, "Q1", file(A01));
@@ -1090,6 +1096,111 @@ int main(int argc, char **argv)
         fs::remove_all(broken);
     }
     std::cout << "case 16 (a library that cannot be read is said to be, not taken for one without it) OK\n";
+
+    // 17. "Delete playlist and its tracks" names each file in every
+    //     library on the stick: a row OneLibrary had none for is a stand-in
+    //     (Entry::standIns). x97 and x98 are in Engine only. x97's rekordbox
+    //     and OneLibrary rows are stand-ins: it goes. x98's OneLibrary row
+    //     is a real one, as if the plan had read it: missing at Save, the
+    //     save fails naming the file, and nothing is removed, x97 neither.
+    {
+        std::map<std::string, std::int64_t> extra;
+        {
+            auto db = djinterop::engine::load_database(pathToUtf8(library));
+            for (const char *name : {"x97.mp3", "x98.mp3"}) {
+                djinterop::track_snapshot s;
+                s.relative_path = std::string("../Contents/Extra/") + name;
+                extra[name] = db.create_track(s).id();
+            }
+        }
+        const auto entryFor = [&](const char *name, const QStringList &standIns) {
+            DeleteTracksChange::Entry entry;
+            entry.filePath = pathToUtf8(stick / "Contents" / "Extra" / name);
+            entry.title = name;
+            for (const QString &format : all) {
+                domain::Track row;
+                row.format = format.toStdString();
+                row.filePath = entry.filePath;
+                row.sourceId = format == QLatin1String("engine") ? std::to_string(extra[name]) : std::string();
+                entry.rows.push_back(row);
+                if (standIns.contains(format)) {
+                    entry.standIns.push_back(format.toStdString());
+                }
+            }
+            return entry;
+        };
+        const QStringList standIns{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")};
+        const auto engineHas = [&](const char *name) {
+            return djinterop::engine::load_database(pathToUtf8(library)).track_by_id(extra[name]).has_value();
+        };
+        {
+            SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+            const SaveLoopResult result = runSaveLoop(
+                {std::shared_ptr<PendingChange>(DeleteTracksChange::forPlaylist(
+                    pioneerQ, libraryQ, "Gone",
+                    {entryFor("x97.mp3", standIns), entryFor("x98.mp3", QStringList{QStringLiteral("rekordbox")})}))},
+                ctx);
+            std::cerr << "case 17: a real row missing: " << result.error.toStdString() << "\n";
+            assert(!result.error.isEmpty() && "a real OneLibrary row gone fails the save");
+            assert(result.error.contains(QLatin1String("x98.mp3")) && "naming the file");
+            assert(engineHas("x97.mp3") && engineHas("x98.mp3") && "nothing removed from Engine");
+        }
+        const auto result = save(std::shared_ptr<PendingChange>(
+            DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone", {entryFor("x97.mp3", standIns)})));
+        assert(result.appliedIds.size() == 1 && "an Engine-only track with stand-in rows goes");
+        assert(!engineHas("x97.mp3") && engineHas("x98.mp3"));
+    }
+    std::cout << "case 17 (a stand-in row OneLibrary has none for is nothing to remove; a real row missing fails the "
+                 "save, nothing removed) OK\n";
+
+    // 18. A library that is not on the stick is not one that cannot be
+    //     read: none is named unreadable, and the others are read as ever.
+    {
+        const fs::path absent = testing::scratchRoot() / "seabass_playlist_edit_changes_test_absent";
+        const auto copyOfStick = [&]() {
+            fs::remove_all(absent);
+            fs::copy(stick, absent, fs::copy_options::recursive);
+        };
+        const QString absentPioneer = pathToQString(absent / "PIONEER");
+        const QString absentLibrary = pathToQString(absent / "Engine Library");
+        const QString engineOnly = QStringLiteral("engine");
+        const QStringList pioneerOnly{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")};
+        const auto check = [&](const char *what, const QString &pioneerRoot, const QString &enginePath,
+                               const QStringList &onStick) {
+            const PlaylistWhereabouts where = playlistWhereabouts(pioneerRoot, enginePath, "Q Two");
+            std::cerr << "case 18, " << what << ": on the stick " << where.onStick.join(QStringLiteral(", ")).toStdString()
+                      << "; unreadable " << where.unreadable.join(QStringLiteral(", ")).toStdString() << "\n";
+            assert(where.unreadable.isEmpty() && "an absent library is not unreadable");
+            assert(where.onStick == onStick && where.having == onStick && "the others read as ever");
+        };
+        const auto removeDb = [&](const char *name) {
+            for (const char *suffix : {"", "-wal", "-shm"}) {
+                fs::remove(absent / "PIONEER" / "rekordbox" / (std::string(name) + suffix));
+            }
+        };
+
+        copyOfStick();
+        removeDb("export.pdb");
+        check("a PIONEER folder without export.pdb", absentPioneer, absentLibrary,
+              QStringList{QStringLiteral("onelibrary"), engineOnly});
+
+        copyOfStick();
+        removeDb("exportLibrary.db");
+        check("rekordbox without exportLibrary.db", absentPioneer, absentLibrary,
+              QStringList{QStringLiteral("rekordbox"), engineOnly});
+
+        copyOfStick();
+        fs::remove_all(absent / "PIONEER");
+        check("only Engine, no PIONEER folder", absentPioneer, absentLibrary, QStringList{engineOnly});
+        check("only Engine, no rekordbox path", QString(), absentLibrary, QStringList{engineOnly});
+
+        copyOfStick();
+        fs::remove_all(absent / "Engine Library");
+        check("only rekordbox, no Engine Library folder", absentPioneer, absentLibrary, pioneerOnly);
+        check("only rekordbox, no Engine path", absentPioneer, QString(), pioneerOnly);
+        fs::remove_all(absent);
+    }
+    std::cout << "case 18 (a library not on the stick is not one that cannot be read) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";

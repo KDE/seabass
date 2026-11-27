@@ -159,6 +159,7 @@ std::vector<DeleteTracksChange::Entry> entriesOf(const domain::PlaylistTracksDel
                 row.title = track.title;
                 row.artist = track.artist;
                 entry.rows.push_back(std::move(row));
+                entry.standIns.push_back(format);
             }
         }
         entries.push_back(std::move(entry));

@@ -2088,6 +2088,39 @@ TestCase {
         return stickFixture.playlistsIn(stick, format).filter(n => n === name).length;
     }
 
+    // A library that is not on the stick is not one that cannot be read:
+    // an ordinary edit on a stick without it is staged, not refused.
+    function test_anAbsentLibraryIsNoUnreadableOne_data() {
+        return [
+            {tag: "Engine only, an empty PIONEER folder", gone: ["export.pdb", "exportLibrary.db"], pioneer: true},
+            {tag: "Engine only, no rekordbox path", gone: ["export.pdb", "exportLibrary.db"], pioneer: false},
+            {tag: "no OneLibrary", gone: ["exportLibrary.db"], pioneer: true},
+        ];
+    }
+    function test_anAbsentLibraryIsNoUnreadableOne(data) {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture stick copies");
+        for (const name of data.gone) {
+            for (const suffix of ["", "-wal", "-shm"]) {
+                const file = stick + "/PIONEER/rekordbox/" + name + suffix;
+                if (stickFixture.fileExists(file)) {
+                    verify(browseFixture.removeFile(file), file);
+                }
+            }
+            verify(!stickFixture.fileExists(stick + "/PIONEER/rekordbox/" + name), "precondition: " + name + " gone");
+        }
+        const pioneer = data.pioneer ? stick + "/PIONEER" : "";
+        const engine = stick + "/Engine Library";
+        const edits = createTemporaryObject(realEditsComponent, testCase);
+        compare(edited(edits, edits.createPlaylist(pioneer, engine, "Fresh Picks")), "", "not refused");
+        verify(edits.isNewPlaylistStaged("Fresh Picks"), "staged");
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(data.pioneer ? pioneer
+                                                                                                         : engine));
+        verify(session !== null);
+        compare(session.pendingCount, 1);
+        edits.discardLeftOverEdits(pioneer, engine);
+    }
+
     // The one call for the row's playlist, whichever libraries lack it:
     // made where missing (nothing staged for it where none does), the add
     // into every library. Staged again after a restart as it was, kept

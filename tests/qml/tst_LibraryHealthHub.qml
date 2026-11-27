@@ -964,10 +964,81 @@ TestCase {
         controller.scan(pioneer, engine, "");
         tryCompare(controller, "deletingPlaylist", "", 60000);
         compare(session.pendingCount, 1, "nothing staged from the overtaken lookup");
+        compare(controller.statusMessage, "\"Planted Two\" is not deleted: the stick was checked again while Seabass "
+                + "read it. Choose Delete Playlist again if you still want it gone.", "and said so");
         tryVerify(() => !controller.busy, 300000, "the rescan finishes");
         compare(session.pendingCount, 1, "still nothing");
         verify(find("Planted Two") === undefined || find("Planted Two").staged === "", "Two is not staged");
         session.discard();
+    }
+
+    // A later choice for the playlist while Delete Playlist reads, or a
+    // discard, wins: the read's answer is dropped and stages nothing.
+    function test_aLaterChoiceCancelsTheDeleteBeingRead() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        compare(stickFixture.plantPlaylist(stick, "Planted Late", ["rekordbox"], 1).length, 1);
+        compare(stickFixture.plantPlaylist(stick, "Planted Other", ["rekordbox"], 1).length, 1);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer), "TESTSTICK");
+        verify(session !== null);
+        session.discard();
+        const page = createTemporaryObject(stickPageComponent, testCase, {rekordboxPath: pioneer, enginePath: engine});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        const find = (name) => controller.playlistDifferences.find((d) => d.name === name);
+        verify(find("Planted Late") !== undefined, "listed");
+        verify(find("Planted Late").references.some((r) => r.format === "rekordbox"), "rekordbox can be followed");
+
+        // Delete Playlist, then Match rekordbox before the read is done.
+        controller.deletePlaylistEverywhere("Planted Late");
+        compare(controller.deletingPlaylist, "Planted Late");
+        controller.alignPlaylist("Planted Late", "rekordbox");
+        compare(find("Planted Late").staged, "rekordbox");
+        tryCompare(controller, "deletingPlaylist", "", 60000);
+        compare(find("Planted Late").staged, "rekordbox", "the match stays, no delete over it");
+        compare(session.pendingCount, 1);
+
+        // Then unstaged before the read is done.
+        controller.unstagePlaylist("Planted Late");
+        controller.deletePlaylistEverywhere("Planted Late");
+        compare(controller.deletingPlaylist, "Planted Late");
+        controller.unstagePlaylist("Planted Late");
+        tryCompare(controller, "deletingPlaylist", "", 60000);
+        compare(find("Planted Late").staged, "", "unstaged stays unstaged");
+        compare(session.pendingCount, 0);
+
+        // Then Discard All before the read is done (another edit staged,
+        // as Discard All needs one).
+        controller.alignPlaylist("Planted Other", "rekordbox");
+        compare(session.pendingCount, 1);
+        controller.deletePlaylistEverywhere("Planted Late");
+        compare(controller.deletingPlaylist, "Planted Late");
+        session.discard();
+        compare(session.pendingCount, 0);
+        tryCompare(controller, "deletingPlaylist", "", 60000);
+        compare(find("Planted Late").staged, "", "nothing staged after a discard");
+        compare(find("Planted Other").staged, "");
+        compare(session.pendingCount, 0);
+
+        // Untouched, the read still stages the delete.
+        deleteEverywhere(controller, "Planted Late");
+        compare(find("Planted Late").staged, "delete");
+        compare(session.pendingCount, 1);
+        session.discard();
+
+        // Another stick opened before the read is done: dropped, and said.
+        const other = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(other.length > 0, "the fixture must copy");
+        controller.deletePlaylistEverywhere("Planted Late");
+        compare(controller.deletingPlaylist, "Planted Late");
+        controller.scan(other + "/PIONEER", other + "/Engine Library", "");
+        tryCompare(controller, "deletingPlaylist", "", 60000);
+        compare(controller.statusMessage, "\"Planted Late\" is not deleted: another stick was opened while Seabass read "
+                + "it. Choose Delete Playlist again on that stick if you still want it gone.");
+        compare(session.pendingCount, 0, "nothing staged on the first stick");
+        tryVerify(() => !controller.busy, 300000, "the other stick's check finishes");
     }
 
     // A library that cannot be read by the time Delete Playlist looks

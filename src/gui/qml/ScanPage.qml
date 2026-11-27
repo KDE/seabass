@@ -1357,8 +1357,17 @@ Page {
         }
     }
     onPlaylistEditControllerChanged: missingLibrariesDialog.forgetAsks()
-    onRekordboxPathChanged: missingLibrariesDialog.forgetAsks()
-    onEnginePathChanged: missingLibrariesDialog.forgetAsks()
+    // Another stick: the controller drops its asks too, or one it still
+    // holds would keep the same track's next ask for that playlist from
+    // being asked (while the session stays the same).
+    function forgetAsksOfThisStick() {
+        missingLibrariesDialog.forgetAsks();
+        if (root.playlistEditController && ("dropWaitingAdditions" in root.playlistEditController)) {
+            root.playlistEditController.dropWaitingAdditions();
+        }
+    }
+    onRekordboxPathChanged: forgetAsksOfThisStick()
+    onEnginePathChanged: forgetAsksOfThisStick()
     // Back on top: an ask that came while another page was over this one.
     StackView.onActivated: missingLibrariesDialog.askNext()
     Connections {

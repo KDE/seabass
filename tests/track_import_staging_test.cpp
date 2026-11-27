@@ -298,7 +298,7 @@ int main(int argc, char **argv)
         assert(testing::saveChanges({engineOnly}, stick.pioneerPath(), stick.enginePath()).error.isEmpty());
         const std::string alone = refusalOf(target, {"Engine Alone", false, std::nullopt});
         assert(alone.find("is not in every library") != std::string::npos && alone.find("rekordbox") != std::string::npos
-               && alone.find("onelibrary") != std::string::npos);
+               && alone.find("(not in rekordbox, OneLibrary)") != std::string::npos);
         // Made new, it is made where it is missing, and the tracks listed everywhere.
         assert(refusalOf(target, {"Engine Alone", true, std::nullopt}).empty());
         assert(refusalOf(target, {"Staged Import", false, std::nullopt}).empty());
@@ -471,14 +471,14 @@ int main(int argc, char **argv)
         assert(made && (made->formatsTouched() == QStringList{QStringLiteral("engine")}));
         const StagedImport plain = stage({"Two Have", false, std::nullopt});
         assert(plain.changes.empty() && plain.createdIn.isEmpty()
-               && plain.refusal.find("is not in every library") != std::string::npos);
+               && plain.refusal.find("is not in every library on the stick (not in Engine)") != std::string::npos);
         // A folder in rekordbox, a name Engine holds twice: nothing.
         const StagedImport foldered = stage(whereMissing("Foldered"));
         assert(foldered.changes.empty() && foldered.createdIn.isEmpty()
                && foldered.refusal.find("is a folder in rekordbox") != std::string::npos);
         const StagedImport twice = stage(whereMissing("Odd/Twice"));
         assert(twice.changes.empty() && twice.createdIn.isEmpty()
-               && twice.refusal.find("More than one playlist") != std::string::npos);
+               && twice.refusal.find("More than one playlist is called \"Odd/Twice\" in Engine,") != std::string::npos);
         // Saved: the playlist once in every library, the track in it.
         const SaveLoopResult saved = testing::saveChanges(two.changes, pioneerQ, engineQ);
         assert(saved.error.isEmpty() && saved.skippedIds.isEmpty());
@@ -500,7 +500,7 @@ int main(int argc, char **argv)
         fs::create_directory(engineDb);
         const StagedImport unread = stage(whereMissing("Nowhere"));
         assert(unread.changes.empty() && unread.createdIn.isEmpty()
-               && unread.refusal.find("The playlists of engine on the stick could not be read") != std::string::npos);
+               && unread.refusal.find("The playlists of Engine on the stick could not be read") != std::string::npos);
         fs::remove(engineDb);
         fs::rename(aside, engineDb);
     }
