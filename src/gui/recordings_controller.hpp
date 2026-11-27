@@ -106,6 +106,9 @@ signals:
 
 struct RecordingsListResult
 {
+    // The stick listed, as it was asked for: a listing that comes back
+    // after its page moved on to another stick is not that stick's.
+    QString stickRoot;
     application::RecordingListing listing;
     // A row each, in the listing's order.
     std::vector<RecordingListModel::HeaderState> states;
@@ -117,10 +120,12 @@ struct RecordingsListResult
 };
 
 // The recordings on the stick at `stickRoot`, each with its length, and
-// with readHeaders what each WAV's header says (the HeaderState). On the
-// calling thread: the listing the Recordings page shows, and Browse's Own
-// Recordings row too, so that both say the same of a file.
-RecordingsListResult listRecordingsOnStick(const QString &stickRoot, bool readHeaders);
+// with `experimental` (Keep and Own Recordings are on) what each WAV's
+// header says (the HeaderState); without it none is read, as the
+// released Recordings page reads none. On the calling thread: the listing
+// the Recordings page shows and Browse's Own Recordings row too, each
+// passing its Experimental switch, so that both say the same of a file.
+RecordingsListResult listRecordingsOnStick(const QString &stickRoot, bool experimental);
 
 struct RecordingsRunResult
 {

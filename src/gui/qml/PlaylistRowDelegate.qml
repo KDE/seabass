@@ -150,17 +150,22 @@ Rectangle {
             source: root.showsThumbnail ? root.thumbnailSource : ""
         }
         // As wide as the tile it stands for, so the names stay on one line.
-        Item {
+        // Made only for a row that has one: every playlist row of every
+        // host would load an icon it never shows.
+        Loader {
             objectName: "playlistRowIcon"
-            visible: root.showsThumbnail && root.iconName.length > 0
+            active: root.showsThumbnail && root.iconName.length > 0
+            visible: active
             Layout.preferredWidth: thumbnailTile.implicitWidth
             Layout.preferredHeight: thumbnailTile.implicitHeight
             Layout.alignment: Qt.AlignVCenter
-            SeabassIcon {
-                anchors.centerIn: parent
-                iconName: root.iconName.length > 0 ? root.iconName : "media-record"
-                size: Math.min(parent.width, parent.height) * 0.75
-                color: Theme.textMuted
+            sourceComponent: Item {
+                SeabassIcon {
+                    anchors.centerIn: parent
+                    iconName: root.iconName
+                    size: Math.min(parent.width, parent.height) * 0.75
+                    color: Theme.textMuted
+                }
             }
         }
         Label {

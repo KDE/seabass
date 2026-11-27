@@ -1907,14 +1907,17 @@ Page {
             qsTr("Own Recordings"));
     }
     // A recording row's second line: when it was recorded, its size, and
-    // whether the player finished its WAV.
+    // whether the player finished its WAV or left one without audio.
     function recordingDetails(row) {
         const parts = [];
         if (row.recordedAt && !isNaN(row.recordedAt.getTime())) {
             parts.push(row.recordedAt.toLocaleString(Qt.locale(), Locale.ShortFormat));
         }
         parts.push(Theme.humanBytes(row.recordingSizeBytes));
-        if (row.recordingUnfinished) {
+        // As the Recordings page says it of the same file.
+        if (row.recordingHoldsNoAudio) {
+            parts.push(qsTr("holds no audio"));
+        } else if (row.recordingUnfinished) {
             parts.push(qsTr("not finished by the player"));
         }
         return parts.join(" · ");
@@ -2854,6 +2857,7 @@ Page {
                     required property var recordedAt
                     required property double recordingSizeBytes
                     required property bool recordingUnfinished
+                    required property bool recordingHoldsNoAudio
 
                     readonly property bool isPlaying: playbackController.hasTrack
                         && playbackController.currentFormat === root.format

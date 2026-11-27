@@ -73,6 +73,9 @@ public:
         RecordedAtRole,
         RecordingSizeBytesRole,
         RecordingUnfinishedRole,
+        // ...and whether it holds no audio at all (as the Recordings page
+        // says of it).
+        RecordingHoldsNoAudioRole,
     };
 
     explicit TrackListModel(QObject *parent = nullptr);
@@ -122,6 +125,7 @@ public:
         std::int64_t modifiedUnix = 0;
         std::uint64_t sizeBytes = 0;
         bool unfinished = false;
+        bool holdsNoAudio = false;
     };
     void setRecordingRows(std::unordered_map<std::string, RecordingInfo> rows) { m_recordingRows = std::move(rows); }
     // Staged renames, {scanned path: new path}: playlistNames serves the
@@ -268,6 +272,12 @@ class ScanController : public QObject
     Q_PROPERTY(int recordingCount READ recordingCount NOTIFY recordingsChanged)
     // The list shows the recordings (showRecordings()), not the library.
     Q_PROPERTY(bool showingRecordings READ showingRecordings NOTIFY showingRecordingsChanged)
+    // A listing of the stick's recordings runs; the stick read last has
+    // had its recordings listed (none may be on it). A listing of another
+    // stick, which a new scan of this one outran, counts for neither and
+    // changes nothing.
+    Q_PROPERTY(bool recordingsListing READ recordingsListing NOTIFY recordingsListingChanged)
+    Q_PROPERTY(bool recordingsListed READ recordingsListed NOTIFY recordingsListingChanged)
 
 public:
     explicit ScanController(QObject *parent = nullptr);
@@ -297,6 +307,8 @@ public:
     void setRecordingsEnabled(bool enabled);
     int recordingCount() const { return static_cast<int>(m_recordings.size()); }
     bool showingRecordings() const { return m_showRecordings; }
+    bool recordingsListing() const { return m_recordingsListing; }
+    bool recordingsListed() const { return m_recordingsListed; }
     // For tests: how many paths the track import's rows have had made
     // into a key (application::normalizedPathKey) so far. Nothing while
     // no import is staged or awaiting the read; with one, each row and
@@ -510,6 +522,7 @@ signals:
     void recordingsEnabledChanged();
     void recordingsChanged();
     void showingRecordingsChanged();
+    void recordingsListingChanged();
 
 private:
     void setBusy(bool busy);
@@ -590,9 +603,13 @@ private:
     std::vector<RecordingListModel::HeaderState> m_recordingStates;
     bool m_recordingsEnabled = false;
     bool m_showRecordings = false;
+    bool m_recordingsListing = false;
+    bool m_recordingsListed = false;
     QFutureWatcher<RecordingsListResult> m_recordingsWatcher;
     void onRecordingsListed();
     void setShowRecordings(bool show);
+    void setRecordingsListing(bool listing);
+    void setRecordingsListed(bool listed);
     QString m_currentSearchQuery;
     QString m_sortField = "playlist";
     bool m_sortAscending = true;

@@ -37,6 +37,7 @@ TestCase {
         realPlayback.stop();
         realAppSettings.experimentalFeaturesEnabled = false;
         realAppSettings.lastPlaylistName = "";
+        catalogGate.restore();
         browseFixture.restore();
     }
 
@@ -134,8 +135,10 @@ TestCase {
     // alone above the playlists.
     function test_aStickWithoutRecordingsHasNoRow() {
         const page = makePage(makeStick([]), true);
-        settle(page);
         const scan = findChild(page, "scanController");
+        // The listing ran and found none: not a row missing for want of it.
+        tryCompare(scan, "recordingsListed", true, 10000);
+        settle(page);
         compare(scan.recordingCount, 0);
         compare(sidebar(page).fixedRowCount, 1);
         compare(sidebarNames(page), "All tracks(all)|Held Playlist");
@@ -289,6 +292,119 @@ TestCase {
     Component {
         id: signalSpy
         SignalSpy {}
+    }
+
+    // A delete that ends after its Recordings page has gone is heard too:
+    // the page's own end never runs, the one its write is watched by does.
+    function test_aDeleteThatOutlivesItsPageIsHeard() {
+        const root = makeStick(testCase.threeRecordings);
+        const page = makePage(root, true);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+
+        browseFixture.holdRecordingDeletes();
+        const recordings = recordingsControllerComponent.createObject(testCase);
+        recordings.load("TESTSTICK", root + "/PIONEER", root + "/Engine Library");
+        tryVerify(() => recordings.listed && !recordings.busy, 10000);
+        recordings.setIncluded(0, true);
+        recordings.deleteSelected();
+        // In its file: leaving the page stops a delete after the file in
+        // hand, and this one is in hand.
+        tryVerify(() => browseFixture.recordingDeletesWaiting() === 1, 10000, "the delete waits at its first file");
+        recordings.destroy();
+        wait(50);
+        compare(scan.recordingCount, 3, "nothing deleted yet");
+
+        browseFixture.releaseRecordingDeletes();
+        tryCompare(scan, "recordingCount", 2, 10000);
+        compare(scan.tracks.trackCount(), 3, "the library's rows are as they were");
+    }
+
+    // A listing of the stick read before comes back after a read of
+    // another one began: it is not this stick's, and what was listed of
+    // the one before went with it.
+    function test_aListingOfTheStickBeforeIsNotThisOnes() {
+        const page = makePage(makeStick(testCase.threeRecordings), true);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        compare(scan.recordingsListed, true);
+        const other = makeStick([]);
+
+        // The other stick's read waits before its tracks, so nothing of
+        // it lists its recordings while the first stick's listing ends:
+        // the app's catalog cache, gated, instead of the held one.
+        browseFixture.restore();
+        catalogGate.hold(3, true);
+        scan.refreshRecordings();
+        verify(scan.recordingsListing);
+        scan.scan("rekordbox", other + "/PIONEER", "");
+        compare(scan.recordingCount, 0, "the stick before's recordings went with it");
+        compare(scan.recordingsListed, false);
+        tryVerify(() => catalogGate.waiting() === 1, 10000, "the other stick's read waits");
+        tryCompare(scan, "recordingsListing", false, 10000);
+        compare(scan.recordingCount, 0, "a listing of the stick before is not this one's");
+        compare(scan.recordingsListed, false);
+        compare(sidebar(page).fixedRowCount, 1);
+
+        catalogGate.release();
+        tryCompare(scan, "recordingsListed", true, 10000);
+        compare(scan.recordingCount, 0);
+    }
+
+    // The Recordings page's rows, as its delegate reads them.
+    Component {
+        id: recordingRowsComponent
+        Instantiator {
+            delegate: QtObject {
+                required property string path
+                required property bool unfinished
+                required property bool holdsNoAudio
+            }
+        }
+    }
+
+    // Browse and the Recordings page say the same of one file: a WAV the
+    // player did not finish, one that holds no audio, one that is whole.
+    function test_bothPagesSayTheSameOfAFile() {
+        const root = makeStick([
+            {folder: "Sessions", name: "Session-0003.wav", seconds: 4, unfinished: true, at: testCase.base},
+            {folder: "Sessions", name: "Session-0004.wav", seconds: 0, at: testCase.base + testCase.day},
+            {folder: "Sessions", name: "Session-0005.wav", seconds: 2, at: testCase.base + 2 * testCase.day},
+        ]);
+        const page = makePage(root, true);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+
+        const recordings = createTemporaryObject(recordingsControllerComponent, testCase,
+                                                 {keepEnabled: realAppSettings.experimentalFeaturesEnabled});
+        recordings.load("TESTSTICK", root + "/PIONEER", root + "/Engine Library");
+        tryVerify(() => recordings.listed && !recordings.busy, 10000);
+        const rows = createTemporaryObject(recordingRowsComponent, testCase, {model: recordings.recordings});
+        compare(rows.count, 3);
+        const said = {};
+        for (let i = 0; i < rows.count; ++i) {
+            const row = rows.objectAt(i);
+            said[row.path] = {unfinished: row.unfinished, holdsNoAudio: row.holdsNoAudio};
+        }
+        let unfinished = 0;
+        let noAudio = 0;
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            const row = scan.tracks.trackAt(i);
+            const there = said[row.filePath];
+            verify(there !== undefined, row.filePath);
+            compare(row.recordingUnfinished, there.unfinished, row.title + " unfinished");
+            compare(row.recordingHoldsNoAudio, there.holdsNoAudio, row.title + " holds no audio");
+            unfinished += row.recordingUnfinished ? 1 : 0;
+            noAudio += row.recordingHoldsNoAudio ? 1 : 0;
+        }
+        compare(unfinished, 1, "the unfinished one is told on both");
+        compare(noAudio, 1, "the empty one is told on both");
+        waitForRendering(page);
+        const empty = trackRows(page).find(r => r.title === "Session-0004.wav");
+        const subtitle = findChild(empty, "rowSubtitle").text;
+        verify(subtitle.indexOf("holds no audio") >= 0, subtitle);
     }
 
     // A recording plays as the Recordings page plays one (loadFile), with
@@ -538,5 +654,26 @@ TestCase {
         compare(JSON.stringify(list.model), JSON.stringify(["All tracks", "Peak"]));
         compare(list.itemAtIndex(0).fixedKind, "all");
         compare(list.itemAtIndex(1).isFixed, false);
+        // No row here has an icon: none is made, let alone loaded.
+        for (let i = 0; i < list.count; ++i) {
+            const icon = findChild(list.itemAtIndex(i), "playlistRowIcon");
+            verify(icon !== null);
+            compare(icon.item, null, "no icon made for row " + i);
+        }
+    }
+
+    // In Browse only Own Recordings has one.
+    function test_onlyOwnRecordingsMakesAnIcon() {
+        const page = makePage(makeStick(testCase.threeRecordings), true);
+        tryCompare(findChild(page, "scanController"), "recordingCount", 3);
+        waitForRendering(page);
+        for (const row of sidebarRows(page)) {
+            const icon = findChild(row, "playlistRowIcon");
+            if (row.isRecordings) {
+                verify(icon.item !== null, "Own Recordings shows its icon");
+            } else {
+                compare(icon.item, null, row.name + " makes none");
+            }
+        }
     }
 }

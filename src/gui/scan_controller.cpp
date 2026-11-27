@@ -174,6 +174,10 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
         const auto it = m_recordingRows.find(track.sourceId);
         return it != m_recordingRows.end() && it->second.unfinished;
     }
+    case RecordingHoldsNoAudioRole: {
+        const auto it = m_recordingRows.find(track.sourceId);
+        return it != m_recordingRows.end() && it->second.holdsNoAudio;
+    }
     default:
         return {};
     }
@@ -210,6 +214,7 @@ QHash<int, QByteArray> TrackListModel::roleNames() const
         {RecordedAtRole, "recordedAt"},
         {RecordingSizeBytesRole, "recordingSizeBytes"},
         {RecordingUnfinishedRole, "recordingUnfinished"},
+        {RecordingHoldsNoAudioRole, "recordingHoldsNoAudio"},
     };
 }
 
@@ -552,7 +557,19 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
     auto relay = makeMainThreadShared<ScanPhaseRelay>();
     connect(relay.get(), &ScanPhaseRelay::tracksRead, this, &ScanController::onTracksRead);
 
-    m_recordingsRoot = stickRootOf(path);
+    // Another stick: what was listed of the last one is not this one's.
+    if (const QString root = stickRootOf(path); !RecordingsChanges::sameStick(root, m_recordingsRoot)) {
+        m_recordingsRoot = root;
+        setRecordingsListed(false);
+        if (!m_recordings.empty()) {
+            m_recordings.clear();
+            m_recordingStates.clear();
+            emit recordingsChanged();
+            if (m_showRecordings) {
+                applyFilters(true);
+            }
+        }
+    }
     LibraryCatalogCache *cache =
         s_catalogCacheForTesting != nullptr ? s_catalogCacheForTesting : &LibraryCatalogCache::instance();
     m_scanCancel = application::CancellationToken();
@@ -853,6 +870,8 @@ void ScanController::setRecordingsEnabled(bool enabled)
         return;
     }
     // A listing under way lands nowhere (onRecordingsListed()).
+    setRecordingsListing(false);
+    setRecordingsListed(false);
     if (!m_recordings.empty()) {
         m_recordings.clear();
         m_recordingStates.clear();
@@ -872,8 +891,28 @@ void ScanController::refreshRecordings()
     // only the newest, and the older one, which holds nothing of this
     // controller, ends on its own. The header states give an unfinished
     // WAV's length and say that it is one.
-    m_recordingsWatcher.setFuture(
-        runRead([root = m_recordingsRoot]() { return listRecordingsOnStick(root, true); }));
+    // Listed only with Experimental on, which reads the header states as
+    // the Recordings page does with it (listRecordingsOnStick()).
+    m_recordingsWatcher.setFuture(runRead([root = m_recordingsRoot, experimental = m_recordingsEnabled]() {
+        return listRecordingsOnStick(root, experimental);
+    }));
+    setRecordingsListing(true);
+}
+
+void ScanController::setRecordingsListing(bool listing)
+{
+    if (m_recordingsListing != listing) {
+        m_recordingsListing = listing;
+        emit recordingsListingChanged();
+    }
+}
+
+void ScanController::setRecordingsListed(bool listed)
+{
+    if (m_recordingsListed != listed) {
+        m_recordingsListed = listed;
+        emit recordingsListingChanged();
+    }
 }
 
 void ScanController::onRecordingsListed()
@@ -883,6 +922,11 @@ void ScanController::onRecordingsListed()
     }
     QString thrown;
     RecordingsListResult result = takeResult(m_recordingsWatcher, &thrown);
+    setRecordingsListing(false);
+    // Of the stick read before this one: the scan of this one lists it.
+    if (thrown.isEmpty() && !RecordingsChanges::sameStick(result.stickRoot, m_recordingsRoot)) {
+        return;
+    }
     // A listing that failed changes nothing: the rows listed before stay.
     if (!thrown.isEmpty() || !result.error.isEmpty()) {
         return;
@@ -905,6 +949,7 @@ void ScanController::onRecordingsListed()
         m_recordings.push_back(std::move(recordings[i]));
         m_recordingStates.push_back(states[i]);
     }
+    setRecordingsListed(true);
     emit recordingsChanged();
     if (m_showRecordings) {
         applyFilters(true);
@@ -1171,7 +1216,8 @@ void ScanController::applyFilters(bool inPlace)
             // the audio the file holds is its length.
             track.durationSeconds = state.unfinished ? std::max(state.heldSeconds, 0.0)
                                                      : recording.durationSeconds.value_or(0.0);
-            recordingRows[track.sourceId] = {recording.modifiedUnix, recording.sizeBytes, state.unfinished};
+            recordingRows[track.sourceId] = {recording.modifiedUnix, recording.sizeBytes, state.unfinished,
+                                             state.holdsNoAudio};
             result.push_back(std::move(track));
         }
     } else {

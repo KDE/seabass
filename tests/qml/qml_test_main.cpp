@@ -79,6 +79,7 @@
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
 #include "gui/library_consistency_controller.hpp"
 #include "gui/scan_controller.hpp"
+#include "gui/recordings_controller.hpp"
 #include "gui/async_request.hpp"
 #include "gui/stick_events.hpp"
 #include "gui/process_end.hpp"
@@ -1754,6 +1755,8 @@ class BrowseFixture : public QObject
     std::shared_ptr<Gate> m_gate;
     std::vector<std::unique_ptr<seabass::gui::LibraryCatalogCache>> m_caches;
     QTemporaryDir m_artDir;
+    std::shared_ptr<std::atomic<bool>> m_deletesReleased;
+    std::shared_ptr<std::atomic<int>> m_deletesWaiting;
 
 public:
     using QObject::QObject;
@@ -1961,6 +1964,35 @@ public:
             && written.setFileTime(QDateTime::fromSecsSinceEpoch(modifiedUnix), QFileDevice::FileModificationTime);
     }
 
+    // Every delete of a recording (RecordingsController) waits right
+    // before its first file until releaseRecordingDeletes(), or 10 s.
+    Q_INVOKABLE void holdRecordingDeletes()
+    {
+        auto released = std::make_shared<std::atomic<bool>>(false);
+        auto waiting = std::make_shared<std::atomic<int>>(0);
+        m_deletesReleased = released;
+        m_deletesWaiting = waiting;
+        seabass::application::RecordingDeleteHooks hooks;
+        hooks.beforeDelete = [released, waiting](const std::filesystem::path &) {
+            ++*waiting;
+            for (int i = 0; i < 10000 && !released->load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            --*waiting;
+        };
+        seabass::gui::RecordingsController::setDeleteHooksForTesting(hooks);
+    }
+    // How many deletes wait at their file right now.
+    Q_INVOKABLE int recordingDeletesWaiting() const { return m_deletesWaiting ? m_deletesWaiting->load() : 0; }
+    Q_INVOKABLE void releaseRecordingDeletes()
+    {
+        if (m_deletesReleased) {
+            *m_deletesReleased = true;
+            m_deletesReleased.reset();
+        }
+        seabass::gui::RecordingsController::setDeleteHooksForTesting({});
+    }
+
     Q_INVOKABLE bool removeFile(const QString &file)
     {
         std::error_code ec;
@@ -1997,6 +2029,7 @@ public:
     Q_INVOKABLE void restore()
     {
         releaseCues();
+        releaseRecordingDeletes();
         m_gate.reset();
         seabass::gui::ScanController::setCatalogCacheForTesting(nullptr);
         if (!m_refusedPdb.empty()) {

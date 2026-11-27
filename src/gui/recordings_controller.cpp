@@ -279,12 +279,16 @@ RecordingsController::~RecordingsController()
         // ended, so that it keeps again after it.
         QList<QPointer<KeepRecordingController>> told = m_detachedKeeps;
         told.append(m_keep);
+        // On the GUI thread (whenWriteEnds()), as the announce must be:
+        // Browse lists the stick's recordings again though this page,
+        // which would have said so in onRunFinished(), is gone.
         finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver(), [told, root = m_deleteRoot]() {
             for (const QPointer<KeepRecordingController> &keep : told) {
                 if (keep) {
                     keep->setDeleteRunning(root, false);
                 }
             }
+            RecordingsChanges::instance().announce(root);
         });
     }
 }
@@ -382,22 +386,22 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
     }
     m_listing = true;
     emit busyChanged();
-    // The header states are Keep's (experimental): without it the listing
-    // reads no more than TagLib's length.
+    // Keep is the Experimental switch here (listRecordingsOnStick()).
     m_listWatcher.setFuture(
-        QtConcurrent::run([root, readHeaders = m_keepEnabled]() { return listRecordingsOnStick(root, readHeaders); }));
+        QtConcurrent::run([root, experimental = m_keepEnabled]() { return listRecordingsOnStick(root, experimental); }));
 }
 
-RecordingsListResult listRecordingsOnStick(const QString &stickRoot, bool readHeaders)
+RecordingsListResult listRecordingsOnStick(const QString &stickRoot, bool experimental)
 {
     RecordingsListResult result;
+    result.stickRoot = stickRoot;
     try {
         const fs::path stick = pathFromQString(stickRoot);
         // TagLib reads a WAV's header only: measured at well under a
         // millisecond for a 2.2 GB file, so every row gets a length.
         result.listing = infrastructure::audio::withDurationProbe(
             [&stick](application::TrackDurationProbe &probe) { return application::listRecordings(stick, probe); });
-        if (readHeaders) {
+        if (experimental) {
             result.states = headerStates(result.listing.recordings);
         }
         // As CleanupController's stickSpace(): 0/0 when it cannot tell.
