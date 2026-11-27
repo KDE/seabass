@@ -87,6 +87,19 @@ std::vector<uint32_t> pdbPlaylistIds(const infrastructure::rekordbox::PdbRowWrit
     return ids;
 }
 
+// Whether a node of the tree spelling `path` is a folder: it takes no
+// entries, and one written against it is a row no player reads.
+template<typename Node>
+bool folderAt(const std::vector<Node> &tree, const std::string &path)
+{
+    for (const auto &[node, spelled] : spelledPaths(tree)) {
+        if (spelled == path && node.isFolder) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The one playlist at `path`, or nothing when there is none; throws when
 // there are several, since editing by path would have to guess.
 std::optional<uint32_t> pdbPlaylistId(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path)
@@ -623,7 +636,9 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
             infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             const auto playlist = pdbPlaylistId(rows, m_playlist);
             const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, m_filePath));
-            if (!playlist || ids.empty()) {
+            if (playlist && folderAt(rows.playlistTree(), m_playlist)) {
+                leftAlone.push_back("rekordbox's \"" + m_playlist + "\" is a folder, not a playlist");
+            } else if (!playlist || ids.empty()) {
                 leftAlone.push_back(playlist ? "rekordbox has no row for the file" : "rekordbox has no such playlist");
             } else if (rows.appendPlaylistEntries(*playlist, {ids.front()}) > 0) {
                 rows.endEdit();
@@ -650,6 +665,8 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
             requireOneOneLibraryPlaylist(writer, m_playlist);
             if (writer.playlistCountAtPath(m_playlist) == 0) {
                 leftAlone.push_back("OneLibrary has no such playlist");
+            } else if (folderAt(writer.playlistTree(), m_playlist)) {
+                leftAlone.push_back("OneLibrary's \"" + m_playlist + "\" is a folder, not a playlist");
             } else {
                 bool addedHere = false;
                 try {

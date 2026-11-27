@@ -844,6 +844,61 @@ int main(int argc, char **argv)
     }
     std::cout << "case 12 (a playlist deleted with its tracks: only the ones no other playlist holds go) OK\n";
 
+    // 12. An add asked for by a path that is a folder in rekordbox and in
+    //     OneLibrary (a playlist only Engine has under that name, as Browse
+    //     lists it): no entry is written against the folder; those two are
+    //     left alone and the log says why, and Engine's playlist takes it.
+    {
+        {
+            infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
+            rows.createPlaylist(0, "Holder", true);
+            assert(rows.commit());
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            w.createPlaylist("", "Holder", true);
+            auto db = djinterop::engine::load_database(pathToUtf8(library));
+            db.create_root_playlist("Holder");
+        }
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Holder").having == all && "the lookup counts the folders");
+        const auto entriesOfHolder = [&]() {
+            infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
+            uint32_t holder = 0;
+            for (const auto &n : rows.playlistTree()) {
+                holder = n.name == "Holder" ? n.id : holder;
+            }
+            assert(holder != 0);
+            return rows.playlistTrackIds(holder).size();
+        };
+        // The folder's own rows, by its path (the lookup takes any node).
+        const auto oneLibraryRowsOfHolder = [&]() {
+            return infrastructure::onelibrary::OneLibraryCueWriter(pathToUtf8(pioneer)).playlistContent("Holder").size();
+        };
+        const std::string logFile = infrastructure::backup::operationLogForStickRoot(
+            infrastructure::backup::stickRootForCatalogPath(pathToUtf8(library)));
+        const auto logText = [&]() {
+            std::ifstream in(pathFromUtf8(logFile));
+            std::stringstream all;
+            all << in.rdbuf();
+            return all.str();
+        };
+        const size_t logBefore = logText().size();
+        const auto result = save(
+            std::make_shared<AddToPlaylistChange>(pioneerQ, libraryQ, "Holder", file(A01), QStringLiteral("Tone A01"), all));
+        assert(result.appliedIds.size() == 1 && "Engine took it");
+        const size_t pdbEntries = entriesOfHolder();
+        const size_t oneLibraryRows = oneLibraryRowsOfHolder();
+        std::cerr << "case 12: export.pdb entries against the folder " << pdbEntries << ", OneLibrary rows "
+                  << oneLibraryRows << "\n";
+        assert(pdbEntries == 0 && "no export.pdb entry points at the folder");
+        assert(oneLibraryRows == 0 && "no OneLibrary row points at the folder");
+        assert(engineMembers(library, "Holder") == std::vector<std::int64_t>{engineId[A01.relative]}
+               && "Engine's playlist of that name takes it");
+        const std::string log = logText().substr(logBefore);
+        assert(log.find("rekordbox's \"Holder\" is a folder") != std::string::npos);
+        assert(log.find("OneLibrary's \"Holder\" is a folder") != std::string::npos);
+    }
+    std::cout << "case 12 (an add by a path that is a folder in rekordbox and OneLibrary: nothing written against "
+                 "the folder there, said in the log) OK\n";
+
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";
     return 0;
