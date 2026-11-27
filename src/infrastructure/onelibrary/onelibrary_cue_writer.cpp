@@ -346,10 +346,12 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
     // between construction and this call.
     checkNotStale();
 
-    // A cue before the start of the track, or at a time that is not a
-    // number, is left out and the rest written, as the analysis files
-    // below leave it out: the table holds a time as a whole count of
-    // microseconds, and such a cue has none.
+    // A cue before the start of the track, at a time that is not a
+    // number, or past what the analysis files hold, is left out and the
+    // rest written, as the analysis files below leave it out: the table
+    // holds a time as a whole count of microseconds, and such a cue has
+    // none. This call has no result to say so in: the caller's save log
+    // does (rekordbox::cuesWithNoPlace(), recordCuesLeftOut()).
     const std::vector<CuePoint> cues = rekordbox::writableCues(requested);
 
     std::string contentPath = toContentPath(m_stickRoot, filePath);

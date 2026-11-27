@@ -17,6 +17,11 @@
 // file has to call noteAnalysisFileWritten() itself. A writer added
 // without either fails here, by name.
 //
+// A file that does write analysis files, through the durable writes, is
+// not passed as a whole: each of its other writes is listed by the line
+// it is on (a pattern of that line, and why), and a write on any other
+// line of it fails here, as does a listed line that is not there any more.
+//
 // That writeFileDurablyAtomic() and copyFileDurablyAtomic() do tell it,
 // and that the cache then reads the file again, is
 // track_analysis_cache_test's case 6.
@@ -29,6 +34,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "infrastructure/paths/utf8_path.hpp"
 
@@ -42,12 +48,24 @@ enum class Kind {
     NeverAnalysis,
     // Can write an analysis file: calls noteAnalysisFileWritten().
     NotesItself,
+    // Writes analysis files through writeFileDurablyAtomic() or
+    // copyFileDurablyAtomic(); its other writes are the lines listed.
+    DurableByLine,
+};
+
+// A line of a DurableByLine file that writes another way: a pattern found
+// in the line's code, and why that write is never an analysis file.
+struct LineExemption
+{
+    const char *pattern;
+    const char *why;
 };
 
 struct Entry
 {
     Kind kind;
     const char *why;
+    std::vector<LineExemption> lines = {};
 };
 
 // The source files (from src/) that write a file other than through the
@@ -65,7 +83,10 @@ const std::map<std::string, Entry> &knownWriters()
         {"gui/app_color_scheme.cpp", {Kind::NeverAnalysis, "a colour scheme in the user's settings"}},
         {"gui/backup_changelog_text.cpp", {Kind::NeverAnalysis, "a backup's history as text, where the user saves it"}},
         {"gui/cover_cache.cpp", {Kind::NeverAnalysis, "a QBuffer in memory"}},
-        {"gui/edit/changes/import_track_change.cpp", {Kind::NeverAnalysis, "a cover picture in the computer's temporary folder; analysis files go through writeFileDurablyAtomic()"}},
+        {"gui/edit/changes/import_track_change.cpp",
+         {Kind::DurableByLine,
+          "writes an imported track's analysis files through writeFileDurablyAtomic()",
+          {{R"(QTemporaryFile largePicture\()", "a cover picture for Engine in the computer's temporary folder"}}}},
         {"gui/edit/changes/moved_file_changes.cpp", {Kind::NeverAnalysis, "moves an audio file to the place its row names"}},
         {"gui/edit/format_write_session.cpp", {Kind::NeverAnalysis, "a database's scratch copy"}},
         {"gui/edit/save_context.cpp",
@@ -79,8 +100,11 @@ const std::map<std::string, Entry> &knownWriters()
         {"infrastructure/audio/qt_cover_art_preparer.cpp", {Kind::NeverAnalysis, "a QBuffer in memory"}},
         {"infrastructure/audio/qt_flac_recording_encoder.cpp", {Kind::NeverAnalysis, "a recording's FLAC file"}},
         {"infrastructure/backup/filesystem_backup_store.cpp",
-         {Kind::NeverAnalysis, "a backup's description, audio files moved back; files are put back through "
-                               "writeFileDurablyAtomic()"}},
+         {Kind::DurableByLine,
+          "puts a backup's files back, analysis files among them, through writeFileDurablyAtomic()",
+          {{R"(std::ofstream out\(dir / DescriptionFileName)", "a backup's description, in the backup folder"},
+           {R"(fs::rename\(move\.to, move\.from,)", "an audio file a restore moves back to where it was"},
+           {R"(fs::rename\(\(\*it\)->from, \(\*it\)->to,)", "the same audio file moved again when the restore is undone"}}}},
         {"infrastructure/backup/stick_write_lock.cpp", {Kind::NeverAnalysis, "the stick's lock file"}},
         {"infrastructure/database_read_copy.hpp", {Kind::NeverAnalysis, "read copies of a database"}},
         {"infrastructure/durable_file_write.cpp", {Kind::NotesItself, "the two durable writes themselves"}},
@@ -178,12 +202,15 @@ int main()
         std::string line;
         int lineNumber = 0;
         std::string firstHit;
+        // file:line: text of every raw write, for a DurableByLine entry.
+        std::vector<std::pair<std::string, std::string>> hits;
         while (std::getline(lines, line)) {
             ++lineNumber;
             if (std::regex_search(codeOf(line), rawWrite())) {
                 if (firstHit.empty()) {
                     firstHit = relative + ":" + std::to_string(lineNumber) + ": " + line;
                 }
+                hits.emplace_back(relative + ":" + std::to_string(lineNumber) + ": " + line, codeOf(line));
             }
         }
         if (firstHit.empty()) {
@@ -191,6 +218,39 @@ int main()
         }
         found.insert(relative);
         const auto known = knownWriters().find(relative);
+        if (known != knownWriters().end() && known->second.kind == Kind::DurableByLine) {
+            const std::string &text = whole.str();
+            if (text.find("writeFileDurablyAtomic(") == std::string::npos
+                && text.find("copyFileDurablyAtomic(") == std::string::npos) {
+                std::cerr << "FAIL: " << relative << " is listed as writing analysis files through the durable "
+                          << "writes (" << known->second.why << ") but calls neither\n";
+                ++failures;
+            }
+            std::vector<bool> used(known->second.lines.size(), false);
+            for (const auto &[where, code] : hits) {
+                bool exempt = false;
+                for (std::size_t i = 0; i < known->second.lines.size(); ++i) {
+                    if (std::regex_search(code, std::regex(known->second.lines[i].pattern))) {
+                        used[i] = true;
+                        exempt = true;
+                    }
+                }
+                if (!exempt) {
+                    std::cerr << "FAIL: a write that is not listed, in a file that writes analysis files: " << where
+                              << "\n      Write an analysis file through writeFileDurablyAtomic(); list any other "
+                                 "write here by its line, with what it writes.\n";
+                    ++failures;
+                }
+            }
+            for (std::size_t i = 0; i < used.size(); ++i) {
+                if (!used[i]) {
+                    std::cerr << "FAIL: " << relative << " has no line like " << known->second.lines[i].pattern
+                              << " (" << known->second.lines[i].why << ") any more: take it off the list\n";
+                    ++failures;
+                }
+            }
+            continue;
+        }
         if (known == knownWriters().end()) {
             std::cerr << "FAIL: an unlisted writer: " << firstHit
                       << "\n      If it can write an analysis file, call noteAnalysisFileWritten() for it; then "

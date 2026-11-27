@@ -521,6 +521,9 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         const std::vector<domain::CuePoint> forThisCatalog = domain::mergedCuesFor(plan, primaryFormat);
         fc.cueWriter->writeHotCues(survivorId, forThisCatalog);
         w.session.noteItemApplied();
+        if (primaryFormat != "engine") {
+            recordCuesLeftOut(ctx, plan.survivor.filePath, survivorId, forThisCatalog);
+        }
         log.record("cleanup: wrote merged cues onto survivor track id=" + survivorId);
 
         // Device Library Plus, with ITS payload, not this one's.
@@ -918,9 +921,12 @@ ChangeOutcome CleanupGroupChange::apply(SaveContext &ctx)
         }
 
         if (domain::catalogNeedsMergedCues(plan, secondaryFormat)) {
-            sw.context.cueWriter->writeHotCues(targets.survivorSourceId,
-                                               domain::mergedCuesFor(plan, secondaryFormat));
+            const std::vector<domain::CuePoint> merged = domain::mergedCuesFor(plan, secondaryFormat);
+            sw.context.cueWriter->writeHotCues(targets.survivorSourceId, merged);
             sw.session.noteItemApplied();
+            if (secondaryFormat != "engine") {
+                recordCuesLeftOut(ctx, plan.survivor.filePath, targets.survivorSourceId, merged);
+            }
             log.record("cleanup: wrote merged cues onto the " + secondaryFormat + " survivor row id="
                        + targets.survivorSourceId);
         }

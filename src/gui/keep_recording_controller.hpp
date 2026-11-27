@@ -9,6 +9,7 @@
 #include <QFuture>
 #include <QFutureWatcher>
 #include <QHash>
+#include <QSet>
 #include <QMutex>
 #include <QObject>
 #include <QQmlEngine>
@@ -77,8 +78,16 @@ struct KeepRecordingParts
 // for the rules of a job.
 //
 // One job at a time, on a worker, beside the page: a job asked for while
-// one runs waits in a queue and starts when the one before it ends.
-// `progress` is the job in hand's, 0 to 1, and never goes back within it.
+// one runs waits in a queue and starts when the one before it ends,
+// whichever stick either is on. `progress` is the job in hand's, 0 to 1,
+// and never goes back within it.
+//
+// The app has one, and every stick's Recordings page uses it: each job,
+// outcome and kept copy carries the root of the stick its recording is
+// on, and what a page asks is asked of its stick (hasWorkFor(),
+// queuedFor(), finishedJobsFor(), outcomeFor(), keepNotesFor(),
+// cancelFor(), dismissFinishedFor()). stickRoot is the stick the form is
+// for: the one a keep() is of, and whose folders are refused.
 //
 // The form's suggestions (suggestionsFor()) come from the recording and
 // from what was kept last (the settings store: artist, genre, folder).
@@ -88,19 +97,21 @@ struct KeepRecordingParts
 // are on (stickRoot, which RecordingsController sets).
 //
 // What happened to each recording asked for stays known for the session
-// (outcomeFor(), keepNotesFor()); the jobs that ended are listed in
-// finishedJobs until dismissFinished(). A cancel stops the job in hand
-// and drops those that wait: each dropped one gets an outcome of its own
-// ("dropped").
+// (outcomeFor(), keepNotesFor()), whichever stick the form is for
+// meanwhile; the jobs that ended are listed in finishedJobs until
+// dismissFinishedFor() their stick. A cancel of a stick stops its job in
+// hand and drops those of it that wait: each dropped one gets an outcome
+// of its own ("dropped"). The jobs of other sticks go on.
 //
-// Nothing is kept while the recordings are being deleted
+// Nothing is kept from a stick while its recordings are being deleted
 // (setDeleteRunning(), from RecordingsController), and RecordingsController
-// deletes nothing while this has work (hasWork).
+// deletes nothing from a stick while this has work for it (hasWorkFor()).
 //
 // The app's one lives with the window (Main.qml), not with the page:
 // leaving the page leaves the work running, and the page shows it again
 // when it is opened again. A stick taken out while a recording on it is
-// kept or waits to be cancels the work (Main.qml asks cancel()).
+// kept or waits to be cancels that stick's work (Main.qml asks
+// cancelFor()).
 //
 // Destroyed while a job runs (the app quits), the destructor asks the job
 // to stop, drops the queue and waits up to KeepRecordingStopWaitMs for the
@@ -120,14 +131,13 @@ class KeepRecordingController : public QObject
     // Whether this build can encode FLAC at all.
     Q_PROPERTY(bool available READ available CONSTANT)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
-    // A job runs or waits.
-    Q_PROPERTY(bool hasWork READ hasWork NOTIFY hasWorkChanged)
-    // The root of the stick the recordings are on; a folder on it is
-    // refused.
+    // The root of the stick the form is for: what keep() keeps from, and
+    // a folder on it is refused.
     Q_PROPERTY(QString stickRoot READ stickRoot WRITE setStickRoot NOTIFY stickRootChanged)
     Q_PROPERTY(bool cancelRequested READ cancelRequested NOTIFY busyChanged)
-    // The job in hand: its recording (the WAV's path and file name), the
-    // FLAC's file name and its folder.
+    // The job in hand: the root of its stick, its recording (the WAV's
+    // path and file name), the FLAC's file name and its folder.
+    Q_PROPERTY(QString currentStickRoot READ currentStickRoot NOTIFY busyChanged)
     Q_PROPERTY(QString currentWavPath READ currentWavPath NOTIFY busyChanged)
     Q_PROPERTY(QString currentRecording READ currentRecording NOTIFY busyChanged)
     Q_PROPERTY(QString currentFileName READ currentFileName NOTIFY busyChanged)
@@ -135,15 +145,17 @@ class KeepRecordingController : public QObject
     // "space", "encoding", "checking", "tags", "placing"; "" when idle.
     Q_PROPERTY(QString progressStep READ progressStep NOTIFY progressChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
-    // The jobs that wait, in order: [{wavPath, recording, fileName, folder}].
+    // The jobs that wait, of every stick, in order: [{stickRoot, wavPath,
+    // recording, fileName, folder}].
     Q_PROPERTY(QVariantList queued READ queued NOTIFY queueChanged)
-    // The jobs that ended in this session, oldest first, until
-    // dismissFinished(): [{state ("kept", "failed", "cancelled",
-    // "dropped"), wavPath, recording, fileName, folder, flacPath,
-    // leftBehind, message, notes (a list of sentences), unfinished,
-    // keptSeconds}]. A dropped job never started.
+    // The jobs that ended in this session, of every stick, oldest first,
+    // until dismissFinishedFor() their stick: [{state ("kept", "failed",
+    // "cancelled", "dropped"), stickRoot, wavPath, recording, fileName,
+    // folder, flacPath, leftBehind, message, notes (a list of sentences),
+    // unfinished, keptSeconds}]. A dropped job never started.
     Q_PROPERTY(QVariantList finishedJobs READ finishedJobs NOTIFY finishedJobsChanged)
-    // Bumps whenever outcomeFor() may answer differently.
+    // Bumps whenever a question asked of a stick (hasWorkFor(),
+    // queuedFor(), finishedJobsFor(), outcomeFor()) may answer differently.
     Q_PROPERTY(int revision READ revision NOTIFY revisionChanged)
     // Why the last keep() was refused; "" when it was not.
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
@@ -162,12 +174,13 @@ public:
 
     bool available() const;
     bool busy() const { return m_running.has_value(); }
-    bool hasWork() const { return busy() || !m_queue.empty(); }
     QString stickRoot() const { return m_stickRoot; }
     void setStickRoot(const QString &root);
-    // RecordingsController says when its delete starts and ends.
-    void setDeleteRunning(bool running) { m_deleteRunning = running; }
+    // RecordingsController says when its delete on the stick at
+    // `stickRoot` starts and ends.
+    void setDeleteRunning(const QString &stickRoot, bool running);
     bool cancelRequested() const { return busy() && m_cancel.cancelled(); }
+    QString currentStickRoot() const;
     QString currentWavPath() const;
     QString currentRecording() const;
     QString currentFileName() const;
@@ -221,25 +234,36 @@ public:
     // errorMessage, when the form's checks refuse it, or when the
     // recording is being kept or waits to be kept already.
     Q_INVOKABLE bool keep(const QVariantMap &form);
-    // Stops the job in hand and drops the ones that wait.
-    Q_INVOKABLE void cancel();
-    // How the recording at `wavPath` fares in this session: {state
-    // ("queued", "running", "kept", "failed", "cancelled", "dropped"; ""
-    // for none), recording, fileName, folder, flacPath, leftBehind,
-    // message, notes, unfinished, keptSeconds}. A recording is known by its
-    // path, size and modification time: another file that appears under
-    // the same path is another recording. Forgotten when the stick root
-    // changes, but for jobs that run or wait.
-    Q_INVOKABLE QVariantMap outcomeFor(const QString &wavPath) const;
-    // For the delete confirmation, of the recordings at `wavPaths`:
+    // A recording of the stick at `stickRoot` is being kept or waits to be.
+    Q_INVOKABLE bool hasWorkFor(const QString &stickRoot) const;
+    // The job in hand is of the stick at `stickRoot`; is of another stick.
+    Q_INVOKABLE bool runsFor(const QString &stickRoot) const;
+    Q_INVOKABLE bool runsElsewhere(const QString &stickRoot) const;
+    // `queued` and `finishedJobs`, of the stick at `stickRoot` only.
+    Q_INVOKABLE QVariantList queuedFor(const QString &stickRoot) const;
+    Q_INVOKABLE QVariantList finishedJobsFor(const QString &stickRoot) const;
+    // Stops the job in hand when it is of the stick at `stickRoot`, and
+    // drops the ones of it that wait; another stick's work goes on.
+    Q_INVOKABLE void cancelFor(const QString &stickRoot);
+    // How the recording at `wavPath`, on the stick at `stickRoot`, fares in
+    // this session: {state ("queued", "running", "kept", "failed",
+    // "cancelled", "dropped"; "" for none), stickRoot, recording, fileName,
+    // folder, flacPath, leftBehind, message, notes, unfinished,
+    // keptSeconds}. A recording is known by its path, size and
+    // modification time: another file that appears under the same path is
+    // another recording.
+    Q_INVOKABLE QVariantMap outcomeFor(const QString &stickRoot, const QString &wavPath) const;
+    // For the delete confirmation, of the recordings at `wavPaths` on the
+    // stick at `stickRoot`:
     // {notKept: [file names of those a keep was asked for in this session
     // and none ended kept], kept: [{recording, fileName, folder} of those
     // kept in this session, the last copy each, while that FLAC is still
     // there with the size and modification time it had when the job
     // ended], keptGone: [{recording, fileName, folder} of those kept whose
     // FLAC is not there like that any more]}.
-    Q_INVOKABLE QVariantMap keepNotesFor(const QStringList &wavPaths) const;
-    Q_INVOKABLE void dismissFinished();
+    Q_INVOKABLE QVariantMap keepNotesFor(const QString &stickRoot, const QStringList &wavPaths) const;
+    // Takes the stick's jobs off finishedJobs (the strip is closed).
+    Q_INVOKABLE void dismissFinishedFor(const QString &stickRoot);
     // Opens the folder of a kept FLAC in the file manager.
     Q_INVOKABLE void showInFolder(const QString &flacPath) const;
     // "file:" URLs and paths alike as a local path.
@@ -260,7 +284,6 @@ signals:
     void progressChanged();
     void queueChanged();
     void finishedJobsChanged();
-    void hasWorkChanged();
     void stickRootChanged();
     void revisionChanged();
     void errorMessageChanged();
@@ -272,6 +295,8 @@ private:
     struct Job
     {
         int id = 0;
+        // stickKey() of the stick the recording is on.
+        QString stickRoot;
         QString wavPath;
         // wavKey(): the path, size and modification time.
         QString wavKey;
@@ -292,10 +317,13 @@ private:
     void onCoverPrepared();
     void setError(const QString &message);
     void bumpRevision();
-    void clearSessionRecords();
-    void noteWork(bool hadWork);
+    // Drops the jobs that wait for which `drop` holds, each with an
+    // outcome of its own; true when any was.
+    bool dropQueued(const std::function<bool(const Job &)> &drop);
     // Every check of the form, for keep(); "" when it may start.
     QString formProblem(const QVariantMap &form) const;
+    // A job that waits, as `queued` lists it.
+    static QVariantMap queuedEntry(const Job &job);
     // The FLAC's path for a job.
     static QString targetOf(const application::KeepRecordingRequest &request);
 
@@ -309,11 +337,13 @@ private:
     double m_progress = 0.0;
     QVariantList m_finishedJobs;
     // Per WAV (path, size and modification time), how its last job ended,
-    // and its last kept copy with the FLAC's size and modification time.
+    // and its last kept copy with the FLAC's size and modification time;
+    // each with its stick ("stickRoot", a stickKey()).
     QHash<QString, QVariantMap> m_outcomes;
     QHash<QString, QVariantMap> m_keptCopies;
     QString m_stickRoot;
-    bool m_deleteRunning = false;
+    // stickKey() of each stick whose recordings are being deleted.
+    QSet<QString> m_deletingSticks;
     std::shared_ptr<WorkerEnd> m_jobEnd;
     std::shared_ptr<WorkerEnd> m_coverEnd;
     int m_revision = 0;

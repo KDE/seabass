@@ -135,11 +135,12 @@ struct RecordingsRunResult
 // elsewhere, and the confirmation says plainly that they will be gone for
 // good.
 //
-// Keep this recording works beside the list (keepController): nothing is
-// deleted while a recording is being kept or waits to be (deleteSelected()
-// refuses, saying so), nothing is kept while recordings are being
-// deleted, and the keep controller is told which stick the recordings are
-// on, so that it never keeps one onto it.
+// Keep this recording works beside the list (keepController, the app's
+// one, shared by every stick's page): nothing is deleted from this stick
+// while one of its recordings is being kept or waits to be
+// (deleteSelected() refuses, saying so), nothing is kept from it while its
+// recordings are being deleted, and the keep controller is told which
+// stick the recordings are on, so that it never keeps one onto it.
 //
 // Known limitation: summarize(), the hub card's count, lists the folders on the GUI thread.
 class RecordingsController : public QObject
@@ -152,6 +153,9 @@ class RecordingsController : public QObject
     Q_PROPERTY(bool working READ working NOTIFY busyChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool listed READ listed NOTIFY listingChanged)
+    // The root of the stick the catalogs given to load() are on; "" when
+    // none was given.
+    Q_PROPERTY(QString stickRoot READ stickRoot NOTIFY stickRootChanged)
     Q_PROPERTY(int recordingCount READ recordingCount NOTIFY listingChanged)
     Q_PROPERTY(qlonglong totalBytes READ totalBytes NOTIFY listingChanged)
     // The stick's size and free space; 0 when unknown.
@@ -204,6 +208,7 @@ public:
     void setKeepController(KeepRecordingController *keep);
     bool keepEnabled() const { return m_keepEnabled; }
     void setKeepEnabled(bool enabled);
+    QString stickRoot() const;
 
     // For the Housekeeping hub's card: directory entries and stats only,
     // on the calling thread (a few folders, a handful of files). Returns
@@ -222,7 +227,7 @@ public:
     Q_INVOKABLE QStringList selectedPaths() const;
 
     // Deletes the ticked recordings on a worker. Refused, with
-    // errorMessage, while the keep controller has work.
+    // errorMessage, while the keep controller has work for this stick.
     Q_INVOKABLE void deleteSelected();
     // Stops after the file in flight.
     Q_INVOKABLE void cancel();
@@ -244,12 +249,12 @@ signals:
     void lockRefused(const QVariantMap &holder);
     void keepControllerChanged();
     void keepEnabledChanged();
+    void stickRootChanged();
 
 private:
     void onListed();
     void onRunFinished();
     void setError(const QString &message);
-    QString stickRoot() const;
 
     RecordingListModel m_model;
     QFutureWatcher<RecordingsListResult> m_listWatcher;
@@ -273,6 +278,8 @@ private:
     QString m_currentItem;
     QString m_errorMessage;
     QPointer<KeepRecordingController> m_keep;
+    // The stick a delete runs on, from its start to its end.
+    QString m_deleteRoot;
     bool m_keepEnabled = false;
     // Keep controllers let go of while a delete ran: told when it ends.
     QList<QPointer<KeepRecordingController>> m_detachedKeeps;

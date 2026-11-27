@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -42,11 +43,24 @@ std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, co
 
 // The cues of `cues` the analysis files can hold, in order: every cue
 // but one whose position, or a loop's end, is before the start of the
-// track or not a time at all. The rest are left out, not reported: such
-// a cue is junk to domain::isJunkCue whatever the user prefers. The
-// OneLibrary writer leaves out the same ones, so its table and the files
-// agree.
+// track, not a time at all, or past what the files' unsigned 32-bit count
+// of milliseconds holds. Such a cue is junk to domain::isJunkCue whatever
+// the user prefers. The OneLibrary writer leaves out the same ones, so its
+// table and the files agree. Neither writer has a result to say so in:
+// cuesWithNoPlace() counts them, and a save records them in its log
+// (gui recordCuesLeftOut()).
 std::vector<domain::CuePoint> writableCues(const std::vector<domain::CuePoint> &cues);
+
+// The cues writableCues() leaves out, counted by why: each cue once, by
+// its position first, then a loop's end.
+struct CuesWithNoPlace
+{
+    std::size_t beforeStart = 0;
+    std::size_t notATime = 0;
+    std::size_t pastTheField = 0;
+    std::size_t total() const { return beforeStart + notATime + pastTheField; }
+};
+CuesWithNoPlace cuesWithNoPlace(const std::vector<domain::CuePoint> &cues);
 
 class RekordboxCueWriter : public application::CueWriter
 {

@@ -278,10 +278,10 @@ RecordingsController::~RecordingsController()
         // ended, so that it keeps again after it.
         QList<QPointer<KeepRecordingController>> told = m_detachedKeeps;
         told.append(m_keep);
-        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver(), [told]() {
+        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver(), [told, root = m_deleteRoot]() {
             for (const QPointer<KeepRecordingController> &keep : told) {
                 if (keep) {
-                    keep->setDeleteRunning(false);
+                    keep->setDeleteRunning(root, false);
                 }
             }
         });
@@ -299,7 +299,7 @@ void RecordingsController::setKeepController(KeepRecordingController *keep)
         return;
     }
     if (m_keep && !m_working) {
-        m_keep->setDeleteRunning(false);
+        m_keep->setDeleteRunning(m_deleteRoot, false);
     } else if (m_keep) {
         // A delete runs: the controller let go of still may not keep until
         // it has ended (onRunFinished() tells it).
@@ -308,7 +308,9 @@ void RecordingsController::setKeepController(KeepRecordingController *keep)
     m_keep = keep;
     if (m_keep) {
         m_keep->setStickRoot(stickRoot());
-        m_keep->setDeleteRunning(m_working);
+        if (m_working) {
+            m_keep->setDeleteRunning(m_deleteRoot, true);
+        }
     }
     emit keepControllerChanged();
 }
@@ -360,12 +362,16 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
     if (busy()) {
         return;
     }
+    const QString rootBefore = stickRoot();
     m_stickLabel = stickLabel;
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
     m_strongIdAtRead = EditSessionRegistry::instance()->strongStickIdentityAt(
         EditSessionRegistry::instance()->mountPointForPath(!enginePath.isEmpty() ? enginePath : rekordboxPath));
     const QString root = stickRoot();
+    if (root != rootBefore) {
+        emit stickRootChanged();
+    }
     if (m_keep) {
         m_keep->setStickRoot(root);
     }
@@ -465,11 +471,12 @@ void RecordingsController::deleteSelected()
         return;
     }
     // A recording being kept, or waiting to be, is read for minutes: it is
-    // not deleted from under its job, and neither is any other, so that
-    // what the page says was kept or not stays true until it has ended.
-    if (m_keep && m_keep->hasWork()) {
-        setError(tr("Nothing is deleted while a recording is being kept or waits to be kept. Delete once that has "
-                    "ended."));
+    // not deleted from under its job, and neither is any other of its
+    // stick, so that what the page says was kept or not stays true until
+    // it has ended. Another stick's work leaves this one free.
+    if (m_keep && m_keep->hasWorkFor(stickRoot())) {
+        setError(tr("Nothing is deleted from this stick while one of its recordings is being kept or waits to be "
+                    "kept. Delete once that has ended."));
         return;
     }
     // A write on the stick, so the same lock the library's other writers
@@ -493,8 +500,9 @@ void RecordingsController::deleteSelected()
     m_filesTotal = static_cast<int>(paths.size());
     m_currentItem.clear();
     m_working = true;
+    m_deleteRoot = stickRoot();
     if (m_keep) {
-        m_keep->setDeleteRunning(true);
+        m_keep->setDeleteRunning(m_deleteRoot, true);
     }
     emit progressChanged();
     emit busyChanged();
@@ -535,11 +543,11 @@ void RecordingsController::onRunFinished()
     m_writeHold.release();
     m_working = false;
     if (m_keep) {
-        m_keep->setDeleteRunning(false);
+        m_keep->setDeleteRunning(m_deleteRoot, false);
     }
     for (const QPointer<KeepRecordingController> &detached : std::as_const(m_detachedKeeps)) {
         if (detached && detached != m_keep) {
-            detached->setDeleteRunning(false);
+            detached->setDeleteRunning(m_deleteRoot, false);
         }
     }
     m_detachedKeeps.clear();

@@ -280,7 +280,7 @@ void twoJobsQueued(const QString &scratch)
     controller.pickCover(QString());
     check(controller.keep(form(wav2, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Early Set"))), "second job taken");
     check(controller.queued().size() == 1, "the second waits in the queue");
-    check(controller.outcomeFor(QString::fromStdString(wav2)).value("state").toString() == QStringLiteral("queued"),
+    check(controller.outcomeFor(stick, QString::fromStdString(wav2)).value("state").toString() == QStringLiteral("queued"),
           "its row says it waits");
     check(controller.targetProblem(folder, QStringLiteral("DJ Kelp"), QStringLiteral("Early Set")).contains(QStringLiteral("Another recording")),
           "a third with the name of one that waits is refused before it starts");
@@ -313,7 +313,7 @@ void twoJobsQueued(const QString &scratch)
         check(values.size() >= 3, "progress moves on the way (" + std::to_string(values.size()) + " steps)");
     }
 
-    const QVariantMap kept = controller.outcomeFor(QString::fromStdString(wav1));
+    const QVariantMap kept = controller.outcomeFor(stick, QString::fromStdString(wav1));
     check(kept.value("state").toString() == QStringLiteral("kept"), "the row says kept");
     const QString flac1 = folder + QStringLiteral("/DJ Kelp - Late Set.flac");
     check(QDir::cleanPath(QDir::fromNativeSeparators(kept.value("flacPath").toString())) == QDir::cleanPath(flac1),
@@ -361,12 +361,13 @@ void cancelInTheMiddle(const QString &scratch)
     const std::string waiting = writeWav(scratch, QStringLiteral("waiting.wav"), 1);
     const std::string waiting2 = writeWav(scratch, QStringLiteral("waiting too.wav"), 1);
     KeepRecordingController controller;
-    controller.setStickRoot(makeStick(scratch));
+    const QString stick = makeStick(scratch);
+    controller.setStickRoot(stick);
     bool asked = false;
     QObject::connect(&controller, &KeepRecordingController::progressChanged, &controller, [&]() {
         if (!asked && controller.progress() >= 0.2) {
             asked = true;
-            controller.cancel();
+            controller.cancelFor(stick);
         }
     });
     QSignalSpy finished(&controller, &KeepRecordingController::finished);
@@ -380,11 +381,11 @@ void cancelInTheMiddle(const QString &scratch)
     check(outcome.value("state").toString() == QStringLiteral("cancelled"), "it says cancelled");
     check(controller.queued().isEmpty(), "nothing waits after a cancel");
     check(entries(folder).empty(), "no file of it in the folder, no temporary file either");
-    const QVariantMap stopped = controller.outcomeFor(QString::fromStdString(wav));
+    const QVariantMap stopped = controller.outcomeFor(stick, QString::fromStdString(wav));
     check(stopped.value("state").toString() == QStringLiteral("cancelled") && stopped.value("leftBehind").toString().isEmpty(),
           "the row of the job in hand says it was stopped, nothing left");
     for (const std::string &path : {waiting, waiting2}) {
-        check(controller.outcomeFor(QString::fromStdString(path)).value("state").toString() == QStringLiteral("dropped"),
+        check(controller.outcomeFor(stick, QString::fromStdString(path)).value("state").toString() == QStringLiteral("dropped"),
               "a job that waited has an outcome of its own: dropped");
     }
     const QVariantList ended = controller.finishedJobs();
@@ -396,15 +397,15 @@ void cancelInTheMiddle(const QString &scratch)
                                  QStringLiteral("cancelled long.wav")}),
           "the strip lists the dropped jobs and the stopped one: " + states.join(QStringLiteral(", ")).toStdString());
     const QVariantMap notes = controller.keepNotesFor(
-        {QString::fromStdString(wav), QString::fromStdString(waiting), QString::fromStdString(waiting2),
+        stick, {QString::fromStdString(wav), QString::fromStdString(waiting), QString::fromStdString(waiting2),
          QStringLiteral("/never/asked.wav")});
     check(notes.value("notKept").toStringList()
               == (QStringList{QStringLiteral("long.wav"), QStringLiteral("waiting.wav"), QStringLiteral("waiting too.wav")}),
           "the delete confirmation can name every one not kept, and none never asked for");
     check(notes.value("kept").toList().isEmpty(), "and none as kept");
-    controller.dismissFinished();
+    controller.dismissFinishedFor(stick);
     check(controller.finishedJobs().isEmpty(), "closed, the strip's list is empty");
-    check(controller.outcomeFor(QString::fromStdString(waiting)).value("state").toString() == QStringLiteral("dropped"),
+    check(controller.outcomeFor(stick, QString::fromStdString(waiting)).value("state").toString() == QStringLiteral("dropped"),
           "the rows still say it");
     check(fs::file_size(seabass::pathFromUtf8(wav)) == 44 + 44100ULL * 240 * 4, "the recording is as it was");
 }
@@ -424,9 +425,14 @@ struct StopWaits
     StopWaits &operator=(const StopWaits &) = delete;
 };
 
-// A hang guard only: the destructor waits KeepRecordingStopWaitMs at the
-// most for each of its two workers; this is far above that.
+// A hang guard only, for a latch nobody lets go of: far above anything
+// the destructor may take.
 constexpr qint64 DestructorHangGuardMs = 30000;
+
+// What the destructor may take at the most: KeepRecordingStopWaitMs for
+// each of its two workers, and generous slack for a loaded machine. A
+// destructor that waited for a held worker would take the hang guard.
+constexpr qint64 DestructorBoundMs = 2 * seabass::gui::KeepRecordingStopWaitMs + 5000;
 
 // Held until the test lets it go (or the hang guard passes): a step the
 // destructor cannot interrupt, without a wait of fixed length.
@@ -449,16 +455,21 @@ public:
                 break;
             }
         }
+        m_left = true;
         return m_released;
     }
     void markEntered() { m_entered = true; }
     bool entered() const { return m_entered.load(); }
+    // Whether the step held by the latch has returned, by a release or the
+    // hang guard.
+    bool left() const { return m_left.load(); }
 
 private:
     QMutex m_mutex;
     QWaitCondition m_wake;
     bool m_released = false;
     std::atomic<bool> m_entered{false};
+    std::atomic<bool> m_left{false};
 };
 
 void destroyedMidEncoding(const QString &scratch)
@@ -474,7 +485,7 @@ void destroyedMidEncoding(const QString &scratch)
     timer.start();
     controller.reset();
     const qint64 ms = timer.elapsed();
-    check(ms < DestructorHangGuardMs, "the controller goes (hang guard): " + std::to_string(ms) + " ms");
+    check(ms < DestructorBoundMs, "the controller goes within its wait and some slack: " + std::to_string(ms) + " ms");
     // Woken as the worker ends, not at the end of the wait.
     check(waits.seen == (std::vector<std::pair<std::string, bool>>{{"job", true}}),
           "the destructor's wait for the job ended on the worker's own signal, the cancel answered in time");
@@ -524,12 +535,15 @@ void destroyedMidTagging(const QString &scratch)
     const qint64 ms = timer.elapsed();
     // Back while the tag writer still holds: the destructor did not wait
     // for it, it gave up at its deadline (and the worker is left to end).
-    check(ms < DestructorHangGuardMs, "the controller goes while the tags are written (hang guard): "
-                                          + std::to_string(ms) + " ms");
+    const bool stillHeld = !latch.left();
+    check(stillHeld, "the tag writer still holds when the controller is gone: the destructor did not wait for it");
+    check(ms < DestructorBoundMs, "the controller goes while the tags are written, within its wait and some slack: "
+                                      + std::to_string(ms) + " ms");
     check(waits.seen == (std::vector<std::pair<std::string, bool>>{{"job", false}}),
           "the destructor's wait for the job gave up at its deadline: the tag writer had not returned");
     latch.release();
     QThreadPool::globalInstance()->waitForDone();
+    check(latch.left(), "let go, the tag writer returns and the worker ends");
     // The tag writer said written, but the FLAC was not placed yet: the
     // cancel that came while it wrote is seen before the placing, and
     // nothing is kept, no temporary file either.
@@ -579,12 +593,15 @@ void destroyedMidCoverPreview(const QString &scratch)
     timer.start();
     controller.reset();
     const qint64 ms = timer.elapsed();
-    check(ms < DestructorHangGuardMs, "the controller goes while a cover is prepared (hang guard): "
-                                          + std::to_string(ms) + " ms");
+    const bool stillHeld = !latch.left();
+    check(stillHeld, "the preparer still holds when the controller is gone: the destructor did not wait for it");
+    check(ms < DestructorBoundMs, "the controller goes while a cover is prepared, within its wait and some slack: "
+                                      + std::to_string(ms) + " ms");
     check(waits.seen == (std::vector<std::pair<std::string, bool>>{{"cover", false}}),
           "the destructor's wait for the preview gave up at its deadline: the preparer had not returned");
     latch.release();
     QThreadPool::globalInstance()->waitForDone();
+    check(latch.left(), "let go, the preparer returns and the worker ends");
     KeepRecordingController::setPartsForTesting({});
 }
 
@@ -751,7 +768,8 @@ public:
                                                              const std::string &flac) override
     {
         const auto placed = m_real.placeVerified(file, flac);
-        QMetaObject::invokeMethod(m_controller, [c = m_controller]() { c->cancel(); }, Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(m_controller, [c = m_controller]() { c->cancelFor(c->currentStickRoot()); },
+                                  Qt::BlockingQueuedConnection);
         return placed;
     }
 
@@ -769,7 +787,8 @@ public:
     seabass::application::RecordingTagWriteResult tagInPlace(const seabass::application::VerifiedFlac &file,
                                                              const seabass::application::RecordingTags &tags) override
     {
-        QMetaObject::invokeMethod(m_controller, [c = m_controller]() { c->cancel(); }, Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(m_controller, [c = m_controller]() { c->cancelFor(c->currentStickRoot()); },
+                                  Qt::BlockingQueuedConnection);
         return m_real.tagInPlace(file, tags);
     }
 
@@ -914,7 +933,7 @@ void keptCopiesAndIdentity(const QString &scratch)
     // Kept once, then a second keep that fails: the first copy still counts.
     const QVariantMap second = runJob(form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Again")));
     check(second.value("state").toString() == QStringLiteral("failed"), "a second keep without the choice fails");
-    QVariantMap notes = controller.keepNotesFor({wavPath});
+    QVariantMap notes = controller.keepNotesFor(stick, {wavPath});
     check(notes.value("kept").toList().size() == 1 && notes.value("notKept").toList().isEmpty()
               && notes.value("keptGone").toList().isEmpty(),
           "kept once, then a failed keep: still kept, its FLAC is there");
@@ -925,12 +944,12 @@ void keptCopiesAndIdentity(const QString &scratch)
         file.open(QIODevice::Append);
         file.write("x");
     }
-    notes = controller.keepNotesFor({wavPath});
+    notes = controller.keepNotesFor(stick, {wavPath});
     check(notes.value("kept").toList().isEmpty() && notes.value("keptGone").toList().size() == 1,
           "a kept FLAC whose size changed: not counted as kept, said as gone");
     // The FLAC gone.
     QFile::remove(flac);
-    notes = controller.keepNotesFor({wavPath});
+    notes = controller.keepNotesFor(stick, {wavPath});
     check(notes.value("kept").toList().isEmpty() && notes.value("keptGone").toList().size() == 1
               && notes.value("keptGone").toList().first().toMap().value("fileName").toString()
                   == QFileInfo(flac).fileName(),
@@ -940,20 +959,138 @@ void keptCopiesAndIdentity(const QString &scratch)
     recording_test::WavSpec other;
     other.frames = 22050;
     recording_test::writeWav(wav, other);
-    check(controller.outcomeFor(wavPath).isEmpty(), "another file under the same path has no outcome");
-    notes = controller.keepNotesFor({wavPath});
+    check(controller.outcomeFor(stick, wavPath).isEmpty(), "another file under the same path has no outcome");
+    notes = controller.keepNotesFor(stick, {wavPath});
     check(notes.value("kept").toList().isEmpty() && notes.value("keptGone").toList().isEmpty()
               && notes.value("notKept").toList().isEmpty(),
           "and is named nowhere in the delete confirmation");
 
-    // A new stick root: the session's records are forgotten.
+    // The form for another stick: the records stay, each of its stick.
     const QString wav2 = QString::fromStdString(writeWav(sessions, QStringLiteral("Plain.wav"), 0.5));
     const QVariantMap plain = runJob(form(wav2.toStdString(), folder, QStringLiteral("DJ Kelp"), QStringLiteral("Plain")));
     check(plain.value("state").toString() == QStringLiteral("kept"), "a plain recording is kept");
-    check(!controller.outcomeFor(wav2).isEmpty(), "and has its outcome");
-    controller.setStickRoot(scratch + QStringLiteral("/OTHER"));
-    check(controller.outcomeFor(wav2).isEmpty() && controller.keepNotesFor({wav2}).value("kept").toList().isEmpty(),
-          "another stick root: the outcomes and kept copies are forgotten");
+    check(!controller.outcomeFor(stick, wav2).isEmpty(), "and has its outcome");
+    const QString otherStick = scratch + QStringLiteral("/OTHER");
+    controller.setStickRoot(otherStick);
+    check(controller.outcomeFor(stick, wav2).value("state").toString() == QStringLiteral("kept")
+              && controller.keepNotesFor(stick, {wav2}).value("kept").toList().size() == 1,
+          "the form for another stick: this stick's outcomes and kept copies stay");
+    check(controller.outcomeFor(otherStick, wav2).isEmpty() && controller.keepNotesFor(otherStick, {wav2}).value("kept").toList().isEmpty(),
+          "and are not the other stick's");
+}
+
+// One controller for every stick's page, two sticks: the form for one
+// stick leaves the other's records as they were, each stick is asked
+// about its own work, a cancel of a stick (it was taken out) leaves the
+// other's jobs waiting, the queue stays one job at a time across sticks,
+// and a delete on one stick holds off keeps of that stick only.
+void twoSticks(const QString &scratch)
+{
+    const QString stickA = makeStick(scratch);
+    const QString stickB = scratch + QStringLiteral("/STICK B");
+    QDir().mkpath(stickB + QStringLiteral("/Sessions"));
+    const QString folder = scratch + QStringLiteral("/kept");
+    const QString a1 = QString::fromStdString(writeWav(stickA + QStringLiteral("/Sessions"), QStringLiteral("A1.wav"), 0.5));
+    const QString a2 = QString::fromStdString(writeWav(stickA + QStringLiteral("/Sessions"), QStringLiteral("A2.wav"), 0.5));
+    const QString a3 = QString::fromStdString(writeWav(stickA + QStringLiteral("/Sessions"), QStringLiteral("A3.wav"), 0.5));
+    const QString b1 = QString::fromStdString(writeWav(stickB + QStringLiteral("/Sessions"), QStringLiteral("B1.wav"), 240));
+    const QString b2 = QString::fromStdString(writeWav(stickB + QStringLiteral("/Sessions"), QStringLiteral("B2.wav"), 0.5));
+    const QString b3 = QString::fromStdString(writeWav(stickB + QStringLiteral("/Sessions"), QStringLiteral("B3.wav"), 0.5));
+    const auto formFor = [&folder](const QString &wav, const QString &title) {
+        return form(wav.toStdString(), folder, QStringLiteral("DJ Kelp"), title);
+    };
+    const auto stateOf = [](const QVariantList &jobs) {
+        QStringList states;
+        for (const QVariant &job : jobs) {
+            states << job.toMap().value("state").toString() + QLatin1Char(' ') + job.toMap().value("recording").toString();
+        }
+        return states;
+    };
+
+    KeepRecordingController controller;
+    QSignalSpy finished(&controller, &KeepRecordingController::finished);
+    controller.setStickRoot(stickA);
+    check(controller.keep(formFor(a1, QStringLiteral("A1"))), "stick A: a first recording taken");
+    check(waitUntil([&]() { return finished.count() >= 1; }), "and kept");
+
+    // The next job of A holds in the tag writer until the test lets go.
+    Latch latch;
+    KeepRecordingController::setPartsForTesting([&latch]() {
+        KeepRecordingParts parts;
+        parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
+        parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
+        parts.covers = std::make_unique<seabass::infrastructure::audio::QtCoverArtPreparer>();
+        parts.tags = std::make_unique<HeldTags>(&latch);
+        return parts;
+    });
+    check(controller.keep(formFor(a2, QStringLiteral("A2"))), "stick A: a second recording taken");
+    check(waitUntil([&]() { return latch.entered(); }), "and it runs, held in the tag writer");
+    KeepRecordingController::setPartsForTesting({});
+
+    // Stick B's page opens: the form is for B now.
+    controller.setStickRoot(stickB);
+    check(controller.outcomeFor(stickA, a1).value("state").toString() == QStringLiteral("kept")
+              && controller.keepNotesFor(stickA, {a1}).value("kept").toList().size() == 1,
+          "the form for stick B leaves what stick A kept known");
+    check(stateOf(controller.finishedJobsFor(stickA)) == QStringList{QStringLiteral("kept A1.wav")},
+          "and stick A's strip still lists its ended job");
+    check(controller.finishedJobsFor(stickB).isEmpty() && controller.queuedFor(stickB).isEmpty()
+              && !controller.hasWorkFor(stickB),
+          "stick B's strip has nothing of stick A's work");
+    check(controller.outcomeFor(stickB, a1).isEmpty() && controller.keepNotesFor(stickB, {a1}).value("kept").toList().isEmpty(),
+          "stick A's records are not stick B's");
+    check(controller.hasWorkFor(stickA) && controller.busy() && controller.currentStickRoot() == QDir::cleanPath(stickA),
+          "stick A has work: its job is the one in hand");
+    check(controller.hasWorkFor(stickA + QStringLiteral("/")), "a stick is the same stick spelt with a trailing slash");
+
+    check(controller.keep(formFor(b1, QStringLiteral("B1"))) && controller.keep(formFor(b2, QStringLiteral("B2"))),
+          "stick B: two recordings taken while stick A's runs");
+    check(controller.queuedFor(stickB).size() == 2 && controller.queuedFor(stickA).isEmpty()
+              && controller.hasWorkFor(stickB) && controller.currentStickRoot() == QDir::cleanPath(stickA),
+          "they wait behind stick A's: one job at a time across sticks");
+    check(controller.outcomeFor(stickB, b1).value("state").toString() == QStringLiteral("queued"),
+          "B1's row says it waits");
+
+    // Stick A is taken out: its work stops, stick B's waits on.
+    controller.cancelFor(stickA);
+    check(controller.cancelRequested(), "stick A's job is asked to stop");
+    check(controller.queuedFor(stickB).size() == 2 && controller.finishedJobsFor(stickB).isEmpty(),
+          "stick B's jobs still wait, none dropped");
+    latch.release();
+    check(waitUntil([&]() { return controller.busy() && controller.currentRecording() == QStringLiteral("B1.wav"); }),
+          "stick A's job ends, and stick B's first starts");
+    check(stateOf(controller.finishedJobsFor(stickA))
+              == (QStringList{QStringLiteral("kept A1.wav"), QStringLiteral("cancelled A2.wav")}),
+          "stick A's strip: kept, then stopped: " + stateOf(controller.finishedJobsFor(stickA)).join(", ").toStdString());
+
+    // A delete on stick B: nothing more is kept from B meanwhile, A is free.
+    controller.setDeleteRunning(stickB, true);
+    check(!controller.keep(formFor(b3, QStringLiteral("B3"))) && controller.errorMessage().contains(QStringLiteral("deleted")),
+          "while stick B's recordings are deleted, none of B is kept: " + controller.errorMessage().toStdString());
+    controller.setStickRoot(stickA);
+    check(controller.keep(formFor(a3, QStringLiteral("A3"))), "and one of stick A is taken");
+    controller.setDeleteRunning(stickB, false);
+    check(controller.queuedFor(stickA).size() == 1 && controller.queuedFor(stickB).size() == 1,
+          "it waits behind stick B's, with B2");
+
+    // Stick B is taken out: its job in hand stops and its waiting one is
+    // dropped; stick A's waits on and runs.
+    controller.cancelFor(stickB);
+    check(controller.queuedFor(stickB).isEmpty() && controller.queuedFor(stickA).size() == 1,
+          "stick B's waiting job is dropped, stick A's still waits");
+    check(waitUntil([&]() { return !controller.busy() && controller.queued().isEmpty(); }), "everything ends");
+    check(stateOf(controller.finishedJobsFor(stickB))
+              == (QStringList{QStringLiteral("dropped B2.wav"), QStringLiteral("cancelled B1.wav")}),
+          "stick B's strip: dropped, then stopped: " + stateOf(controller.finishedJobsFor(stickB)).join(", ").toStdString());
+    check(stateOf(controller.finishedJobsFor(stickA)).last() == QStringLiteral("kept A3.wav"),
+          "stick A's last job is kept");
+
+    // Each strip closed on its own.
+    controller.dismissFinishedFor(stickA);
+    check(controller.finishedJobsFor(stickA).isEmpty() && controller.finishedJobsFor(stickB).size() == 2,
+          "closing stick A's strip leaves stick B's");
+    check(controller.outcomeFor(stickA, a3).value("state").toString() == QStringLiteral("kept"),
+          "and the rows still say what happened");
 }
 
 int main(int argc, char **argv)
@@ -1005,6 +1142,7 @@ int main(int argc, char **argv)
     failureStaysWhileTheNextRuns(dir + QStringLiteral("/failure-stays"));
     lateCancelAndLeftFiles(dir + QStringLiteral("/late-cancel"));
     keptCopiesAndIdentity(dir + QStringLiteral("/kept-copies"));
+    twoSticks(dir + QStringLiteral("/two-sticks"));
 
     if (failures > 0) {
         std::cout << "keep_recording_controller_test: " << failures << " FAILED\n";

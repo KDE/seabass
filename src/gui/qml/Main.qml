@@ -477,20 +477,23 @@ ApplicationWindow {
 
     // Keep this recording (Clean Up Recordings): with the window, not the
     // page, so that a keep of minutes goes on when the page is left, and
-    // the page shows its strip again when it is opened again.
+    // the page shows its strip again when it is opened again. One for
+    // every stick: each page asks it about its own stick.
     KeepRecordingController {
         id: recordingsKeepCtrl
     }
     // A stick taken out while a recording on it is kept, or waits to be:
-    // the work is stopped, as the person would, and the strip says so.
+    // that stick's work is stopped, as the person would, and its strip
+    // says so. Another stick's work goes on.
     Connections {
         target: mediaCtrl.sticks
         function onCountsChanged() {
             const keep = recordingsKeepCtrl;
-            const recordings = [keep.currentWavPath].concat((keep.queued ?? []).map(job => job.wavPath))
-                .filter(path => path.length > 0);
-            if (recordings.some(path => !mediaCtrl.pathIsPresent(path))) {
-                keep.cancel();
+            const jobs = (keep.busy ? [{stickRoot: keep.currentStickRoot, wavPath: keep.currentWavPath}] : [])
+                .concat(keep.queued ?? []);
+            const gone = new Set(jobs.filter(job => !mediaCtrl.pathIsPresent(job.wavPath)).map(job => job.stickRoot));
+            for (const stickRoot of gone) {
+                keep.cancelFor(stickRoot);
             }
         }
     }

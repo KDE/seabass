@@ -196,6 +196,13 @@ QString comparablePath(const QString &path)
     return QDir(folder).filePath(info.fileName()).toCaseFolded();
 }
 
+// A stick's root as the jobs and records carry it, so that two spellings
+// of one root are one stick.
+QString stickKey(const QString &root)
+{
+    return root.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(root));
+}
+
 QString defaultFolder()
 {
     QString music = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
@@ -286,37 +293,21 @@ KeepRecordingController::~KeepRecordingController()
 
 void KeepRecordingController::setStickRoot(const QString &root)
 {
+    // Only which stick the form is for: what is known of every stick's
+    // recordings stays, each record carrying its own stick.
     if (m_stickRoot == root) {
         return;
     }
     m_stickRoot = root;
-    clearSessionRecords();
     emit stickRootChanged();
 }
 
-void KeepRecordingController::clearSessionRecords()
+void KeepRecordingController::setDeleteRunning(const QString &stickRoot, bool running)
 {
-    // What the session knows of recordings is of the stick it was on; the
-    // jobs that run or wait keep theirs, and record their end as usual.
-    QSet<QString> inHand;
-    if (m_running) {
-        inHand.insert(m_running->wavKey);
-    }
-    for (const Job &job : m_queue) {
-        inHand.insert(job.wavKey);
-    }
-    bool changed = !m_keptCopies.isEmpty();
-    m_keptCopies.clear();
-    for (auto it = m_outcomes.begin(); it != m_outcomes.end();) {
-        if (inHand.contains(it.key())) {
-            ++it;
-        } else {
-            it = m_outcomes.erase(it);
-            changed = true;
-        }
-    }
-    if (changed) {
-        bumpRevision();
+    if (running) {
+        m_deletingSticks.insert(stickKey(stickRoot));
+    } else {
+        m_deletingSticks.remove(stickKey(stickRoot));
     }
 }
 
@@ -331,6 +322,11 @@ bool KeepRecordingController::available() const
 #else
     return false;
 #endif
+}
+
+QString KeepRecordingController::currentStickRoot() const
+{
+    return m_running ? m_running->stickRoot : QString();
 }
 
 QString KeepRecordingController::currentWavPath() const
@@ -357,14 +353,32 @@ QVariantList KeepRecordingController::queued() const
 {
     QVariantList out;
     for (const Job &job : m_queue) {
-        out.append(QVariantMap{
-            {"wavPath", job.wavPath},
-            {"recording", job.recording},
-            {"fileName", QString::fromStdString(job.request.fileName)},
-            {"folder", QString::fromStdString(job.request.folder)},
-        });
+        out.append(queuedEntry(job));
     }
     return out;
+}
+
+QVariantList KeepRecordingController::queuedFor(const QString &stickRoot) const
+{
+    const QString key = stickKey(stickRoot);
+    QVariantList out;
+    for (const Job &job : m_queue) {
+        if (job.stickRoot == key) {
+            out.append(queuedEntry(job));
+        }
+    }
+    return out;
+}
+
+QVariantMap KeepRecordingController::queuedEntry(const Job &job)
+{
+    return {
+        {"stickRoot", job.stickRoot},
+        {"wavPath", job.wavPath},
+        {"recording", job.recording},
+        {"fileName", QString::fromStdString(job.request.fileName)},
+        {"folder", QString::fromStdString(job.request.folder)},
+    };
 }
 
 bool KeepRecordingController::canKeep(const QString &path) const
@@ -569,8 +583,8 @@ void KeepRecordingController::onCoverPrepared()
 
 QString KeepRecordingController::formProblem(const QVariantMap &form) const
 {
-    if (m_deleteRunning) {
-        return tr("Recordings are being deleted right now. Keep this one once that has ended.");
+    if (m_deletingSticks.contains(stickKey(m_stickRoot))) {
+        return tr("Recordings are being deleted from this stick right now. Keep this one once that has ended.");
     }
     const QString wavPath = localPath(form.value("wavPath").toString());
     const QString title = form.value("title").toString().trimmed();
@@ -626,9 +640,9 @@ bool KeepRecordingController::keep(const QVariantMap &form)
     const QString folder = QDir::fromNativeSeparators(localPath(form.value("folder").toString().trimmed()));
     const QString yearText = form.value("year").toString().trimmed();
 
-    const bool hadWork = hasWork();
     Job job;
     job.id = m_nextJob++;
+    job.stickRoot = stickKey(m_stickRoot);
     job.wavPath = wavPath;
     job.recording = form.value("recording").toString();
     if (job.recording.isEmpty()) {
@@ -655,6 +669,7 @@ bool KeepRecordingController::keep(const QVariantMap &form)
 
     m_outcomes.insert(job.wavKey, QVariantMap{
                                    {"state", QStringLiteral("queued")},
+                                   {"stickRoot", job.stickRoot},
                                    {"recording", job.recording},
                                    {"fileName", QString::fromStdString(job.request.fileName)},
                                    {"folder", QDir::toNativeSeparators(folder)},
@@ -665,7 +680,6 @@ bool KeepRecordingController::keep(const QVariantMap &form)
     if (!m_running) {
         startNext();
     }
-    noteWork(hadWork);
     return true;
 }
 
@@ -728,36 +742,79 @@ void KeepRecordingController::startNext()
     bumpRevision();
 }
 
-void KeepRecordingController::cancel()
+bool KeepRecordingController::hasWorkFor(const QString &stickRoot) const
 {
-    const bool hadWork = hasWork();
-    if (!m_queue.empty()) {
-        // Each job that waited ends here, never started: its row and the
-        // strip say so.
-        for (const Job &job : m_queue) {
-            const QVariantMap outcome{
-                {"state", QStringLiteral("dropped")},
-                {"wavPath", job.wavPath},
-                {"recording", job.recording},
-                {"fileName", QString::fromStdString(job.request.fileName)},
-                {"folder", QDir::toNativeSeparators(QString::fromStdString(job.request.folder))},
-                {"flacPath", QString()},
-                {"leftBehind", QString()},
-                {"message", QString()},
-            };
-            m_outcomes.insert(job.wavKey, outcome);
-            m_finishedJobs.append(outcome);
+    const QString key = stickKey(stickRoot);
+    return (m_running && m_running->stickRoot == key)
+        || std::any_of(m_queue.begin(), m_queue.end(), [&key](const Job &job) { return job.stickRoot == key; });
+}
+
+bool KeepRecordingController::runsFor(const QString &stickRoot) const
+{
+    return m_running && m_running->stickRoot == stickKey(stickRoot);
+}
+
+bool KeepRecordingController::runsElsewhere(const QString &stickRoot) const
+{
+    return m_running && m_running->stickRoot != stickKey(stickRoot);
+}
+
+QVariantList KeepRecordingController::finishedJobsFor(const QString &stickRoot) const
+{
+    const QString key = stickKey(stickRoot);
+    QVariantList out;
+    for (const QVariant &job : m_finishedJobs) {
+        if (job.toMap().value("stickRoot").toString() == key) {
+            out.append(job);
         }
-        m_queue.clear();
+    }
+    return out;
+}
+
+bool KeepRecordingController::dropQueued(const std::function<bool(const Job &)> &drop)
+{
+    bool dropped = false;
+    for (auto it = m_queue.begin(); it != m_queue.end();) {
+        if (!drop(*it)) {
+            ++it;
+            continue;
+        }
+        // A job that waited ends here, never started: its row and the
+        // strip say so.
+        const Job &job = *it;
+        const QVariantMap outcome{
+            {"state", QStringLiteral("dropped")},
+            {"stickRoot", job.stickRoot},
+            {"wavPath", job.wavPath},
+            {"recording", job.recording},
+            {"fileName", QString::fromStdString(job.request.fileName)},
+            {"folder", QDir::toNativeSeparators(QString::fromStdString(job.request.folder))},
+            {"flacPath", QString()},
+            {"leftBehind", QString()},
+            {"message", QString()},
+        };
+        m_outcomes.insert(job.wavKey, outcome);
+        m_finishedJobs.append(outcome);
+        it = m_queue.erase(it);
+        dropped = true;
+    }
+    if (dropped) {
         emit queueChanged();
         emit finishedJobsChanged();
         bumpRevision();
     }
-    if (m_running && !m_cancel.cancelled()) {
+    return dropped;
+}
+
+void KeepRecordingController::cancelFor(const QString &stickRoot)
+{
+    const QString key = stickKey(stickRoot);
+    dropQueued([&key](const Job &job) { return job.stickRoot == key; });
+    if (m_running && m_running->stickRoot == key && !m_cancel.cancelled()) {
         m_cancel.cancel();
         emit busyChanged();  // cancelRequested
+        bumpRevision();
     }
-    noteWork(hadWork);
 }
 
 void KeepRecordingController::onJobFinished()
@@ -765,7 +822,6 @@ void KeepRecordingController::onJobFinished()
     if (!m_running) {
         return;
     }
-    const bool hadWork = hasWork();
     QString thrown;
     KeepRecordingResult result = takeResult(m_watcher, &thrown);
     if (!thrown.isEmpty()) {
@@ -784,6 +840,7 @@ void KeepRecordingController::onJobFinished()
     const QString flacPath = kept ? QDir::toNativeSeparators(QString::fromStdString(result.flacPath)) : QString();
     const QVariantMap outcome{
         {"state", stateKey(result.status)},
+        {"stickRoot", job.stickRoot},
         {"wavPath", job.wavPath},
         {"recording", job.recording},
         {"fileName", QString::fromStdString(job.request.fileName)},
@@ -816,23 +873,27 @@ void KeepRecordingController::onJobFinished()
     bumpRevision();
     emit finished(outcome);
     startNext();
-    noteWork(hadWork);
 }
 
-QVariantMap KeepRecordingController::outcomeFor(const QString &wavPath) const
+QVariantMap KeepRecordingController::outcomeFor(const QString &stickRoot, const QString &wavPath) const
 {
-    return m_outcomes.value(wavKey(localPath(wavPath)));
+    const QVariantMap outcome = m_outcomes.value(wavKey(localPath(wavPath)));
+    return outcome.value("stickRoot").toString() == stickKey(stickRoot) ? outcome : QVariantMap();
 }
 
-QVariantMap KeepRecordingController::keepNotesFor(const QStringList &wavPaths) const
+QVariantMap KeepRecordingController::keepNotesFor(const QString &stickRoot, const QStringList &wavPaths) const
 {
+    const QString stick = stickKey(stickRoot);
+    const auto ofStick = [&stick](const QVariantMap &record) {
+        return !record.isEmpty() && record.value("stickRoot").toString() == stick;
+    };
     QStringList notKept;
     QVariantList kept;
     QVariantList keptGone;
     for (const QString &given : wavPaths) {
         const QString path = localPath(given);
         const QString key = wavKey(path);
-        if (m_keptCopies.contains(key)) {
+        if (ofStick(m_keptCopies.value(key))) {
             const QVariantMap copy = m_keptCopies.value(key);
             const QVariantMap named{
                 {"recording", copy.value("recording")},
@@ -849,7 +910,7 @@ QVariantMap KeepRecordingController::keepNotesFor(const QStringList &wavPaths) c
             continue;
         }
         const QVariantMap outcome = m_outcomes.value(key);
-        if (!outcome.isEmpty()) {
+        if (ofStick(outcome)) {
             const QString name = outcome.value("recording").toString();
             notKept.append(name.isEmpty() ? QFileInfo(path).fileName() : name);
         }
@@ -857,11 +918,14 @@ QVariantMap KeepRecordingController::keepNotesFor(const QStringList &wavPaths) c
     return {{"notKept", notKept}, {"kept", kept}, {"keptGone", keptGone}};
 }
 
-void KeepRecordingController::dismissFinished()
+void KeepRecordingController::dismissFinishedFor(const QString &stickRoot)
 {
-    if (!m_finishedJobs.isEmpty()) {
-        m_finishedJobs.clear();
+    const QString key = stickKey(stickRoot);
+    const auto before = m_finishedJobs.size();
+    m_finishedJobs.removeIf([&key](const QVariant &job) { return job.toMap().value("stickRoot").toString() == key; });
+    if (m_finishedJobs.size() != before) {
         emit finishedJobsChanged();
+        bumpRevision();
     }
 }
 
@@ -886,13 +950,6 @@ void KeepRecordingController::bumpRevision()
 {
     ++m_revision;
     emit revisionChanged();
-}
-
-void KeepRecordingController::noteWork(bool hadWork)
-{
-    if (hadWork != hasWork()) {
-        emit hasWorkChanged();
-    }
 }
 
 }  // namespace seabass::gui

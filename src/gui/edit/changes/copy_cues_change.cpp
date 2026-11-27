@@ -197,6 +197,9 @@ ChangeOutcome CopyCuesChange::apply(SaveContext &ctx)
             ctx.backupOnce(file, "duplicate-cue-consolidation");
         }
         format.writer->writeHotCues(target.sourceId, cues);
+        if (m_format != "engine") {
+            recordCuesLeftOut(ctx, target.filePath, target.sourceId, cues);
+        }
         if (format.engineSession) {
             format.engineSession->noteItemApplied();
         }

@@ -20,9 +20,13 @@ import SeabassGui
 // and a KeepRecordingController, beside the page in the passive progress
 // strip. The recording on the stick stays as it is. The controller lives
 // with the window: the work goes on when the page is left, and the strip
-// shows it again when the page is opened again. The strip stays while a
-// job runs or waits, even when Experimental is switched off meanwhile, and
-// lists what ended until it is closed. The delete confirmation names every
+// shows it again when the page is opened again. The controller is the
+// app's one, for every stick: the page asks it about this stick only (its
+// root, controller.stickRoot), and says in one line when a recording of
+// another stick is being kept, so that a job asked for here is seen to
+// wait. The strip stays while a job of this stick runs or waits, even when
+// Experimental is switched off meanwhile, and lists what ended until it is
+// closed. The delete confirmation names every
 // ticked recording a keep was asked for and did not end kept.
 //
 // With Experimental off the page is the released one: no Keep button, and
@@ -45,11 +49,21 @@ Page {
 
     readonly property bool keepOffered: root.keepEnabled && root.keepController !== null
         && root.keepController.available === true
-    // A recording is being kept or waits to be: nothing is deleted
-    // meanwhile, so no recording goes from under its job.
-    readonly property bool keepWorking: root.keepController !== null
-        && (root.keepController.busy === true || (root.keepController.queued ?? []).length > 0)
     readonly property int keepRevision: root.keepController !== null ? root.keepController.revision : 0
+    // The stick's root, as the keep controller is asked about it.
+    readonly property string stickRoot: root.controller.stickRoot ?? ""
+    // A recording of this stick is being kept or waits to be: nothing is
+    // deleted meanwhile, so no recording goes from under its job.
+    readonly property bool keepWorking: root.keepController !== null
+        && (root.keepRevision, root.keepController.hasWorkFor(root.stickRoot)) === true
+    // The job in hand is this stick's; is another stick's.
+    readonly property bool keepRunsHere: root.keepController !== null
+        && (root.keepRevision, root.keepController.runsFor(root.stickRoot)) === true
+    readonly property bool keepRunsElsewhere: root.keepController !== null
+        && (root.keepRevision, root.keepController.runsElsewhere(root.stickRoot)) === true
+    // This stick's jobs that wait.
+    readonly property var keepQueued: root.keepController !== null
+        ? ((root.keepRevision, root.keepController.queuedFor(root.stickRoot)) ?? []) : []
 
     readonly property bool working: root.controller.working === true
     readonly property int recordingCount: root.controller.recordingCount
@@ -142,7 +156,8 @@ Page {
         {key: "tags", label: qsTr("Tags and cover")},
         {key: "placing", label: qsTr("Saving")},
     ]
-    readonly property var keepFinishedJobs: root.keepController !== null ? (root.keepController.finishedJobs ?? []) : []
+    readonly property var keepFinishedJobs: root.keepController !== null
+        ? ((root.keepRevision, root.keepController.finishedJobsFor(root.stickRoot)) ?? []) : []
     readonly property var keepFinished: root.keepFinishedJobs.length > 0
         ? root.keepFinishedJobs[root.keepFinishedJobs.length - 1] : ({})
     readonly property int keepNotKeptCount: root.keepFinishedJobs.filter(job => job.state !== "kept").length
@@ -219,7 +234,7 @@ Page {
         property var keepNotes: ({notKept: [], kept: [], keptGone: []})
         function openWithNotes() {
             confirmDeleteDialog.keepNotes = root.keepController !== null
-                ? root.keepController.keepNotesFor(root.controller.selectedPaths())
+                ? root.keepController.keepNotesFor(root.stickRoot, root.controller.selectedPaths())
                 : ({notKept: [], kept: [], keptGone: []});
             confirmDeleteDialog.open();
         }
@@ -726,7 +741,7 @@ Page {
                 required property bool holdsNoAudio
 
                 readonly property var kept: root.keepController !== null
-                    ? (root.keepRevision, root.keepController.outcomeFor(row.path)) : ({})
+                    ? (root.keepRevision, root.keepController.outcomeFor(root.stickRoot, row.path)) : ({})
                 readonly property string keptState: row.kept.state ?? ""
                 readonly property string keptLine: {
                     switch (row.keptState) {
@@ -871,8 +886,20 @@ Page {
             text: root.leftAloneLine
         }
 
-        // Keep this recording, beside the page: the job in hand, the
-        // ones that wait, and the end of the last one.
+        // Another stick's recording is being kept: this stick's jobs wait
+        // for it, one job at a time.
+        Label {
+            objectName: "otherStickKeepLabel"
+            Layout.fillWidth: true
+            visible: root.keepRunsElsewhere && (root.keepOffered || root.keepWorking)
+            wrapMode: Text.WordWrap
+            color: Theme.textMuted
+            text: qsTr("A recording from another stick is being kept. What you keep from this stick waits until "
+                + "that has ended.")
+        }
+
+        // Keep this recording, beside the page: this stick's job in hand,
+        // its ones that wait, and the end of the last one.
         PassiveProgress {
             id: keepProgress
             objectName: "keepProgress"
@@ -881,14 +908,17 @@ Page {
             readonly property bool finishedShown: root.keepShowsFinished
             readonly property var last: root.keepFinished
             readonly property string state: last.state ?? ""
-            readonly property int stepIndex: keep && keep.busy ? root.keepStepIndex(keep.progressStep) : -1
-            readonly property int waiting: keep ? (keep.queued ?? []).length : 0
+            readonly property bool runsHere: root.keepRunsHere
+            readonly property int stepIndex: runsHere ? root.keepStepIndex(keep.progressStep) : -1
+            readonly property int waiting: root.keepQueued.length
             // Not tied to Experimental: work under way is shown, and can be
             // cancelled, until it has ended, and what ended until closed.
             running: keep !== null && (root.keepWorking || finishedShown)
-            done: finishedShown ? (root.keepNotKeptCount === 0 ? 1000 : 0) : Math.round((keep?.progress ?? 0) * 1000)
+            done: finishedShown ? (root.keepNotKeptCount === 0 ? 1000 : 0)
+                : runsHere ? Math.round((keep?.progress ?? 0) * 1000) : 0
             total: 1000
-            cancellable: keep !== null && keep.busy === true && keep.cancelRequested !== true
+            // Stops this stick's job in hand and drops its ones that wait.
+            cancellable: root.keepWorking && !(runsHere && keep.cancelRequested === true)
             summary: {
                 if (!keep) return "";
                 if (finishedShown) {
@@ -913,6 +943,9 @@ Page {
                     }
                     return left ? qsTr("%1 was not kept, and a file was left in %2").arg(last.recording).arg(last.folder)
                         : qsTr("%1 was not kept").arg(last.recording);
+                }
+                if (!runsHere) {
+                    return qsTr("%n recording(s) waiting to be kept", "", waiting);
                 }
                 if (keep.cancelRequested) {
                     return qsTr("Stopping: keeping %1").arg(keep.currentRecording);
@@ -942,8 +975,8 @@ Page {
                 if (finishedShown) {
                     return root.keepEndedLines();
                 }
-                const lines = keep.busy ? [qsTr("Writing %1 in %2").arg(keep.currentFileName).arg(keep.currentFolder)] : [];
-                for (const job of (keep.queued ?? [])) {
+                const lines = runsHere ? [qsTr("Writing %1 in %2").arg(keep.currentFileName).arg(keep.currentFolder)] : [];
+                for (const job of root.keepQueued) {
                     lines.push(qsTr("Waiting: %1, as %2").arg(job.recording).arg(job.fileName));
                 }
                 return lines.concat(root.keepEndedLines());
@@ -956,12 +989,12 @@ Page {
             actions: !finishedShown ? []
                 : state === "kept" ? [{key: "show", text: qsTr("Show in Folder")}, {key: "close", text: qsTr("Close")}]
                 : [{key: "close", text: qsTr("Close")}]
-            onCancelRequested: keep.cancel()
+            onCancelRequested: keep.cancelFor(root.stickRoot)
             onActionTriggered: (key) => {
                 if (key === "show") {
                     keep.showInFolder(last.flacPath);
                 } else {
-                    keep.dismissFinished();
+                    keep.dismissFinishedFor(root.stickRoot);
                 }
             }
         }

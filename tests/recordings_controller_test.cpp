@@ -368,19 +368,19 @@ int main(int argc, char **argv)
             {"folder", pathToQString(keptFolder)},
         };
         assert(keep.keep(form));
-        assert(keep.hasWork());
+        assert(keep.hasWorkFor(keep.stickRoot()));
         wired.setAllIncluded(true);
         QSignalSpy finished(&wired, &RecordingsController::finished);
         wired.deleteSelected();
         assert(!wired.working());
         assert(wired.errorMessage().contains(QStringLiteral("being kept")));
         assert(fs::exists(stick / "Sessions" / "K1.wav") && fs::exists(stick / "Sessions" / "K2.wav"));
-        std::cout << "ok: nothing is deleted while a recording is being kept, and the page is told why\n";
+        std::cout << "ok: nothing is deleted while a recording of this stick is being kept, and the page is told why\n";
 
         release = true;
         QSignalSpy keptSpy(&keep, &KeepRecordingController::finished);
         assert(waitFor(keptSpy, 1));
-        assert(!keep.hasWork());
+        assert(!keep.hasWorkFor(keep.stickRoot()));
         assert(keptSpy.first().first().toMap().value("state").toString() == QStringLiteral("kept"));
 
         // While the delete runs, nothing is kept.
@@ -400,7 +400,7 @@ int main(int argc, char **argv)
         second.insert("title", QStringLiteral("K2"));
         assert(!keep.keep(second));
         assert(keep.errorMessage().contains(QStringLiteral("deleted")));
-        assert(!keep.hasWork());
+        assert(!keep.hasWorkFor(keep.stickRoot()));
         // Let go of while the delete runs: it still keeps nothing until the
         // delete has ended.
         wired.setKeepController(nullptr);
@@ -462,6 +462,150 @@ int main(int argc, char **argv)
             std::cout << "ok: and once it has ended, the keep controller is told and keeps again\n";
         }
         RecordingsController::setDeleteHooksForTesting({});
+        KeepRecordingController::setPartsForTesting({});
+    }
+
+    // Two sticks, one keep controller (the window's), a page each: a keep
+    // of stick A leaves stick B's page free to delete, B's page does not
+    // take A's records away, and a delete on B holds off keeps of B only.
+    {
+        for (int i = 0; i < 300 && controller.busy(); ++i) {
+            listed.wait(100);
+        }
+        const fs::path stickB = scratch / "STICK B";
+        const fs::path engineB = stickB / "Engine Library";
+        fs::create_directories(engineB / "Database2");
+        write(stick / "Sessions" / "A1.wav", wav(1000, 'p'));
+        write(stick / "Sessions" / "A2.wav", wav(1000, 'q'));
+        write(stickB / "Sessions" / "B0.wav", wav(1000, 'r'));
+        std::atomic<bool> release{true};
+        KeepRecordingController::setPartsForTesting([&release]() {
+            KeepRecordingParts parts;
+            parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
+            parts.encoder = std::make_unique<HeldEncoder>(&release);
+            parts.covers = std::make_unique<NoCovers>();
+            parts.tags = std::make_unique<PassingTags>();
+            return parts;
+        });
+        const auto formFor = [&scratch](const fs::path &recording) {
+            return QVariantMap{
+                {"wavPath", pathToQString(recording)},
+                {"recording", pathToQString(recording.filename())},
+                {"artist", QString()},
+                {"title", pathToQString(recording.stem())},
+                {"album", QString()},
+                {"genre", QString()},
+                {"year", QString()},
+                {"folder", pathToQString(scratch / "kept-two-sticks")},
+            };
+        };
+        KeepRecordingController keep;
+        QSignalSpy kept(&keep, &KeepRecordingController::finished);
+
+        RecordingsController pageA;
+        QSignalSpy listedA(&pageA, &RecordingsController::listingChanged);
+        pageA.setKeepController(&keep);
+        pageA.load(QStringLiteral("STICK"), QString(), pathToQString(engine));
+        assert(waitFor(listedA, 1));
+        const QString rootA = pageA.stickRoot();
+        assert(fs::equivalent(seabass::gui::pathFromQString(rootA), stick));
+        assert(keep.keep(formFor(stick / "Sessions" / "A1.wav")));
+        assert(waitFor(kept, 1));
+        release = false;
+        assert(keep.keep(formFor(stick / "Sessions" / "A2.wav")));
+        assert(keep.busy() && keep.hasWorkFor(rootA));
+
+        // Stick B's page opens while stick A's keep runs.
+        RecordingsController pageB;
+        QSignalSpy listedB(&pageB, &RecordingsController::listingChanged);
+        QSignalSpy rootChangedB(&pageB, &RecordingsController::stickRootChanged);
+        pageB.setKeepController(&keep);
+        pageB.load(QStringLiteral("STICK B"), QString(), pathToQString(engineB));
+        assert(waitFor(listedB, 1));
+        const QString rootB = pageB.stickRoot();
+        assert(rootChangedB.count() == 1 && fs::equivalent(seabass::gui::pathFromQString(rootB), stickB));
+        assert(keep.stickRoot() == rootB);
+        assert(keep.outcomeFor(rootA, pathToQString(stick / "Sessions" / "A1.wav")).value("state").toString()
+               == QStringLiteral("kept"));
+        assert(keep.finishedJobsFor(rootA).size() == 1);
+        assert(!keep.hasWorkFor(rootB) && keep.finishedJobsFor(rootB).isEmpty());
+        std::cout << "ok: stick B's page leaves stick A's records and work as they were\n";
+
+        // Delete on B while A's keep runs: B's recordings are not involved.
+        QSignalSpy deletedB(&pageB, &RecordingsController::finished);
+        pageB.setAllIncluded(true);
+        pageB.deleteSelected();
+        assert(pageB.errorMessage().isEmpty());
+        assert(waitFor(deletedB, 1));
+        assert(deletedB.first().first().toMap().value("written").toInt() == 1);
+        assert(!fs::exists(stickB / "Sessions" / "B0.wav"));
+        assert(keep.busy() && keep.hasWorkFor(rootA));
+        std::cout << "ok: a keep of stick A does not hold off a delete on stick B\n";
+
+        // Stick A's page, the same: refused while A's keep runs.
+        pageA.setAllIncluded(true);
+        pageA.deleteSelected();
+        assert(!pageA.working() && pageA.errorMessage().contains(QStringLiteral("being kept")));
+        assert(fs::exists(stick / "Sessions" / "A2.wav"));
+        std::cout << "ok: and still holds off a delete on stick A\n";
+
+        // A delete on B that runs: keeps of B wait for it, keeps of A not.
+        for (int i = 0; i < 300 && pageB.busy(); ++i) {
+            listedB.wait(100);
+        }
+        write(stickB / "Sessions" / "B1.wav", wav(1000, 's'));
+        write(stickB / "Sessions" / "B2.wav", wav(1000, 't'));
+        const int listedBefore = listedB.count();
+        pageB.load(QStringLiteral("STICK B"), QString(), pathToQString(engineB));
+        assert(waitFor(listedB, listedBefore + 1));
+        std::atomic<bool> letDelete{false};
+        seabass::application::RecordingDeleteHooks hooks;
+        hooks.beforeDelete = [&letDelete](const fs::path &) {
+            for (int i = 0; i < 5000 && !letDelete.load(); ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        };
+        RecordingsController::setDeleteHooksForTesting(hooks);
+        int row = -1;
+        for (int i = 0; i < pageB.recordings()->rowCount(); ++i) {
+            if (pageB.recordings()->data(pageB.recordings()->index(i), seabass::gui::RecordingListModel::FileNameRole)
+                    .toString() == QStringLiteral("B2.wav")) {
+                row = i;
+            }
+        }
+        assert(row >= 0);
+        pageB.setIncluded(row, true);
+        pageB.deleteSelected();
+        assert(pageB.working());
+        assert(!keep.keep(formFor(stickB / "Sessions" / "B1.wav")));
+        assert(keep.errorMessage().contains(QStringLiteral("deleted")));
+        keep.setStickRoot(rootA);
+        write(stick / "Sessions" / "A3.wav", wav(1000, 'u'));
+        assert(keep.keep(formFor(stick / "Sessions" / "A3.wav")));
+        std::cout << "ok: a delete on stick B holds off keeps of B, not of A\n";
+        letDelete = true;
+        assert(waitFor(deletedB, 2));
+        RecordingsController::setDeleteHooksForTesting({});
+        for (int i = 0; i < 300 && pageB.busy(); ++i) {
+            listedB.wait(100);
+        }
+        keep.setStickRoot(rootB);
+        assert(keep.keep(formFor(stickB / "Sessions" / "B1.wav")));
+        std::cout << "ok: and once it has ended, B keeps again\n";
+
+        // Stick A is taken out (Main.qml asks cancelFor()): B's job waits on.
+        keep.cancelFor(rootA);
+        assert(keep.hasWorkFor(rootB) && !keep.queuedFor(rootB).isEmpty());
+        release = true;
+        for (int i = 0; i < 300 && (keep.busy() || !keep.queued().isEmpty()); ++i) {
+            kept.wait(100);
+        }
+        assert(!keep.busy() && keep.queued().isEmpty());
+        assert(keep.outcomeFor(rootB, pathToQString(stickB / "Sessions" / "B1.wav")).value("state").toString()
+               == QStringLiteral("kept"));
+        assert(keep.outcomeFor(rootA, pathToQString(stick / "Sessions" / "A3.wav")).value("state").toString()
+               == QStringLiteral("dropped"));
+        std::cout << "ok: stick A taken out stops its work; stick B's goes on and is kept\n";
         KeepRecordingController::setPartsForTesting({});
     }
 

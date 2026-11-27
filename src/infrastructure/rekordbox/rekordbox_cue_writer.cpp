@@ -6,6 +6,7 @@
 #include "infrastructure/paths/utf8_path.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -252,6 +253,35 @@ bool fitsAnlzMs(double ms)
 
 }  // namespace
 
+namespace
+{
+
+enum class NoPlace { BeforeStart, NotATime, PastTheField };
+
+// Why the files cannot hold a time, or nothing when they can.
+std::optional<NoPlace> noPlaceFor(double ms)
+{
+    if (fitsAnlzMs(ms)) {
+        return std::nullopt;
+    }
+    if (!std::isfinite(ms)) {
+        return NoPlace::NotATime;
+    }
+    return ms < 0.0 ? NoPlace::BeforeStart : NoPlace::PastTheField;
+}
+
+// Why the files cannot hold a cue (its position first, then a loop's
+// end), or nothing when they can.
+std::optional<NoPlace> noPlaceFor(const domain::CuePoint &cue)
+{
+    if (const auto position = noPlaceFor(cue.positionMs)) {
+        return position;
+    }
+    return cue.isLoop ? noPlaceFor(cue.loopEndMs) : std::nullopt;
+}
+
+}  // namespace
+
 // A cue before the start of the track is not one of the cues the files
 // can hold: domain::isJunkCue calls a negative position junk
 // whatever the user prefers, a "no cue set" sentinel read as a position
@@ -262,11 +292,32 @@ std::vector<domain::CuePoint> writableCues(const std::vector<domain::CuePoint> &
 {
     std::vector<domain::CuePoint> out;
     for (const auto &cue : cues) {
-        if (fitsAnlzMs(cue.positionMs) && (!cue.isLoop || fitsAnlzMs(cue.loopEndMs))) {
+        if (!noPlaceFor(cue)) {
             out.push_back(cue);
         }
     }
     return out;
+}
+
+CuesWithNoPlace cuesWithNoPlace(const std::vector<domain::CuePoint> &cues)
+{
+    CuesWithNoPlace counted;
+    for (const auto &cue : cues) {
+        if (const auto why = noPlaceFor(cue)) {
+            switch (*why) {
+                case NoPlace::BeforeStart:
+                    ++counted.beforeStart;
+                    break;
+                case NoPlace::NotATime:
+                    ++counted.notATime;
+                    break;
+                case NoPlace::PastTheField:
+                    ++counted.pastTheField;
+                    break;
+            }
+        }
+    }
+    return counted;
 }
 
 std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, const std::string &analyzePath)

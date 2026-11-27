@@ -14,9 +14,12 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 
 #include "application/path_key.hpp"
+#include "application/use_cases/plan_engine_update.hpp"
 #include "application/ports/track_metadata_probe.hpp"
 #include "gui/edit/save_context.hpp"
 #include "gui/qt_path.hpp"
@@ -134,6 +137,7 @@ QString mirrorCuesOrExplain(infrastructure::onelibrary::OneLibraryCueWriter &mir
             return {};
         }
         mirror.writeCuesForPath(filePath, cues);
+        recordCuesLeftOut(ctx, filePath, {}, cues);
         ctx.log().record(logTag + ": also wrote into OneLibrary");
         return {};
     } catch (const std::exception &e) {
@@ -143,6 +147,63 @@ QString mirrorCuesOrExplain(infrastructure::onelibrary::OneLibraryCueWriter &mir
                               "agreement.")
             .arg(what, QString::fromUtf8(e.what()));
     }
+}
+
+namespace
+{
+// The tracks and left-out cues already said in this save's log.
+struct CuesLeftOutSaid
+{
+    std::set<std::string> said;
+};
+
+std::string cueKey(const domain::CuePoint &cue)
+{
+    std::ostringstream key;
+    key << static_cast<int>(cue.kind) << ':' << cue.hotCueNumber << ':' << cue.positionMs << ':' << cue.isLoop << ':'
+        << cue.loopEndMs;
+    return key.str();
+}
+}  // namespace
+
+void recordCuesLeftOut(SaveContext &ctx, const std::string &filePath, const std::string &sourceId,
+                       const std::vector<domain::CuePoint> &cues)
+{
+    const infrastructure::rekordbox::CuesWithNoPlace counted = infrastructure::rekordbox::cuesWithNoPlace(cues);
+    if (counted.total() == 0) {
+        return;
+    }
+    const std::string relative = application::stickRelativePathOf(filePath, ctx.stickRoot());
+    const std::string track = !relative.empty() ? relative : !filePath.empty() ? filePath : "track id=" + sourceId;
+    // The same cues of the same track said once, whichever writer or
+    // change of this save left them out.
+    std::string key = track;
+    for (const auto &cue : cues) {
+        if (infrastructure::rekordbox::cuesWithNoPlace({cue}).total() > 0) {
+            key += '|' + cueKey(cue);
+        }
+    }
+    auto &said = ctx.sharedForWholeSave<CuesLeftOutSaid>("cues-left-out-said",
+                                                         []() { return std::make_unique<CuesLeftOutSaid>(); });
+    if (!said.said.insert(key).second) {
+        return;
+    }
+    std::vector<std::string> why;
+    if (counted.beforeStart > 0) {
+        why.push_back(std::to_string(counted.beforeStart) + " before the start of the track");
+    }
+    if (counted.notATime > 0) {
+        why.push_back(std::to_string(counted.notATime) + " at a time that is not a number");
+    }
+    if (counted.pastTheField > 0) {
+        why.push_back(std::to_string(counted.pastTheField) + " later than the analysis files can hold");
+    }
+    std::string line = std::to_string(counted.total()) + " cue point(s) of " + track
+        + " have no place on the track and were left out:";
+    for (std::size_t i = 0; i < why.size(); ++i) {
+        line += (i == 0 ? " " : ", ") + why[i];
+    }
+    ctx.log().record(line);
 }
 
 QString junkKeyFor(const domain::Track &track)

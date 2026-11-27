@@ -73,6 +73,17 @@ QString mirrorCuesOrExplain(infrastructure::onelibrary::OneLibraryCueWriter &mir
                             const std::string &filePath, const std::vector<domain::CuePoint> &cues,
                             SaveContext &ctx, const std::string &logTag, const QString &what);
 
+// The cues of `cues` the rekordbox and OneLibrary writers leave out
+// (rekordbox::cuesWithNoPlace()), in the save log: one line per track,
+// "N cue point(s) of <stick-relative path> have no place on the track and
+// were left out", with why. Neither writer has a result of its own to say
+// it in. Said once per track and save: a change that writes the same set
+// into DeviceLibrary and Device Library Plus, or a second change on the
+// track leaving out the same cues, adds no second line. `sourceId` names
+// a track with no file path. Nothing is recorded when every cue fits.
+void recordCuesLeftOut(SaveContext &ctx, const std::string &filePath, const std::string &sourceId,
+                       const std::vector<domain::CuePoint> &cues);
+
 // "3 hot, 1 memory (...)" -- the human summary of a cue set. Mirrors the
 // command line's own wording so both report a sync identically.
 QString describeCues(const std::vector<domain::CuePoint> &cues);

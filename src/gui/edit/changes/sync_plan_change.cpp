@@ -367,6 +367,7 @@ ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
             }
         }
         writer.rekordbox->writeHotCues(tgt.sourceId, m_plan.cuesToApply);
+        recordCuesLeftOut(ctx, tgt.filePath, tgt.sourceId, m_plan.cuesToApply);
         // export.pdb and exportLibrary.db are the SAME library in two
         // formats, not two catalogs, so a cue written to one and not the
         // other leaves rekordbox 7 showing a track the older export says
@@ -412,6 +413,7 @@ ChangeOutcome SyncPlanChange::apply(SaveContext &ctx)
         writer.engine->writeHotCues(tgt.sourceId, m_plan.cuesToApply);
     } else {
         writer.oneLibrary->writeCuesForPath(tgt.filePath, m_plan.cuesToApply);
+        recordCuesLeftOut(ctx, tgt.filePath, tgt.sourceId, m_plan.cuesToApply);
     }
     writer.session.noteItemApplied();
     ctx.log().record(logLine());

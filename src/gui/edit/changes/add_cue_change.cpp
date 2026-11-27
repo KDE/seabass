@@ -206,6 +206,7 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
         }
         ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot), "add-cue");
         sharedOneLibraryWriter(ctx, pioneerRoot).writeCuesForPath(track->filePath, cues);
+        recordCuesLeftOut(ctx, track->filePath, id, cues);
         ctx.log().record("add-cue: added " + kind + " cue at " + positionText + "ms to OneLibrary track id=" + id
                          + " (\"" + track->title + "\")");
         m_written = RekordboxWrite{track->filePath, cues, std::nullopt};
@@ -247,6 +248,9 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
     }
 
     writer->writeHotCues(id, cues);
+    if (m_format == "rekordbox") {
+        recordCuesLeftOut(ctx, track->filePath, id, cues);
+    }
     if (engineSession) {
         // Counted, because a session discards a scratch copy nothing was
         // applied to, and this cue with it.
@@ -287,6 +291,7 @@ ChangeOutcome AddCueChange::apply(SaveContext &ctx)
             } else {
                 ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneerRoot), "add-cue");
                 oneLibrary.writeCuesForPath(track->filePath, cues);
+                recordCuesLeftOut(ctx, track->filePath, id, cues);
                 ctx.log().record("add-cue: also wrote into OneLibrary");
             }
         } catch (const std::exception &e) {

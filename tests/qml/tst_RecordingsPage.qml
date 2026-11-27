@@ -45,6 +45,7 @@ TestCase {
             property string currentItem: ""
             property bool cancelRequested: false
             property string errorMessage: ""
+            property string stickRoot: "/media/u/TESTSTICK"
             property ListModel recordings: ListModel { id: rows }
             signal finished(var summary)
             signal lockRefused(var holder)
@@ -108,6 +109,9 @@ TestCase {
             property bool available: true
             property bool busy: false
             property bool cancelRequested: false
+            // The page's stick; an entry that names no stick is of it.
+            readonly property string homeStick: "/media/u/TESTSTICK"
+            property string currentStickRoot: fakeKeep.homeStick
             property string currentWavPath: ""
             property string currentRecording: ""
             property string currentFileName: ""
@@ -116,7 +120,8 @@ TestCase {
             property double progress: 0
             property var queued: []
             property var finishedJobs: []
-            readonly property bool hasWork: fakeKeep.busy || fakeKeep.queued.length > 0
+            // The sticks cancelFor() was asked for, in order.
+            property var cancelledSticks: []
             property int revision: 0
             property string errorMessage: ""
             property string coverPath: ""
@@ -164,19 +169,25 @@ TestCase {
             // The real rule: a kept copy first (kept while its FLAC is
             // there as it was, gone otherwise), whatever came after it;
             // else any outcome is a keep asked for and not ended kept.
-            function keepNotesFor(paths) {
+            function stickOf(entry) { return entry.stickRoot ?? fakeKeep.homeStick; }
+            function runsFor(stick) { return fakeKeep.busy && fakeKeep.currentStickRoot === stick; }
+            function runsElsewhere(stick) { return fakeKeep.busy && fakeKeep.currentStickRoot !== stick; }
+            function queuedFor(stick) { return fakeKeep.queued.filter(job => fakeKeep.stickOf(job) === stick); }
+            function finishedJobsFor(stick) { return fakeKeep.finishedJobs.filter(job => fakeKeep.stickOf(job) === stick); }
+            function hasWorkFor(stick) { return fakeKeep.runsFor(stick) || fakeKeep.queuedFor(stick).length > 0; }
+            function keepNotesFor(stick, paths) {
                 const notKept = [];
                 const kept = [];
                 const keptGone = [];
                 for (const path of paths) {
                     const copy = fakeKeep.keptCopies[path];
-                    if (copy) {
+                    if (copy && fakeKeep.stickOf(copy) === stick) {
                         (copy.there ? kept : keptGone).push({recording: copy.recording, fileName: copy.fileName,
                                                              folder: copy.folder});
                         continue;
                     }
                     const outcome = fakeKeep.outcomes[path];
-                    if (outcome) {
+                    if (outcome && fakeKeep.stickOf(outcome) === stick) {
                         notKept.push(outcome.recording);
                     }
                 }
@@ -215,9 +226,18 @@ TestCase {
                 }
                 return fakeKeep.takes;
             }
-            function cancel() { fakeKeep.calls.push("cancel"); }
-            function outcomeFor(path) { return fakeKeep.outcomes[path] ?? ({}); }
-            function dismissFinished() { fakeKeep.calls.push("dismiss"); fakeKeep.finishedJobs = []; }
+            function cancelFor(stick) {
+                fakeKeep.calls.push("cancel");
+                fakeKeep.cancelledSticks = fakeKeep.cancelledSticks.concat([stick]);
+            }
+            function outcomeFor(stick, path) {
+                const outcome = fakeKeep.outcomes[path];
+                return outcome && fakeKeep.stickOf(outcome) === stick ? outcome : ({});
+            }
+            function dismissFinishedFor(stick) {
+                fakeKeep.calls.push("dismiss");
+                fakeKeep.finishedJobs = fakeKeep.finishedJobs.filter(job => fakeKeep.stickOf(job) !== stick);
+            }
             function showInFolder(path) { fakeKeep.calls.push("show:" + path); }
             function localPath(path) { return path.startsWith("file://") ? path.substring(7) : path; }
             function folderUrl(folder) { return "file://" + folder; }
@@ -792,6 +812,72 @@ TestCase {
         saveScreenshot(page, "recordings-keep-progress-open");
         mouseClick(findChild(strip, "passiveProgressCancel"));
         compare(page.keepController.calls[page.keepController.calls.length - 1], "cancel", "Cancel by mouse");
+        compare(page.keepController.cancelledSticks, ["/media/u/TESTSTICK"], "of this stick");
+        compare(findChild(page, "otherStickKeepLabel").visible, false, "no other stick's work to speak of");
+    }
+
+    // The keep controller is the window's, for every stick: another
+    // stick's job in hand is not this page's, and one plain line says it
+    // is running, so that a job of this stick is seen to wait for it.
+    function test_anotherSticksWorkIsSaid() {
+        const page = makePage(addRecordings, keep => {
+            keep.busy = true;
+            keep.currentStickRoot = "/media/u/OTHERSTICK";
+            keep.currentWavPath = "/media/u/OTHERSTICK/Sessions/Elsewhere.wav";
+            keep.currentRecording = "Elsewhere.wav";
+            keep.currentFileName = "Elsewhere.flac";
+            keep.currentFolder = "/home/dj/Music/Own Recordings";
+            keep.progressStep = "encoding";
+            keep.progress = 0.4;
+            keep.queued = [{stickRoot: "/media/u/OTHERSTICK", wavPath: "/media/u/OTHERSTICK/Sessions/Later.wav",
+                            recording: "Later.wav", fileName: "Later.flac", folder: "/home/dj/Music/Own Recordings"},
+                           {wavPath: "/media/u/TESTSTICK/Sessions/Session-0002.wav", recording: "Session-0002.wav",
+                            fileName: "DJ Kelp - Early Set.flac", folder: "/home/dj/Music/Own Recordings"}];
+            keep.finishedJobs = [{state: "kept", stickRoot: "/media/u/OTHERSTICK", wavPath: "/media/u/OTHERSTICK/Sessions/Before.wav",
+                                  recording: "Before.wav", fileName: "Before.flac", folder: "/f", flacPath: "/f/Before.flac",
+                                  leftBehind: "", message: ""}];
+            keep.outcomes = {
+                "/media/u/TESTSTICK/Sessions/Session-0002.wav": {state: "queued", fileName: "DJ Kelp - Early Set.flac",
+                                                                  folder: "/home/dj/Music/Own Recordings"},
+            };
+            keep.revision++;
+        });
+        verify(waitForPolish(page.Window.window));
+        const other = findChild(page, "otherStickKeepLabel");
+        verify(other.visible && other.height > 0, "the line about another stick's work shows");
+        compare(other.text, "A recording from another stick is being kept. What you keep from this stick waits until "
+                + "that has ended.");
+        const strip = findChild(page, "keepProgress");
+        verify(strip.visible, "the strip shows this stick's job that waits");
+        compare(findChild(strip, "passiveProgressSummary").text, "1 recording(s) waiting to be kept");
+        compare(findChild(strip, "passiveProgressBar").value, 0, "nothing of this stick's is under way yet");
+        mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
+        verify(waitForPolish(page.Window.window));
+        compare(findAll(strip, "passiveProgressActivityLine").map(l => l.text),
+                ["Waiting: Session-0002.wav, as DJ Kelp - Early Set.flac"],
+                "this stick's job only, nothing of the other stick's");
+        compare(findChild(row(page, 1), "keptLabel").text, "Waits to be kept as DJ Kelp - Early Set.flac");
+        mouseClick(findChild(page, "selectAllButton"));
+        compare(findChild(page, "deleteButton").enabled, false, "a job of this stick waits: nothing is deleted");
+        verify(strip.cancellable, "this stick's waiting job can be dropped");
+        mouseClick(findChild(strip, "passiveProgressCancel"));
+        compare(page.keepController.cancelledSticks, ["/media/u/TESTSTICK"], "the cancel is of this stick");
+
+        // Only the other stick has work: this stick's strip has nothing to
+        // show, its Delete is free, and the line stays.
+        page.keepController.queued = [page.keepController.queued[0]];
+        page.keepController.revision++;
+        tryVerify(() => !strip.visible, 2000, "no job of this stick: no strip");
+        verify(waitForPolish(page.Window.window));
+        verify(other.visible, "the line about the other stick stays");
+        verify(findChild(page, "deleteButton").enabled, "another stick's work does not hold off this stick's Delete");
+        saveScreenshot(page, "recordings-keep-another-stick");
+
+        // The other stick's work ends: the line goes.
+        page.keepController.busy = false;
+        page.keepController.queued = [];
+        page.keepController.revision++;
+        tryVerify(() => !other.visible, 2000, "nothing runs: the line goes");
     }
 
     // Two pieces of a step's count: the steps before are done, the one in
