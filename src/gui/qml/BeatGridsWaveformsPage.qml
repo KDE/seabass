@@ -271,15 +271,12 @@ Page {
                         width: parent.width
                         spacing: Theme.tightSpacing
 
-                        // What this page does, in two sentences.
+                        // What this page does, in a few words.
                         Label {
                             objectName: "introLabel"
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            text: "Copies rekordbox's beat grids and waveforms into this stick's Engine library, "
-                                + "for the tracks you tick, each grid with its waveform. A grid locked or moved on "
-                                + "the player stays, with its waveform, unless you tick Overwrite Locked "
-                                + "(Hand-Edited) Beat Grids. Engine's own analysis is kept, so it can be restored."
+                            text: "Copies rekordbox's beat grids and waveforms into Engine."
                         }
                     }
                 }
@@ -498,12 +495,37 @@ Page {
                         ToolTip.text: "Untick every track, in every playlist"
                         onClicked: root.controller.setPlaylistTicked("", false)
                     }
-                    Item {
+                    // What the ticked tracks would get, on the helpers' line
+                    // rather than a line of its own: one line, the whole of
+                    // it on hover.
+                    Label {
+                        id: summaryLabel
+                        objectName: "summaryLabel"
                         Layout.fillWidth: true
+                        Layout.leftMargin: Theme.rowSpacing
+                        horizontalAlignment: Text.AlignRight
+                        elide: Text.ElideRight
+                        color: Theme.textMuted
+                        text: root.controller.summaryText
+                        ToolTip.visible: summaryHover.hovered && truncated
+                        ToolTip.text: text
+                        HoverHandler {
+                            id: summaryHover
+                        }
+                    }
+                    // How many playlists are ticked, which the closed combo
+                    // cannot show.
+                    Label {
+                        id: tickedPlaylistsLabel
+                        objectName: "tickedPlaylistsLabel"
+                        visible: text.length > 0
+                        color: Theme.textMuted
+                        font.pointSize: Theme.fontSmall
+                        text: root.tickedPlaylistsText
                     }
                 }
 
-                // What the ticked tracks would get, and the action.
+                // Why ticked tracks are left alone, and the save's state.
                 RowLayout {
                     objectName: "summaryRow"
                     Layout.fillWidth: true
@@ -511,41 +533,13 @@ Page {
                     // folded away or has nothing to say.
                     // (Their own conditions, not their `visible`: that is
                     // false while this row is hidden, and it would stay so.)
-                    visible: root.usable && (summaryLabel.fold < 1 || tickedPlaylistsLabel.text.length > 0
-                        || (leftAloneLabel.text.length > 0 && headerCollapse.progress < 1) || root.staged
+                    visible: root.usable && ((leftAloneLabel.text.length > 0 && headerCollapse.progress < 1) || root.staged
                         || (editHost.session !== null && editHost.session.canUndo === true))
                     spacing: Theme.rowSpacing
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignVCenter
                         spacing: 2
-                        // With nothing ticked it only says how to start: that
-                        // folds away with the explanation when the list is
-                        // scrolled. What ticked tracks would get stays.
-                        Label {
-                            id: summaryLabel
-                            objectName: "summaryLabel"
-                            readonly property real fold: root.controller.tickedCount > 0 ? 0 : headerCollapse.progress
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: implicitHeight * (1 - fold)
-                            visible: fold < 1
-                            opacity: 1 - fold
-                            clip: true
-                            wrapMode: Text.WordWrap
-                            text: root.controller.summaryText
-                        }
-                        // How many playlists are ticked, which the closed
-                        // combo cannot show.
-                        Label {
-                            id: tickedPlaylistsLabel
-                            objectName: "tickedPlaylistsLabel"
-                            Layout.fillWidth: true
-                            visible: text.length > 0
-                            elide: Text.ElideRight
-                            color: Theme.textMuted
-                            font.pointSize: Theme.fontSmall
-                            text: root.tickedPlaylistsText
-                        }
                         // A note, not a control: it folds away with the
                         // explanation when the list is scrolled.
                         Label {

@@ -1123,7 +1123,7 @@ TestCase {
         const body = findChild(o.page, "pageBody");
         const left = body.mapToItem(o.page, 0, 0).x;
         compare(left, Theme.pageMargin);
-        for (const name of ["introLabel", "summaryLabel", "trackList", "breadcrumb"]) {
+        for (const name of ["introLabel", "trackList", "breadcrumb"]) {
             compare(findChild(o.page, name).mapToItem(o.page, 0, 0).x, left, name + " is on the page's left line");
         }
         const box = findChild(findChild(o.page, "gridsCheckBox"), "seabassCheckIndicator");
@@ -1313,11 +1313,12 @@ TestCase {
         verify(details !== null, "the explanation is one block that folds");
         tryVerify(() => !details.visible, 2000, "scrolling folds the intro away");
         compare(intro.visible, false);
-        compare(findChild(o.page.header, "summaryLabel").visible, false, "and \"Nothing is ticked\" with it");
-        verify(o.page.header.height < fullHeader - 40, "folded " + o.page.header.height + ", was " + fullHeader);
+        verify(o.page.header.height <= fullHeader - intro.implicitHeight,
+               "folded " + o.page.header.height + ", was " + fullHeader);
         compare(findChild(o.page.header, "summaryRow").visible, false,
                 "nothing ticked: the summary's row is gone, gap and all");
-        for (const name of ["breadcrumb", "optionsRow", "stageButton", "selectAllButton", "playlistPicker"]) {
+        for (const name of ["breadcrumb", "optionsRow", "stageButton", "selectAllButton", "playlistPicker",
+                            "summaryLabel"]) {
             const control = findChild(o.page.header, name);
             verify(control.visible, name + " stays");
             const top = control.mapToItem(o.page, 0, 0).y;
@@ -1333,7 +1334,7 @@ TestCase {
         list.positionViewAtBeginning();
         tryCompare(o.page.header, "height", fullHeader, 2000, "the header unfolds at the top");
         verify(details.visible && intro.visible);
-        tryVerify(() => findChild(o.page.header, "summaryLabel").visible, 2000, "the line is back at the top");
+        verify(findChild(o.page.header, "summaryLabel").visible, "what is ticked shows all along");
     }
 
     // The boxes, the playlist and the buttons on the ticks share one row
