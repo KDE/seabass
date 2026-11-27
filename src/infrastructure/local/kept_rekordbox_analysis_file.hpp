@@ -279,6 +279,13 @@ struct KeptAnalysisFileInfo
 // not there is an empty list; one that cannot be read gives what was read
 // and `error` saying why (required).
 std::vector<KeptAnalysisFileInfo> listKeptRekordboxAnalyses(const std::filesystem::path &stickRoot, std::string *error);
-std::vector<KeptAnalysisFileInfo> listKeptEngineAnalyses(const std::filesystem::path &stickRoot, std::string *error);
+// With `wanted`, an Engine entry whose file `wanted` turns down is left
+// out unread (its file is not opened).
+std::vector<KeptAnalysisFileInfo> listKeptEngineAnalyses(
+    const std::filesystem::path &stickRoot, std::string *error,
+    const std::function<bool(const std::filesystem::path &file)> &wanted = {});
+// For a test: how many kept Engine entries a listing parsed since the
+// process started.
+int keptEngineEntriesParsedForTesting();
 
 }  // namespace seabass::infrastructure::local

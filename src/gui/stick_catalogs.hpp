@@ -60,6 +60,12 @@ struct StickCatalogRead
 StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, application::ProgressReporter &progress,
                                         const application::CancellationToken &cancel);
 
+// As readAllStickCatalogs(), at the first stage of each catalog
+// (LibraryCatalogCache::Detail::Tracks: the rows and their playlists, no
+// cues, no lengths probed), so a catalog Browse has loaded is not read
+// again. Quiet: no progress.
+StickCatalogRead readAllStickCatalogTracks(const std::string &libraryPath, const application::CancellationToken &cancel);
+
 // What readAllStickCatalogs(libraryPath) would announce now, in the
 // units its reads tick (LibraryCatalogCache::plannedUnits() per catalog
 // present), for a caller announcing one bar before the first read

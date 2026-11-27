@@ -59,10 +59,12 @@ namespace seabass::gui
 //   the kept one did (an export reused the folder);
 // - the kept entry's record is missing or cannot be read: Seabass cannot
 //   tell its own grids from one changed since;
-// - the grid in the track's .DAT is neither one Seabass wrote
-//   (isSeabassRekordboxGrid(): the record's, any analysis ledger entry's,
-//   or any record's) nor the kept original's: it was changed outside
-//   Seabass since, and that is never written over;
+// - the grid in any of the track's kept .DAT files is neither one Seabass
+//   wrote (isSeabassRekordboxGrid(): the record's, any analysis ledger
+//   entry's, or any record's) nor that file's kept original's: it was
+//   changed outside Seabass since, and that is never written over
+//   (prepareAnalysisRestore() leaves such a track out before it is
+//   staged; this is the same check at the save);
 // - Engine's row changed since Seabass wrote it (the player analysed it
 //   again, or the DJ moved or locked the grid), or what is kept of it is
 //   damaged or of another row;
@@ -82,11 +84,25 @@ namespace seabass::gui
 // grid planned. A cue set or changed since stays where it is, and so does
 // every cue where Analyse again moved none (declined or refused): then no
 // move is offered at all. Each library is matched on its own (rekordbox's
-// set, DeviceLibrary's with OneLibrary's kept in step, and Engine's rows),
-// and the move back is all or nothing across them: where DeviceLibrary's
-// and OneLibrary's rows hold different cue points, or Engine holds moved
-// cues and keeps Seabass's grid, no cue of the track moves anywhere, and
+// set, DeviceLibrary's with OneLibrary's kept in step, and Engine's rows).
+// Cue points follow the grid of their own library: where a library's grid
+// goes back, its moved cues go back with it; where Engine keeps the grid
+// it has (the player's analysis kept is Copy Beat Grids', or none was
+// kept), Engine's cues stay where Analyse again put them, on that grid.
+// The libraries then hold different cue points, as they hold different
+// grids, and the save's summary says so for the track: which library went
+// back, which stayed and why. The switch decides for every library whose
+// grid goes back, all or nothing: where DeviceLibrary's and OneLibrary's
+// rows hold different cue points, no cue of the track moves anywhere, and
 // the log and the summary say why.
+//
+// What is kept is taken away only for what went back. rekordbox's entry
+// goes once rekordbox's analysis is back, unless the player's analysis
+// Analyse again kept with it could not go back to its row: then the entry
+// stays, its record naming that analysis and its Engine cue moves, only
+// the moves of rekordbox's cues that went back taken out of it. The
+// player's analysis kept by Copy Beat Grids and its beat grid ledger line
+// are never touched here: Restore Engine's Analysis needs nothing else.
 //
 // Every file written is read back and compared before it is believed.
 // After the save landed: the analysis ledger's entry for the track is

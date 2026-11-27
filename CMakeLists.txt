@@ -4169,10 +4169,18 @@ if(TARGET seabass_edit)
         if(TARGET seabass_audio_qt)
             target_link_libraries(kept_analysis_rules_test PRIVATE seabass_audio_qt)
         endif()
-        add_test(NAME kept_analysis_rules_test COMMAND kept_analysis_rules_test
-            ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
-        set_tests_properties(kept_analysis_rules_test PROPERTIES LABELS "integration"
-            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+        # One entry per group of cases (KEPT_RULES_CASE), each importing
+        # only its cases' playlists: run whole it takes some 400 s, past
+        # the per-test limit on slower CI machines. Each group stands on
+        # its own; case 12 takes the stick's lock away and runs last in
+        # its group. About 100 to 140 s each on a Linux Debug build.
+        foreach(_kept_group "1" "2,3,4,5,6,7,8,9,10,11" "13,14,19,20" "15,16,17,18,21,22,23,24,12")
+            string(REPLACE "," "_" _kept_name "${_kept_group}")
+            add_test(NAME kept_analysis_rules_test_${_kept_name} COMMAND kept_analysis_rules_test
+                ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+            set_tests_properties(kept_analysis_rules_test_${_kept_name} PROPERTIES LABELS "integration" TIMEOUT 600
+                ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen;KEPT_RULES_CASE=${_kept_group}")
+        endforeach()
     endif()
 
     # The #73 hardware round of 2026-11-13 replayed on what the stick

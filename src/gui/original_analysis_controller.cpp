@@ -512,11 +512,15 @@ KeptAnalysisSpaceController::Listing KeptAnalysisSpaceController::listKept(const
     // of. One that Beat Grids & Waveforms kept alone is that page's, with
     // its own way back (Restore Engine's Analysis), and is not listed:
     // Free Up Space never offered to remove those.
+    // Filtered by name before any is opened: nothing kept of rekordbox's,
+    // nothing of the player's is read.
     std::string engineError;
-    for (auto &info : infrastructure::local::listKeptEngineAnalyses(root, &engineError)) {
-        if (analysedAgain.count(stemOf(info.file)) == 0) {
-            continue;
-        }
+    const auto ofAnalysedAgain = [&](const fs::path &file) {
+        return analysedAgain.count(stemOf(pathToUtf8(file))) > 0;
+    };
+    for (auto &info : analysedAgain.empty() ? std::vector<infrastructure::local::KeptAnalysisFileInfo>{}
+                                            : infrastructure::local::listKeptEngineAnalyses(root, &engineError,
+                                                                                            ofAnalysedAgain)) {
         (engineTrackGone(info, engineLibrary) ? engineGone : engine).files.push_back(std::move(info));
     }
     const std::string both = error.empty() ? engineError : engineError.empty() ? error : error + "; " + engineError;

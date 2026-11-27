@@ -90,8 +90,13 @@ enum class KeepOriginal {
     // the track's analysis was changed outside Seabass since (rekordbox
     // analysed it anew, or the DJ set its grid). Keeping it would replace
     // the kept original and writing over it would lose it, so the track is
-    // left alone: the person restores the original first, or removes it in
-    // Free Up Space to let the next Analyse again keep this one.
+    // left alone, and Restore leaves it alone too. Removing the kept
+    // original in Free Up Space lets the next Analyse again keep this one,
+    // and discards the original Seabass kept.
+    //
+    // Analyse again asks this of every analysis file it writes, each with
+    // that file's own kept original: one ChangedOutside or CannotTell
+    // decides for the track.
     ChangedOutside,
     // Seabass cannot tell whether the grid is its own: an original is kept
     // and its record is missing or cannot be read, or nothing is kept, the
@@ -147,7 +152,8 @@ std::shared_ptr<const KeptAnalysisNames> relistKeptAnalysisNames(const std::stri
 // keptCountFromCache().
 void noteKeptAnalysisPlaylist(const std::string &stickId, const std::filesystem::path &stickRoot,
                               const std::string &playlist, std::vector<std::string> names);
-// The count for the playlist from what is kept in memory, at once: -1 when
+// The count for the playlist from what is kept in memory, at once: 0 when
+// the stick's rekordbox kept folder is known to hold nothing, else -1 when
 // the stick's names or the playlist's tracks are not known yet.
 int keptCountFromCache(const std::string &stickId, const std::string &playlist);
 // Each of `files` (absolute, UTF-8) in the kept folders of the stick at

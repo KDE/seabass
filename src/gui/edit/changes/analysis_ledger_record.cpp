@@ -212,17 +212,19 @@ void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const 
         const auto landedChange = [&](const QString &changeId) {
             return after.appliedIds.contains(changeId) && !after.skippedIds.contains(changeId);
         };
-        // The tracks this save would record, take out or move.
+        // The tracks this save would record or take out, and the entries
+        // it would move (a relink): a move is no track analysed.
         std::size_t tracks = 0;
+        std::size_t moves = 0;
         for (const QString &changeId : after.appliedIds) {
             if (landedChange(changeId)) {
                 tracks += record->forgetByChange.count(changeId) + record->byChange.count(changeId);
-                if (const auto moves = record->renameByChange.find(changeId); moves != record->renameByChange.end()) {
-                    tracks += moves->second.size();
+                if (const auto renames = record->renameByChange.find(changeId); renames != record->renameByChange.end()) {
+                    moves += renames->second.size();
                 }
             }
         }
-        if (tracks == 0) {
+        if (tracks == 0 && moves == 0) {
             return;
         }
         const fs::path root = pathFromUtf8(stickRoot);
@@ -231,6 +233,16 @@ void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const 
         std::string incompleteSince;
         const AnalysisLedger previous =
             infrastructure::local::readAnalysisLedger(root, &readError, &fault, &incompleteSince);
+        // A save that only moves entries never replaces, moves aside or
+        // warns about a ledger it cannot believe: the file stays exactly as
+        // it is, and the log says so.
+        if (tracks == 0 && fault != infrastructure::local::AnalysisLedgerFault::None) {
+            ctx.log().record("analysis ledger: " + std::string(fault == infrastructure::local::AnalysisLedgerFault::Damaged
+                                                                   ? "damaged"
+                                                                   : "cannot be read")
+                             + " (" + readError + "), so its entries were not moved and it is left as it is");
+            return;
+        }
         if (fault == infrastructure::local::AnalysisLedgerFault::Unreadable) {
             // What it holds is not known, so it is not replaced: this
             // save's entries go unrecorded, and the save says so.
@@ -240,8 +252,8 @@ void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const 
                 "Your changes are saved, but Seabass could not record which tracks it analysed (" + readError
                 + "), so it will not know them for its own analyses later. The record on the stick cannot be read, so "
                   "Seabass leaves it as it is and says this at every save. Check the stick for errors on a computer. "
-                  "If it stays unreadable, \"seabass-cli analysis-ledger --reset\" moves the record aside, deleting "
-                  "nothing, and the next save starts a new one.");
+                  "If it stays unreadable, Seabass's command line tool, seabass-cli, can move the record aside, "
+                  "deleting nothing, and the next save starts a new one.");
         }
         // A damaged ledger is never written over: whatever it still holds
         // stays on the stick, moved aside, and a new one starts with this

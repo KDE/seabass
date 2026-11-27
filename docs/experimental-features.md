@@ -114,8 +114,14 @@ from day one.
   analysing again leaves the first original in place, and a track whose
   grid is neither the kept one nor Seabass's (rekordbox analysed it anew,
   or the DJ set its grid, and it was exported over the stick) is left
-  alone, with the advice to restore the original first or remove it in
-  Free Up Space. A track is left as it is, with the reason in the log and
+  alone, and Restore leaves it alone too: removing the kept original in
+  Free Up Space lets Seabass analyse it again, which discards the
+  original Seabass kept. Analyse again decides this on every analysis
+  file it writes (DeviceLibrary's and OneLibrary's rows may name two),
+  each against its own kept original, and leaves the track alone when
+  its rows name other analysis files than the ones the original was kept
+  from (a new export moved them): written, the kept original would have
+  no way back. A track is left as it is, with the reason in the log and
   the save's summary, when its audio file's size cannot be read or is not
   the size it was analysed at, when the analysis ledger cannot be read
   and the grid is not known, when its kept original has no record that
@@ -126,7 +132,24 @@ from day one.
   before, its maker unknown. Library Health's relink of a moved file
   carries what is kept, and both ledgers' lines, to the track's new name,
   as far as it can: it never fails for them, and a kept original already
-  under the new name stays there.
+  under the new name stays there. An entry it writes under the new name
+  whose record cannot then be written is taken away again, and the old
+  pair stays. A relink with nothing else in the save leaves an analysis
+  ledger or beat grid ledger it cannot believe (damaged, unreadable)
+  exactly as it is: nothing replaced, nothing moved aside, no warning,
+  a line in the log. Where the analysis ledger cannot be read, the
+  command line moves it aside, deleting nothing:
+  `seabass-cli analysis-ledger --reset`; the save's summary names the
+  tool, not the command.
+
+  Seabass can take an earlier analysis of its own for rekordbox's in
+  three cases: writing the analysis ledger failed after an import (the
+  save says so); Analyse again ran on a track that had nothing to keep;
+  or the stick's Seabass folder was deleted, or the stick copied without
+  it. A later Analyse again then keeps that earlier analysis of Seabass's
+  as the original, and Restore puts it back rather than rekordbox's. No
+  data is lost: rekordbox's own analysis was no longer on the stick in
+  any of the three, and what Restore puts back is what was there before.
 
   Restore original analysis and Free Up Space's list of what is kept are
   not behind the Experimental switch: with the switch off they still
@@ -150,9 +173,20 @@ from day one.
   A track is left as it is, with the reason, when its audio file is not
   the size it was, when its rows name other analysis files, when its
   record is missing or damaged, or when its grid is neither the original
-  nor one Seabass wrote: Seabass never writes over that. Cue points go
-  back only where they are still exactly where Analyse again put them,
-  never onto another cue, and in every library or none. `seabass-cli kept-analysis` counts what
+  nor one Seabass wrote: Seabass never writes over that; such a track is
+  left out when the restore is prepared, under "Left as they are" with
+  that reason, and never staged. Cue points follow the grid of their own
+  library: where a library's grid goes back, the cue points Analyse
+  again moved there go back, only where they are still exactly where it
+  put them and never onto another cue; where Engine keeps the grid it
+  has (the player's analysis kept is Copy Beat Grids', or none was
+  kept), its cue points stay on it. The libraries may then hold
+  different cue points, as they hold different grids, and the save's
+  summary says, per track, which library went back, which stayed and
+  why. The switch per track decides for every library whose grid goes
+  back, all or nothing. What is kept is removed only for what went
+  back: the player's analysis kept by Copy Beat Grids, and its beat grid
+  ledger line, stay for Restore Engine's Analysis. `seabass-cli kept-analysis` counts what
   is kept on a stick.
 
   Free Up Space lists what is kept, with its size: per track about 235 kB

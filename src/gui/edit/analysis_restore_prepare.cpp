@@ -4,6 +4,8 @@
 
 #include "gui/edit/analysis_restore_prepare.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -16,6 +18,7 @@
 #include "gui/edit/changes/kept_analysis_save.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
+#include "infrastructure/local/analysis_ledger_file.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/kept_rekordbox_analysis_file.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
@@ -50,17 +53,35 @@ struct StickPlaylist
     std::vector<PlaylistFile> files;
 };
 
-StickPlaylist readPlaylist(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel)
+std::atomic<int> &catalogReads()
+{
+    static std::atomic<int> reads{0};
+    return reads;
+}
+
+// Every catalog of the stick, at full detail for a restore (its cues) or
+// at the first stage for a count (the rows and their playlists).
+StickCatalogRead readCatalogs(const std::string &libraryPath, bool full, const application::CancellationToken &cancel)
+{
+    ++catalogReads();
+    application::NullProgressReporter quiet;
+    return full ? readAllStickCatalogs(libraryPath, quiet, cancel) : readAllStickCatalogTracks(libraryPath, cancel);
+}
+
+std::string libraryPathOf(const AnalysisRestoreRequest &request)
+{
+    return request.rekordboxPath.isEmpty() ? request.enginePath.toStdString() : request.rekordboxPath.toStdString();
+}
+
+StickPlaylist readPlaylist(const AnalysisRestoreRequest &request, bool full, const application::CancellationToken &cancel)
 {
     StickPlaylist out;
-    const std::string libraryPath =
-        request.rekordboxPath.isEmpty() ? request.enginePath.toStdString() : request.rekordboxPath.toStdString();
+    const std::string libraryPath = libraryPathOf(request);
     if (libraryPath.empty()) {
         out.refusal = "There is no stick to restore tracks on.";
         return out;
     }
-    application::NullProgressReporter quiet;
-    const StickCatalogRead read = readAllStickCatalogs(libraryPath, quiet, cancel);
+    const StickCatalogRead read = readCatalogs(libraryPath, full, cancel);
     if (!read.failed.empty()) {
         std::string names;
         for (const std::string &name : read.failed) {
@@ -163,19 +184,84 @@ bool engineKeptFor(const PlaylistFile &file, const fs::path &root, const std::st
     return false;
 }
 
+// The grids the stick records as Seabass's beyond a track's own record
+// (every analysis ledger entry's, every kept record's), read once for a
+// prepare and only when a track's own record does not know its grid.
+struct SeabassGridsOnStick
+{
+    std::optional<std::set<std::string>> grids;
+
+    bool knows(const fs::path &root, const std::string &grid)
+    {
+        if (!grids) {
+            grids.emplace();
+            std::string error;
+            for (const auto &[key, entry] : infrastructure::local::readAnalysisLedger(root, &error)) {
+                if (!entry.rekordboxGrid.empty()) {
+                    grids->insert(entry.rekordboxGrid);
+                }
+            }
+            for (const std::string &one : infrastructure::local::keptRekordboxSeabassGrids(root, &error)) {
+                grids->insert(one);
+            }
+        }
+        return grids->count(grid) > 0;
+    }
+};
+
+// Why the track's analysis cannot go back because it was changed outside
+// Seabass since its original was kept: a kept .DAT whose grid on the
+// stick is neither that file's kept original's nor one Seabass wrote (as
+// RestoreAnalysisChange decides it at the save). Empty when every file is
+// one Restore may write over, or cannot be read here (the save then says
+// why).
+std::string changedOutsideIn(const infrastructure::local::KeptRekordboxAnalysis &kept,
+                             const infrastructure::local::KeptRekordboxRecord &record, const fs::path &root,
+                             SeabassGridsOnStick &seabass)
+{
+    for (const auto &set : kept.files) {
+        if (!set.dat || set.datPath.size() < 2) {
+            continue;
+        }
+        std::string now;
+        std::string original;
+        try {
+            const fs::path dat = root / pathFromUtf8(set.datPath.substr(1));
+            std::error_code ec;
+            if (!fs::is_regular_file(dat, ec)) {
+                continue;
+            }
+            now = infrastructure::rekordbox::pqtzGridFingerprint(infrastructure::rekordbox::AnlzFile::readRaw(pathToUtf8(dat)));
+            original = infrastructure::rekordbox::pqtzGridFingerprint(
+                infrastructure::rekordbox::AnlzFile::fromBytes(*set.dat, "the kept " + set.datPath));
+        } catch (const std::exception &) {
+            continue;
+        }
+        if (now == original || std::find(record.seabassGrids.begin(), record.seabassGrids.end(), now) != record.seabassGrids.end()
+            || seabass.knows(root, now)) {
+            continue;
+        }
+        return "its beat grid in " + set.datPath
+               + " was changed outside Seabass since its original analysis was kept (it is neither that original "
+                 "nor one Seabass wrote), and Seabass does not write over it";
+    }
+    return {};
+}
+
 }  // namespace
 
 PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &request,
                                                const application::CancellationToken &cancel)
 {
     PreparedAnalysisRestore prepared;
-    const StickPlaylist stick = readPlaylist(request, cancel);
+    const StickPlaylist stick = readPlaylist(request, true, cancel);
     if (!stick.refusal.empty()) {
         prepared.refusal = stick.refusal;
         return prepared;
     }
     prepared.tracks = static_cast<int>(stick.files.size());
     infrastructure::local::StickKeptRekordboxAnalysisStore rekordboxKept(stick.root);
+    SeabassGridsOnStick seabassGrids;
     std::vector<std::shared_ptr<RestoreAnalysisChange>> changes;
     for (const PlaylistFile &file : stick.files) {
         cancel.throwIfCancelled();
@@ -210,6 +296,13 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
                                           + recorded.error + ")"});
             continue;
         }
+        // A grid changed outside Seabass since the original was kept is
+        // never written over: such a track is left as it is, not staged.
+        if (const std::string changed = changedOutsideIn(found.entry, recorded.record, stick.root, seabassGrids);
+            !changed.empty()) {
+            prepared.leftAlone.push_back({file.filePath, changed});
+            continue;
+        }
         std::string engineDamaged;
         const bool engineKept = engineKeptFor(file, stick.root, key, recorded.record.engineKept, &engineDamaged);
         std::vector<std::string> datPaths;
@@ -235,7 +328,9 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
                 for (const auto &move : found.entry.cueMoves) {
                     engineMoved = engineMoved || move.library == "engine";
                 }
-                if (engineMoved) {
+                // Only where Engine's grid goes back: one that keeps the grid
+                // it has keeps its cues on it.
+                if (engineMoved && engineKept) {
                     review.plan = cueMovesBack(found.entry.cueMoves, "engine", {});
                 }
             }
@@ -276,7 +371,16 @@ std::vector<std::string> keptNamesOf(const std::vector<PlaylistFile> &files, con
 
 int countKeptOriginals(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel)
 {
-    const StickPlaylist stick = readPlaylist(request, cancel);
+    const std::string libraryPath = libraryPathOf(request);
+    if (libraryPath.empty()) {
+        return -1;
+    }
+    // Nothing kept on the stick: nothing else is read.
+    const fs::path stickRoot = pathFromUtf8(infrastructure::paths::normalStickRootForCatalogPath(libraryPath));
+    if (keptAnalysisNamesOf(stickIdOr(request.stickId, stickRoot), stickRoot)->rekordbox.empty()) {
+        return 0;
+    }
+    const StickPlaylist stick = readPlaylist(request, false, cancel);
     if (!stick.refusal.empty()) {
         return -1;
     }
@@ -298,13 +402,19 @@ int countKeptOriginals(const AnalysisRestoreRequest &request, const application:
 
 void warmKeptCounts(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel)
 {
-    const std::string libraryPath =
-        request.rekordboxPath.isEmpty() ? request.enginePath.toStdString() : request.rekordboxPath.toStdString();
+    const std::string libraryPath = libraryPathOf(request);
     if (libraryPath.empty()) {
         return;
     }
-    application::NullProgressReporter quiet;
-    const StickCatalogRead read = readAllStickCatalogs(libraryPath, quiet, cancel);
+    // The kept folders first: with nothing of rekordbox's kept, every
+    // playlist's count is 0 (keptCountFromCache()), and no library is read.
+    const fs::path stickRoot = pathFromUtf8(infrastructure::paths::normalStickRootForCatalogPath(libraryPath));
+    if (relistKeptAnalysisNames(stickIdOr(request.stickId, stickRoot), stickRoot)->rekordbox.empty()) {
+        return;
+    }
+    // The rows and their playlists only, as Browse has them loaded (the
+    // catalog cache serves its entry at once).
+    const StickCatalogRead read = readCatalogs(libraryPath, false, cancel);
     if (!read.failed.empty()) {
         return;
     }
@@ -334,11 +444,15 @@ void warmKeptCounts(const AnalysisRestoreRequest &request, const application::Ca
             }
         }
     }
-    relistKeptAnalysisNames(id, root);
     for (const auto &[playlist, files] : byPlaylist) {
         noteKeptAnalysisPlaylist(id, root, playlist,
                      pioneerRoot.isEmpty() ? std::vector<std::string>{} : keptNamesOf(files, root));
     }
+}
+
+int keptCountCatalogReadsForTesting()
+{
+    return catalogReads().load();
 }
 
 }  // namespace seabass::gui

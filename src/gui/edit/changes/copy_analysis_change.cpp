@@ -169,8 +169,15 @@ void recordLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot)
         const auto root = pathFromUtf8(stickRoot);
         const infrastructure::local::BeatGridLedger previous = infrastructure::local::readBeatGridLedger(root, &error);
         // A ledger that cannot be read is replaced, as the command line
-        // does: nothing in it was believed anyway.
+        // does: nothing in it was believed anyway. Not by a save that only
+        // moves lines (a relink): it has nothing of its own to record, so
+        // the file stays exactly as it is, and the log says so.
         const bool unreadable = !error.empty();
+        if (unreadable && !anyWrite) {
+            ctx.log().record("beat grids: the ledger cannot be read (" + error
+                             + "), so its lines were not moved and it is left as it is");
+            return;
+        }
         infrastructure::local::BeatGridLedger next = previous;
         int recorded = 0;
         int dropped = 0;

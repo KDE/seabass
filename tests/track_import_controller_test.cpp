@@ -2904,7 +2904,7 @@ int main(int argc, char **argv)
             assert(saved.value("error").toString().isEmpty() && saved.value("written").toInt() >= 1);
             assert(saved.value("warning").toString().contains(
                 QLatin1String("Your changes are saved, but Seabass could not record which tracks it analysed")));
-            assert(saved.value("warning").toString().contains(QLatin1String("seabass-cli analysis-ledger --reset"))
+            assert(saved.value("warning").toString().contains(QLatin1String("Seabass's command line tool, seabass-cli, can move the record aside"))
                    && "the warning says what the person can do");
             assert(fs::is_directory(ledgerFile / "in the way"));
             fs::remove_all(ledgerFile);

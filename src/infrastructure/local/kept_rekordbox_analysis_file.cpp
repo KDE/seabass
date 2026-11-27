@@ -4,6 +4,8 @@
 
 #include "infrastructure/local/kept_rekordbox_analysis_file.hpp"
 
+#include <atomic>
+
 #include <algorithm>
 #include <charconv>
 #include <cmath>
@@ -710,11 +712,32 @@ std::vector<std::string> keptRekordboxSeabassGrids(const fs::path &stickRoot, st
     return grids;
 }
 
-std::vector<KeptAnalysisFileInfo> listKeptEngineAnalyses(const fs::path &stickRoot, std::string *error)
+namespace
+{
+
+std::atomic<int> &engineEntriesParsed()
+{
+    static std::atomic<int> parsed{0};
+    return parsed;
+}
+
+}  // namespace
+
+int keptEngineEntriesParsedForTesting()
+{
+    return engineEntriesParsed().load();
+}
+
+std::vector<KeptAnalysisFileInfo> listKeptEngineAnalyses(const fs::path &stickRoot, std::string *error,
+                                                         const std::function<bool(const fs::path &file)> &wanted)
 {
     error->clear();
     std::vector<KeptAnalysisFileInfo> out;
     for (const fs::path &file : entryFilesIn(paths::stickKeptEngineAnalysisDir(stickRoot), ".tsv", error)) {
+        if (wanted && !wanted(file)) {
+            continue;
+        }
+        ++engineEntriesParsed();
         KeptAnalysisFileInfo info;
         info.file = pathToUtf8(file);
         std::error_code ec;

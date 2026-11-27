@@ -294,6 +294,9 @@ struct ReanalysisNotes
     // The tracks left alone whose analysis was changed outside Seabass
     // since their original was kept.
     std::map<QString, bool> changedOutside;
+    // The tracks left alone whose rows name other analysis files than the
+    // ones their original was kept from.
+    std::map<QString, bool> filesMoved;
 };
 
 ReanalysisNotes &saveNotesOf(SaveContext &ctx)
@@ -336,13 +339,26 @@ ReanalysisNotes &saveNotesOf(SaveContext &ctx)
             if (const int n = skipped(notes->changedOutside); n > 0) {
                 ctx.addSummaryNote(
                     n == 1 ? QStringLiteral("One track was not analysed again: its analysis was changed outside Seabass "
-                                            "since its original analysis was kept. Restore the original analysis "
-                                            "first, or remove the kept original in Free Up Space to let Seabass keep "
-                                            "the new one.")
+                                            "since Seabass kept its original, and Seabass leaves it alone. Removing "
+                                            "the kept original in Free Up Space lets Seabass analyse it again; that "
+                                            "discards the original Seabass kept.")
                            : QStringLiteral("%1 tracks were not analysed again: their analysis was changed outside "
-                                            "Seabass since their original analysis was kept. Restore the original "
-                                            "analysis first, or remove the kept originals in Free Up Space to let "
-                                            "Seabass keep the new ones.")
+                                            "Seabass since Seabass kept their originals, and Seabass leaves them "
+                                            "alone. Removing the kept originals in Free Up Space lets Seabass analyse "
+                                            "them again; that discards the originals Seabass kept.")
+                                 .arg(n));
+            }
+            if (const int n = skipped(notes->filesMoved); n > 0) {
+                ctx.addSummaryNote(
+                    n == 1 ? QStringLiteral("One track was not analysed again: its rows name other analysis files than "
+                                            "the ones Seabass kept its original from (a new export moved them), and "
+                                            "Seabass leaves it alone. Removing the kept original in Free Up Space lets "
+                                            "Seabass analyse it again; that discards the original Seabass kept.")
+                           : QStringLiteral("%1 tracks were not analysed again: their rows name other analysis files "
+                                            "than the ones Seabass kept their originals from (a new export moved "
+                                            "them), and Seabass leaves them alone. Removing the kept originals in Free "
+                                            "Up Space lets Seabass analyse them again; that discards the originals "
+                                            "Seabass kept.")
                                  .arg(n));
             }
             if (const int n = skipped(notes->cannotTellRecord); n > 0) {
@@ -361,14 +377,14 @@ ReanalysisNotes &saveNotesOf(SaveContext &ctx)
                 ctx.addSummaryNote(
                     n == 1 ? QStringLiteral("One track was not analysed again: Seabass cannot tell whether its beat "
                                             "grid is its own, as its record of the tracks it analysed cannot be read. "
-                                            "Check the stick for errors on a computer; \"seabass-cli analysis-ledger "
-                                            "--reset\" moves that record aside, and the next Analyse again keeps "
-                                            "what is there.")
+                                            "Check the stick for errors on a computer. Seabass's command line tool, "
+                                            "seabass-cli, can move that record aside, deleting nothing, and the next "
+                                            "Analyse again keeps what is there.")
                            : QStringLiteral("%1 tracks were not analysed again: Seabass cannot tell whether their beat "
                                             "grids are its own, as its record of the tracks it analysed cannot be "
-                                            "read. Check the stick for errors on a computer; \"seabass-cli "
-                                            "analysis-ledger --reset\" moves that record aside, and the next Analyse "
-                                            "again keeps what is there.")
+                                            "read. Check the stick for errors on a computer. Seabass's command line "
+                                            "tool, seabass-cli, can move that record aside, deleting nothing, and "
+                                            "the next Analyse again keeps what is there.")
                                  .arg(n));
             }
             if (noRoom > 0) {
@@ -1128,15 +1144,69 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             const infrastructure::local::KeptRekordboxRecord *record =
                 recorded.status == infrastructure::local::KeptRekordboxRecordLookup::Status::Found ? &recorded.record
                                                                                                     : nullptr;
-            std::string gridNow;
-            if (toWrite.front().before.dat) {
-                gridNow = infrastructure::rekordbox::pqtzGridFingerprint(
-                    AnlzFile::fromBytes(*toWrite.front().before.dat, toWrite.front().datPath));
+            const auto gridOfBytes = [](const std::optional<std::string> &bytes, const std::string &what) {
+                return bytes ? infrastructure::rekordbox::pqtzGridFingerprint(AnlzFile::fromBytes(*bytes, what))
+                             : std::string();
+            };
+            // With an original kept, the files about to be written are the
+            // ones it was kept from: rows that name others now (a new
+            // export moved them) would leave the kept original with no way
+            // back once they are written.
+            if (kept) {
+                std::set<std::string> keptPaths;
+                for (const auto &set : kept->files) {
+                    keptPaths.insert(application::normalizedPathKey(set.datPath));
+                }
+                for (const MergedFiles &m : toWrite) {
+                    if (keptPaths.count(application::normalizedPathKey(m.datPath)) == 0) {
+                        leftAlone("left as it is, nothing written: its rows name other analysis files now (" + m.datPath
+                                  + ") than the ones Seabass kept its original from (a new export moved them), and "
+                                    "writing them would leave the kept original with no way back; removing the kept "
+                                    "original in Free Up Space lets Seabass analyse it again, and discards the "
+                                    "original Seabass kept");
+                        saveNotesOf(ctx).filesMoved[id()] = true;
+                        return ChangeOutcome::skip();
+                    }
+                }
             }
-            const std::string gridNew = infrastructure::rekordbox::pqtzGridFingerprint(*toWrite.front().merged.files.dat);
-            const KeepOriginal decision =
-                keepOriginalDecision(gridNow, isSeabassRekordboxGrid(ctx, stickRoot, gridNow, record),
-                                     ledgerBelieved(ctx, stickRoot), kept, record);
+            // Decided on every file this writes, each against its own kept
+            // original: one file that cannot be told, or that was changed
+            // outside Seabass, leaves the whole track alone.
+            const std::string gridNow = gridOfBytes(toWrite.front().before.dat, toWrite.front().datPath);
+            std::vector<std::string> gridsNew;
+            KeepOriginal decision = KeepOriginal::Nothing;
+            std::string changedIn;
+            for (const MergedFiles &m : toWrite) {
+                const std::string fileGridNow = gridOfBytes(m.before.dat, m.datPath);
+                infrastructure::local::KeptRekordboxAnalysis keptFile;
+                if (kept) {
+                    for (const auto &set : kept->files) {
+                        if (application::normalizedPathKey(set.datPath) == application::normalizedPathKey(m.datPath)) {
+                            keptFile.originalGrid = gridOfBytes(set.dat, "the kept " + set.datPath);
+                        }
+                    }
+                }
+                const KeepOriginal one =
+                    keepOriginalDecision(fileGridNow, isSeabassRekordboxGrid(ctx, stickRoot, fileGridNow, record),
+                                         ledgerBelieved(ctx, stickRoot), kept ? &keptFile : nullptr, record);
+                if (one == KeepOriginal::CannotTell || decision == KeepOriginal::CannotTell) {
+                    decision = KeepOriginal::CannotTell;
+                } else if (one == KeepOriginal::ChangedOutside || decision == KeepOriginal::ChangedOutside) {
+                    if (decision != KeepOriginal::ChangedOutside) {
+                        changedIn = "its beat grid in " + m.datPath;
+                    }
+                    decision = KeepOriginal::ChangedOutside;
+                } else if (one == KeepOriginal::KeepNow || decision == KeepOriginal::KeepNow) {
+                    decision = KeepOriginal::KeepNow;
+                } else {
+                    decision = one;
+                }
+                const std::string fileGridNew = infrastructure::rekordbox::pqtzGridFingerprint(*m.merged.files.dat);
+                if (!fileGridNew.empty()
+                    && std::find(gridsNew.begin(), gridsNew.end(), fileGridNew) == gridsNew.end()) {
+                    gridsNew.push_back(fileGridNew);
+                }
+            }
             if (decision == KeepOriginal::CannotTell) {
                 if (kept) {
                     leftAlone("left as it is, nothing written: Seabass cannot tell whether its beat grid is its own, "
@@ -1154,10 +1224,11 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 return ChangeOutcome::skip();
             }
             if (decision == KeepOriginal::ChangedOutside) {
-                leftAlone("left as it is, nothing written: its beat grid is neither its kept original analysis nor "
-                          "one Seabass wrote, so it was changed outside Seabass since the original was kept; restore "
-                          "the original first, or remove the kept original in Free Up Space to let Seabass keep the "
-                          "new one");
+                leftAlone("left as it is, nothing written: " + changedIn
+                          + " was changed outside Seabass since Seabass kept its original (it is neither that "
+                            "original nor a grid Seabass wrote), and Seabass leaves it alone; removing the kept "
+                            "original in Free Up Space lets Seabass analyse it again, and discards the original "
+                            "Seabass kept");
                 saveNotesOf(ctx).changedOutside[id()] = true;
                 return ChangeOutcome::skip();
             }
@@ -1167,9 +1238,11 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 // cues into the entry, a cue moved again carried on from
                 // its first place.
                 infrastructure::local::KeptRekordboxRecord next = *record;
-                if (!gridNew.empty()
-                    && std::find(next.seabassGrids.begin(), next.seabassGrids.end(), gridNew) == next.seabassGrids.end()) {
-                    next.seabassGrids.push_back(gridNew);
+                for (const std::string &gridNew : gridsNew) {
+                    if (std::find(next.seabassGrids.begin(), next.seabassGrids.end(), gridNew)
+                        == next.seabassGrids.end()) {
+                        next.seabassGrids.push_back(gridNew);
+                    }
                 }
                 if (!cueMovesMade.empty()) {
                     infrastructure::local::KeptRekordboxAnalysis entry = *kept;
@@ -1193,9 +1266,7 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                 // A ledger moved aside or reset may have known this grid for
                 // Seabass's: what is kept is the analysis that was there.
                 next.originKnown = !ledgerIncomplete(ctx, stickRoot);
-                if (!gridNew.empty()) {
-                    next.seabassGrids.push_back(gridNew);
-                }
+                next.seabassGrids = gridsNew;
                 std::uint64_t keptBytes = 0;
                 for (const MergedFiles &m : toWrite) {
                     entry.files.push_back(m.before);

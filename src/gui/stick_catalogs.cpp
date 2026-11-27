@@ -21,7 +21,32 @@ namespace seabass::gui
 
 namespace fs = std::filesystem;
 
+namespace
+{
+
+StickCatalogRead readAllStickCatalogsAt(const std::string &libraryPath, LibraryCatalogCache::Detail detail,
+                                        application::ProgressReporter &progress,
+                                        const application::CancellationToken &cancel);
+
+}  // namespace
+
 StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, application::ProgressReporter &progress,
+                                        const application::CancellationToken &cancel)
+{
+    return readAllStickCatalogsAt(libraryPath, LibraryCatalogCache::Detail::Full, progress, cancel);
+}
+
+StickCatalogRead readAllStickCatalogTracks(const std::string &libraryPath, const application::CancellationToken &cancel)
+{
+    return readAllStickCatalogsAt(libraryPath, LibraryCatalogCache::Detail::Tracks,
+                                  application::NullProgressReporter::instance(), cancel);
+}
+
+namespace
+{
+
+StickCatalogRead readAllStickCatalogsAt(const std::string &libraryPath, LibraryCatalogCache::Detail detail,
+                                        application::ProgressReporter &progress,
                                         const application::CancellationToken &cancel)
 {
     StickCatalogRead result;
@@ -35,7 +60,7 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
     auto read = [&](const char *format, const std::string &path,
                     std::optional<std::vector<domain::Track>> &into) {
         try {
-            into = LibraryCatalogCache::instance().tracksFor(format, path, progress, cancel);
+            into = LibraryCatalogCache::instance().tracksFor(format, path, detail, progress, cancel);
         } catch (const application::OperationCancelled &) {
             throw;  // a cancelled scan is not a failed catalog
         } catch (const std::exception &) {
@@ -55,6 +80,8 @@ StickCatalogRead readAllStickCatalogs(const std::string &libraryPath, applicatio
     }
     return result;
 }
+
+}  // namespace
 
 std::optional<size_t> plannedUnitsForAllStickCatalogs(const std::string &libraryPath,
                                                       const application::CancellationToken &cancel)

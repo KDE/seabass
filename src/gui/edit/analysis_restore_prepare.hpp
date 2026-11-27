@@ -60,7 +60,9 @@ struct PreparedAnalysisRestore
 // new grid the kept one's) switched on where it follows on its own under
 // the request's threshold. A track whose kept entry cannot be read is
 // left out with the reason. Refused (`refusal`) when no track of the
-// playlist has anything of Analyse again's kept. Reads the stick and writes nothing: not for
+// playlist has anything of Analyse again's kept. A track whose grid was
+// changed outside Seabass since its original was kept is left out, with
+// that reason, and never staged. Reads the stick and writes nothing: not for
 // the GUI thread. Throws application::OperationCancelled on a cancel.
 PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &request,
                                                const application::CancellationToken &cancel);
@@ -74,10 +76,18 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
 // cannot be read. Reads the stick: not for the GUI thread.
 int countKeptOriginals(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel);
 
-// Every playlist of the stick read once and its tracks' names kept, and
-// the kept folders listed afresh: for a stick Browse has just loaded, and
-// after a save (an Undo puts kept files back without telling). Reads the
-// stick: not for the GUI thread.
+// The kept folders listed afresh, then, only when the rekordbox kept
+// folder holds an entry, every playlist of the stick read once at the
+// first stage of its catalogs (the rows and their playlists, which Browse
+// has loaded already) and its tracks' names kept: for a stick Browse has
+// just loaded, and after a save (an Undo puts kept files back without
+// telling). With nothing kept, no library is read and every count is 0.
+// countKeptOriginals() likewise reads no library with nothing kept. Reads
+// the stick: not for the GUI thread.
 void warmKeptCounts(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel);
+
+// For a test: how many times the stick's catalogs were read for a count,
+// a warm or a restore since the process started.
+int keptCountCatalogReadsForTesting();
 
 }  // namespace seabass::gui

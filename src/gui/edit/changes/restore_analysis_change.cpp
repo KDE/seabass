@@ -118,9 +118,10 @@ struct RestoreNotes
 {
     std::map<QString, std::string> refused;
     std::map<QString, std::string> cuesLeft;
-    // The restored tracks whose Engine row keeps its grid: the player's
-    // analysis kept there is Beat Grids & Waveforms' to put back.
-    std::map<QString, bool> engineElsewhere;
+    // The restored tracks whose Engine row keeps the grid it has while
+    // rekordbox's goes back: what went back, what stayed and why, and
+    // where the cue points are, one line per track.
+    std::map<QString, QString> libraries;
 };
 
 RestoreNotes &saveNotesOf(SaveContext &ctx)
@@ -153,21 +154,10 @@ RestoreNotes &saveNotesOf(SaveContext &ctx)
             for (const auto &[id, why] : notes->cuesLeft) {
                 left += after.appliedIds.contains(id) && !after.skippedIds.contains(id) ? 1 : 0;
             }
-            int elsewhere = 0;
-            for (const auto &[id, unused] : notes->engineElsewhere) {
-                (void)unused;
-                elsewhere += after.appliedIds.contains(id) && !after.skippedIds.contains(id) ? 1 : 0;
-            }
-            if (elsewhere > 0) {
-                ctx.addSummaryNote(
-                    elsewhere == 1
-                        ? QStringLiteral("On one restored track Engine keeps the grid it has: the player's analysis "
-                                         "kept there by Copy Beat Grids is put back on the Beat Grids & Waveforms "
-                                         "page, with Restore Engine's Analysis.")
-                        : QStringLiteral("On %1 restored tracks Engine keeps the grid it has: the player's analysis "
-                                         "kept there by Copy Beat Grids is put back on the Beat Grids & Waveforms "
-                                         "page, with Restore Engine's Analysis.")
-                              .arg(elsewhere));
+            for (const auto &[id, text] : notes->libraries) {
+                if (after.appliedIds.contains(id) && !after.skippedIds.contains(id)) {
+                    ctx.addSummaryNote(text);
+                }
             }
             if (left > 0) {
                 ctx.addSummaryNote(left == 1
@@ -629,9 +619,10 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                 if (sectionOf(*dat.current, Ppth) != sectionOf(original, Ppth)) {
                     return refuse(set.datPath + " names another audio file now than when it was kept");
                 }
+                // Each file against its own kept original.
                 const std::string gridNow = infrastructure::rekordbox::pqtzGridFingerprint(*dat.current);
                 const bool seabass = isSeabassRekordboxGrid(ctx, stickRoot, gridNow, &record);
-                if (!seabass && gridNow != kept->originalGrid) {
+                if (!seabass && gridNow != infrastructure::rekordbox::pqtzGridFingerprint(original)) {
                     return refuse("its beat grid in " + set.datPath
                                   + " is neither the original nor one Seabass wrote: it was changed outside Seabass "
                                     "since the original was kept, and Seabass does not write over that");
@@ -656,6 +647,11 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
         // One Beat Grids & Waveforms kept stays that page's, and Engine
         // keeps the grid it has.
         bool engineHere = hasEngine;
+        // Why Engine keeps the grid it has where rekordbox's goes back, for
+        // the log and the summary; No where it goes back too, or has no row.
+        enum class EngineStays { No, CopiedElsewhere, NothingKept, NotAnalyseAgains, CannotGoBack };
+        EngineStays engineStays = EngineStays::No;
+        std::string engineWhy;
         if (hasEngine && kept) {
             const auto engineKept = infrastructure::local::StickKeptEngineAnalysisStore(pathFromUtf8(stickRoot)).find(key);
             const bool keptByAnalyseAgain =
@@ -663,14 +659,10 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                 && keptEngineOriginalFingerprint(engineKept.entry) == record.engineKept;
             if (!keptByAnalyseAgain) {
                 engineHere = false;
-                if (engineKept.status != application::KeptEngineAnalysisLookup::Status::None) {
-                    saveNotesOf(ctx).engineElsewhere[id()] = true;
-                    done.push_back(record.engineKept.empty()
-                                       ? "Engine keeps the grid it has: the player's analysis kept for it was kept by "
-                                         "Copy Beat Grids, and goes back on the Beat Grids & Waveforms page"
-                                       : "Engine keeps the grid it has: the player's analysis kept for it is not the "
-                                         "one Analyse again kept");
-                }
+                engineStays = engineKept.status == application::KeptEngineAnalysisLookup::Status::None
+                                  ? EngineStays::NothingKept
+                              : record.engineKept.empty() ? EngineStays::CopiedElsewhere
+                                                          : EngineStays::NotAnalyseAgains;
             }
         }
         if (hasEngine) {
@@ -702,6 +694,34 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                 return refuse(why.empty() ? std::string("nothing of the player's analysis is kept for it any more")
                                           : "what is kept of the player's analysis does not belong to its row: " + why);
             }
+            if (kept && engineHere && !engineRows.empty() && engineRestores.empty()) {
+                engineStays = EngineStays::CannotGoBack;
+                engineWhy = why;
+            }
+        }
+        if (engineRows.empty()) {
+            engineStays = EngineStays::No;
+        }
+        switch (engineStays) {
+        case EngineStays::No:
+            break;
+        case EngineStays::NothingKept:
+            done.push_back("Engine keeps the grid it has: nothing of the player's analysis was kept");
+            break;
+        case EngineStays::CopiedElsewhere:
+            done.push_back("Engine keeps the grid it has: the player's analysis kept for it was kept by Copy Beat "
+                           "Grids, and goes back on the Beat Grids & Waveforms page");
+            break;
+        case EngineStays::NotAnalyseAgains:
+            done.push_back("Engine keeps the grid it has: the player's analysis kept for it is not the one Analyse "
+                           "again kept");
+            break;
+        case EngineStays::CannotGoBack:
+            done.push_back("Engine keeps the grid it has: the player's analysis Analyse again kept cannot go back to "
+                           "its row"
+                           + (engineWhy.empty() ? std::string() : " (" + engineWhy + ")")
+                           + ", and it stays kept with rekordbox's");
+            break;
         }
         if (!kept && engineRestores.empty()) {
             return refuse("nothing is kept for it any more");
@@ -713,6 +733,8 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
         std::vector<std::pair<std::string, std::vector<domain::CuePoint>>> deviceLibraryCues;
         std::optional<std::vector<domain::CuePoint>> oneLibraryCues;
         std::vector<std::pair<std::int64_t, std::vector<domain::CuePoint>>> engineCues;
+        bool engineCuesStay = false;
+        bool cuesBlocked = false;
         if (kept && isOn(cueSwitch) && !kept->cueMoves.empty()) {
             // Only the cues Analyse again moved (as the kept entry records
             // them), and only those still where it put them, go back to
@@ -750,28 +772,32 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                     }
                 }
             }
+            // Cue points follow the grid of their own library: an Engine
+            // row whose grid goes back gets its moved cues back with it;
+            // one that keeps the grid it has keeps the cues Analyse again
+            // moved onto that grid.
             for (const EngineCues &row : engineRows) {
                 auto moved = cuesMovedBack(kept->cueMoves, "engine", row.cues);
                 if (!moved) {
                     continue;
                 }
                 if (std::find(engineRestores.begin(), engineRestores.end(), row.id) == engineRestores.end()) {
-                    // Its grid stays Seabass's, and the cues Analyse again
-                    // moved onto it with it: then no library's go back.
-                    notes.push_back("Engine keeps Seabass's grid, and the cue points Analyse again moved onto it");
+                    engineCuesStay = true;
                     continue;
                 }
                 engineCues.emplace_back(row.id, std::move(*moved));
             }
-            // All or nothing across the libraries: one that cannot take
-            // its cues back keeps every library's where they are.
+            // All or nothing across the libraries whose grid goes back:
+            // one that cannot take its cues back keeps every library's
+            // where they are.
             if (!notes.empty()) {
+                cuesBlocked = true;
                 deviceLibraryCues.clear();
                 oneLibraryCues.reset();
                 engineCues.clear();
             }
             cuesMove = !deviceLibraryCues.empty() || oneLibraryCues || !engineCues.empty();
-            if (!cuesMove || !notes.empty()) {
+            if (!notes.empty() || (!cuesMove && !engineCuesStay)) {
                 const std::string why = !notes.empty() ? notes.front() + ", so no cue point moves in any library"
                                                        : "none of the cue points Analyse again moved is where it put "
                                                          "them any more";
@@ -1043,9 +1069,48 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
         }
 
         // What was kept has done its work: taken away in the save, so Undo
-        // puts it back with the analysis it describes.
-        if (rekordboxRestored) {
+        // puts it back with the analysis it describes. Only what went back
+        // is done with: where the player's analysis Analyse again kept
+        // could not go back with rekordbox's, the entry stays, its record
+        // naming that analysis and its Engine cue moves, without the moves
+        // of rekordbox's cues that went back.
+        if (rekordboxRestored && engineStays == EngineStays::CannotGoBack) {
+            infrastructure::local::KeptRekordboxAnalysis rest = *kept;
+            std::erase_if(rest.cueMoves, [](const auto &move) { return move.library != "engine"; });
+            if (!(rest == *kept)) {
+                saveKeptRekordboxStore(ctx, stickRoot).keep(rest, record);
+            }
+            done.push_back("what is kept stays, for the player's analysis");
+        } else if (rekordboxRestored) {
             saveKeptRekordboxStore(ctx, stickRoot).drop(key);
+        }
+        if (rekordboxRestored && engineStays != EngineStays::No) {
+            QString text = QStringLiteral("\"%1\": rekordbox's libraries have the kept analysis back; Engine keeps "
+                                          "the grid it has")
+                               .arg(subject());
+            switch (engineStays) {
+            case EngineStays::CopiedElsewhere:
+                text += QStringLiteral(", and the player's analysis that Copy Beat Grids kept goes back on the Beat "
+                                       "Grids & Waveforms page, with Restore Engine's Analysis.");
+                break;
+            case EngineStays::NothingKept:
+                text += QStringLiteral(", as nothing of the player's analysis was kept.");
+                break;
+            case EngineStays::NotAnalyseAgains:
+                text += QStringLiteral(", as the player's analysis kept for it is not the one Analyse again kept.");
+                break;
+            case EngineStays::CannotGoBack:
+                text += QStringLiteral(", as the player's analysis that Analyse again kept cannot go back to its row; "
+                                       "it stays kept.");
+                break;
+            case EngineStays::No:
+                break;
+            }
+            if (isOn(cueSwitch) && !kept->cueMoves.empty() && !cuesBlocked) {
+                text += QStringLiteral(" The cue points of each library follow its own grid: those Analyse again "
+                                       "moved went back in rekordbox and stay where they are in Engine.");
+            }
+            saveNotesOf(ctx).libraries[id()] = text;
         }
         // The analysis ledger after the commit: no entry when no library
         // keeps Seabass's analysis of the track, else the entry without

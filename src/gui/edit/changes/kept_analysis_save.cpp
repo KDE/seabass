@@ -413,6 +413,10 @@ int keptCountFromCache(const std::string &stickId, const std::string &playlist)
     if (stick == cache.byStick.end() || !stick->second.names) {
         return -1;
     }
+    // Nothing of rekordbox's kept: no playlist has an original.
+    if (stick->second.names->rekordbox.empty()) {
+        return 0;
+    }
     const auto listed = stick->second.playlists.find(playlist);
     if (listed == stick->second.playlists.end()) {
         return -1;

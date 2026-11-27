@@ -464,7 +464,24 @@ void RelinkMovedFileChange::carryTrackRecords(SaveContext &ctx, bool rekordboxPo
                 entry.stickPath = stickPath;
                 infrastructure::local::KeptRekordboxRecord next = record.record;
                 next.pathKey = newKey;
-                store.keep(entry, next);
+                // Half carried is not carried: an entry written under the
+                // new name whose record then fails goes again, and the old
+                // pair stays as it is.
+                try {
+                    store.keep(entry, next);
+                    const auto back = store.findRecord(newKey);
+                    if (back.status != RecordStatus::Found || !(back.record == next)) {
+                        throw std::runtime_error("its record under the new name does not read back as it was written");
+                    }
+                } catch (...) {
+                    try {
+                        store.drop(newKey);
+                    } catch (const std::exception &) {
+                        // drop() takes the entry first: what is left is a
+                        // record without an entry, which holds no analysis.
+                    }
+                    throw;
+                }
                 store.drop(oldKey);
                 said.push_back("rekordbox's kept analysis carried to the new name");
             });
@@ -495,7 +512,21 @@ void RelinkMovedFileChange::carryTrackRecords(SaveContext &ctx, bool rekordboxPo
                         entry.trackFile = path;
                     }
                 }
-                store.keep(entry);
+                // Believed only once it reads back, as rekordbox's pair is:
+                // the old entry goes only then.
+                try {
+                    store.keep(entry);
+                    const auto back = store.find(newKey);
+                    if (back.status != EngineStatus::Found || !(back.entry == entry)) {
+                        throw std::runtime_error("it does not read back under the new name as it was written");
+                    }
+                } catch (...) {
+                    try {
+                        store.drop(newKey);
+                    } catch (const std::exception &) {
+                    }
+                    throw;
+                }
                 store.drop(oldKey);
                 said.push_back("the player's kept analysis carried to the new name");
             });
