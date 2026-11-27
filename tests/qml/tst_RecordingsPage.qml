@@ -250,9 +250,9 @@ TestCase {
         RecordingsPage {
             width: 980
             height: 680
-            stickLabel: "WHALESHARK"
-            rekordboxPath: "/media/u/WHALESHARK/PIONEER"
-            enginePath: "/media/u/WHALESHARK/Engine Library"
+            stickLabel: "TESTSTICK"
+            rekordboxPath: "/media/u/TESTSTICK/PIONEER"
+            enginePath: "/media/u/TESTSTICK/Engine Library"
         }
     }
 
@@ -271,17 +271,17 @@ TestCase {
 
     function addRecordings(controller) {
         const rows = controller.recordings;
-        rows.append({path: "/media/u/WHALESHARK/Sessions/Milkshaken.wav", fileName: "Milkshaken.wav",
+        rows.append({path: "/media/u/TESTSTICK/Sessions/Milkshaken.wav", fileName: "Milkshaken.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 2239137764,
                      modified: new Date(2026, 4, 7, 20, 6), durationSeconds: 12693.5, included: false,
                      unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
                      missingBytes: -1, holdsNoAudio: false});
-        rows.append({path: "/media/u/WHALESHARK/Sessions/Session-0002.wav", fileName: "Session-0002.wav",
+        rows.append({path: "/media/u/TESTSTICK/Sessions/Session-0002.wav", fileName: "Session-0002.wav",
                      folderName: "Sessions", source: "engine", sizeBytes: 111384620,
                      modified: new Date(2026, 6, 12, 2, 30), durationSeconds: 631.4, included: false,
                      unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
                      missingBytes: -1, holdsNoAudio: false});
-        rows.append({path: "/media/u/WHALESHARK/PIONEER REC/REC001.WAV", fileName: "REC001.WAV",
+        rows.append({path: "/media/u/TESTSTICK/PIONEER REC/REC001.WAV", fileName: "REC001.WAV",
                      folderName: "PIONEER REC", source: "pioneer", sizeBytes: 457387052,
                      modified: new Date(2017, 0, 1, 1, 0), durationSeconds: -1, included: false,
                      unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
@@ -328,7 +328,7 @@ TestCase {
 
     function test_listShowsEveryRecordingWithWhatItIs() {
         const page = makePage(addRecordings);
-        compare(page.controller.calls[0], "load:WHALESHARK|/media/u/WHALESHARK/PIONEER|/media/u/WHALESHARK/Engine Library");
+        compare(page.controller.calls[0], "load:TESTSTICK|/media/u/TESTSTICK/PIONEER|/media/u/TESTSTICK/Engine Library");
         compare(findChild(page, "recordingsList").count, 3);
 
         const first = row(page, 0);
@@ -358,7 +358,7 @@ TestCase {
         compare(findChild(page, "copyButton"), null, "nothing is copied: there is no copy action");
 
         const crumb = Breadcrumb.read(page);
-        compare(crumb.stick, "WHALESHARK");
+        compare(crumb.stick, "TESTSTICK");
         compare(crumb.middle, "");
         compare(crumb.title, "Clean Up Recordings");
         saveScreenshot(page, "recordings-page");
@@ -438,7 +438,7 @@ TestCase {
         const dialog = findChild(page, "confirmDeleteDialog");
         tryVerify(() => dialog.opened);
         compare(dialog.title, "Delete 3 Recordings?");
-        compare(dialog.headline, "This deletes 3 recordings from WHALESHARK and frees " + Theme.humanBytes(total) + ".");
+        compare(dialog.headline, "This deletes 3 recordings from TESTSTICK and frees " + Theme.humanBytes(total) + ".");
         compare(dialog.detailText, "They will be gone for good.");
         compare(dialog.acceptText, "Delete");
         saveScreenshot(page, "recordings-confirm-delete");
@@ -460,7 +460,7 @@ TestCase {
         const dialog = findChild(page, "confirmDeleteDialog");
         tryVerify(() => dialog.opened);
         compare(dialog.title, "Delete 1 Recording?");
-        compare(dialog.headline, "This deletes 1 recording from WHALESHARK and frees " + Theme.humanBytes(111384620) + ".");
+        compare(dialog.headline, "This deletes 1 recording from TESTSTICK and frees " + Theme.humanBytes(111384620) + ".");
         dialog.reject();
     }
 
@@ -471,15 +471,15 @@ TestCase {
         mouseClick(findChild(row(page, 0), "playButton"));
         compare(player.loads.length, 1);
         compare(player.loads[0].format, "engine", "Sessions/ is Engine OS's");
-        compare(player.loads[0].libraryPath, "/media/u/WHALESHARK/Engine Library");
-        compare(player.loads[0].filePath, "/media/u/WHALESHARK/Sessions/Milkshaken.wav");
+        compare(player.loads[0].libraryPath, "/media/u/TESTSTICK/Engine Library");
+        compare(player.loads[0].filePath, "/media/u/TESTSTICK/Sessions/Milkshaken.wav");
         compare(player.loads[0].title, "Milkshaken.wav");
         compare(player.loads[0].artist, "Sessions (Engine OS)");
 
         mouseClick(findChild(row(page, 2), "playButton"));
         compare(player.loads[1].format, "rekordbox", "a REC folder is a Pioneer or AlphaTheta deck's");
-        compare(player.loads[1].libraryPath, "/media/u/WHALESHARK/PIONEER");
-        compare(player.loads[1].filePath, "/media/u/WHALESHARK/PIONEER REC/REC001.WAV");
+        compare(player.loads[1].libraryPath, "/media/u/TESTSTICK/PIONEER");
+        compare(player.loads[1].filePath, "/media/u/TESTSTICK/PIONEER REC/REC001.WAV");
         compare(player.loads[1].artist, "PIONEER REC (Pioneer)");
         compare(page.controller.selectedCount, 0, "playing ticks nothing");
     }
@@ -595,7 +595,7 @@ TestCase {
     function test_keepIsOfferedForWavsWithExperimentalOn() {
         let page = makePage(controller => {
             addRecordings(controller);
-            controller.recordings.append({path: "/media/u/WHALESHARK/Sessions/Set.mp3", fileName: "Set.mp3",
+            controller.recordings.append({path: "/media/u/TESTSTICK/Sessions/Set.mp3", fileName: "Set.mp3",
                                           folderName: "Sessions", source: "engine", sizeBytes: 1000,
                                           modified: new Date(2026, 1, 1), durationSeconds: 10, included: false,
                                           unfinished: false, heldSeconds: -1, declaredSeconds: -1, declaredUnusable: false,
@@ -720,7 +720,7 @@ TestCase {
         keyClick(Qt.Key_Return);
         compare(page.keepController.calls.filter(c => c === "keep").length, 1, "Enter starts it");
         const form = page.keepController.lastForm;
-        compare(form.wavPath, "/media/u/WHALESHARK/Sessions/Milkshaken.wav");
+        compare(form.wavPath, "/media/u/TESTSTICK/Sessions/Milkshaken.wav");
         compare(form.recording, "Milkshaken.wav");
         compare(form.artist, "DJ Kelp");
         compare(form.title, "Late Set");
@@ -743,18 +743,18 @@ TestCase {
 
     function busyKeep(keep) {
         keep.busy = true;
-        keep.currentWavPath = "/media/u/WHALESHARK/Sessions/Milkshaken.wav";
+        keep.currentWavPath = "/media/u/TESTSTICK/Sessions/Milkshaken.wav";
         keep.currentRecording = "Milkshaken.wav";
         keep.currentFileName = "DJ Kelp - Late Set.flac";
         keep.currentFolder = "/home/dj/Music/Own Recordings";
         keep.progressStep = "checking";
         keep.progress = 0.7;
-        keep.queued = [{wavPath: "/media/u/WHALESHARK/Sessions/Session-0002.wav", recording: "Session-0002.wav",
+        keep.queued = [{wavPath: "/media/u/TESTSTICK/Sessions/Session-0002.wav", recording: "Session-0002.wav",
                         fileName: "DJ Kelp - Early Set.flac", folder: "/home/dj/Music/Own Recordings"}];
         keep.outcomes = {
-            "/media/u/WHALESHARK/Sessions/Milkshaken.wav": {state: "running", fileName: "DJ Kelp - Late Set.flac",
+            "/media/u/TESTSTICK/Sessions/Milkshaken.wav": {state: "running", fileName: "DJ Kelp - Late Set.flac",
                                                             folder: "/home/dj/Music/Own Recordings"},
-            "/media/u/WHALESHARK/Sessions/Session-0002.wav": {state: "queued", fileName: "DJ Kelp - Early Set.flac",
+            "/media/u/TESTSTICK/Sessions/Session-0002.wav": {state: "queued", fileName: "DJ Kelp - Early Set.flac",
                                                               folder: "/home/dj/Music/Own Recordings"},
         };
         keep.revision++;
@@ -833,12 +833,12 @@ TestCase {
     }
 
     function keptKeep(keep) {
-        const done = {state: "kept", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+        const done = {state: "kept", wavPath: "/media/u/TESTSTICK/Sessions/Milkshaken.wav",
                       recording: "Milkshaken.wav", fileName: "DJ Kelp - Late Set.flac",
                       folder: "/home/dj/Music/Own Recordings",
                       flacPath: "/home/dj/Music/Own Recordings/DJ Kelp - Late Set.flac", leftBehind: "", message: ""};
         keep.finishedJobs = [done];
-        keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": done};
+        keep.outcomes = {"/media/u/TESTSTICK/Sessions/Milkshaken.wav": done};
         keep.progress = 1;
         keep.revision++;
     }
@@ -905,15 +905,15 @@ TestCase {
     function test_deleteNamesWhatWasNotKept() {
         const page = makePage(addRecordings, keep => {
             keep.outcomes = {
-                "/media/u/WHALESHARK/Sessions/Milkshaken.wav": {state: "failed", recording: "Milkshaken.wav",
+                "/media/u/TESTSTICK/Sessions/Milkshaken.wav": {state: "failed", recording: "Milkshaken.wav",
                                                                 fileName: "A.flac", folder: "/f", message: "no room"},
-                "/media/u/WHALESHARK/Sessions/Session-0002.wav": {state: "dropped", recording: "Session-0002.wav",
+                "/media/u/TESTSTICK/Sessions/Session-0002.wav": {state: "dropped", recording: "Session-0002.wav",
                                                                   fileName: "B.flac", folder: "/f", message: ""},
-                "/media/u/WHALESHARK/PIONEER REC/REC001.WAV": {state: "kept", recording: "REC001.WAV",
+                "/media/u/TESTSTICK/PIONEER REC/REC001.WAV": {state: "kept", recording: "REC001.WAV",
                                                                fileName: "C.flac", folder: "/home/dj/Music/Own Recordings"},
             };
             keep.keptCopies = {
-                "/media/u/WHALESHARK/PIONEER REC/REC001.WAV": {recording: "REC001.WAV", fileName: "C.flac",
+                "/media/u/TESTSTICK/PIONEER REC/REC001.WAV": {recording: "REC001.WAV", fileName: "C.flac",
                                                                folder: "/home/dj/Music/Own Recordings", there: true},
             };
             keep.revision++;
@@ -948,9 +948,9 @@ TestCase {
         const page = makePage(addRecordings, keep => {
             const dropped = (path, name) => ({state: "dropped", wavPath: path, recording: name, fileName: name + ".flac",
                                               folder: "/f", flacPath: "", leftBehind: "", message: ""});
-            const one = dropped("/media/u/WHALESHARK/Sessions/Session-0002.wav", "Session-0002.wav");
-            const two = dropped("/media/u/WHALESHARK/PIONEER REC/REC001.WAV", "REC001.WAV");
-            const stopped = {state: "cancelled", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+            const one = dropped("/media/u/TESTSTICK/Sessions/Session-0002.wav", "Session-0002.wav");
+            const two = dropped("/media/u/TESTSTICK/PIONEER REC/REC001.WAV", "REC001.WAV");
+            const stopped = {state: "cancelled", wavPath: "/media/u/TESTSTICK/Sessions/Milkshaken.wav",
                              recording: "Milkshaken.wav", fileName: "M.flac", folder: "/f", flacPath: "",
                              leftBehind: "", message: ""};
             keep.finishedJobs = [one, two, stopped];
@@ -978,7 +978,7 @@ TestCase {
     function test_aFailureStaysWhileTheNextRuns() {
         const page = makePage(addRecordings, keep => {
             busyKeep(keep);
-            keep.finishedJobs = [{state: "failed", wavPath: "/media/u/WHALESHARK/PIONEER REC/REC001.WAV",
+            keep.finishedJobs = [{state: "failed", wavPath: "/media/u/TESTSTICK/PIONEER REC/REC001.WAV",
                                   recording: "REC001.WAV", fileName: "R.flac", folder: "/f", flacPath: "",
                                   leftBehind: "", message: "There is not enough room in /f."}];
         });
@@ -994,12 +994,12 @@ TestCase {
     // A cancel that could not take its file away says what was left.
     function test_aFileLeftBehindIsSaid() {
         const page = makePage(addRecordings, keep => {
-            const stopped = {state: "cancelled", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+            const stopped = {state: "cancelled", wavPath: "/media/u/TESTSTICK/Sessions/Milkshaken.wav",
                              recording: "Milkshaken.wav", fileName: "M.flac", folder: "/home/dj/Kept", flacPath: "",
                              leftBehind: "/home/dj/Kept/M.flac",
                              message: "The unfinished M.flac could not be removed from /home/dj/Kept (busy)."};
             keep.finishedJobs = [stopped];
-            keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": stopped};
+            keep.outcomes = {"/media/u/TESTSTICK/Sessions/Milkshaken.wav": stopped};
             keep.revision++;
         });
         const strip = findChild(page, "keepProgress");
@@ -1024,12 +1024,12 @@ TestCase {
 
     function test_whenItFails() {
         const page = makePage(addRecordings, keep => {
-            const failed = {state: "failed", wavPath: "/media/u/WHALESHARK/Sessions/Milkshaken.wav",
+            const failed = {state: "failed", wavPath: "/media/u/TESTSTICK/Sessions/Milkshaken.wav",
                             recording: "Milkshaken.wav", fileName: "DJ Kelp - Late Set.flac",
                             folder: "/home/dj/Music/Own Recordings", flacPath: "", leftBehind: "",
                             message: "There is not enough room in /home/dj/Music/Own Recordings."};
             keep.finishedJobs = [failed];
-            keep.outcomes = {"/media/u/WHALESHARK/Sessions/Milkshaken.wav": failed};
+            keep.outcomes = {"/media/u/TESTSTICK/Sessions/Milkshaken.wav": failed};
             keep.revision++;
         });
         const strip = findChild(page, "keepProgress");
@@ -1048,15 +1048,15 @@ TestCase {
     function test_deleteSaysWhichKeptCopiesAreStillThere() {
         const page = makePage(addRecordings, keep => {
             keep.outcomes = {
-                "/media/u/WHALESHARK/Sessions/Milkshaken.wav": {state: "failed", recording: "Milkshaken.wav",
+                "/media/u/TESTSTICK/Sessions/Milkshaken.wav": {state: "failed", recording: "Milkshaken.wav",
                                                                 fileName: "Again.flac", folder: "/f", message: "no room"},
-                "/media/u/WHALESHARK/Sessions/Session-0002.wav": {state: "kept", recording: "Session-0002.wav",
+                "/media/u/TESTSTICK/Sessions/Session-0002.wav": {state: "kept", recording: "Session-0002.wav",
                                                                   fileName: "B.flac", folder: "/f"},
             };
             keep.keptCopies = {
-                "/media/u/WHALESHARK/Sessions/Milkshaken.wav": {recording: "Milkshaken.wav", fileName: "A.flac",
+                "/media/u/TESTSTICK/Sessions/Milkshaken.wav": {recording: "Milkshaken.wav", fileName: "A.flac",
                                                                 folder: "/f", there: true},
-                "/media/u/WHALESHARK/Sessions/Session-0002.wav": {recording: "Session-0002.wav", fileName: "B.flac",
+                "/media/u/TESTSTICK/Sessions/Session-0002.wav": {recording: "Session-0002.wav", fileName: "B.flac",
                                                                   folder: "/f", there: false},
             };
             keep.revision++;

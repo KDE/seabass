@@ -308,7 +308,7 @@ void tags(const std::string &dir)
     check(cover.cover.has_value(), "tags: a cover to embed (" + cover.error + ")");
 
     application::RecordingTags tags;
-    tags.artist = "S\xC3\xA9" "bastien K\xC3\xBC" "gler & \xE5\x9D\x82\xE6\x9C\xAC";      // Sébastien Kügler & 坂本
+    tags.artist = "S\xC3\xA9" "verine M\xC3\xBC" "ller & \xE5\x9D\x82\xE6\x9C\xAC";      // Séverine Müller & 坂本
     tags.title = "\xD0\x9D\xD0\xBE\xD1\x87\xD1\x8C \xD0\xB2 \xD0\xBA\xD0\xBB\xD1\x83\xD0\xB1\xD0\xB5";  // Ночь в клубе
     tags.album = "\xC5\x8Csaka Session \xF0\x9F\x8E\xA7";                           // Ōsaka Session and a headphone emoji
     tags.genre = "Drum & Bass";
