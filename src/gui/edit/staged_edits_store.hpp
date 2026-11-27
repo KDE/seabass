@@ -16,12 +16,14 @@ namespace seabass::gui
 // own level: the call that staged it, not the PendingChange it made.
 // Kept so the call can be made again (see StagedEditsStore).
 //
-//   kind: "create", "delete", "add", "remove", "move" or "rename"
+//   kind: "create", "delete", "deleteWithTracks", "add", "remove", "move" or "rename"
 //   playlist: the playlist as the page named it; for a rename, the path
 //             the stick has
 //   file: the track's file, absolute in memory, relative to the stick's
 //         mount point on disk
 //   anyway: an add the user confirmed past "Not in every library"
+//   toIndex: a place in the playlist; for "deleteWithTracks", the number
+//            of tracks the user agreed to let go
 struct StagedEditRequest
 {
     QString kind;

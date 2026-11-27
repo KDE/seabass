@@ -510,6 +510,7 @@ add_library(seabass_core STATIC
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/playlist_tracks_deletion.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/playlist_diff.cpp
     src/domain/rekordbox_baseline.cpp
@@ -762,6 +763,7 @@ add_library(seabass_core_testing STATIC
     src/domain/rekordbox_baseline.cpp
     src/domain/engine_update_planning.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/playlist_tracks_deletion.cpp
     src/domain/moved_files.cpp
     src/domain/imported_track.cpp
     src/domain/track_import_plan.cpp
@@ -2766,6 +2768,11 @@ add_executable(tracks_in_no_playlist_test tests/tracks_in_no_playlist_test.cpp)
 target_link_libraries(tracks_in_no_playlist_test PRIVATE seabass_core_testing)
 target_include_directories(tracks_in_no_playlist_test PRIVATE src)
 add_test(NAME tracks_in_no_playlist_test COMMAND tracks_in_no_playlist_test)
+
+add_executable(playlist_tracks_deletion_test tests/playlist_tracks_deletion_test.cpp)
+target_link_libraries(playlist_tracks_deletion_test PRIVATE seabass_core_testing)
+target_include_directories(playlist_tracks_deletion_test PRIVATE src)
+add_test(NAME playlist_tracks_deletion_test COMMAND playlist_tracks_deletion_test)
 
 add_executable(playlist_sync_test tests/playlist_sync_test.cpp)
 target_link_libraries(playlist_sync_test PRIVATE seabass_core_testing)

@@ -816,6 +816,9 @@ Page {
         property string playlist: ""
         readonly property bool staged: root.playlistEditController.pendingRevision >= 0
             && playlist.length > 0 && root.playlistEditController.isPlaylistStaged(playlist)
+        // Staged to go with its tracks ("Delete playlist and its tracks").
+        readonly property bool tracksStaged: staged && ("isTracksDeleteStaged" in root.playlistEditController)
+            && root.playlistEditController.isTracksDeleteStaged(playlist)
         // One staged to be created: the menu takes the create back.
         readonly property bool isNew: root.playlistEditController.pendingRevision >= 0
             && playlist.length > 0 && root.playlistEditController.isNewPlaylistStaged(playlist)
@@ -920,11 +923,14 @@ Page {
             onTriggered: root.playlistEditController.keepPlaylistName(playlistMenu.playlist)
         }
         // Delete asks nothing: it only marks the playlist, nothing is
-        // written before Save, and this same item then takes it back.
+        // written before Save, and this same item then takes it back
+        // (with its tracks, when it was to take those along).
         MenuItem {
             objectName: "deletePlaylistItem"
             text: playlistMenu.isNew ? qsTr("Don't create this playlist")
-                : playlistMenu.staged ? qsTr("Keep this playlist") : qsTr("Delete playlist")
+                : playlistMenu.staged ? (playlistMenu.tracksStaged ? qsTr("Keep this playlist and its tracks")
+                                                                   : qsTr("Keep this playlist"))
+                : qsTr("Delete playlist")
             onTriggered: {
                 if (playlistMenu.isNew) {
                     root.playlistEditController.dropNewPlaylist(playlistMenu.playlist);
@@ -935,6 +941,71 @@ Page {
                 }
             }
         }
+        // The playlist and the tracks only it holds. This one does ask:
+        // files go, and what goes is read from every library on the stick
+        // first (deleteWithTracksDialog).
+        MenuItem {
+            objectName: "deletePlaylistWithTracksItem"
+            visible: !playlistMenu.isNew && !playlistMenu.staged
+                && ("planDeleteWithTracks" in root.playlistEditController)
+            height: visible ? implicitHeight : 0
+            text: qsTr("Delete playlist and its tracks...")
+            onTriggered: root.playlistEditController.planDeleteWithTracks(root.rekordboxPath, root.enginePath,
+                                                                          playlistMenu.playlist)
+        }
+    }
+
+    // What deleting a playlist with its tracks comes to, as the controller
+    // read it from every library on the stick (deleteWithTracksPlanned):
+    // the libraries the playlist goes from, the tracks that go with it,
+    // and the ones another playlist keeps. OK stages it; nothing is
+    // written before Save.
+    SeabassDialog {
+        id: deleteWithTracksDialog
+        objectName: "deleteWithTracksDialog"
+        property string playlist: ""
+        property var libraries: []
+        property int going: 0
+        property int staying: 0
+        property int withoutFile: 0
+        property int megabytes: 0
+        function names(list) {
+            return list.length <= 1 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
+        }
+        severity: SeabassDialog.Warning
+        title: qsTr("Delete playlist and its tracks")
+        messageObjectName: "deleteWithTracksHeadline"
+        detailObjectName: "deleteWithTracksDetail"
+        headline: going === 0 ? qsTr("Delete \"%1\"? None of its tracks would go with it.").arg(playlist)
+            : staying > 0 ? qsTr("Delete \"%1\" and %2 of its %3 tracks from this stick?").arg(playlist).arg(going).arg(going + staying)
+            : going === 1 ? qsTr("Delete \"%1\" and its track from this stick?").arg(playlist)
+            : qsTr("Delete \"%1\" and its %2 tracks from this stick?").arg(playlist).arg(going)
+        detailText: {
+            const lines = [qsTr("The playlist is deleted from %1.").arg(names(libraries))];
+            if (going > 0) {
+                const size = megabytes > 0 ? qsTr(" (%1 MB)").arg(megabytes) : "";
+                lines.push(going === 1
+                    ? qsTr("Its track is taken out of every library on the stick, and the file%1 is listed for Free Up Space to delete.").arg(size)
+                    : qsTr("%1 tracks are taken out of every library on the stick, and their files%2 are listed for Free Up Space to delete.")
+                        .arg(going).arg(size));
+            }
+            if (staying > 0) {
+                lines.push(staying === 1 ? qsTr("1 track stays on the stick: another playlist holds it.")
+                                         : qsTr("%1 tracks stay on the stick: other playlists hold them.").arg(staying));
+            }
+            if (withoutFile > 0) {
+                lines.push(withoutFile === 1 ? qsTr("1 streaming track has no file here to delete.")
+                                             : qsTr("%1 streaming tracks have no file here to delete.").arg(withoutFile));
+            }
+            lines.push(qsTr("Nothing changes until you Save."));
+            return lines.join(" ");
+        }
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        // With the number agreed to: more than that by the time it is
+        // staged, and the controller refuses and says so.
+        onAccepted: root.playlistEditController.deletePlaylistWithTracks(root.rekordboxPath, root.enginePath,
+                                                                         deleteWithTracksDialog.playlist,
+                                                                         deleteWithTracksDialog.going)
     }
 
     // The playlist dialogs wear SeabassDialog's frame, which is what
@@ -1082,6 +1153,15 @@ Page {
             missingLibrariesDialog.missing = missing;
             missingLibrariesDialog.added = added ?? [];
             missingLibrariesDialog.open();
+        }
+        function onDeleteWithTracksPlanned(plan) {
+            deleteWithTracksDialog.playlist = plan.playlist;
+            deleteWithTracksDialog.libraries = plan.libraries ?? [];
+            deleteWithTracksDialog.going = plan.going ?? 0;
+            deleteWithTracksDialog.staying = plan.staying ?? 0;
+            deleteWithTracksDialog.withoutFile = plan.withoutFile ?? 0;
+            deleteWithTracksDialog.megabytes = plan.megabytes ?? 0;
+            deleteWithTracksDialog.open();
         }
     }
 
@@ -2896,10 +2976,15 @@ Page {
                                     // not staged.
                                     color: trackDelegate.pendingAddition || trackDelegate.pendingMove
                                         || trackDelegate.unreadable ? Theme.textMuted : Theme.text
-                                    // Staged to come out of the playlist shown.
-                                    font.strikeout: root.shownPlaylist.length > 0
-                                        && root.playlistEditController.pendingRevision >= 0
-                                        && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath)
+                                    // Staged to come out of the playlist shown,
+                                    // or to go from the stick with a playlist
+                                    // deleted with its tracks, whichever list
+                                    // shows it.
+                                    font.strikeout: root.playlistEditController.pendingRevision >= 0
+                                        && ((root.shownPlaylist.length > 0
+                                             && root.playlistEditController.isRemovalStaged(root.shownPlaylist, filePath))
+                                            || (("isTrackDeleteStaged" in root.playlistEditController)
+                                                && root.playlistEditController.isTrackDeleteStaged(filePath)))
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
                                 }

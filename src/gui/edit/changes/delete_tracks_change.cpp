@@ -52,29 +52,52 @@ DeleteTracksChange::DeleteTracksChange(QString pioneerRoot, QString enginePath, 
 {
 }
 
+std::unique_ptr<DeleteTracksChange> DeleteTracksChange::forPlaylist(QString pioneerRoot, QString enginePath, std::string playlist,
+                                                                    std::vector<Entry> entries)
+{
+    auto change = std::make_unique<DeleteTracksChange>(std::move(pioneerRoot), std::move(enginePath), std::move(entries));
+    change->m_playlist = std::move(playlist);
+    return change;
+}
+
 QString DeleteTracksChange::idFor()
 {
     return QStringLiteral("library-health:delete-unplaylisted");
 }
 
+QString DeleteTracksChange::idForPlaylist(const std::string &playlist)
+{
+    return QStringLiteral("addcue:delete-playlist-tracks:") + QString::fromStdString(playlist);
+}
+
 QString DeleteTracksChange::id() const
 {
-    return idFor();
+    return m_playlist.empty() ? idFor() : idForPlaylist(m_playlist);
 }
 
 QString DeleteTracksChange::owner() const
 {
-    return QStringLiteral("library-health");
+    return m_playlist.empty() ? QStringLiteral("library-health") : QStringLiteral("addcue");
 }
 
 QString DeleteTracksChange::description() const
 {
+    if (!m_playlist.empty()) {
+        const QString playlist = QString::fromStdString(m_playlist);
+        return m_entries.size() == 1
+                   ? QStringLiteral("Delete \"%1\", the track of \"%2\" that no other playlist holds")
+                         .arg(QString::fromStdString(m_entries[0].title), playlist)
+                   : QStringLiteral("Delete the %1 tracks of \"%2\" that no other playlist holds").arg(m_entries.size()).arg(playlist);
+    }
     return m_entries.size() == 1 ? QStringLiteral("Delete \"%1\", which is in no playlist").arg(QString::fromStdString(m_entries[0].title))
                                  : QStringLiteral("Delete %1 tracks that are in no playlist").arg(m_entries.size());
 }
 
 QString DeleteTracksChange::subject() const
 {
+    if (!m_playlist.empty()) {
+        return QStringLiteral("The tracks of \"%1\"").arg(QString::fromStdString(m_playlist));
+    }
     return m_entries.size() == 1 ? QString::fromStdString(m_entries[0].title) : QStringLiteral("Tracks not in any playlist");
 }
 

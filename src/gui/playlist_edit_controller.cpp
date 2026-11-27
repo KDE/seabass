@@ -14,10 +14,14 @@
 #include <memory>
 #include <vector>
 
+#include "application/path_key.hpp"
+#include "application/ports/cancellation_token.hpp"
+#include "gui/edit/changes/delete_tracks_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/future_result.hpp"
+#include "gui/stick_catalogs.hpp"
 #include "seabass_version.hpp"
 
 namespace seabass::gui
@@ -42,6 +46,68 @@ QString ambiguous(const QString &playlist, const QStringList &libraries)
     return QStringLiteral("More than one playlist is called \"%1\" (in %2), so Seabass cannot tell which "
                           "one you mean. Rename one of them first.")
         .arg(playlist, displayNames(libraries));
+}
+
+// The tracks of `playlist` in every library on the stick, and what
+// deleting them comes to. From the catalogs as Browse has them (the cache
+// LibraryCatalogCache keeps, at its tracks-and-playlists stage), so a
+// library Browse is showing is not read again. Runs off the GUI thread.
+std::shared_ptr<const PlaylistTracksRead> readPlaylistTracks(const QString &rekordboxPath, const QString &enginePath,
+                                                             const std::string &playlist)
+{
+    auto read = std::make_shared<PlaylistTracksRead>();
+    try {
+        const std::string libraryPath = (rekordboxPath.isEmpty() ? enginePath : rekordboxPath).toStdString();
+        StickCatalogRead stick = readAllStickCatalogTracks(libraryPath, application::CancellationToken::none());
+        for (const std::string &failed : stick.failed) {
+            read->unreadable << QString::fromStdString(failed);
+        }
+        std::vector<domain::PlaylistCatalog> catalogs;
+        if (stick.catalogs.rekordbox) {
+            catalogs.push_back({"rekordbox", std::move(*stick.catalogs.rekordbox)});
+        }
+        if (stick.catalogs.oneLibrary) {
+            catalogs.push_back({"onelibrary", std::move(*stick.catalogs.oneLibrary)});
+        }
+        if (stick.catalogs.engine) {
+            catalogs.push_back({"engine", std::move(*stick.catalogs.engine)});
+        }
+        read->plan = domain::planPlaylistTracksDeletion(
+            catalogs, [](const std::string &file) { return application::normalizedPathKey(file); }, playlist);
+    } catch (const std::exception &e) {
+        read->error = QString::fromUtf8(e.what());
+    }
+    return read;
+}
+
+// The files a plan lets go, as DeleteTracksChange takes them: each with
+// its rows and, for every library the stick has (`onStick`) that had no
+// row for the file when the plan was read, one naming the file there all
+// the same. The change looks a file up at Save in the libraries its rows
+// name, so this is what makes it ask every library on the stick, as each
+// is by then: one that has gained a row for the file since, in a
+// playlist, keeps the file.
+std::vector<DeleteTracksChange::Entry> entriesOf(const domain::PlaylistTracksDeletion &plan, const QStringList &onStick)
+{
+    std::vector<DeleteTracksChange::Entry> entries;
+    for (const auto &track : plan.going) {
+        DeleteTracksChange::Entry entry{track.filePath, track.title, track.artist, track.rows};
+        for (const QString &library : onStick) {
+            const std::string format = library.toStdString();
+            const bool has = std::any_of(entry.rows.begin(), entry.rows.end(),
+                                         [&](const domain::Track &row) { return row.format == format; });
+            if (!has) {
+                domain::Track row;
+                row.format = format;
+                row.filePath = track.filePath;
+                row.title = track.title;
+                row.artist = track.artist;
+                entry.rows.push_back(std::move(row));
+            }
+        }
+        entries.push_back(std::move(entry));
+    }
+    return entries;
 }
 
 // PlaylistEditController::lastAddPlaylist, in the settings: Browse makes
@@ -104,6 +170,25 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
                 }
             });
             connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &summary) {
+                // A delete of a playlist's tracks whose playlist's delete
+                // is no longer staged (it was written, and the save was
+                // then cancelled or stopped) is dropped: left staged, the
+                // next save would take the tracks with nothing on the
+                // page to say so or to take it back. They stay on the
+                // stick, in no playlist.
+                {
+                    const QString tracksPrefix = DeleteTracksChange::idForPlaylist(std::string());
+                    std::vector<QString> orphaned;
+                    for (const QString &id : m_staged) {
+                        if (id.startsWith(tracksPrefix)
+                            && m_staged.count(DeletePlaylistChange::idFor(id.mid(tracksPrefix.size()).toStdString())) == 0) {
+                            orphaned.push_back(id);
+                        }
+                    }
+                    for (const QString &id : orphaned) {
+                        unstage(id);
+                    }
+                }
                 // Worded first: the page shows it when it hears of the save.
                 const QString described = describeApplied();
                 m_appliedKinds.clear();
@@ -126,6 +211,7 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
                     m_renames.clear();
                     m_creates.clear();
                     m_newPlaylists.clear();
+                    m_trackDeletes.clear();
                     m_requests.clear();
                     ++m_pendingRevision;
                     emit pendingChanged();
@@ -470,6 +556,7 @@ void PlaylistEditController::forgetUnstagedNewPlaylists()
     std::erase_if(m_removals, [this](const Edit &r) { return m_staged.count(r.id) == 0; });
     std::erase_if(m_moves, [this](const Edit &m) { return m_staged.count(m.id) == 0; });
     std::erase_if(m_renames, [this](const Rename &r) { return m_staged.count(r.id) == 0; });
+    std::erase_if(m_trackDeletes, [this](const auto &d) { return m_staged.count(d.first) == 0; });
 }
 
 bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist)
@@ -491,12 +578,176 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
         if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, where.having))) {
             return;  // the session reported why (another page's edits)
         }
+        // The playlist alone, whatever was asked of its tracks before.
+        if (const QString tracksId = DeleteTracksChange::idForPlaylist(name); m_staged.erase(tracksId) > 0) {
+            m_session->unstage(tracksId);
+            m_trackDeletes.erase(tracksId);
+        }
         m_staged.insert(DeletePlaylistChange::idFor(name));
         record(DeletePlaylistChange::idFor(name), {QStringLiteral("delete"), playlist});
         ++m_pendingRevision;
         emit pendingChanged();
     });
     return true;
+}
+
+bool PlaylistEditController::tracksDeletable(const QString &playlist, const PlaylistWhereabouts &where)
+{
+    if (where.having.isEmpty()) {
+        setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
+        return false;
+    }
+    if (!where.several.isEmpty()) {
+        setErrorMessage(ambiguous(playlist, where.several));
+        return false;
+    }
+    // Which files another playlist still uses is a question about every
+    // library on the stick: with one of them unread, no file may go.
+    if (!where.tracks || !where.tracks->error.isEmpty()) {
+        setErrorMessage(QStringLiteral("Could not read the stick's libraries, so no track of \"%1\" is deleted: %2")
+                            .arg(playlist, where.tracks ? where.tracks->error : QStringLiteral("nothing was read")));
+        return false;
+    }
+    if (!where.tracks->unreadable.isEmpty()) {
+        setErrorMessage(QStringLiteral("%1 on this stick could not be read, so Seabass cannot tell which tracks of \"%2\" "
+                                       "another playlist there still uses. No track is deleted.")
+                            .arg(displayNames(where.tracks->unreadable), playlist));
+        return false;
+    }
+    return true;
+}
+
+bool PlaylistEditController::planDeleteWithTracks(const QString &rekordboxPath, const QString &enginePath,
+                                                  const QString &playlist)
+{
+    setErrorMessage({});
+    if (playlist.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    lookUpWithTracks(rekordboxPath, enginePath, stickPathOf(playlist).toStdString(), [=, this](const PlaylistWhereabouts &where) {
+        if (!tracksDeletable(playlist, where)) {
+            return;
+        }
+        const domain::PlaylistTracksDeletion &plan = where.tracks->plan;
+        // Each file's size once, whichever library knows it.
+        std::uint64_t bytes = 0;
+        for (const auto &track : plan.going) {
+            std::uint64_t size = 0;
+            for (const auto &row : track.rows) {
+                size = std::max(size, row.fileSizeBytes);
+            }
+            bytes += size;
+        }
+        QVariantMap said;
+        said["playlist"] = playlist;
+        said["libraries"] = displayNames(where.having).split(QStringLiteral(", "));
+        said["going"] = static_cast<int>(plan.going.size());
+        said["staying"] = static_cast<int>(plan.staying.size());
+        said["withoutFile"] = plan.withoutFile;
+        said["megabytes"] = static_cast<int>((bytes + 1024 * 1024 - 1) / (1024 * 1024));
+        emit deleteWithTracksPlanned(said);
+    });
+    return true;
+}
+
+bool PlaylistEditController::deletePlaylistWithTracks(const QString &rekordboxPath, const QString &enginePath,
+                                                      const QString &playlist, int confirmedTracks)
+{
+    setErrorMessage({});
+    if (playlist.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    const std::string name = playlist.toStdString();
+    lookUpWithTracks(rekordboxPath, enginePath, stickPathOf(playlist).toStdString(), [=, this](const PlaylistWhereabouts &where) {
+        if (!tracksDeletable(playlist, where)) {
+            return;
+        }
+        // What was agreed to is a number of tracks. The stick is read
+        // again here (and again when a kept batch is staged after a
+        // crash): more tracks than that, and it is asked again instead.
+        const int going = static_cast<int>(where.tracks->plan.going.size());
+        if (confirmedTracks >= 0 && going > confirmedTracks) {
+            setErrorMessage(QStringLiteral("\"%1\" would take %2 tracks with it now, more than the %3 you agreed to: the "
+                                           "stick has changed since. Nothing is staged; ask again to see what would go.")
+                                .arg(playlist).arg(going).arg(confirmedTracks));
+            return;
+        }
+        // The playlist first: by the tracks' turn at Save it is gone, and
+        // only then is a track of it in no playlist.
+        const QString deleteId = DeletePlaylistChange::idFor(name);
+        const QString tracksId = DeleteTracksChange::idForPlaylist(name);
+        if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, where.having))) {
+            return;  // the session reported why (another page's edits)
+        }
+        // Staged again (a kept batch, or asked twice): the tracks take
+        // their place behind the playlist's delete once more.
+        if (m_staged.erase(tracksId) > 0) {
+            m_session->unstage(tracksId);
+        }
+        m_trackDeletes.erase(tracksId);
+        std::vector<DeleteTracksChange::Entry> entries = entriesOf(where.tracks->plan, where.onStick);
+        if (!entries.empty()) {
+            std::set<std::string> files;
+            for (const auto &entry : entries) {
+                files.insert(application::normalizedPathKey(entry.filePath));
+            }
+            if (!m_session->stage(DeleteTracksChange::forPlaylist(rekordboxPath, enginePath, name, std::move(entries)))) {
+                // Not half of what was asked: the playlist alone is not it.
+                m_session->unstage(deleteId);
+                m_staged.erase(deleteId);
+                ++m_pendingRevision;
+                emit pendingChanged();
+                return;
+            }
+            m_staged.insert(tracksId);
+            m_trackDeletes[tracksId] = std::move(files);
+        }
+        m_staged.insert(deleteId);
+        // One request for the two changes, kept under the playlist's
+        // delete: asked again after a crash, it stages both.
+        // toIndex carries the number of tracks agreed to.
+        record(deleteId, {QStringLiteral("deleteWithTracks"), playlist, QString(), QString(), going});
+        ++m_pendingRevision;
+        emit pendingChanged();
+    });
+    return true;
+}
+
+bool PlaylistEditController::isTracksDeleteStaged(const QString &playlist) const
+{
+    const QStringList names = namesOf(playlist);
+    return std::any_of(names.begin(), names.end(), [&](const QString &name) {
+        return m_staged.count(DeleteTracksChange::idForPlaylist(name.toStdString())) > 0;
+    });
+}
+
+bool PlaylistEditController::isTrackDeleteStaged(const QString &filePath) const
+{
+    if (m_trackDeletes.empty() || filePath.isEmpty()) {
+        return false;
+    }
+    const std::string key = application::normalizedPathKey(filePath.toStdString());
+    const bool going = std::any_of(m_trackDeletes.begin(), m_trackDeletes.end(), [&](const auto &staged) {
+        return m_staged.count(staged.first) > 0 && staged.second.count(key) > 0;
+    });
+    if (!going) {
+        return false;
+    }
+    // One put into another playlist in this batch stays: the tracks'
+    // delete is written last, and leaves alone what a playlist holds by
+    // then.
+    // Not an add into a playlist that is itself staged to go, or lies in
+    // a folder that is: that add finds no playlist at Save.
+    const QString deletePrefix = DeletePlaylistChange::idFor(std::string());
+    const auto doomed = [&](const QString &playlist) {
+        return std::any_of(m_staged.begin(), m_staged.end(), [&](const QString &id) {
+            return id.startsWith(deletePrefix) && within(playlist, id.mid(deletePrefix.size()));
+        });
+    };
+    return std::none_of(m_additions.begin(), m_additions.end(), [&](const Edit &add) {
+        return m_staged.count(add.id) > 0 && application::normalizedPathKey(add.file.toStdString()) == key
+               && !doomed(add.playlist);
+    });
 }
 
 bool PlaylistEditController::removeFromPlaylist(const QString &rekordboxPath, const QString &enginePath,
@@ -766,10 +1017,13 @@ std::vector<QString> PlaylistEditController::editsAddressing(const QString &path
             }
         }
     }
+    // A playlist's delete, and the delete of its tracks staged with it.
     for (const QString &id : m_staged) {
-        const QString prefix = DeletePlaylistChange::idFor(std::string());
-        if (id.startsWith(prefix) && within(id.mid(prefix.size()), path)) {
-            ids.push_back(id);
+        for (const QString &prefix : {DeleteTracksChange::idForPlaylist(std::string()), DeletePlaylistChange::idFor(std::string())}) {
+            if (id.startsWith(prefix) && within(id.mid(prefix.size()), path)) {
+                ids.push_back(id);
+                break;
+            }
         }
     }
     return ids;
@@ -793,6 +1047,18 @@ void PlaylistEditController::lookUp(const QString &rekordboxPath, const QString 
     runNextLookup();
 }
 
+void PlaylistEditController::lookUpWithTracks(const QString &rekordboxPath, const QString &enginePath,
+                                              const std::string &playlist,
+                                              std::function<void(const PlaylistWhereabouts &)> then)
+{
+    m_lookups.push_back({rekordboxPath, enginePath, playlist, std::string(), std::string(),
+                         [then = std::move(then)](const PlaylistWhereabouts &where, const PlaylistWhereabouts &) {
+                             then(where);
+                         },
+                         true});
+    runNextLookup();
+}
+
 void PlaylistEditController::runNextLookup()
 {
     if (m_lookupWatcher.isRunning()) {
@@ -806,8 +1072,12 @@ void PlaylistEditController::runNextLookup()
     const Lookup &next = m_lookups.front();
     m_lookupWatcher.setFuture(QtConcurrent::run(
         [rekordboxPath = next.rekordboxPath, enginePath = next.enginePath, playlist = next.playlist, also = next.also,
-         file = next.file]() {
-            return std::make_pair(playlistWhereabouts(rekordboxPath, enginePath, playlist, file),
+         file = next.file, withTracks = next.withTracks]() {
+            PlaylistWhereabouts where = playlistWhereabouts(rekordboxPath, enginePath, playlist, file);
+            if (withTracks) {
+                where.tracks = readPlaylistTracks(rekordboxPath, enginePath, playlist);
+            }
+            return std::make_pair(std::move(where),
                                   also.empty() ? PlaylistWhereabouts{} : playlistWhereabouts(rekordboxPath, enginePath, also));
         }));
 }
@@ -845,6 +1115,11 @@ void PlaylistEditController::noteApplied(const QString &changeId)
     }
     const QString kind = parts.at(1);
     const QString rest = parts.mid(2).join(QLatin1Char(':'));
+    // The delete of a playlist's tracks that took none (each is in a
+    // playlist by now) is not said as "with its tracks".
+    if (kind == QLatin1String("delete-playlist-tracks") && m_session && m_session->lastSkippedIds().contains(changeId)) {
+        return;
+    }
     ++m_appliedKinds[kind];
     QString playlist = rest.section(QLatin1Char('|'), 0, 0);
     if (kind == QLatin1String("rename-playlist")) {
@@ -894,14 +1169,24 @@ QString PlaylistEditController::describeApplied() const
         parts << tracks(n, "removed");
     }
     if (const int n = count("delete-playlist")) {
-        parts << (one ? QStringLiteral("deleted") : QStringLiteral("%1 deleted").arg(n));
+        // "With its tracks" when the save took those too; how many went
+        // is the save's own count, some may have stayed for a playlist
+        // that holds them by now.
+        const int withTracks = count("delete-playlist-tracks");
+        parts << (one ? (withTracks > 0 ? QStringLiteral("deleted with its tracks") : QStringLiteral("deleted"))
+                      : withTracks == 0 ? QStringLiteral("%1 deleted").arg(n)
+                      : n == 1 ? QStringLiteral("1 deleted with its tracks")
+                               : QStringLiteral("%1 deleted, %2 with their tracks").arg(n).arg(withTracks));
+    } else if (count("delete-playlist-tracks") > 0) {
+        // The tracks alone: their playlist went in a save before this one.
+        parts << QStringLiteral("its tracks deleted");
     }
     int other = 0;
     for (const auto &[kind, n] : m_appliedKinds) {
         static const QStringList known{QStringLiteral("create-playlist"), QStringLiteral("rename-playlist"),
                                        QStringLiteral("add-to-playlist"),
                                        QStringLiteral("move-in-playlist"), QStringLiteral("remove-from-playlist"),
-                                       QStringLiteral("delete-playlist")};
+                                       QStringLiteral("delete-playlist"), QStringLiteral("delete-playlist-tracks")};
         other += known.contains(kind) ? 0 : n;
     }
     if (other > 0) {
@@ -942,6 +1227,8 @@ void PlaylistEditController::unstage(const QString &changeId)
 void PlaylistEditController::keepPlaylist(const QString &playlist)
 {
     for (const QString &name : namesOf(playlist)) {
+        // Its tracks too, when it was to take them along.
+        unstage(DeleteTracksChange::idForPlaylist(name.toStdString()));
         unstage(DeletePlaylistChange::idFor(name.toStdString()));
     }
 }
@@ -1096,6 +1383,9 @@ bool PlaylistEditController::issue(const StagedEditRequest &r)
     }
     if (r.kind == QLatin1String("delete")) {
         return deletePlaylist(rb, en, r.playlist);
+    }
+    if (r.kind == QLatin1String("deleteWithTracks")) {
+        return deletePlaylistWithTracks(rb, en, r.playlist, r.toIndex);
     }
     if (r.kind == QLatin1String("add")) {
         return requestAdd(rb, en, r.playlist, r.file, r.title, r.toIndex, QString(), r.anyway);

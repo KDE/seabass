@@ -100,6 +100,31 @@ public:
     Q_INVOKABLE void dropNewPlaylist(const QString &name);
     Q_INVOKABLE bool isNewPlaylistStaged(const QString &name) const;
     Q_INVOKABLE bool deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
+    // Deleting a playlist together with its tracks. A track is the
+    // playlist's when any library on the stick lists its file there, and
+    // it goes (out of every library, its file onto the list Free Up Space
+    // deletes from) only when no playlist in any library holds it once
+    // this one is gone: one another playlist uses stays on the stick.
+    //
+    // planDeleteWithTracks reads what that comes to and says it with
+    // deleteWithTracksPlanned, for the page to ask with; nothing is
+    // staged. deletePlaylistWithTracks stages it: the playlist's delete,
+    // from every library that has it, and behind it the delete of the
+    // tracks (DeleteTracksChange::forPlaylist, which checks each again at
+    // Save). Refused when a library on the stick cannot be read: what its
+    // playlists still use is then not known. keepPlaylist takes both back.
+    Q_INVOKABLE bool planDeleteWithTracks(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
+    // `confirmedTracks` is how many tracks the user agreed to let go (the
+    // number planDeleteWithTracks said): the stick is read again, and if
+    // more would go by now nothing is staged and the error says so. Below
+    // 0, any number.
+    Q_INVOKABLE bool deletePlaylistWithTracks(const QString &rekordboxPath, const QString &enginePath,
+                                              const QString &playlist, int confirmedTracks = -1);
+    // The playlist is staged to be deleted with its tracks.
+    Q_INVOKABLE bool isTracksDeleteStaged(const QString &playlist) const;
+    // The file is one a playlist staged so takes with it, and no add
+    // staged in this batch puts it into another playlist.
+    Q_INVOKABLE bool isTrackDeleteStaged(const QString &filePath) const;
     Q_INVOKABLE bool removeFromPlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
                                         const QString &filePath, const QString &title);
     // The file at the end of `playlist` in every library on the stick
@@ -210,6 +235,12 @@ signals:
     // Nothing is staged until addAnyway().
     void additionNeedsLibraries(const QString &playlist, const QString &filePath, const QString &title,
                                 const QStringList &missingLibraries, int toIndex, const QStringList &addedLibraries);
+    // What planDeleteWithTracks found: playlist, libraries (display names
+    // of the ones holding the playlist), going and staying (tracks that
+    // would be deleted, and ones another playlist keeps), withoutFile
+    // (streaming rows: nothing to delete), megabytes (the files going,
+    // rounded up; 0 when no size is known).
+    void deleteWithTracksPlanned(const QVariantMap &plan);
     // keepLeftOverEdits is done: `kept` of `total` edits are staged again,
     // and `refusals` say why the others are not.
     void leftOverEditsKept(int kept, int total, const QStringList &refusals);
@@ -220,6 +251,13 @@ private:
     // thread with what it found, unless a save is writing by then.
     void lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
                 std::function<void(const PlaylistWhereabouts &)> then, const std::string &file = {});
+    // The same, with the playlist's tracks read from every library on the
+    // stick as well (PlaylistWhereabouts::tracks).
+    void lookUpWithTracks(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
+                          std::function<void(const PlaylistWhereabouts &)> then);
+    // The reasons a delete with tracks cannot go ahead on what was read,
+    // set as the error; false when there is one.
+    bool tracksDeletable(const QString &playlist, const PlaylistWhereabouts &where);
     // The same for two paths read in one turn: a rename's old and new.
     void lookUp(const QString &rekordboxPath, const QString &enginePath, const std::string &playlist,
                 const std::string &also, std::function<void(const PlaylistWhereabouts &, const PlaylistWhereabouts &)> then);
@@ -280,6 +318,7 @@ private:
         std::string also;  // empty: one path
         std::string file;  // asked of the first path (PlaylistWhereabouts::withFile)
         std::function<void(const PlaylistWhereabouts &, const PlaylistWhereabouts &)> then;
+        bool withTracks = false;  // read the first path's tracks too (PlaylistWhereabouts::tracks)
     };
     std::deque<Lookup> m_lookups;
     QFutureWatcher<std::pair<PlaylistWhereabouts, PlaylistWhereabouts>> m_lookupWatcher;
@@ -294,6 +333,9 @@ private:
     std::map<QString, QString> m_appliedRenames;
     QString m_lastSavedSummary;
     std::set<QString> m_staged;  // change ids
+    // The files each staged delete of a playlist's tracks takes, by the
+    // change's id, spelt as paths are compared (normalizedPathKey).
+    std::map<QString, std::set<std::string>> m_trackDeletes;
     QStringList m_newPlaylists;
     // One edit of a track's place in a playlist, as staged: `remake`
     // makes its change again for the playlist under another name (a new

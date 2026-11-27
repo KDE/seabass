@@ -384,8 +384,14 @@ bool LibraryEditSession::stage(std::unique_ptr<PendingChange> change)
                                  [&](const auto &c) { return c->id() == id; });
     if (existing != m_changes.end()) {
         *existing = std::shared_ptr<PendingChange>(std::move(change));
-    } else {
+    } else if (change->appliesLast()) {
         m_changes.push_back(std::shared_ptr<PendingChange>(std::move(change)));
+    } else {
+        // Before the changes that are written last
+        // (PendingChange::appliesLast), which stay at the end in the order
+        // they were staged.
+        const auto last = std::find_if(m_changes.begin(), m_changes.end(), [](const auto &c) { return c->appliesLast(); });
+        m_changes.insert(last, std::shared_ptr<PendingChange>(std::move(change)));
     }
     emit pendingChanged();
     if (!wasDirty) {
@@ -452,6 +458,9 @@ bool LibraryEditSession::stageAll(std::vector<std::shared_ptr<PendingChange>> ch
             m_changes.push_back(std::move(change));
         }
     }
+    // As stage() keeps it: the changes that are written last stay at the
+    // end, each kind in the order it was staged.
+    std::stable_partition(m_changes.begin(), m_changes.end(), [](const auto &c) { return !c->appliesLast(); });
     emit pendingChanged();
     if (!wasDirty) {
         emit stateChanged();

@@ -205,6 +205,15 @@ public:
     // anything else, sees every row the changes before it made.
     virtual bool sharesHeldWrites() const { return false; }
 
+    // Whether this change is written after every change that does not say
+    // so, whenever each was staged (LibraryEditSession::stage keeps such
+    // changes at the end of the batch). For a change whose answer depends
+    // on what the rest of the save leaves on the stick: the delete of a
+    // playlist's tracks takes only those no playlist holds by its turn,
+    // so a track put into another playlist after it was staged, by any
+    // page, has to be there before it looks.
+    virtual bool appliesLast() const { return false; }
+
     virtual ChangeOutcome apply(SaveContext &ctx) = 0;
 };
 

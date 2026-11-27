@@ -22,6 +22,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include <djinterop/djinterop.hpp>
@@ -738,6 +739,110 @@ int main(int argc, char **argv)
         assert(playlistWhereabouts(pioneerQ, libraryQ, "Q Two", file(A10)).withFile.isEmpty());
     }
     std::cout << "case 11 (the libraries with a row for a file, read with the playlist) OK\n";
+
+    // 12. A playlist deleted with its tracks (Browse, "Delete playlist and
+    //     its tracks"): "Doomed" holds c01, which no other playlist does,
+    //     a01, which "Q Two" holds too, and b01, which Engine has no row
+    //     for since case 11. The tracks' delete alone, with Doomed still
+    //     there, takes nothing: every one of them is in a playlist. Staged
+    //     behind the playlist's delete in one save, c01 and b01 go from
+    //     every library that lists them, their files queued; a01 stays for
+    //     Q Two.
+    {
+        const std::string pdbPath = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
+        const std::string manifestPath = pathToUtf8(stick / "Seabass" / "orphaned" / "pending-deletions.jsonl");
+        const auto manifestText = [&]() {
+            std::ifstream manifest(pathFromUtf8(manifestPath));
+            std::stringstream lines;
+            lines << manifest.rdbuf();
+            return lines.str();
+        };
+        {
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            assert(!w.isInAnyPlaylist(file(C01)) && !w.isInAnyPlaylist(file(B01)) && "in no playlist since case 3");
+            assert(w.isInAnyPlaylist(file(A01)) && "a01 is in Q Two");
+        }
+        assert(save(std::make_shared<CreatePlaylistChange>(pioneerQ, libraryQ, "Doomed", all)).appliedIds.size() == 1);
+        for (const auto &[f, title] : {std::pair{C01, "Tone C01"}, std::pair{A01, "Tone A01"}, std::pair{B01, "Tone B01"}}) {
+            const auto added = save(std::make_shared<AddToPlaylistChange>(pioneerQ, libraryQ, "Doomed", file(f),
+                                                                          QString::fromLatin1(title), all));
+            assert(added.appliedIds.size() == 1 && added.skippedIds.isEmpty());
+        }
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Doomed").having == all);
+        assert((engineMembers(library, "Doomed") == std::vector<std::int64_t>{engineId[C01.relative], engineId[A01.relative]})
+               && "Engine's Doomed is short of b01, which it has no row for");
+
+        const auto rowsFor = [&](const File &f, bool inEngine) {
+            std::vector<domain::Track> rows;
+            for (const char *format : {"rekordbox", "onelibrary", "engine"}) {
+                if (std::string(format) == "engine" && !inEngine) {
+                    continue;
+                }
+                domain::Track t;
+                t.format = format;
+                t.filePath = file(f);
+                rows.push_back(t);
+            }
+            return rows;
+        };
+        const auto tracksOfDoomed = [&]() {
+            return std::shared_ptr<PendingChange>(DeleteTracksChange::forPlaylist(
+                pioneerQ, libraryQ, "Doomed",
+                {{file(C01), "Tone C01", "Tone Artist 01", rowsFor(C01, true)},
+                 {file(A01), "Tone A01", "Tone Artist 01", rowsFor(A01, true)},
+                 {file(B01), "Tone B01", "Nouvel Artiste", rowsFor(B01, false)}}));
+        };
+        assert(tracksOfDoomed()->id() == DeleteTracksChange::idForPlaylist("Doomed"));
+        assert(tracksOfDoomed()->id() != DeleteTracksChange::idFor() && "beside Library Health's, never over it");
+        assert(tracksOfDoomed()->owner() == QStringLiteral("addcue") && "Browse's editor stages it");
+
+        // Alone, the playlist still there: nothing goes.
+        {
+            const auto result = save(tracksOfDoomed());
+            assert(result.skippedIds.size() == 1 && "every track is still in a playlist");
+            infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+            assert(!rows.trackIdsWithFilePath("/Contents/" + std::string(C01.relative)).empty());
+            assert(manifestText().find("c01.mp3") == std::string::npos);
+        }
+
+        // Behind the playlist's delete, in one save.
+        {
+            SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
+            const SaveLoopResult result =
+                runSaveLoop({std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "Doomed", all), tracksOfDoomed()}, ctx);
+            assert(result.error.isEmpty());
+            assert(result.appliedIds.size() == 2 && result.skippedIds.isEmpty());
+        }
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Doomed").having.isEmpty() && "the playlist is gone from all three");
+        {
+            infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+            assert(rows.trackIdsWithFilePath("/Contents/" + std::string(C01.relative)).empty() && "c01 out of export.pdb");
+            assert(rows.trackIdsWithFilePath("/Contents/" + std::string(B01.relative)).empty() && "b01 out of export.pdb");
+            assert(!rows.trackIdsWithFilePath("/Contents/" + std::string(A01.relative)).empty() && "a01 kept: Q Two holds it");
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            for (const File &f : {C01, B01}) {
+                bool gone = false;
+                try {
+                    w.addToPlaylist("Q Two", file(f));
+                } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
+                    gone = true;
+                }
+                assert(gone && "out of OneLibrary");
+            }
+            assert(w.isInAnyPlaylist(file(A01)) && "a01 still in OneLibrary's Q Two");
+            assert(w.playlistContentRowsWithoutPlaylist() == 0 && "no entry of Doomed left behind");
+            auto db = djinterop::engine::load_database(pathToUtf8(library));
+            assert(!db.track_by_id(engineId[C01.relative]).has_value() && "c01 out of Engine");
+            assert(db.track_by_id(engineId[A01.relative]).has_value() && "a01 kept in Engine");
+            assert(engineRowsNaming(library, engineId[C01.relative]) == 0 && "nothing of c01 left behind in Engine");
+            const std::string queued = manifestText();
+            assert(queued.find("c01.mp3") != std::string::npos && queued.find("b01.mp3") != std::string::npos
+                   && "the files wait on the list");
+            assert(queued.find("a01.mp3") == std::string::npos && "a01's file does not");
+        }
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Q Two").having == all && "the other playlist is untouched");
+    }
+    std::cout << "case 12 (a playlist deleted with its tracks: only the ones no other playlist holds go) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";

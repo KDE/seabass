@@ -158,8 +158,31 @@ TestCase {
             function keepPlaylist(playlist) {
                 calls.push(["keep", playlist]);
                 delete staged["p:" + playlist];
+                delete staged["t:" + playlist];
+                tracksGoing = [];
                 pendingRevision++;
             }
+            // "Delete playlist and its tracks": the plan the next ask
+            // answers with, as the real one reads it from the stick, and
+            // the files a staged one takes.
+            property var nextTracksPlan: ({libraries: ["rekordbox", "OneLibrary", "Engine"], going: 12, staying: 3,
+                                           withoutFile: 0, megabytes: 340})
+            property var tracksGoing: []
+            signal deleteWithTracksPlanned(var plan)
+            function planDeleteWithTracks(rekordboxPath, enginePath, playlist) {
+                calls.push(["planWithTracks", rekordboxPath, enginePath, playlist]);
+                deleteWithTracksPlanned(Object.assign({playlist: playlist}, nextTracksPlan));
+                return true;
+            }
+            function deletePlaylistWithTracks(rekordboxPath, enginePath, playlist, confirmedTracks) {
+                calls.push(["deleteWithTracks", rekordboxPath, enginePath, playlist, confirmedTracks]);
+                staged["p:" + playlist] = true;
+                staged["t:" + playlist] = true;
+                pendingRevision++;
+                return true;
+            }
+            function isTracksDeleteStaged(playlist) { return staged["t:" + playlist] === true; }
+            function isTrackDeleteStaged(filePath) { return tracksGoing.indexOf(filePath) >= 0; }
             function keepInPlaylist(playlist, filePath) {
                 calls.push(["keepIn", playlist, filePath]);
                 delete staged["r:" + playlist + "|" + filePath];
@@ -758,6 +781,105 @@ TestCase {
         compare(item.text, "Keep this playlist");
         item.triggered();
         compare(JSON.stringify(page.playlistEditController.calls[1]), JSON.stringify(["keep", "Peak"]));
+        cleanupExperimental();
+    }
+
+    // "Delete playlist and its tracks" does ask, with what the controller
+    // read from the stick: the libraries the playlist goes from, the
+    // tracks that go, the ones another playlist keeps. Only OK stages;
+    // the menu then offers to keep the playlist and its tracks.
+    function test_deletingAPlaylistWithItsTracksAsksWithWhatWasRead() {
+        const page = makeEditingPage();
+        const fake = page.playlistEditController;
+        const menu = findChild(page, "playlistMenu");
+        const dialog = findChild(page, "deleteWithTracksDialog");
+        const withTracks = findChild(page, "deletePlaylistWithTracksItem");
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        compare(withTracks.visible, true);
+        compare(withTracks.text, "Delete playlist and its tracks...");
+        withTracks.triggered();
+        compare(JSON.stringify(fake.calls), JSON.stringify([
+            ["planWithTracks", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Peak"]]),
+            "read first, nothing staged");
+        tryCompare(dialog, "opened", true);
+        compare(findChild(dialog, "deleteWithTracksHeadline").text, "Delete \"Peak\" and 12 of its 15 tracks from this stick?");
+        compare(findChild(dialog, "deleteWithTracksDetail").text,
+                "The playlist is deleted from rekordbox, OneLibrary and Engine. "
+                + "12 tracks are taken out of every library on the stick, and their files (340 MB) are listed for "
+                + "Free Up Space to delete. 3 tracks stay on the stick: other playlists hold them. "
+                + "Nothing changes until you Save.");
+        waitForRendering(page);
+        saveScreenshot(page, "browse_delete_playlist_with_tracks_dialog");
+        dialog.reject();
+        tryCompare(dialog, "visible", false);
+        compare(fake.calls.length, 1, "Cancel stages nothing");
+        compare(fake.isPlaylistStaged("Peak"), false);
+
+        withTracks.triggered();
+        tryCompare(dialog, "opened", true);
+        dialog.accept();
+        compare(JSON.stringify(fake.calls[2]), JSON.stringify(
+            ["deleteWithTracks", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Peak", 12]),
+            "with the number agreed to");
+        tryCompare(dialog, "visible", false);
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        // Staged: one way back, for the playlist and its tracks together.
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        const item = findChild(page, "deletePlaylistItem");
+        compare(item.text, "Keep this playlist and its tracks");
+        compare(withTracks.visible, false, "not offered again while it is staged");
+        item.triggered();
+        compare(JSON.stringify(fake.calls[3]), JSON.stringify(["keep", "Peak"]));
+        compare(fake.isTracksDeleteStaged("Peak"), false);
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        // A plain delete keeps its plain way back.
+        fake.deletePlaylist("", "", "Peak");
+        page.openPlaylistMenu("Peak", page);
+        tryCompare(menu, "opened", true);
+        compare(item.text, "Keep this playlist");
+        menu.close();
+        cleanupExperimental();
+    }
+
+    // The question's words for what was read: one track, all of them,
+    // none (every one is another playlist's too), one library, a
+    // streaming row, and no size known.
+    function test_theDeleteWithTracksQuestionSaysWhatGoes_data() {
+        return [
+            {tag: "one track, one library",
+             plan: {libraries: ["Engine"], going: 1, staying: 0, withoutFile: 0, megabytes: 9},
+             headline: "Delete \"Peak\" and its track from this stick?",
+             detail: "The playlist is deleted from Engine. Its track is taken out of every library on the stick, and "
+                     + "the file (9 MB) is listed for Free Up Space to delete. Nothing changes until you Save."},
+            {tag: "all of them, no size",
+             plan: {libraries: ["rekordbox", "OneLibrary"], going: 7, staying: 0, withoutFile: 0, megabytes: 0},
+             headline: "Delete \"Peak\" and its 7 tracks from this stick?",
+             detail: "The playlist is deleted from rekordbox and OneLibrary. 7 tracks are taken out of every library on "
+                     + "the stick, and their files are listed for Free Up Space to delete. Nothing changes until you Save."},
+            {tag: "none can go",
+             plan: {libraries: ["rekordbox", "OneLibrary", "Engine"], going: 0, staying: 1, withoutFile: 2, megabytes: 0},
+             headline: "Delete \"Peak\"? None of its tracks would go with it.",
+             detail: "The playlist is deleted from rekordbox, OneLibrary and Engine. 1 track stays on the stick: another "
+                     + "playlist holds it. 2 streaming tracks have no file here to delete. Nothing changes until you Save."},
+        ];
+    }
+    function test_theDeleteWithTracksQuestionSaysWhatGoes(data) {
+        const page = makeEditingPage();
+        const fake = page.playlistEditController;
+        const dialog = findChild(page, "deleteWithTracksDialog");
+        fake.nextTracksPlan = data.plan;
+        fake.planDeleteWithTracks("", "", "Peak");
+        tryCompare(dialog, "opened", true);
+        compare(findChild(dialog, "deleteWithTracksHeadline").text, data.headline);
+        compare(findChild(dialog, "deleteWithTracksDetail").text, data.detail);
+        dialog.reject();
+        tryCompare(dialog, "visible", false);
         cleanupExperimental();
     }
 
@@ -3757,6 +3879,164 @@ TestCase {
         wait(50);
         const page4 = leftOverPage(t);
         verify(!findChild(page4, "leftOverEditsDialog").opened, "not offered again");
+    }
+
+    // "Delete playlist and its tracks" with the real controller, on the
+    // fixture's stick: asked with what every library on it says, staged
+    // as the playlist's delete with its tracks' behind it, taken back as
+    // one, kept across a crash as one, and saved: the playlist gone, the
+    // tracks no other playlist holds out of every library with their
+    // files queued, the others still listed.
+    function test_aPlaylistDeletedWithItsTracksOnARealStick() {
+        const t = leftOverCopy();
+        realAppSettings.experimentalFeaturesEnabled = false;
+        const page1 = leftOverPage(t);
+        const browse1 = page1.playlistEditController;
+        const session = leftOverSession(t);
+        const file = browse1.leftOverEditsFile(t.pioneer, t.engine);
+        const dialog = findChild(page1, "deleteWithTracksDialog");
+
+        verify(browse1.planDeleteWithTracks(t.pioneer, t.engine, t.playlist), browse1.errorMessage);
+        tryCompare(dialog, "opened", true, 60000);
+        compare(browse1.errorMessage, "");
+        compare(session.pendingCount, 0, "asking stages nothing");
+        const going = dialog.going;
+        const staying = dialog.staying;
+        verify(going + staying >= t.order.length, "every track OneLibrary lists there is accounted for: " + going + " + " + staying);
+        verify(going > 0, "the fixture's playlist has tracks of its own: " + going + " going, " + staying + " staying");
+        verify(dialog.libraries.length > 0);
+        dialog.accept();
+        tryCompare(browse1, "busy", false, 60000);
+        compare(browse1.errorMessage, "");
+        compare(session.pendingCount, 2, "the playlist's delete, and its tracks'");
+        compare(browse1.isPlaylistStaged(t.playlist), true);
+        compare(browse1.isTracksDeleteStaged(t.playlist), true);
+        const goingFiles = t.order.filter(f => browse1.isTrackDeleteStaged(f));
+        verify(goingFiles.length > 0 && goingFiles.length <= going, goingFiles.length + " of " + going);
+        const stayingFiles = t.order.filter(f => !browse1.isTrackDeleteStaged(f));
+        const descriptions = JSON.stringify(session.pendingDescriptions);
+
+        // Taken back as one.
+        browse1.keepPlaylist(t.playlist);
+        compare(session.pendingCount, 0);
+        compare(browse1.isTracksDeleteStaged(t.playlist), false);
+        compare(browse1.isTrackDeleteStaged(goingFiles[0]), false);
+        verify(!stickFixture.fileExists(file), "nothing staged, nothing kept");
+
+        // More tracks than were agreed to: refused, and said.
+        verify(browse1.deletePlaylistWithTracks(t.pioneer, t.engine, t.playlist, going - 1));
+        tryCompare(browse1, "busy", false, 60000);
+        verify(browse1.errorMessage.indexOf("more than the " + (going - 1) + " you agreed to") > 0, browse1.errorMessage);
+        compare(session.pendingCount, 0, "nothing staged of it");
+
+        // Asked for under a new name, and the name taken back: the rename,
+        // the playlist's delete and its tracks' all go.
+        const renamed = t.playlist.substring(0, t.playlist.lastIndexOf("/") + 1) + "Renamed Doomed";
+        staged(browse1, browse1.renamePlaylist(t.pioneer, t.engine, t.playlist, "Renamed Doomed"));
+        staged(browse1, browse1.deletePlaylistWithTracks(t.pioneer, t.engine, renamed, going));
+        compare(session.pendingCount, 3);
+        compare(browse1.isTrackDeleteStaged(goingFiles[0]), true);
+        browse1.keepPlaylistName(renamed);
+        compare(session.pendingCount, 0, "no delete of its tracks left behind");
+        compare(browse1.isTrackDeleteStaged(goingFiles[0]), false);
+
+        // Staged again, and kept across a crash: both changes, in order.
+        staged(browse1, browse1.deletePlaylistWithTracks(t.pioneer, t.engine, t.playlist));
+        compare(session.pendingCount, 2);
+        compare(JSON.stringify(session.pendingDescriptions), descriptions);
+        verify(stickFixture.readText(file).indexOf("\"kind\": \"deleteWithTracks\"") > 0, stickFixture.readText(file));
+        crash(page1, t, file);
+        const page2 = leftOverPage(t);
+        const browse2 = page2.playlistEditController;
+        const left = findChild(page2, "leftOverEditsDialog");
+        tryCompare(left, "opened", true);
+        const spy = createTemporaryObject(leftOverKeptSpy, testCase, {target: browse2});
+        findChild(left, "keepLeftOverEditsButton").clicked();
+        tryCompare(spy, "count", 1, 60000);
+        compare(spy.signalArguments[0][0], 1, "one edit asked for, kept");
+        compare(session.pendingCount, 2, "and it is two changes again");
+        compare(JSON.stringify(session.pendingDescriptions), descriptions);
+        compare(browse2.isTrackDeleteStaged(goingFiles[0]), true);
+
+        // One of its tracks put into another playlist afterwards is kept:
+        // the tracks' delete stays the last change of the save, behind the
+        // add, and leaves alone what a playlist holds by its turn.
+        const rescued = goingFiles[0];
+        verify(browse2.addToPlaylist(t.pioneer, t.engine, "Playlist 000", rescued, "Rescued"), browse2.errorMessage);
+        // Staged, or asked about first ("Not in every library"): the
+        // question may still be opening when the lookup is done.
+        const ask = findChild(page2, "missingLibrariesDialog");
+        tryVerify(() => session.pendingCount === 3 || ask.opened, 60000, browse2.errorMessage);
+        if (ask.opened) {
+            findChild(ask, "addAnywayButton").clicked();
+            tryCompare(ask, "visible", false);
+        }
+        tryCompare(browse2, "busy", false, 60000);
+        compare(browse2.errorMessage, "");
+        compare(session.pendingCount, 3);
+        compare(session.pendingDescriptions[2], JSON.parse(descriptions)[1], "the tracks' delete is still last");
+        compare(browse2.isTrackDeleteStaged(rescued), false, "not struck out any more");
+        // Put into the playlist that goes, it is no rescue.
+        if (goingFiles.length > 1 && browse2.addToPlaylist(t.pioneer, t.engine, t.playlist, goingFiles[1], "No rescue")) {
+            tryVerify(() => session.pendingCount === 4 || ask.opened || browse2.errorMessage.length > 0, 60000);
+            if (ask.opened) {
+                findChild(ask, "addAnywayButton").clicked();
+                tryCompare(ask, "visible", false);
+            }
+            tryCompare(browse2, "busy", false, 60000);
+            compare(session.pendingCount, 4, browse2.errorMessage);
+            compare(browse2.isTrackDeleteStaged(goingFiles[1]), true, "still struck out: its playlist goes");
+            browse2.keepOutOfPlaylist(t.playlist, goingFiles[1]);
+            compare(session.pendingCount, 3);
+            compare(browse2.errorMessage, "");
+        }
+
+        // Saved.
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(session.pendingCount, 0);
+        compare(browse2.lastSavedSummary, going > 1 ? "2 playlists saved: 1 track added, 1 deleted with its tracks"
+                                                    : "2 playlists saved: 1 track added, 1 deleted");
+        const manifest = t.stick + "/Seabass/orphaned/pending-deletions.jsonl";
+        compare(stickFixture.fileExists(manifest), going > 1, "files are queued exactly when a track went");
+        const queued = stickFixture.fileExists(manifest) ? stickFixture.readText(manifest) : "";
+        const rescuedName = rescued.replace(/\\/g, "/").split("/").pop();
+        verify(queued.indexOf(rescuedName) < 0, rescuedName + " was put into another playlist and stays");
+        goingFiles.shift();
+        stayingFiles.push(rescued);
+        for (const gone of goingFiles) {
+            const name = gone.replace(/\\/g, "/").split("/").pop();
+            verify(queued.indexOf(name) >= 0, name + " waits on the list Free Up Space deletes from");
+        }
+        for (const kept of stayingFiles) {
+            const name = kept.replace(/\\/g, "/").split("/").pop();
+            verify(queued.indexOf(name) < 0, name + " is another playlist's and stays");
+        }
+        // Read again, each library: no playlist of that name, none of the
+        // files that went, every one that stayed.
+        for (const format of ["onelibrary", "rekordbox", "engine"]) {
+            const scan = createTemporaryObject(leftOverScanComponent, testCase);
+            scan.scan(format, format === "engine" ? t.engine : t.pioneer);
+            tryVerify(() => !scan.busy && scan.tracks.trackCount() > 0, 120000, format + " scanned");
+            verify(scan.playlistNames.indexOf(t.playlist) < 0, format + " has no such playlist any more");
+            const files = [];
+            for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+                files.push(scan.tracks.trackAt(i).filePath);
+            }
+            for (const gone of goingFiles) {
+                verify(files.indexOf(gone) < 0, format + " still lists " + gone);
+            }
+            if (format === "onelibrary") {
+                for (const kept of stayingFiles) {
+                    verify(files.indexOf(kept) >= 0, format + " lost " + kept);
+                }
+            }
+        }
     }
 
     function test_aSaveThatWritesEverythingLeavesNoBatch() {

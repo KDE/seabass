@@ -9,10 +9,12 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "domain/playlist_tracks_deletion.hpp"
 #include "gui/edit/pending_change.hpp"
 
 namespace seabass::infrastructure::rekordbox
@@ -22,6 +24,21 @@ class PdbRowWriter;
 
 namespace seabass::gui
 {
+
+// A playlist's tracks across every library on the stick, with what
+// deleting them would come to, when the asker wanted them (Browse's
+// "Delete playlist and its tracks"). playlistWhereabouts() never reads
+// them: PlaylistEditController does, beside it, in the same turn off the
+// GUI thread.
+struct PlaylistTracksRead
+{
+    domain::PlaylistTracksDeletion plan;
+    // Libraries the stick has whose tracks could not be read, or why none
+    // could: with either, which files another playlist still uses is not
+    // known, and nothing may be deleted.
+    QStringList unreadable;
+    QString error;
+};
 
 // Where a playlist at `playlist` (its full path, "Folder/List") is on the
 // stick, read now, each library opened once: libraries are "rekordbox",
@@ -45,6 +62,9 @@ struct PlaylistWhereabouts
     // relative to the library). A library holding the playlist that is not
     // here would be left alone by an add, so Browse asks first.
     QStringList withFile;
+    // Set by the asker that read them (see PlaylistTracksRead); null from
+    // playlistWhereabouts() itself.
+    std::shared_ptr<const PlaylistTracksRead> tracks;
 };
 PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist,
                                         const std::string &filePath = {});
