@@ -112,7 +112,6 @@
 #include <map>
 #include <set>
 #include <sstream>
-#include <unistd.h>
 #include <vector>
 
 #include "application/path_key.hpp"
@@ -2321,7 +2320,7 @@ int main(int argc, char **argv)
         application::LibraryEditLock other =
             registry->lockTemplate(libraryId, QStringLiteral("TEST"), pathToQString(stick.root));
         other.instanceId = "another-seabass";
-        other.pid = static_cast<std::int64_t>(::getpid());
+        other.pid = static_cast<std::int64_t>(QCoreApplication::applicationPid());
         registry->lockStore().forceRemove(libraryId.toStdString());
         require(registry->lockStore().tryAcquire(other), "12: the other instance takes the lock");
         QSignalSpy refused(&space, &KeptAnalysisSpaceController::lockRefused);
