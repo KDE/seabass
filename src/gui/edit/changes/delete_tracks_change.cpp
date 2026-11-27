@@ -8,7 +8,9 @@
 #include <filesystem>
 #include <memory>
 #include <set>
+#include <stdexcept>
 
+#include "domain/sync_planning.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
 #include "gui/edit/save_context.hpp"
@@ -192,6 +194,18 @@ ChangeOutcome DeleteTracksChange::apply(SaveContext &ctx)
             std::vector<std::string> oneLibraryPaths;
             std::vector<std::int64_t> engineIds;
         };
+        // One rule for all three libraries, before anything is removed: a
+        // stand-in row (Browse names the file in every library on the
+        // stick, see Entry::standIns) that the library still has no row
+        // for is in none of its playlists and has nothing to remove. A
+        // row the plan read that is not found now fails the save, and so
+        // does OneLibrary naming the file in two spellings, stand-in or
+        // not: the file could still be listed there.
+        const auto changedSince = [](const Entry &e, const std::string &format, const char *what) {
+            return std::runtime_error(domain::catalogDisplayName(format) + " " + what + " \"" + e.filePath
+                                      + "\" since Seabass read the stick, so no track was deleted. "
+                                        "Check the stick again, then delete the tracks again.");
+        };
         std::vector<Resolved> doomed;
         for (const auto &e : m_entries) {
             Resolved r;
@@ -201,29 +215,34 @@ ChangeOutcome DeleteTracksChange::apply(SaveContext &ctx)
                 if (row.filePath.empty()) {
                     continue;
                 }
+                const bool standIn = std::find(e.standIns.begin(), e.standIns.end(), row.format) != e.standIns.end();
                 if (row.format == "rekordbox" && pdb) {
-                    for (const uint32_t id : pdb->trackIdsWithFilePath(pathOnStick(pioneer, row.filePath))) {
+                    const std::vector<uint32_t> ids = pdb->trackIdsWithFilePath(pathOnStick(pioneer, row.filePath));
+                    if (ids.empty() && !standIn) {
+                        throw changedSince(e, row.format, "no longer lists");
+                    }
+                    for (const uint32_t id : ids) {
                         listed = listed || pdb->trackInAnyPlaylist(id);
                         r.rekordboxIds.push_back(id);
                     }
                 } else if (row.format == "onelibrary" && oneLibrary) {
-                    // A stand-in row (Browse names the file in every
-                    // library on the stick, see Entry::standIns) that
-                    // OneLibrary still has no row for: in none of its
-                    // playlists, nothing to remove. A real row that is
-                    // gone, or answers in two spellings, fails the save.
-                    const bool standIn = std::find(e.standIns.begin(), e.standIns.end(), "onelibrary") != e.standIns.end();
                     try {
                         listed = listed || oneLibrary->isInAnyPlaylist(row.filePath);
                         r.oneLibraryPaths.push_back(row.filePath);
+                    } catch (const infrastructure::onelibrary::OneLibraryRowInTwoSpellings &) {
+                        throw changedSince(e, row.format, "lists two spellings of");
                     } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
                         if (!standIn) {
-                            throw;
+                            throw changedSince(e, row.format, "no longer lists");
                         }
                     }
                 } else if (row.format == "engine" && engineSession) {
-                    for (const std::int64_t id :
-                         infrastructure::engine::engineTrackIdsForFile(engineSession->writeRoot(), engineSession->realRoot(), row.filePath)) {
+                    const std::vector<std::int64_t> ids =
+                        infrastructure::engine::engineTrackIdsForFile(engineSession->writeRoot(), engineSession->realRoot(), row.filePath);
+                    if (ids.empty() && !standIn) {
+                        throw changedSince(e, row.format, "no longer lists");
+                    }
+                    for (const std::int64_t id : ids) {
                         listed = listed || engineListed.count(id) > 0;
                         r.engineIds.push_back(id);
                     }

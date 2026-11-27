@@ -94,8 +94,8 @@ namespace
 //
 // Rows in two or more other spellings are not chosen between: nothing
 // says which of them the player reads, so this answers "none", as it did
-// before it folded anything.
-std::vector<int64_t> contentIdsMatching(SqlCipherDb &db, const std::string &contentPath)
+// before it folded anything, and sets `twoSpellings` when given.
+std::vector<int64_t> contentIdsMatching(SqlCipherDb &db, const std::string &contentPath, bool *twoSpellings = nullptr)
 {
     std::vector<int64_t> ids;
     {
@@ -120,6 +120,9 @@ std::vector<int64_t> contentIdsMatching(SqlCipherDb &db, const std::string &cont
             continue;
         }
         if (spelling && *spelling != path) {
+            if (twoSpellings) {
+                *twoSpellings = true;
+            }
             return {};
         }
         spelling = std::move(path);
@@ -135,7 +138,11 @@ std::vector<int64_t> contentIdsMatching(SqlCipherDb &db, const std::string &cont
 // reach all of them.
 std::vector<int64_t> contentIdsAt(SqlCipherDb &db, const std::string &contentPath)
 {
-    std::vector<int64_t> ids = contentIdsMatching(db, contentPath);
+    bool twoSpellings = false;
+    std::vector<int64_t> ids = contentIdsMatching(db, contentPath, &twoSpellings);
+    if (twoSpellings) {
+        throw OneLibraryRowInTwoSpellings("onelibrary: content rows name " + contentPath + " in two spellings");
+    }
     if (ids.empty()) {
         throw OneLibraryRowMissing("onelibrary: no content row for path " + contentPath);
     }

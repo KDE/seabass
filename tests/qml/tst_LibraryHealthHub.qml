@@ -1041,6 +1041,47 @@ TestCase {
         tryVerify(() => !controller.busy, 300000, "the other stick's check finishes");
     }
 
+    Component {
+        id: browseEditComponent
+        PlaylistEditController {}
+    }
+
+    // A match the session refuses (Browse's batch waits) takes nothing
+    // back: the delete being read still stages once Browse's batch is
+    // gone.
+    function test_aRefusedMatchKeepsTheChoiceBefore() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        compare(stickFixture.plantPlaylist(stick, "Planted Kept", ["rekordbox"], 1).length, 1);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer), "TESTSTICK");
+        verify(session !== null);
+        session.discard();
+        const page = createTemporaryObject(stickPageComponent, testCase, {rekordboxPath: pioneer, enginePath: engine});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        const find = (name) => controller.playlistDifferences.find((d) => d.name === name);
+        verify(find("Planted Kept") !== undefined, "listed");
+        verify(find("Planted Kept").references.some((r) => r.format === "rekordbox"), "rekordbox can be followed");
+
+        // Browse's batch waits while the delete is read.
+        const browse = createTemporaryObject(browseEditComponent, testCase);
+        verify(browse.createPlaylist(pioneer, engine, "Browse Made"), browse.errorMessage);
+        tryVerify(() => browse.isNewPlaylistStaged("Browse Made"), 60000, "Browse's create is staged");
+        compare(session.editorOwner, "addcue");
+        controller.deletePlaylistEverywhere("Planted Kept");
+        compare(controller.deletingPlaylist, "Planted Kept");
+        controller.alignPlaylist("Planted Kept", "rekordbox");
+        compare(find("Planted Kept").staged, "", "the match is refused");
+        browse.dropNewPlaylist("Browse Made");
+        compare(session.pendingCount, 0, "Browse's batch is gone");
+        tryCompare(controller, "deletingPlaylist", "", 60000);
+        compare(find("Planted Kept").staged, "delete", "the delete read before the refused match stages");
+        compare(session.pendingCount, 1);
+        session.discard();
+    }
+
     // A library that cannot be read by the time Delete Playlist looks
     // (export.pdb gone, a folder in its place): not deleted anywhere, and
     // said why, rather than deleted from the libraries that still read.

@@ -75,6 +75,16 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// No row is chosen because rows name the file in two or more spellings
+// that differ only in case or accents (contentIdsMatching). A
+// OneLibraryRowMissing to every caller that takes it as one; a caller
+// that must not take "two spellings" for "no row" catches this first.
+class OneLibraryRowInTwoSpellings : public OneLibraryRowMissing
+{
+public:
+    using OneLibraryRowMissing::OneLibraryRowMissing;
+};
+
 // The row a removal would repoint playlists AT is the one missing. The
 // opposite of OneLibraryRowMissing above in what it means for a caller:
 // the row to remove is right there, and removing it with nowhere to send

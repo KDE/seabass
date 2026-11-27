@@ -2377,12 +2377,17 @@ void LibraryConsistencyController::alignPlaylist(const QString &playlist, const 
         return;
     }
     const QString id = AlignPlaylistChange::idFor(name);
-    cancelPendingDelete(playlist);
-    unstagePlaylistResolution(name);
+    // Staged first (it replaces a match staged before): refused, the
+    // choice made before, staged or being read, stays as it was.
     if (!m_session->stage(std::make_unique<AlignPlaylistChange>(m_rekordboxPath, m_enginePath, name, ref,
                                                                 alignments->second, 1))) {
         emit playlistsChanged();
         return;
+    }
+    cancelPendingDelete(playlist);
+    const QString deleteId = DeletePlaylistChange::idFor(name);
+    if (m_stagedPlaylists.erase(deleteId) > 0) {
+        m_session->unstage(deleteId);
     }
     m_stagedPlaylists[id] = reference;
     emit playlistsChanged();
