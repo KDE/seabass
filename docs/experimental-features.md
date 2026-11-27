@@ -293,7 +293,11 @@ from day one.
   tracks as any playlist's (staged ones before Save included), the
   recordings after them, the playlist not listed a second time; a WAV
   whose FLAC is in it (as long to the sample at the same rate) is marked
-  "In the library as FLAC". Verified on a scratch stick through Save in
+  "In the library as FLAC". Files dropped on the row or its list and
+  tracks dragged onto the row go into that playlist (made first when the
+  stick has none), a track taken out of the row leaves the playlist only,
+  the row has no playlist menu (no rename, no delete) and its summary is
+  the playlist's. Verified on a scratch stick through Save in
   all three libraries (`tst_OwnRecordings`). Still owed: Free Up Space
   naming a recording that is in the library as FLAC, and Windows and
   macOS.

@@ -27,12 +27,12 @@ ListView {
     // kind: "all" ("All tracks", picked as playlistPicked(0, ...)), then
     // whatever the host adds (Browse: "recordings", Own Recordings, picked
     // as fixedRowPicked). Always at the top in this order, whatever the
-    // filter; never renamed, deleted or dropped on. A fixed row may stand
-    // for a stick playlist as well (`playlist`, Browse's Own Recordings
-    // for the playlist of that name): that playlist is then this row and
-    // not listed a second time below, and the row counts and changes as
-    // that playlist. Any other stick playlist of a fixed row's name is a
-    // row of its own below them.
+    // filter; never renamed or deleted. A fixed row may stand for a stick
+    // playlist as well (`playlist`, Browse's Own Recordings for the
+    // playlist of that name): that playlist is then this row and not
+    // listed a second time below, and the row counts, changes, sums up
+    // and takes dropped tracks and files as that playlist. Any other stick
+    // playlist of a fixed row's name is a row of its own below them.
     property var fixedRows: [{kind: "all", name: "All tracks"}]
     readonly property int fixedRowCount: root.fixedRows.length
     function fixedKindAt(index) {
@@ -389,7 +389,7 @@ ListView {
         // first row while the page keeps showing the playlist it opened on.
         isCurrent: isFixed ? root.shownFixedRow === fixedKind
             : root.shownFixedRow.length === 0 && modelData === root.shownPlaylist
-        onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
+        onDropTargetChanged: root.noteDropTarget(playlist, dropTarget)
         pendingDelete: !isFixed && !isNew && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
         // "All tracks" changes by the tracks an import brings, a fixed
         // row's playlist as that playlist.
@@ -419,12 +419,15 @@ ListView {
         onCheckToggled: checked => root.playlistCheckToggled(isAll ? "" : modelData, checked)
         thumbnailSource: isNew || isRecordings ? "" : ((root.scanController.playlistThumbnails || {})[isAll ? "" : modelData] ?? "")
         // The summary's part: the pointer on a row that has one, a
-        // press or the wheel there, and what to show for it. The
-        // recordings have none yet.
+        // press or the wheel there, and what to show for it. Own
+        // Recordings sums up its playlist's tracks, once the stick has
+        // that playlist; the recordings no library lists are left out.
+        readonly property bool hasSummary: !isNew && (!isRecordings
+            || (hasPlaylist && root.scanController.playlistNames.indexOf(playlist) >= 0))
         function summaryFor() {
-            return root.scanController.playlistSummary(isAll ? "" : modelData);
+            return root.scanController.playlistSummary(isAll ? "" : playlist);
         }
-        onRowHoveredChanged: root.noteSummaryHover(this, rowHovered && !isNew && !isRecordings)
+        onRowHoveredChanged: root.noteSummaryHover(this, rowHovered && hasSummary)
         onSummaryDismissed: root.dismissSummary(this)
         Component.onDestruction: root.noteSummaryHover(this, false)
         // The index the page gets is the playlist's place among the
@@ -433,14 +436,14 @@ ListView {
         onPicked: isNew ? root.newPlaylistPicked(modelData)
             : isFixed && !isAll ? root.fixedRowPicked(fixedKind)
             : root.playlistPicked(isAll ? 0 : root.scanController.playlistNames.indexOf(modelData) + 1, modelData)
-        acceptsTrackDrop: root.trackDropsEnabled && !isFixed && !pendingDelete
-            && (modelData !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(modelData) < 0)
-        heldDropTarget: !isFixed && root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
-        onTrackDropped: root.trackDropped(modelData)
-        // Files go into a playlist, or into none ("All tracks"); Own
-        // Recordings is neither.
-        acceptsFileDrop: root.fileDropsEnabled && !pendingDelete && !isRecordings
-        onFilesDropped: urls => root.filesDropped(isAll ? "" : modelData, urls)
+        acceptsTrackDrop: root.trackDropsEnabled && hasPlaylist && !pendingDelete
+            && (playlist !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(playlist) < 0)
+        heldDropTarget: hasPlaylist && root.heldDropTarget.length > 0 && root.heldDropTarget === playlist
+        onTrackDropped: root.trackDropped(playlist)
+        // Files go into a playlist, or into none ("All tracks"); a fixed
+        // row that is no playlist takes none.
+        acceptsFileDrop: root.fileDropsEnabled && !pendingDelete && (isAll || hasPlaylist)
+        onFilesDropped: urls => root.filesDropped(isAll ? "" : playlist, urls)
         onContextRequested: {
             if (!isFixed) {
                 root.playlistContextRequested(modelData, this);

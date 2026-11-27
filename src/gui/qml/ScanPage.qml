@@ -3425,14 +3425,14 @@ Page {
                     objectName: "trackFileDropArea"
                     parent: trackListView
                     anchors.fill: parent
-                    // Files go into a playlist or into the library; the
-                    // recordings are neither.
-                    enabled: root.trackImportEnabled && !root.showingRecordings
+                    // On Own Recordings the files go into its playlist.
+                    enabled: root.trackImportEnabled
                     keys: ["text/uri-list"]
                     // The place counts only where a row's place is its
                     // place in the playlist, and nothing staged moves it.
                     readonly property bool placed: root.shownPlaylist.length > 0 && dropGap.orderShown
                         && root.newPlaylistNames.indexOf(root.shownPlaylist) < 0
+                        && (!root.showingRecordings || root.ownRecordingsPlaylistOnStick)
                     // The row the files would go before; the count for the end.
                     readonly property int targetIndex: {
                         if (!containsDrag || !placed) {
@@ -3440,8 +3440,8 @@ Page {
                         }
                         const y = drag.y + trackListView.contentY;
                         const at = trackListView.indexAt(trackListView.width / 2, y);
-                        if (at < 0) {
-                            return trackListView.count;
+                        if (at < 0 || at >= dropGap.rowCount) {
+                            return dropGap.rowCount;
                         }
                         const row = trackListView.itemAtIndex(at);
                         return row !== null && y > row.y + row.height / 2 ? at + 1 : at;
@@ -3450,8 +3450,8 @@ Page {
                         if (targetIndex < 0) {
                             return 0;
                         }
-                        const last = targetIndex >= trackListView.count;
-                        const row = trackListView.itemAtIndex(last ? trackListView.count - 1 : targetIndex);
+                        const last = targetIndex >= dropGap.rowCount;
+                        const row = trackListView.itemAtIndex(last ? dropGap.rowCount - 1 : targetIndex);
                         return row === null ? 0 : row.y + (last ? row.height : 0) - trackListView.contentY;
                     }
                     onDropped: drop => {
@@ -3461,7 +3461,7 @@ Page {
                         const to = fileDropArea.targetIndex;
                         drop.accept(Qt.CopyAction);
                         root.importFiles(drop.urls, root.shownPlaylist, false,
-                                         to >= 0 && to < trackListView.count ? to : -1);
+                                         to >= 0 && to < dropGap.rowCount ? to : -1);
                     }
                     Rectangle {
                         objectName: "trackFileDropOutline"
@@ -3501,7 +3501,9 @@ Page {
                     pointerY: trackDropArea.drag.y
                     contentY: trackListView.contentY
                     originY: trackListView.originY
-                    rowCount: trackListView.count
+                    // The playlist's rows: Own Recordings' recordings come
+                    // after them and have no place in it.
+                    rowCount: trackListView.count - (root.showingRecordings ? scanController.recordingRowsShown : 0)
                     // A track from elsewhere gets a place too; the card then
                     // asks, holding the gap open meanwhile.
                     takesOtherTracks: true
@@ -3929,6 +3931,13 @@ Page {
     function addDraggedTrack(playlist, moveFrom) {
         if (trackDrag.targetIndex >= 0) {
             root.settle(trackDrag.targetIndex);
+        }
+        // Own Recordings' playlist, not made yet: staged to be made first,
+        // as "Create new playlist" stages it, and the add goes into it.
+        if (playlist === root.ownRecordingsPlaylist && root.ownRecordingsListed && !root.ownRecordingsPlaylistOnStick
+                && root.newPlaylistNames.indexOf(playlist) < 0
+                && !root.playlistEditController.createPlaylist(root.rekordboxPath, root.enginePath, playlist)) {
+            return;
         }
         root.playlistEditController.addToPlaylist(root.rekordboxPath, root.enginePath, playlist,
                                                   trackDrag.filePath, trackDrag.title, trackDrag.targetIndex,

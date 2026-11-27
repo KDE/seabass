@@ -481,7 +481,8 @@ TestCase {
         own.close();
         tryCompare(own, "visible", false);
         compare(page.trackDragCard.canDrag(row), false, "not dragged into a playlist");
-        compare(findChild(page, "trackFileDropArea").enabled, false, "no files dropped on the recordings");
+        compare(findChild(page, "trackFileDropArea").enabled, page.trackImportEnabled,
+                "files dropped on Own Recordings go into its playlist");
         compare(row.ToolTip.text, page.recordingRowText);
         mouseMove(row, row.width / 2, row.height / 2);
         tryCompare(row.ToolTip, "visible", true);
@@ -496,11 +497,12 @@ TestCase {
 
         const menus = signalSpy.createObject(testCase, {target: sidebar(page), signalName: "playlistContextRequested"});
         for (const fixed of sidebarRows(page).filter(r => r.isFixed)) {
-            compare(fixed.acceptsTrackDrop, false, fixed.name + " takes no track");
+            // Own Recordings is its playlist, made at the first track.
+            compare(fixed.acceptsTrackDrop, fixed.isRecordings, fixed.name + " takes a track as its playlist");
             fixed.contextRequested();
         }
         compare(menus.count, 0, "no menu on a fixed row");
-        compare(recordingsRow(page).acceptsFileDrop, false, "no files dropped on Own Recordings");
+        compare(recordingsRow(page).acceptsFileDrop, page.trackImportEnabled, "files dropped on Own Recordings too");
         compare(sidebarRows(page)[0].acceptsFileDrop, page.trackImportEnabled, "All tracks as before");
         const playlistRow = sidebarRows(page).find(r => r.name === "Held Playlist");
         playlistRow.contextRequested();
@@ -1070,6 +1072,30 @@ TestCase {
         }
     }
 
+    // Files dropped on the row or on its list go into the stick playlist
+    // "Own Recordings" as on any playlist (at its end): made by that
+    // import while the stick has none, put into it once it has.
+    function test_filesDroppedGoIntoThePlaylist() {
+        for (const hasPlaylist of [false, true]) {
+            const page = makePage(makeStick(testCase.threeRecordings), true, hasPlaylist ? "Own Recordings" : "");
+            const scan = findChild(page, "scanController");
+            tryCompare(scan, "recordingCount", 3);
+            const fake = createTemporaryObject(fakeImportComponent, testCase);
+            page.trackImportController = fake;
+
+            verify(recordingsRow(page).acceptsFileDrop);
+            recordingsRow(page).filesDropped(["file:///home/dj/a.wav"]);
+            compare(JSON.stringify(fake.calls[0]), JSON.stringify([["file:///home/dj/a.wav"], "Own Recordings", !hasPlaylist, -1]),
+                    "a drop on the row");
+            page.showOwnRecordings();
+            tryCompare(findChild(page, "trackListView"), "count", hasPlaylist ? 6 : 3);
+            verify(findChild(page, "trackFileDropArea").enabled, "the list takes files too");
+            page.destroy();
+            wait(0);
+            browseFixture.restore();
+        }
+    }
+
     // Add to the library is offered only for the FLAC Save as FLAC made
     // and while it is there; never for the WAV. Otherwise shown, off,
     // with the reason.
@@ -1100,6 +1126,81 @@ TestCase {
         keep.flacs = {[path]: "/home/dj/Kept/Late Set.flac"};
         keep.revision++;
         compare(said(), JSON.stringify([true, "Add to the library"]));
+    }
+
+    // Just enough of the playlist edits to see what a dragged track asks.
+    Component {
+        id: fakePlaylistEditComponent
+        QtObject {
+            property var calls: []
+            property int pendingRevision: 0
+            property string errorMessage: ""
+            property var newPlaylists: []
+            property var pendingMoves: ({})
+            property var pendingAdditions: ({})
+            property string lastAddPlaylist: ""
+            signal pendingChanged()
+            function createPlaylist(rekordboxPath, enginePath, name) {
+                calls.push(["create", name]);
+                newPlaylists = newPlaylists.concat([name]);
+                return true;
+            }
+            function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom) {
+                calls.push(["add", playlist, filePath, toIndex]);
+                return true;
+            }
+            function isNewPlaylistStaged(name) { return newPlaylists.indexOf(name) >= 0; }
+            function isPlaylistStaged(name) { return false; }
+            function isRemovalStaged() { return false; }
+            function isAdditionStaged() { return false; }
+            function isRenameStaged() { return false; }
+            function isPlaylistEdited() { return false; }
+            function trackCountChange() { return 0; }
+        }
+    }
+
+    // A track dragged onto the row goes into its playlist: made first
+    // (staged as "Create new playlist" stages one) while the stick has
+    // none, then the add; once it has one, the add alone.
+    function test_aDraggedTrackGoesIntoThePlaylist() {
+        for (const hasPlaylist of [false, true]) {
+            const page = makePage(makeStick(testCase.threeRecordings), true, hasPlaylist ? "Own Recordings" : "");
+            tryCompare(findChild(page, "scanController"), "recordingCount", 3);
+            const edits = createTemporaryObject(fakePlaylistEditComponent, testCase);
+            page.playlistEditController = edits;
+            verify(recordingsRow(page).acceptsTrackDrop);
+            const drag = findChild(page, "trackDragItem");
+            drag.filePath = "/nonexistent/HELD/Contents/held-1001.mp3";
+            drag.title = "Held Track 1001";
+            drag.addChosen("Own Recordings");
+            compare(JSON.stringify(edits.calls), JSON.stringify(
+                (hasPlaylist ? [] : [["create", "Own Recordings"]])
+                    .concat([["add", "Own Recordings", "/nonexistent/HELD/Contents/held-1001.mp3", -1]])));
+            // Staged to be made: still the one row.
+            if (!hasPlaylist) {
+                compare(sidebarNames(page), "All tracks(all)|Own Recordings(recordings)|Held Playlist");
+            }
+            page.destroy();
+            wait(0);
+            browseFixture.restore();
+        }
+    }
+
+    // The row's summary is its playlist's, once the stick has it; the
+    // recordings no library lists are left out of it.
+    function test_theSummaryIsThePlaylists() {
+        let page = makePage(makeStick(testCase.threeRecordings), true);
+        tryCompare(findChild(page, "scanController"), "recordingCount", 3);
+        compare(recordingsRow(page).hasSummary, false, "no playlist, no summary");
+        page.destroy();
+        wait(0);
+        browseFixture.restore();
+        page = makePage(makeStick(testCase.threeRecordings), true, "Own Recordings");
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        const row = recordingsRow(page);
+        verify(row.hasSummary);
+        compare(JSON.stringify(row.summaryFor()), JSON.stringify(scan.playlistSummary("Own Recordings")));
     }
 
     // ---- The whole way, on a copy of a real stick ----
@@ -1231,5 +1332,60 @@ TestCase {
             compare(files.length, 1, format + ": " + files.join(", "));
             verify(files[0].endsWith(".flac"), format + ": " + files[0]);
         }
+    }
+
+    // A track of the row taken out of it leaves the stick playlist only:
+    // the track stays in every library. The recordings have no place in
+    // the playlist, so a place in the list past its tracks is its end.
+    function test_removingFromTheRowLeavesTheTrackInTheLibrary() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        verify(browseFixture.writeRecording(stick + "/Sessions/Session-0010.wav", 1, false, testCase.base));
+        const planted = stickFixture.plantPlaylist(stick, "Own Recordings", ["rekordbox", "onelibrary", "engine"], 2);
+        compare(planted.length, 2, "the playlist is planted in every library");
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 660, stickLabel: "TESTSTICK",
+            rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library",
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        const scan = findChild(page, "scanController");
+        tryVerify(() => !scan.busy && scan.playlistNames.indexOf("Own Recordings") >= 0, 60000, "the stick is read");
+        tryCompare(scan, "recordingCount", 1, 10000);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        compare(scan.tracks.trackAt(2).recording, true);
+        compare(findChild(page, "playlistDropGap").rowCount, 2, "the playlist's rows only");
+
+        const removed = scan.tracks.trackAt(0).filePath;
+        waitForRendering(page);
+        page.openTrackMenu(trackRows(page)[0], trackRows(page)[0]);
+        const menu = findChild(page, "trackMenu");
+        tryCompare(menu, "opened", true);
+        const item = findChild(menu, "removeFromPlaylistItem");
+        verify(item.visible);
+        compare(item.text, "Remove from \"Own Recordings\"");
+        item.triggered();
+        menu.close();
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
+        tryCompare(session, "pendingCount", 1, 30000);
+        let summary = null;
+        const done = result => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        tryVerify(() => !scan.busy && scan.tracks.trackCount() === 2, 60000, "read again: one track and the recording");
+        compare(page.showingRecordings, true);
+
+        // The fixture's Engine library has none of these tracks: its
+        // playlist is there, empty, and stays so.
+        for (const format of ["rekordbox", "onelibrary"]) {
+            const files = playlistFiles(stick, format, "Own Recordings");
+            compare(files.length, 1, format + ": " + files.join(", "));
+            verify(files.indexOf(removed) < 0, format);
+            verify(playlistFiles(stick, format, "").indexOf(removed) >= 0, format + " still lists the track");
+        }
+        verify(stickFixture.playlistsIn(stick, "engine").indexOf("Own Recordings") >= 0, "Engine keeps the playlist");
     }
 }
