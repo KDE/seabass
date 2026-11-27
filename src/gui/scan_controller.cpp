@@ -36,6 +36,7 @@
 #include "gui/qt_progress_reporter.hpp"
 #include "gui/recordings_changes.hpp"
 #include "gui/stick_path.hpp"
+#include "infrastructure/audio/exact_sample_count.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/read_access.hpp"
 
@@ -55,6 +56,46 @@ QString aliasedPlaylistName(const QVariantMap &aliases, const QString &name)
         }
     }
     return name;
+}
+
+// For each recording listed, the one of `flacs` (files of the library on
+// the stick) that holds its audio, or "": a FLAC as long as the WAV to
+// the sample, at its rate. Save as FLAC proves its FLAC sample for
+// sample, and the import copies the file as it is, so a recording saved
+// and added is found by its length alone, after a restart too. A WAV the
+// player did not finish states no length to compare, and one without
+// audio matches nothing; each FLAC stands for one recording. Reads the
+// files' headers: not for the GUI thread.
+std::vector<std::string> libraryCopiesOf(const RecordingsListResult &listed, const std::vector<std::string> &flacs)
+{
+    std::vector<std::string> copies(listed.listing.recordings.size());
+    if (flacs.empty()) {
+        return copies;
+    }
+    std::vector<std::optional<infrastructure::audio::ExactSampleCount>> lengths;
+    lengths.reserve(flacs.size());
+    for (const std::string &flac : flacs) {
+        lengths.push_back(infrastructure::audio::readExactSampleCount(flac));
+    }
+    std::vector<bool> taken(flacs.size(), false);
+    for (std::size_t i = 0; i < copies.size(); ++i) {
+        if (i < listed.states.size() && (listed.states[i].unfinished || listed.states[i].holdsNoAudio)) {
+            continue;
+        }
+        const auto wav = infrastructure::audio::readExactSampleCount(listed.listing.recordings[i].path);
+        if (!wav || wav->samples == 0) {
+            continue;
+        }
+        for (std::size_t f = 0; f < flacs.size(); ++f) {
+            if (!taken[f] && lengths[f] && lengths[f]->samples == wav->samples
+                && std::abs(lengths[f]->sampleRateHz - wav->sampleRateHz) < 0.5) {
+                taken[f] = true;
+                copies[i] = flacs[f];
+                break;
+            }
+        }
+    }
+    return copies;
 }
 
 }  // namespace
@@ -178,6 +219,10 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
         const auto it = m_recordingRows.find(track.sourceId);
         return it != m_recordingRows.end() && it->second.holdsNoAudio;
     }
+    case RecordingInLibraryAsRole: {
+        const auto it = m_recordingRows.find(track.sourceId);
+        return it == m_recordingRows.end() ? QString() : QString::fromStdString(it->second.inLibraryAs);
+    }
     default:
         return {};
     }
@@ -215,6 +260,7 @@ QHash<int, QByteArray> TrackListModel::roleNames() const
         {RecordingSizeBytesRole, "recordingSizeBytes"},
         {RecordingUnfinishedRole, "recordingUnfinished"},
         {RecordingHoldsNoAudioRole, "recordingHoldsNoAudio"},
+        {RecordingInLibraryAsRole, "recordingInLibraryAs"},
     };
 }
 
@@ -514,7 +560,7 @@ void ScanController::setCatalogCacheForTesting(LibraryCatalogCache *cache)
 ScanController::ScanController(QObject *parent) : QObject(parent)
 {
     connect(&m_watcher, &QFutureWatcher<ScanTaskResult>::finished, this, &ScanController::onScanFinished);
-    connect(&m_recordingsWatcher, &QFutureWatcher<RecordingsListResult>::finished, this,
+    connect(&m_recordingsWatcher, &QFutureWatcher<RecordingsListing>::finished, this,
             &ScanController::onRecordingsListed);
     connect(&RecordingsChanges::instance(), &RecordingsChanges::changed, this, [this](const QString &stickRoot) {
         if (RecordingsChanges::sameStick(stickRoot, m_recordingsRoot)) {
@@ -565,6 +611,7 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
         if (!m_recordings.empty()) {
             m_recordings.clear();
             m_recordingStates.clear();
+            m_recordingCopies.clear();
             emit recordingsChanged();
             if (m_showRecordings) {
                 applyFilters(true);
@@ -854,9 +901,24 @@ void ScanController::setShowRecordings(bool show)
 
 void ScanController::showRecordings()
 {
-    m_currentPlaylistFilter.clear();
+    m_currentPlaylistFilter = m_recordingsPlaylist;
     setShowRecordings(true);
     applyFilters();
+}
+
+void ScanController::setRecordingsPlaylist(const QString &playlist)
+{
+    if (m_recordingsPlaylist == playlist) {
+        return;
+    }
+    m_recordingsPlaylist = playlist;
+    emit recordingsPlaylistChanged();
+    // Shown already: with the playlist it is shown with now.
+    if (m_showRecordings) {
+        m_currentPlaylistFilter = playlist;
+        applyFilters();
+    }
+    refreshRecordings();
 }
 
 void ScanController::setRecordingsEnabled(bool enabled)
@@ -876,6 +938,7 @@ void ScanController::setRecordingsEnabled(bool enabled)
     if (!m_recordings.empty()) {
         m_recordings.clear();
         m_recordingStates.clear();
+        m_recordingCopies.clear();
         emit recordingsChanged();
         if (m_showRecordings) {
             applyFilters(true);
@@ -894,9 +957,27 @@ void ScanController::refreshRecordings()
     // WAV's length and say that it is one.
     // Listed only with Experimental on, which reads the header states as
     // the Recordings page does with it (listRecordingsOnStick()).
-    m_recordingsWatcher.setFuture(runRead([root = m_recordingsRoot, experimental = m_recordingsEnabled]() {
-        return listRecordingsOnStick(root, experimental);
-    }));
+    // The FLACs of the recordings' playlist, which a recording saved as
+    // FLAC and added to the library is one of.
+    std::vector<std::string> flacs;
+    if (!m_recordingsPlaylist.isEmpty()) {
+        const std::string playlist = scannedPlaylistName(m_recordingsPlaylist).toStdString();
+        for (const domain::Track &track : m_allTracks) {
+            const bool inIt = std::any_of(track.playlists.begin(), track.playlists.end(),
+                                          [&playlist](const auto &membership) { return membership.name == playlist; });
+            const QString file = QString::fromStdString(track.filePath);
+            if (inIt && file.endsWith(QStringLiteral(".flac"), Qt::CaseInsensitive)) {
+                flacs.push_back(track.filePath);
+            }
+        }
+    }
+    m_recordingsWatcher.setFuture(
+        runRead([root = m_recordingsRoot, experimental = m_recordingsEnabled, flacs = std::move(flacs)]() {
+            RecordingsListing listing;
+            listing.listed = listRecordingsOnStick(root, experimental);
+            listing.copies = libraryCopiesOf(listing.listed, flacs);
+            return listing;
+        }));
     setRecordingsListing(true);
 }
 
@@ -945,7 +1026,8 @@ void ScanController::onRecordingsListed()
         return;
     }
     QString thrown;
-    RecordingsListResult result = takeResult(m_recordingsWatcher, &thrown);
+    RecordingsListing taken = takeResult(m_recordingsWatcher, &thrown);
+    RecordingsListResult &result = taken.listed;
     setRecordingsListing(false);
     // Of the stick read before this one: the scan of this one lists it.
     if (thrown.isEmpty() && !RecordingsChanges::sameStick(result.stickRoot, m_recordingsRoot)) {
@@ -958,6 +1040,8 @@ void ScanController::onRecordingsListed()
     std::vector<application::Recording> recordings = std::move(result.listing.recordings);
     std::vector<RecordingListModel::HeaderState> states = std::move(result.states);
     states.resize(recordings.size());
+    std::vector<std::string> copies = std::move(taken.copies);
+    copies.resize(recordings.size());
     // Newest first, then by name, as a list of what was recorded reads.
     std::vector<std::size_t> order(recordings.size());
     std::iota(order.begin(), order.end(), std::size_t{0});
@@ -969,9 +1053,11 @@ void ScanController::onRecordingsListed()
     });
     m_recordings.clear();
     m_recordingStates.clear();
+    m_recordingCopies.clear();
     for (const std::size_t i : order) {
         m_recordings.push_back(std::move(recordings[i]));
         m_recordingStates.push_back(states[i]);
+        m_recordingCopies.push_back(std::move(copies[i]));
     }
     setRecordingsListed(true);
     emit recordingsChanged();
@@ -1221,11 +1307,30 @@ std::optional<int> playlistPosition(const domain::Track &track, const std::strin
 
 void ScanController::applyFilters(bool inPlace)
 {
-    // Own Recordings: the recordings, as rows of their own, instead of the
-    // library; nothing staged in a library is theirs.
+    // Own Recordings: the tracks of the recordings' playlist, as any
+    // playlist shows them, and the recordings after them as rows of their
+    // own; nothing staged in a library is theirs.
     std::unordered_map<std::string, TrackListModel::RecordingInfo> recordingRows;
-    std::vector<domain::Track> result;
+    std::vector<domain::Track> recordingTracks;
+    std::vector<domain::Track> result = m_allTracks;
     if (m_showRecordings) {
+        // Without a playlist to show them with, the recordings alone.
+        if (m_currentPlaylistFilter.isEmpty()) {
+            result.clear();
+        }
+        std::unordered_map<std::string, const domain::Track *> byFile;
+        for (const std::string &copy : m_recordingCopies) {
+            if (!copy.empty()) {
+                byFile.emplace(copy, nullptr);
+            }
+        }
+        if (!byFile.empty()) {
+            for (const domain::Track &track : m_allTracks) {
+                if (const auto it = byFile.find(track.filePath); it != byFile.end() && it->second == nullptr) {
+                    it->second = &track;
+                }
+            }
+        }
         for (std::size_t i = 0; i < m_recordings.size(); ++i) {
             const application::Recording &recording = m_recordings[i];
             const RecordingListModel::HeaderState &state = m_recordingStates[i];
@@ -1240,12 +1345,18 @@ void ScanController::applyFilters(bool inPlace)
             // the audio the file holds is its length.
             track.durationSeconds = state.unfinished ? std::max(state.heldSeconds, 0.0)
                                                      : recording.durationSeconds.value_or(0.0);
-            recordingRows[track.sourceId] = {recording.modifiedUnix, recording.sizeBytes, state.unfinished,
-                                             state.holdsNoAudio};
-            result.push_back(std::move(track));
+            TrackListModel::RecordingInfo info{recording.modifiedUnix, recording.sizeBytes, state.unfinished,
+                                               state.holdsNoAudio, {}};
+            // Its FLAC, while the library still lists that file.
+            if (i < m_recordingCopies.size() && !m_recordingCopies[i].empty()) {
+                const auto copy = byFile.find(m_recordingCopies[i]);
+                if (copy != byFile.end() && copy->second != nullptr) {
+                    info.inLibraryAs = copy->second->title.empty() ? copy->second->filename : copy->second->title;
+                }
+            }
+            recordingRows[track.sourceId] = std::move(info);
+            recordingTracks.push_back(std::move(track));
         }
-    } else {
-        result = m_allTracks;
     }
     // The playlist shown by its scanned path: a staged rename lists it
     // under the new one.
@@ -1454,6 +1565,12 @@ void ScanController::applyFilters(bool inPlace)
         }
     }
 
+    // After the playlist's rows, so a row's place among those is its place
+    // in the playlist (drops, moves); the playlist order keeps them last.
+    for (domain::Track &track : recordingTracks) {
+        result.push_back(std::move(track));
+    }
+
     if (m_hideStreamingTracks) {
         std::vector<domain::Track> filtered;
         for (const auto &track : result) {
@@ -1532,11 +1649,17 @@ void ScanController::applyFilters(bool inPlace)
     m_model.setPendingAdditions(std::move(pendingAdditions));
     m_model.setPendingMoves(std::move(pendingMoves));
     m_model.setImportRows(std::move(importChangeIds), std::move(importNewTracks), std::move(importAwaiting));
+    const int recordingsShown = static_cast<int>(std::count_if(
+        result.begin(), result.end(), [&recordingRows](const domain::Track &t) { return recordingRows.count(t.sourceId) > 0; }));
     m_model.setRecordingRows(std::move(recordingRows));
     if (inPlace) {
         m_model.updateTracks(std::move(result));
     } else {
         m_model.setTracks(std::move(result));
+    }
+    if (recordingsShown != m_recordingRowsShown) {
+        m_recordingRowsShown = recordingsShown;
+        emit recordingRowsShownChanged();
     }
 }
 

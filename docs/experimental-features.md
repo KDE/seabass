@@ -284,9 +284,19 @@ from day one.
   `local_keep_recording_files_test`); no real recording has been kept
   yet. Promote once Sebastian has kept real recordings of each kind
   (Engine OS 16 and 24 bit, an unfinished one, a Pioneer REC file)
-  and a Bluesound player has shown the cover. Still owed: the FLAC put
-  onto the stick into an "Own Recordings" playlist, Free Up Space naming a
-  recording that has been kept, and Windows and macOS.
+  and a Bluesound player has shown the cover. "Add to the library" on a
+  recording's menu in Browse (2026-11-27) imports the FLAC Save as FLAC
+  made, while it is there (never the WAV), through the track import into
+  the stick playlist "Own Recordings", at its top, made in every library
+  at the first add; a playlist of that name already on the stick is that
+  playlist. Browse's fixed row Own Recordings is then that playlist: its
+  tracks as any playlist's (staged ones before Save included), the
+  recordings after them, the playlist not listed a second time; a WAV
+  whose FLAC is in it (as long to the sample at the same rate) is marked
+  "In the library as FLAC". Verified on a scratch stick through Save in
+  all three libraries (`tst_OwnRecordings`). Still owed: Free Up Space
+  naming a recording that is in the library as FLAC, and Windows and
+  macOS.
 
 - **Moved files: Point Library at File** (added 2026-11-19, #103) — the
   second repair on Library Health's Moved files page (`MovedFilesPage.qml`,

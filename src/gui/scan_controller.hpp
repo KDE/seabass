@@ -76,6 +76,10 @@ public:
         // ...and whether it holds no audio at all (as the Recordings page
         // says of it).
         RecordingHoldsNoAudioRole,
+        // The title of the library track of the recordings' playlist that
+        // holds the recording's audio (ScanController::recordingsPlaylist);
+        // "" for a recording no library has, and for every library track.
+        RecordingInLibraryAsRole,
     };
 
     explicit TrackListModel(QObject *parent = nullptr);
@@ -126,6 +130,7 @@ public:
         std::uint64_t sizeBytes = 0;
         bool unfinished = false;
         bool holdsNoAudio = false;
+        std::string inLibraryAs;
     };
     void setRecordingRows(std::unordered_map<std::string, RecordingInfo> rows) { m_recordingRows = std::move(rows); }
     // Staged renames, {scanned path: new path}: playlistNames serves the
@@ -281,6 +286,17 @@ class ScanController : public QObject
     // The root of the stick the last scan was of, as its recordings are
     // listed and kept (KeepRecordingController's stickRoot).
     Q_PROPERTY(QString recordingsRoot READ recordingsRoot NOTIFY recordingsListingChanged)
+    // The stick playlist the recordings are shown with (Browse: "Own
+    // Recordings"; "" for none): showRecordings() lists its tracks, as
+    // filterByPlaylist() does, and after them the recordings. A recording
+    // whose audio a FLAC of that playlist holds, as long to the sample at
+    // the same rate, is listed with that track's title as
+    // recordingInLibraryAs.
+    Q_PROPERTY(QString recordingsPlaylist READ recordingsPlaylist WRITE setRecordingsPlaylist NOTIFY
+                   recordingsPlaylistChanged)
+    // How many recording rows the list shows now (searched): they come
+    // after the playlist's rows in its own order.
+    Q_PROPERTY(int recordingRowsShown READ recordingRowsShown NOTIFY recordingRowsShownChanged)
 
 public:
     explicit ScanController(QObject *parent = nullptr);
@@ -313,6 +329,9 @@ public:
     bool recordingsListing() const { return m_recordingsListing; }
     bool recordingsListed() const { return m_recordingsListed; }
     QString recordingsRoot() const { return m_recordingsRoot; }
+    QString recordingsPlaylist() const { return m_recordingsPlaylist; }
+    void setRecordingsPlaylist(const QString &playlist);
+    int recordingRowsShown() const { return m_recordingRowsShown; }
     // For tests: how many paths the track import's rows have had made
     // into a key (application::normalizedPathKey) so far. Nothing while
     // no import is staged or awaiting the read; with one, each row and
@@ -339,9 +358,11 @@ public:
 
     // playlistName empty shows every scanned track again.
     Q_INVOKABLE void filterByPlaylist(const QString &playlistName);
-    // The list shows the stick's recordings instead of its library, a row
-    // each, newest first: the file's name as the title, its length as the
-    // duration ("recording" true, see TrackListModel). Their sourceId is
+    // The list shows the tracks of recordingsPlaylist, as
+    // filterByPlaylist() shows a playlist (what is staged into it
+    // included), and the stick's recordings after them, a row each, newest
+    // first: the file's name as the title, its length as the duration
+    // ("recording" true, see TrackListModel). Their sourceId is
     // "recording:" and the path, as PlaybackController::loadFile() names
     // what it plays. filterByPlaylist() goes back to the library, and so
     // does a new scan, as it does to "All tracks".
@@ -532,6 +553,8 @@ signals:
     void recordingsChanged();
     void showingRecordingsChanged();
     void recordingsListingChanged();
+    void recordingsPlaylistChanged();
+    void recordingRowsShownChanged();
 
 private:
     void setBusy(bool busy);
@@ -614,7 +637,17 @@ private:
     bool m_showRecordings = false;
     bool m_recordingsListing = false;
     bool m_recordingsListed = false;
-    QFutureWatcher<RecordingsListResult> m_recordingsWatcher;
+    // Each recording's copy in the recordings' playlist, by its file on
+    // the stick ("" for none), in m_recordings' order.
+    std::vector<std::string> m_recordingCopies;
+    QString m_recordingsPlaylist;
+    int m_recordingRowsShown = 0;
+    struct RecordingsListing
+    {
+        RecordingsListResult listed;
+        std::vector<std::string> copies;
+    };
+    QFutureWatcher<RecordingsListing> m_recordingsWatcher;
     void onRecordingsListed();
     void setShowRecordings(bool show);
     void setRecordingsListing(bool listing);

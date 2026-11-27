@@ -34,6 +34,7 @@ TestCase {
     readonly property double base: 1795255200
 
     function cleanup() {
+        EditSessionRegistry.discardAll();
         realPlayback.stop();
         realAppSettings.experimentalFeaturesEnabled = false;
         realAppSettings.lastPlaylistName = "";
@@ -207,7 +208,7 @@ TestCase {
         waitForRendering(page);
         const rows = trackRows(page);
         compare(rows.length, 3);
-        verify(findChild(rows[0], "notInLibraryBadge").visible, "marked as not in the library");
+        verify(findChild(rows[0], "recordingBadge").visible, "marked as not in the library");
         const subtitle = findChild(rows[0], "rowSubtitle").text;
         verify(subtitle.indexOf(Theme.humanBytes(44 + 3 * 44100 * 2)) >= 0, subtitle);
         verify(subtitle.indexOf("not finished") < 0, subtitle);
@@ -556,59 +557,92 @@ TestCase {
         }
     }
 
-    // A stick playlist named "Own Recordings" is a playlist of its own,
-    // below the fixed row: picking either shows its own rows, the other
-    // is not current, and the remembered playlist of that name is that
-    // playlist when it is read again.
-    function test_aStickPlaylistOfTheSameNameIsAnother() {
+    // A stick playlist named "Own Recordings" is the fixed row: listed
+    // once, it shows the playlist's tracks and after them the recordings,
+    // and is the playlist shown for everything that asks (the header, the
+    // count, Matching's target). The remembered playlist of that name is
+    // the row when the stick is read again. With Experimental off it is an
+    // ordinary playlist again, as before.
+    function test_aStickPlaylistOfThatNameIsTheRow() {
         const page = makePage(makeStick(testCase.threeRecordings), true, "Own Recordings");
         const scan = findChild(page, "scanController");
         tryCompare(scan, "recordingCount", 3);
-        compare(sidebarNames(page), "All tracks(all)|Own Recordings(recordings)|Held Playlist|Own Recordings");
-        let rows = sidebarRows(page);
-        let fixed = rows[1];
-        let playlist = rows[3];
-
-        mouseClick(playlist);
-        tryCompare(page, "shownPlaylist", "Own Recordings");
-        compare(page.showingRecordings, false);
-        tryCompare(findChild(page, "trackListView"), "count", 3);
-        compare(titles(page), "Held Track 1000|Held Track 1001|Held Track 1002");
-        compare(playlist.isCurrent, true);
-        compare(fixed.isCurrent, false);
-        compare(sidebar(page).currentIndex, 3);
-        compare(realAppSettings.lastPlaylistName, "Own Recordings");
-        // Filtered, the playlist is found below the fixed row of its name.
-        const filter = findChild(page, "playlistFilterField");
-        filter.text = "own";
-        tryCompare(sidebar(page), "count", 3);
-        compare(sidebar(page).currentIndex, 2);
-        filter.text = "";
-        tryCompare(sidebar(page), "count", 4);
-        // The filter made the rows again.
-        waitForRendering(page);
-        rows = sidebarRows(page);
-        fixed = rows[1];
-        playlist = rows[3];
-        compare(playlist.count, 3);
-        compare(fixed.count, 3);
+        compare(sidebarNames(page), "All tracks(all)|Own Recordings(recordings)|Held Playlist", "one row, not two");
+        const fixed = recordingsRow(page);
+        compare(fixed.count, 6, "its rows: three tracks and three recordings");
+        realAppSettings.lastPlaylistName = "Held Playlist";
 
         mouseClick(fixed);
         tryCompare(page, "showingRecordings", true);
-        compare(page.shownPlaylist, "");
-        compare(titles(page), "Session-0002.wav|REC001.WAV|Session-0001.wav");
+        compare(page.shownPlaylist, "Own Recordings");
+        tryCompare(findChild(page, "trackListView"), "count", 6);
+        compare(titles(page), "Held Track 1000|Held Track 1001|Held Track 1002|Session-0002.wav|REC001.WAV|Session-0001.wav",
+                "the playlist's tracks, then the recordings newest first");
+        compare(scan.recordingRowsShown, 3);
+        compare(scan.tracks.trackAt(0).recording, false);
+        compare(scan.tracks.trackAt(3).recording, true);
         compare(fixed.isCurrent, true);
-        compare(playlist.isCurrent, false);
-        compare(realAppSettings.lastPlaylistName, "Own Recordings", "the fixed row is not remembered as a playlist");
+        compare(sidebar(page).currentIndex, 1);
+        compare(page.currentPlaylistLabel, "Own Recordings");
+        compare(page.selectedPlaylistIndex, scan.playlistNames.indexOf("Own Recordings") + 1, "Matching's target");
+        compare(findChild(page, "matchingPage").browseSelectedPlaylistIndex, page.selectedPlaylistIndex);
+        compare(realAppSettings.lastPlaylistName, "Held Playlist", "the fixed row is not remembered as a playlist");
+        // A search narrows both kinds.
+        findChild(page, "searchField").text = "1001";
+        tryCompare(findChild(page, "trackListView"), "count", 1);
+        compare(scan.recordingRowsShown, 0);
+        findChild(page, "searchField").text = "REC";
+        tryCompare(findChild(page, "trackListView"), "count", 1);
+        compare(scan.recordingRowsShown, 1);
+        findChild(page, "searchField").text = "";
+        tryCompare(findChild(page, "trackListView"), "count", 6);
 
-        // Read again with the playlist picked last: the playlist, not the row.
-        page.selectPlaylist(0, "");
+        // Filtered by its name, only the fixed row is left.
+        const filter = findChild(page, "playlistFilterField");
+        filter.text = "own";
+        tryCompare(sidebar(page), "count", 2);
+        compare(sidebar(page).currentIndex, 1);
+        filter.text = "";
+        tryCompare(sidebar(page), "count", 3);
+
+        // Another playlist after it is found by name.
+        page.selectPlaylist(1, "Held Playlist");
+        compare(sidebar(page).currentIndex, 2);
+        compare(page.showingRecordings, false);
+
+        // Read again with the playlist of that name picked last: the row.
         realAppSettings.lastPlaylistName = "Own Recordings";
         page.rescan();
         tryVerify(() => !scan.busy && !scan.cuesPending, 10000);
-        tryCompare(page, "shownPlaylist", "Own Recordings");
-        compare(page.showingRecordings, false);
-        compare(page.selectedPlaylistIndex, scan.playlistNames.indexOf("Own Recordings") + 1);
+        tryCompare(page, "showingRecordings", true);
+        compare(page.shownPlaylist, "Own Recordings");
+        tryCompare(findChild(page, "trackListView"), "count", 6);
+
+        // Off: an ordinary playlist below the others, shown as one.
+        realAppSettings.experimentalFeaturesEnabled = false;
+        tryCompare(page, "showingRecordings", false);
+        compare(sidebarNames(page), "All tracks(all)|Held Playlist|Own Recordings");
+        compare(page.shownPlaylist, "Own Recordings");
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        compare(titles(page), "Held Track 1000|Held Track 1001|Held Track 1002");
+        compare(sidebarRows(page)[2].isCurrent, true);
+        // On again, the playlist shown is the row.
+        realAppSettings.experimentalFeaturesEnabled = true;
+        tryCompare(page, "showingRecordings", true);
+        tryCompare(findChild(page, "trackListView"), "count", 6);
+    }
+
+    // The playlist alone, without a recording on the stick, makes the row.
+    function test_thePlaylistAloneMakesTheRow() {
+        const page = makePage(makeStick([]), true, "Own Recordings");
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingsListed", true, 10000);
+        settle(page);
+        compare(sidebarNames(page), "All tracks(all)|Own Recordings(recordings)|Held Playlist");
+        compare(recordingsRow(page).count, 3);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        compare(scan.recordingRowsShown, 0);
     }
 
     // Own Recordings shown stays shown when the stick is read again (a
@@ -712,8 +746,9 @@ TestCase {
         return menu;
     }
 
-    // A recording's menu offers exactly saving it as FLAC and showing it
-    // on the Recordings page; no delete. Saving is not offered for a WAV
+    // A recording's menu offers exactly saving it as FLAC, adding that
+    // FLAC to the library, and showing it on the Recordings page; no
+    // delete. Saving is not offered for a WAV
     // without audio, as the Recordings page does not offer it.
     function test_aRecordingsMenu() {
         const keep = createTemporaryObject(realKeepComponent, testCase);
@@ -729,7 +764,9 @@ TestCase {
         tryCompare(findChild(page, "trackListView"), "count", 2);
 
         let menu = openRecordingMenu(page, "Session-0005.wav");
-        compare(JSON.stringify(menuTexts(menu)), JSON.stringify(["Save as FLAC...", "Show on the Recordings page"]));
+        compare(JSON.stringify(menuTexts(menu)), JSON.stringify(["Save as FLAC...", "Add to the library (save it as FLAC first)",
+                                                                 "Show on the Recordings page"]));
+        compare(findChild(menu, "addToLibraryItem").enabled, false, "nothing to add before the FLAC is saved");
         verify(findChild(menu, "saveAsFlacItem").enabled);
         const asked = signalSpy.createObject(testCase, {target: page, signalName: "recordingsPageRequested"});
         findChild(menu, "showOnRecordingsPageItem").triggered();
@@ -840,6 +877,9 @@ TestCase {
                 fakeKeep.asked.push(stick + "|" + path);
                 return fakeKeep.outcomes[path] ?? ({});
             }
+            // path -> the FLAC it was saved as, while there
+            property var flacs: ({})
+            function keptFlacFor(stick, path) { return fakeKeep.flacs[path] ?? ""; }
             function runsFor(stick) { return fakeKeep.busy && fakeKeep.currentStickRoot === stick; }
             function runsElsewhere(stick) { return fakeKeep.busy && fakeKeep.currentStickRoot !== stick; }
             function queuedFor(stick) { return []; }
@@ -947,5 +987,249 @@ TestCase {
         compare(item.marked, true);
         const first = list.itemAtIndex(index - 1);
         compare(first.marked, false);
+    }
+
+    // ---- The stick playlist "Own Recordings" ----
+
+    // What the page asks of the import: the calls, and nothing staged.
+    Component {
+        id: fakeImportComponent
+        QtObject {
+            property var calls: []
+            property bool busy: false
+            property string progressStep: ""
+            property int progressDone: 0
+            property int progressTotal: 0
+            property string progressFile: ""
+            property var progressFiles: []
+            property real progressFraction: 0
+            property bool progressPlanned: false
+            property string errorMessage: ""
+            property string errorSource: "import"
+            property int pendingRevision: 0
+            property var stagedImport: ({})
+            property int stagedCount: 0
+            property string stagedPlaylist: ""
+            property bool stagedPlaylistIsNew: false
+            property var lastResult: ({})
+            property string reanalysingPlaylist: ""
+            property var lastReanalysis: ({})
+            property var cueReview: []
+            property var cueReviewTooDifferent: []
+            property int cueFollowThresholdMs: 10
+            property bool saveWriting: false
+            signal resultReady()
+            signal tracksImported()
+            signal reanalysisReady()
+            signal moveCuesChanged(string changeId, bool move)
+            function importFiles(rekordboxPath, enginePath, files, playlist, create, atIndex) {
+                calls.push([files.map(f => f.toString()), playlist, create, atIndex]);
+                return true;
+            }
+            function cancel() {}
+            function releaseLanded() {}
+            function dropStaged() {}
+            function trackCountChange(playlist) { return 0; }
+            function reanalysisCount(playlist) { return 0; }
+            function fileDialogFilter() { return "*.wav"; }
+            function suggestedPlaylistName(files) { return ""; }
+        }
+    }
+
+    // A saved FLAC added to the library goes into the stick playlist "Own
+    // Recordings", at its top (newest first): made by that import while
+    // the stick has none, put into it once it has.
+    function test_addToTheLibraryGoesIntoThePlaylist() {
+        for (const hasPlaylist of [false, true]) {
+            const keep = createTemporaryObject(fakeKeepComponent, testCase);
+            const page = makePage(makeStick(testCase.threeRecordings), true, hasPlaylist ? "Own Recordings" : "", keep);
+            const scan = findChild(page, "scanController");
+            tryCompare(scan, "recordingCount", 3);
+            const fake = createTemporaryObject(fakeImportComponent, testCase);
+            page.trackImportController = fake;
+
+            page.showOwnRecordings();
+            tryCompare(findChild(page, "trackListView"), "count", hasPlaylist ? 6 : 3);
+
+            const path = scan.tracks.trackAt(hasPlaylist ? 3 : 0).filePath;
+            keep.outcomes = {[path]: {state: "kept", fileName: "Late Set.flac", folder: "/home/dj/Kept"}};
+            keep.flacs = {[path]: "/home/dj/Kept/Late Set.flac"};
+            keep.revision++;
+            const menu = openRecordingMenu(page, "Session-0002.wav");
+            const add = findChild(menu, "addToLibraryItem");
+            compare(add.text, "Add to the library");
+            verify(add.enabled);
+            add.triggered();
+            compare(JSON.stringify(fake.calls[0]), JSON.stringify([["/home/dj/Kept/Late Set.flac"], "Own Recordings",
+                                                                   !hasPlaylist, 0]), "the FLAC, at the top");
+            menu.close();
+            tryCompare(menu, "visible", false);
+            page.destroy();
+            wait(0);
+            browseFixture.restore();
+        }
+    }
+
+    // Add to the library is offered only for the FLAC Save as FLAC made
+    // and while it is there; never for the WAV. Otherwise shown, off,
+    // with the reason.
+    function test_addToTheLibraryNeedsTheFlac() {
+        const keep = createTemporaryObject(fakeKeepComponent, testCase);
+        const page = makePage(makeStick(testCase.threeRecordings), true, "", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        const path = scan.tracks.trackAt(0).filePath;
+        const said = () => {
+            const menu = openRecordingMenu(page, "Session-0002.wav");
+            const add = findChild(menu, "addToLibraryItem");
+            const out = [add.enabled, add.text];
+            menu.close();
+            tryCompare(menu, "visible", false);
+            return JSON.stringify(out);
+        };
+        compare(said(), JSON.stringify([false, "Add to the library (save it as FLAC first)"]));
+        keep.outcomes = {[path]: {state: "running", fileName: "Late Set.flac"}};
+        keep.revision++;
+        compare(said(), JSON.stringify([false, "Add to the library (once saved as FLAC)"]));
+        keep.outcomes = {[path]: {state: "kept", fileName: "Late Set.flac", folder: "/home/dj/Kept"}};
+        keep.revision++;
+        compare(said(), JSON.stringify([false, "Add to the library (its FLAC is no longer where it was saved)"]),
+                "saved, and the FLAC moved away since");
+        keep.flacs = {[path]: "/home/dj/Kept/Late Set.flac"};
+        keep.revision++;
+        compare(said(), JSON.stringify([true, "Add to the library"]));
+    }
+
+    // ---- The whole way, on a copy of a real stick ----
+
+    // tests/qml/ -> tests/fixtures/anonymized_library.
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+    Component {
+        id: scanComponent
+        ScanController {}
+    }
+    // The tracks of `playlist` as `format`'s library on the stick lists
+    // them, read afresh.
+    function playlistFiles(stick, format, playlist) {
+        const scan = createTemporaryObject(scanComponent, testCase);
+        scan.scan(format, format === "engine" ? stick + "/Engine Library" : stick + "/PIONEER",
+                  format === "engine" ? stick + "/PIONEER" : "");
+        tryVerify(() => !scan.busy && scan.tracks.trackCount() > 0, 60000, format + " is read");
+        scan.filterByPlaylist(playlist);
+        const files = [];
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            files.push(scan.tracks.trackAt(i).filePath);
+        }
+        return files;
+    }
+
+    // A recording on a copy of a real stick, saved as FLAC with the real
+    // KeepRecordingController, added to the library from its menu: staged
+    // into a new "Own Recordings" (shown in the row before Save), saved,
+    // and read back from every library. The row then lists the FLAC, and
+    // the WAV marked as in the library as FLAC; playing the FLAC, nothing
+    // comes next (the WAV after it is no row of the queue).
+    function test_aSavedFlacAddedThroughSave() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture stick copies");
+        verify(browseFixture.writeRecording(stick + "/Sessions/Session-0009.wav", 3, false, testCase.base));
+        const keep = createTemporaryObject(realKeepComponent, testCase);
+        verify(keep.available);
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 660, stickLabel: "TESTSTICK",
+            rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library",
+            playbackController: realPlayback, appSettingsController: realAppSettings, keepController: keep});
+        const scan = findChild(page, "scanController");
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 60000, "the stick is read");
+        tryCompare(scan, "recordingCount", 1, 10000);
+        verify(scan.playlistNames.indexOf("Own Recordings") < 0, "precondition: no such playlist yet");
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 1);
+        const wav = scan.tracks.trackAt(0).filePath;
+
+        // Saved as FLAC on "this computer", as the form starts it.
+        keep.stickRoot = scan.recordingsRoot;
+        const computer = stickFixture.scratchDirectory();
+        const finished = signalSpy.createObject(testCase, {target: keep, signalName: "finished"});
+        verify(keep.keep({wavPath: wav, recording: "Session-0009.wav", artist: "DJ Kelp", title: "Late Set",
+                          album: "", genre: "", year: "", folder: computer, keepUnfinished: false}), keep.errorMessage);
+        tryCompare(finished, "count", 1, 60000);
+        compare(finished.signalArguments[0][0].state, "kept", JSON.stringify(finished.signalArguments[0][0]));
+        finished.destroy();
+        const flac = keep.keptFlacFor(scan.recordingsRoot, wav);
+        verify(flac.endsWith(".flac"), flac);
+
+        let menu = openRecordingMenu(page, "Session-0009.wav");
+        const add = findChild(menu, "addToLibraryItem");
+        verify(add.enabled, add.text);
+        add.triggered();
+        menu.close();
+        const importer = page.trackImportController;
+        tryCompare(importer, "busy", false, 120000);
+        compare(importer.errorMessage, "");
+        const dialog = findChild(page, "importResultDialog");
+        tryCompare(dialog, "opened", true);
+        dialog.close();
+        compare(importer.stagedCount, 1);
+        compare(importer.stagedPlaylist, "Own Recordings");
+        compare(importer.stagedPlaylistIsNew, true);
+        // Before Save: the staged track in the row, at the top, then the
+        // recording; the row once in the sidebar, counting the new track.
+        tryCompare(findChild(page, "trackListView"), "count", 2);
+        compare(scan.tracks.trackAt(0).pendingImport, true, "the staged FLAC");
+        compare(scan.tracks.trackAt(1).recording, true);
+        compare(sidebar(page).model.filter(n => n === "Own Recordings").length, 1, "one row");
+        compare(recordingsRow(page).countChange, 1);
+
+        // Save, as the page's button does.
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
+        let summary = null;
+        const done = result => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+
+        // Read again (the import asks for it): the playlist is on the
+        // stick, the row its, with the FLAC and the WAV marked.
+        tryVerify(() => !scan.busy && scan.playlistNames.indexOf("Own Recordings") >= 0, 60000, "read again");
+        tryCompare(page, "showingRecordings", true);
+        tryVerify(() => scan.tracks.trackCount() === 2 && scan.tracks.trackAt(1).recording
+                  && scan.tracks.trackAt(1).recordingInLibraryAs.length > 0, 20000, "the WAV marked as in the library");
+        const track = scan.tracks.trackAt(0);
+        compare(track.recording, false);
+        verify(track.filePath.endsWith(".flac"), track.filePath);
+        compare(scan.tracks.trackAt(1).recordingInLibraryAs, track.title);
+        compare(sidebarNames(page).split("|").filter(n => n.startsWith("Own Recordings")).length, 1, "still one row");
+        compare(recordingsRow(page).count, 2);
+        waitForRendering(page);
+        const wavRow = trackRows(page)[1];
+        compare(findChild(wavRow, "recordingBadge").children[0].text, "In the library as FLAC");
+        compare(wavRow.ToolTip.text, page.recordingInLibraryText(track.title));
+        menu = openRecordingMenu(page, "Session-0009.wav");
+        compare(findChild(menu, "addToLibraryItem").enabled, false, "not a second time");
+        compare(findChild(menu, "addToLibraryItem").text, "Add to the library (it is there as \"" + track.title + "\")");
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        // The queue: the FLAC plays, and the WAV after it is not next.
+        page.playRow(scan.tracks.trackAt(0));
+        compare(realPlayback.currentQueueRow(), 0);
+        compare(realPlayback.hasNext, false, "a recording is no row of the queue");
+        page.trackPanelOpen = false;
+
+        for (const format of ["rekordbox", "onelibrary", "engine"]) {
+            verify(stickFixture.playlistsIn(stick, format).indexOf("Own Recordings") >= 0, format + " has the playlist");
+            const files = playlistFiles(stick, format, "Own Recordings");
+            compare(files.length, 1, format + ": " + files.join(", "));
+            verify(files[0].endsWith(".flac"), format + ": " + files[0]);
+        }
     }
 }

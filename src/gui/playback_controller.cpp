@@ -1003,7 +1003,9 @@ int PlaybackController::currentQueueRow() const
     const int rows = m_queue->rowCount();
     for (int row = 0; row < rows; ++row) {
         if (m_queue->data(m_queue->index(row, 0), role).toString() == m_currentSourceId) {
-            return row;
+            // A recording among a list's rows (Browse's Own Recordings) is
+            // no row of the queue: nothing comes next after one.
+            return queueValue(row, "recording").toBool() ? -1 : row;
         }
     }
     return -1;
@@ -1018,7 +1020,8 @@ int PlaybackController::playableRowFrom(int row, int step) const
     for (int candidate = row + step; candidate >= 0 && candidate < rows; candidate += step) {
         const QString filePath = queueValue(candidate, "filePath").toString();
         if (queueValue(candidate, "streamingSource").toString().isEmpty() && !filePath.isEmpty()
-            && !queueValue(candidate, "unreadable").toBool() && QFile::exists(filePath)) {
+            && !queueValue(candidate, "unreadable").toBool() && !queueValue(candidate, "recording").toBool()
+            && QFile::exists(filePath)) {
             return candidate;
         }
     }

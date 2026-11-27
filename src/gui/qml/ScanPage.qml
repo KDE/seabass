@@ -69,6 +69,7 @@ Page {
         objectName: "scanController"
         // Off, the stick's recordings are not even listed.
         recordingsEnabled: root.ownRecordingsEnabled
+        recordingsPlaylist: root.ownRecordingsEnabled ? root.ownRecordingsPlaylist : ""
         // playlistNames only becomes available once the (async) scan
         // finishes, so restoring the last-selected playlist has to wait
         // for this rather than happening at Component.onCompleted
@@ -119,25 +120,45 @@ Page {
 
     // Own Recordings (Experimental, as the rest of Own Recordings): a
     // fixed row under "All tracks" while the stick holds a recording the
-    // players left on it, listing those (ScanController.showRecordings()).
-    // Off, the sidebar and the list are as they were without it.
+    // players left on it or a playlist "Own Recordings" (or an import
+    // waits to make it). The row is that playlist: it lists the
+    // playlist's tracks as any playlist, and after them the recordings
+    // (ScanController.showRecordings()); the playlist is not listed a
+    // second time. "Add to the library" on a recording saved as FLAC
+    // imports the FLAC into it, made at the first. Off, the sidebar and
+    // the list are as they were without it, the playlist an ordinary one.
     readonly property bool ownRecordingsEnabled: root.appSettingsController.experimentalFeaturesEnabled === true
-    readonly property bool ownRecordingsListed: root.ownRecordingsEnabled && scanController.recordingCount > 0
-    // The row shown is Own Recordings: shownPlaylist is "" then, as for
-    // "All tracks". Kept across a new read of the stick while the row is
-    // there (restoreSelectedPlaylist()); gone with it.
+    readonly property string ownRecordingsPlaylist: "Own Recordings"
+    readonly property bool ownRecordingsPlaylistOnStick: scanController.playlistNames.indexOf(root.ownRecordingsPlaylist) >= 0
+    readonly property bool ownRecordingsListed: root.ownRecordingsEnabled && (scanController.recordingCount > 0
+        || root.ownRecordingsPlaylistOnStick || root.newPlaylistNames.indexOf(root.ownRecordingsPlaylist) >= 0)
+    // The row shown is Own Recordings: shownPlaylist is its playlist then,
+    // which every question about the playlist shown (a drop at a place,
+    // "Remove from", a move) asks of, made or not yet. Kept across a new
+    // read of the stick while the row is there (restoreSelectedPlaylist());
+    // gone with it.
     property bool showingRecordings: false
     onOwnRecordingsListedChanged: {
         if (!root.ownRecordingsListed && root.showingRecordings) {
             root.restoreSelectedPlaylist();
+        } else if (root.ownRecordingsListed && !root.showingRecordings
+                   && root.shownPlaylist === root.ownRecordingsPlaylist) {
+            // The playlist shown is the row now.
+            root.showOwnRecordings();
         }
     }
     readonly property var sidebarFixedRows: [{kind: "all", name: "All tracks"}]
-        .concat(root.ownRecordingsListed ? [{kind: "recordings", name: "Own Recordings"}] : [])
+        .concat(root.ownRecordingsListed
+                ? [{kind: "recordings", name: "Own Recordings", playlist: root.ownRecordingsPlaylist}] : [])
     // What a recording's row is, and why it offers none of a track's edits.
     readonly property string recordingRowText: qsTr("A recording a player left on the stick. It is not in the "
                                                     + "library, so it has no cues, tags or analysis, and it goes "
                                                     + "into no playlist.")
+    // ...and of one whose FLAC the library has: the WAV is a second copy.
+    function recordingInLibraryText(title) {
+        return qsTr("A recording a player left on the stick. Saved as FLAC, it is in the library as \"%1\", so "
+                    + "this WAV is a second copy of it.").arg(title);
+    }
     property var playlistEditController: PlaylistEditController {}
     Connections {
         target: ("objectName" in root.playlistEditController) ? root.playlistEditController : null
@@ -288,7 +309,11 @@ Page {
                                      true, qsTr("Not imported"));
             return;
         }
-        root.trackImportController.importFiles(root.rekordboxPath, root.enginePath, files, playlist, create, atIndex);
+        // Own Recordings' playlist is made by the first import into it,
+        // whichever way the files came, at the top level.
+        const makes = create || (playlist === root.ownRecordingsPlaylist && root.ownRecordingsListed
+                                 && !root.ownRecordingsPlaylistOnStick);
+        root.trackImportController.importFiles(root.rekordboxPath, root.enginePath, files, playlist, makes, atIndex);
     }
     // The dropped files go into a playlist still to be named.
     function importIntoNewPlaylist(files) {
@@ -1682,6 +1707,26 @@ Page {
                 && !root.recordingSaveInProgress(recordingMenu.filePath)
             onTriggered: root.openSaveAsFlac(recordingMenu.filePath)
         }
+        // The FLAC Save as FLAC made, imported into Own Recordings'
+        // playlist as any import (analysed, staged, written by Save); never
+        // the WAV itself, which would be a second copy of up to 2 GB in the
+        // music folder. Shown with the reason while it cannot be.
+        MenuItem {
+            objectName: "addToLibraryItem"
+            readonly property string inLibraryAs: recordingMenu.row ? (recordingMenu.row.recordingInLibraryAs ?? "") : ""
+            readonly property string flac: recordingMenu.row ? root.keptFlacFor(recordingMenu.filePath) : ""
+            readonly property string saveState: recordingMenu.row && root.keepController !== null
+                ? ((root.keepController.revision,
+                    root.keepController.outcomeFor(scanController.recordingsRoot, recordingMenu.filePath)).state ?? "")
+                : ""
+            enabled: flac.length > 0 && inLibraryAs.length === 0
+            text: inLibraryAs.length > 0 ? qsTr("Add to the library (it is there as \"%1\")").arg(inLibraryAs)
+                : flac.length > 0 ? qsTr("Add to the library")
+                : saveState === "queued" || saveState === "running" ? qsTr("Add to the library (once saved as FLAC)")
+                : saveState === "kept" ? qsTr("Add to the library (its FLAC is no longer where it was saved)")
+                : qsTr("Add to the library (save it as FLAC first)")
+            onTriggered: root.addRecordingToLibrary(recordingMenu.filePath)
+        }
         MenuItem {
             objectName: "showOnRecordingsPageItem"
             text: qsTr("Show on the Recordings page")
@@ -1703,6 +1748,20 @@ Page {
         const state = (root.keepController.revision,
                        root.keepController.outcomeFor(scanController.recordingsRoot, path)).state ?? "";
         return state === "queued" || state === "running";
+    }
+    // The FLAC the recording at `path` was saved as, while it is there; "".
+    function keptFlacFor(path) {
+        if (root.keepController === null || !("keptFlacFor" in root.keepController)) {
+            return "";
+        }
+        return (root.keepController.revision, root.keepController.keptFlacFor(scanController.recordingsRoot, path));
+    }
+    // At the top of the playlist: Own Recordings lists the newest first.
+    function addRecordingToLibrary(path) {
+        const flac = root.keptFlacFor(path);
+        if (flac.length > 0) {
+            root.importFiles([flac], root.ownRecordingsPlaylist, false, 0);
+        }
     }
     function openSaveAsFlac(path) {
         const recording = scanController.recordingAt(path);
@@ -1822,6 +1881,11 @@ Page {
     // remember is false only for the fallback below, which must not
     // forget a playlist because this library happens not to have it.
     function selectPlaylist(index, name, remember) {
+        // Own Recordings' playlist is that row (a spring-load, a restore).
+        if (index !== 0 && name === root.ownRecordingsPlaylist && root.ownRecordingsListed) {
+            root.showOwnRecordings();
+            return;
+        }
         const fromRecordings = root.showingRecordings;
         root.showingRecordings = false;
         root.selectedPlaylistIndex = index;
@@ -1837,12 +1901,13 @@ Page {
         }
     }
 
-    // Own Recordings shown. Matching keeps the whole library as its
-    // target, and the playlist remembered for the next visit stays the
-    // one picked last.
+    // Own Recordings shown: its playlist is the one shown, Matching's
+    // target once the stick has it (the whole library until then), and the
+    // playlist remembered for the next visit stays the one picked last.
     function showOwnRecordings() {
-        root.selectedPlaylistIndex = 0;
-        root.shownPlaylist = "";
+        const index = scanController.playlistNames.indexOf(root.ownRecordingsPlaylist);
+        root.selectedPlaylistIndex = index >= 0 ? index + 1 : 0;
+        root.shownPlaylist = root.ownRecordingsPlaylist;
         root.showingRecordings = true;
         scanController.showRecordings();
         root.offerQueue();
@@ -1889,13 +1954,9 @@ Page {
     // plays when a track ends are the rows of the list as it is sorted
     // and filtered now. Offered whenever a scan has filled the list, so a
     // track played from the details pane has a queue too.
+    // The recordings among them are no queue's rows: the player passes
+    // over them (PlaybackController skips a row with `recording`).
     function offerQueue() {
-        // Not the recordings: they are no library's rows, and the player
-        // would read the next one as a track of the library.
-        if (root.showingRecordings) {
-            root.playbackController.setQueue(null, "", "");
-            return;
-        }
         root.playbackController.setQueue(scanController.tracks, root.format, root.currentPath());
     }
 
@@ -1990,8 +2051,8 @@ Page {
     // The playlist shown, by the name it is listed under: a new one staged
     // to be created (picked at index -1, not among the scan's names) and a
     // renamed one's new name included.
-    readonly property string currentPlaylistLabel: root.shownPlaylist.length > 0 ? root.shownPlaylist
-        : root.showingRecordings ? "Own Recordings" : "All tracks"
+    readonly property string currentPlaylistLabel: root.showingRecordings ? "Own Recordings"
+        : root.shownPlaylist.length > 0 ? root.shownPlaylist : "All tracks"
 
     // How much of Browse's own row content fits once the panel above has
     // taken its share of the window: 2 (comfortable) shows every column,
@@ -2054,9 +2115,9 @@ Page {
     property bool sortAscending: true
     // What Playlist Order is for the list shown, as the headers' tooltips
     // name it.
-    readonly property string unsortedOrderName: root.shownPlaylist.length > 0
-        ? "the playlist's own order" : root.showingRecordings ? "the newest recording first"
-        : "the library's own order"
+    readonly property string unsortedOrderName: root.showingRecordings
+        ? "the playlist's own order, then the newest recording first"
+        : root.shownPlaylist.length > 0 ? "the playlist's own order" : "the library's own order"
     readonly property bool sortedByColumn: root.columnSortKeys.indexOf(root.sortField) >= 0
 
     function applySort() {
@@ -2934,6 +2995,9 @@ Page {
                     required property double recordingSizeBytes
                     required property bool recordingUnfinished
                     required property bool recordingHoldsNoAudio
+                    // The title of its FLAC in Own Recordings' playlist, ""
+                    // for a recording no library has.
+                    required property string recordingInLibraryAs
 
                     readonly property bool isPlaying: playbackController.hasTrack
                         && playbackController.currentFormat === root.format
@@ -2964,7 +3028,8 @@ Page {
                     // What a row not on the stick yet cannot do, and when it can.
                     readonly property bool waitTipShown: ToolTip.visible
                     ToolTip.visible: (trackDelegate.unreadable || trackDelegate.recording) && rowHover.hovered
-                    ToolTip.text: trackDelegate.recording ? root.recordingRowText
+                    ToolTip.text: trackDelegate.recording ? (trackDelegate.recordingInLibraryAs.length > 0
+                            ? root.recordingInLibraryText(trackDelegate.recordingInLibraryAs) : root.recordingRowText)
                         : trackDelegate.awaitingRead ? root.awaitingReadText : root.afterSaveText
                     ToolTip.delay: 500
 
@@ -3194,18 +3259,21 @@ Page {
                                         color: Theme.textMuted
                                     }
                                 }
+                                // Whether the library has it: a WAV whose FLAC
+                                // it has is a second copy now.
                                 Rectangle {
-                                    objectName: "notInLibraryBadge"
+                                    objectName: "recordingBadge"
                                     visible: trackDelegate.recording
                                     radius: 3
                                     color: Theme.groupBackground
                                     border.color: Theme.borderSubtle
-                                    implicitWidth: notInLibraryLabel.implicitWidth + 8
-                                    implicitHeight: notInLibraryLabel.implicitHeight + 4
+                                    implicitWidth: recordingBadgeLabel.implicitWidth + 8
+                                    implicitHeight: recordingBadgeLabel.implicitHeight + 4
                                     Label {
-                                        id: notInLibraryLabel
+                                        id: recordingBadgeLabel
                                         anchors.centerIn: parent
-                                        text: qsTr("Not in the library")
+                                        text: trackDelegate.recordingInLibraryAs.length > 0
+                                            ? qsTr("In the library as FLAC") : qsTr("Not in the library")
                                         font.pointSize: Theme.fontTiny
                                         font.bold: true
                                         color: Theme.textMuted
@@ -3325,8 +3393,8 @@ Page {
                     visible: trackListView.count === 0 && !scanController.busy
                     iconName: "edit-find"
                     text: searchField.text.length === 0 ? (root.showingRecordings ? "No recordings found." : "No tracks found.")
-                        : root.shownPlaylist.length > 0 ? "No tracks in this playlist match."
                         : root.showingRecordings ? "No recordings match."
+                        : root.shownPlaylist.length > 0 ? "No tracks in this playlist match."
                         : "No tracks match."
                 }
 

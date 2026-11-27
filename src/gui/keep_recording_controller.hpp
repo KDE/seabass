@@ -262,6 +262,11 @@ public:
     // ended], keptGone: [{recording, fileName, folder} of those kept whose
     // FLAC is not there like that any more]}.
     Q_INVOKABLE QVariantMap keepNotesFor(const QString &stickRoot, const QStringList &wavPaths) const;
+    // The FLAC the recording at `wavPath`, on the stick at `stickRoot`, was
+    // last saved as in this session, while a file is there under its
+    // path (tags changed since or not); "" otherwise. What Browse adds to
+    // the library for the recording.
+    Q_INVOKABLE QString keptFlacFor(const QString &stickRoot, const QString &wavPath) const;
     // Takes the stick's jobs off finishedJobs (the strip is closed).
     Q_INVOKABLE void dismissFinishedFor(const QString &stickRoot);
     // Opens the folder of a kept FLAC in the file manager.

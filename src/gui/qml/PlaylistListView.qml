@@ -27,13 +27,22 @@ ListView {
     // kind: "all" ("All tracks", picked as playlistPicked(0, ...)), then
     // whatever the host adds (Browse: "recordings", Own Recordings, picked
     // as fixedRowPicked). Always at the top in this order, whatever the
-    // filter; never renamed, deleted or dropped on. A stick playlist of
-    // the same name is a row of its own below them.
+    // filter; never renamed, deleted or dropped on. A fixed row may stand
+    // for a stick playlist as well (`playlist`, Browse's Own Recordings
+    // for the playlist of that name): that playlist is then this row and
+    // not listed a second time below, and the row counts and changes as
+    // that playlist. Any other stick playlist of a fixed row's name is a
+    // row of its own below them.
     property var fixedRows: [{kind: "all", name: "All tracks"}]
     readonly property int fixedRowCount: root.fixedRows.length
     function fixedKindAt(index) {
         return index >= 0 && index < root.fixedRowCount ? root.fixedRows[index].kind : "";
     }
+    function fixedPlaylistAt(index) {
+        return index >= 0 && index < root.fixedRowCount ? (root.fixedRows[index].playlist ?? "") : "";
+    }
+    // The stick playlists a fixed row stands for.
+    readonly property var fixedPlaylists: root.fixedRows.map(row => row.playlist ?? "").filter(name => name.length > 0)
     // The fixed row shown, by kind; "" while a playlist is.
     property string shownFixedRow: root.shownPlaylist.length === 0 ? "all" : ""
     signal fixedRowPicked(string kind)
@@ -313,8 +322,9 @@ ListView {
     // they are what is being put together, and at the end of a long
     // list they sat below the window's edge, where a track dragged in
     // from the right could not reach them.
-    property var allNames: root.fixedRows.map(row => row.name).concat(root.canCreate ? root.newPlaylists : [])
-        .concat(scanController.playlistNames)
+    property var allNames: root.fixedRows.map(row => row.name)
+        .concat((root.canCreate ? root.newPlaylists : []).concat(scanController.playlistNames)
+                .filter(name => root.fixedPlaylists.indexOf(name) < 0))
     model: root.searchQuery.length === 0
         ? allNames
         : allNames.filter((n, i) => i < root.fixedRowCount || n.toLowerCase().includes(root.searchQuery.toLowerCase()))
@@ -333,7 +343,9 @@ ListView {
         if (fixed >= 0) {
             return fixed;
         }
-        if (root.searchQuery.length === 0) {
+        // A playlist a fixed row stands for is not among the rows, and
+        // the places after it are not selectedIndex's: found by name.
+        if (root.searchQuery.length === 0 && root.fixedPlaylists.length === 0) {
             return root.selectedIndex > 0 ? root.selectedIndex + root.fixedRowCount - 1 : root.selectedIndex;
         }
         return root.shownPlaylist.length > 0 ? rows.indexOf(root.shownPlaylist, root.fixedRowCount) : -1;
@@ -356,14 +368,21 @@ ListView {
         readonly property bool isFixed: fixedKind.length > 0
         readonly property bool isAll: fixedKind === "all"
         readonly property bool isRecordings: fixedKind === "recordings"
+        // The stick playlist the row is: its own name, or the playlist a
+        // fixed row stands for ("" for none, "All tracks" among them).
+        readonly property string playlist: isFixed ? root.fixedPlaylistAt(index) : modelData
+        readonly property bool hasPlaylist: playlist.length > 0
         // Staged to be created: not on the stick yet, so no count, no
         // summary, nothing to delete or rename; its menu takes it back.
         readonly property bool isNew: !isFixed && root.canCreate && root.newPlaylists.indexOf(modelData) >= 0
         pendingNew: isNew
         // "All tracks" counts what it lists: the rows a save wrote too,
         // until the stick has been read again.
+        // Own Recordings counts its rows too: the playlist's tracks and
+        // every recording.
         count: isAll ? root.scanController.totalTrackCount + (root.scanController.importAwaitingReadCount ?? 0)
             : isRecordings ? (root.scanController.recordingCount ?? 0)
+                + (hasPlaylist ? (root.scanController.playlistTrackCounts[playlist] ?? 0) : 0)
             : isNew ? 0 : (root.scanController.playlistTrackCounts[modelData] ?? 0)
         // By the row shown, not ListView.isCurrentItem: a scan rebuilds
         // the model, and the view then puts its current index back at the
@@ -372,11 +391,13 @@ ListView {
             : root.shownFixedRow.length === 0 && modelData === root.shownPlaylist
         onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
         pendingDelete: !isFixed && !isNew && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
-        // "All tracks" changes by the tracks an import brings.
+        // "All tracks" changes by the tracks an import brings, a fixed
+        // row's playlist as that playlist.
         edited: !isFixed ? !isNew && root.pendingRevision >= 0 && root.isEdited(modelData)
-            : isAll && countChange !== 0
+            : isAll ? countChange !== 0 : hasPlaylist && root.pendingRevision >= 0 && root.isEdited(playlist)
         pendingRename: !isFixed && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
-        countChange: root.pendingRevision >= 0 && !isRecordings ? root.trackCountChange(isAll ? "" : modelData) : 0
+        countChange: root.pendingRevision >= 0 && (!isRecordings || hasPlaylist)
+            ? root.trackCountChange(isAll ? "" : playlist) : 0
         showsThumbnail: true
         iconName: isRecordings ? "media-record" : ""
         checkable: root.checkable

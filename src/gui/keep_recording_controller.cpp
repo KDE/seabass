@@ -921,6 +921,16 @@ QVariantMap KeepRecordingController::keepNotesFor(const QString &stickRoot, cons
     return {{"notKept", notKept}, {"kept", kept}, {"keptGone", keptGone}};
 }
 
+QString KeepRecordingController::keptFlacFor(const QString &stickRoot, const QString &wavPath) const
+{
+    const QVariantMap copy = m_keptCopies.value(wavKey(localPath(wavPath)));
+    if (copy.isEmpty() || copy.value("stickRoot").toString() != stickKey(stickRoot)) {
+        return {};
+    }
+    const QString flac = copy.value("flacPath").toString();
+    return !flac.isEmpty() && QFileInfo(flac).isFile() ? flac : QString();
+}
+
 void KeepRecordingController::dismissFinishedFor(const QString &stickRoot)
 {
     const QString key = stickKey(stickRoot);
