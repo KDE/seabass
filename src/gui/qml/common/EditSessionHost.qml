@@ -548,6 +548,7 @@ Item {
         case "dup": return "Cues on Duplicate Copies";
         case "localcue": return "Local Cue Backup";
         case "addcue": return "Browse Library";
+        case "align-cues": return "Align Cue Points";
         default: return "another page";
         }
     }

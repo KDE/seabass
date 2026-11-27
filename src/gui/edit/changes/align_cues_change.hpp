@@ -21,10 +21,17 @@ namespace seabass::gui
 // contract every other cue write here follows.
 //
 // `aligned` is the whole list, as the page worked it out from `track.cues`
-// and the grid it read (domain::cuesAlignedToBeats), on the timeline the
-// readers give cues on (rekordbox's, for an Engine row too: its writer
-// takes the file's offset off again). What the row showed is what is
-// written; nothing is worked out again here.
+// and the grid it read (domain::cuesAlignedToBeats), on the timeline of
+// that grid: rekordbox's for a DeviceLibrary or OneLibrary row, Engine's
+// own for an Engine row, whose cues as read (`track.cues`, on rekordbox's
+// timeline) are `gridShiftMs` later. An Engine row is written as Engine
+// stores it, with nothing taken off: the write then cannot depend on what
+// the file's offset is taken to be at Save.
+//
+// Checked again at Save: a track whose cues on the stick are no longer the
+// ones the page read is left alone and said so, never written over with
+// the list as it was. A rekordbox cue that moves keeps its comment, its
+// colour and a loop's length in beats (rekordbox::MovedCue).
 //
 // Its own editor ("align-cues"), not Library Health's: every change of
 // that page carries a track's whole cue list as it was scanned, and two of
@@ -34,7 +41,8 @@ namespace seabass::gui
 class AlignCuesChange : public PendingChange
 {
 public:
-    AlignCuesChange(QString path, domain::Track track, std::vector<domain::CuePoint> aligned, int moved);
+    AlignCuesChange(QString path, domain::Track track, std::vector<domain::CuePoint> aligned, double gridShiftMs,
+                    int moved);
 
     static QString idFor(const domain::Track &track);
 
@@ -55,7 +63,10 @@ private:
     QString m_path;
     domain::Track m_track;
     std::vector<domain::CuePoint> m_aligned;
+    double m_gridShiftMs = 0.0;
     int m_moved = 0;
+    // 0 when the track was left alone (its cues had changed).
+    int m_written = 0;
 };
 
 }  // namespace seabass::gui

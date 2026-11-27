@@ -333,7 +333,8 @@ SqlCipherDb &OneLibraryCueWriter::verifyConnection()
     return *m_verifyDb;
 }
 
-void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const std::vector<CuePoint> &requested)
+void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const std::vector<CuePoint> &requested,
+                                           const std::vector<rekordbox::MovedCue> &moved)
 {
     // Staleness guard, adapted from PdbRowWriter's own convention to
     // this format: PdbRowWriter reads a whole file into memory once and
@@ -405,7 +406,8 @@ void OneLibraryCueWriter::writeCuesForPath(const std::string &filePath, const st
                         written.push_back(
                             {file, std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>())});
                     }
-                });
+                },
+                moved);
         }
         writeCueRows(db, contentIds, cues);
     } catch (...) {

@@ -9,8 +9,10 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <set>
 
+#include "application/path_key.hpp"
 #include "gui/edit/changes/align_cues_change.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/edit_session_registry.hpp"
@@ -101,15 +103,31 @@ std::shared_ptr<const CueAlignmentScan> scanCueAlignment(const QString &rekordbo
             LibraryCatalogCache::instance().tracksFor(format, path.toStdString(), LibraryCatalogCache::Detail::Cues,
                                                       application::NullProgressReporter::instance(), cancel);
         scan->formats << QString::fromStdString(format);
+        // Engine's grids in one opening of its database, for the rows
+        // that will be measured.
+        std::map<std::string, std::vector<domain::Beat>> engineGrids;
+        if (format == "engine") {
+            std::vector<std::string> ids;
+            for (const domain::Track &track : tracks) {
+                if (!track.cues.empty() && !track.cueRateUnverified && !track.engineCuesOnRekordboxTimeline) {
+                    ids.push_back(track.sourceId);
+                }
+            }
+            engineGrids = infrastructure::engine::readBeatGrids(engineRoot, ids, [&cancel] { return cancel.cancelled(); });
+        }
         for (const domain::Track &track : tracks) {
             cancel.throwIfCancelled();
-            if (format == "rekordbox" && !track.analysisFile.empty()) {
-                rekordboxAnalysisFiles.insert(track.analysisFile);
+            // Spelt as paths are compared: export.pdb pads the path, the
+            // two catalogs may differ in case and separator.
+            const std::string analysisKey =
+                track.analysisFile.empty() ? std::string() : application::normalizedPathKey(track.analysisFile);
+            if (format == "rekordbox" && !analysisKey.empty()) {
+                rekordboxAnalysisFiles.insert(analysisKey);
             }
             if (track.cues.empty()) {
                 continue;
             }
-            if (format == "onelibrary" && rekordboxAnalysisFiles.count(track.analysisFile) > 0) {
+            if (format == "onelibrary" && rekordboxAnalysisFiles.count(analysisKey) > 0) {
                 continue;
             }
             ++scan->tracksWithCues;
@@ -122,8 +140,10 @@ std::shared_ptr<const CueAlignmentScan> scanCueAlignment(const QString &rekordbo
             MeasuredTrack measured;
             std::vector<double> beats;
             if (format == "engine") {
-                for (const domain::Beat &beat : infrastructure::engine::readBeatGrid(engineRoot, track.sourceId)) {
-                    beats.push_back(beat.timeMs);
+                if (const auto grid = engineGrids.find(track.sourceId); grid != engineGrids.end()) {
+                    for (const domain::Beat &beat : grid->second) {
+                        beats.push_back(beat.timeMs);
+                    }
                 }
                 // Engine's grid is on Engine's timeline; its cues were
                 // read onto rekordbox's.
@@ -465,6 +485,10 @@ void CueAlignmentController::attachSession()
             m_ticked.remove(changeId.mid(prefix.size()));
             m_rescanAfterSave = true;
         }
+        // A save undone puts the cue points back where they were.
+        if (changeId == QStringLiteral("undo:last-save")) {
+            m_rescanAfterSave = true;
+        }
     });
     connect(m_session, &LibraryEditSession::saveFinished, this, [this](const QVariantMap &) {
         // What was written is read again: the cues are where they went,
@@ -506,7 +530,7 @@ void CueAlignmentController::stage()
             continue;
         }
         // Aligned on the grid's own timeline, where they were measured,
-        // and handed over on the timeline the cues were read on.
+        // and handed over on it (see AlignCuesChange).
         std::vector<domain::CuePoint> cues = measured.track.cues;
         for (domain::CuePoint &cue : cues) {
             cue.positionMs -= measured.gridShiftMs;
@@ -515,13 +539,8 @@ void CueAlignmentController::stage()
             }
         }
         cues = domain::cuesAlignedToBeats(std::move(cues), measured.alignment, m_toleranceMs);
-        for (domain::CuePoint &cue : cues) {
-            cue.positionMs += measured.gridShiftMs;
-            if (cue.isLoop) {
-                cue.loopEndMs += measured.gridShiftMs;
-            }
-        }
-        if (!m_session->stage(std::make_unique<AlignCuesChange>(measured.path, measured.track, std::move(cues), row.offCount))) {
+        if (!m_session->stage(std::make_unique<AlignCuesChange>(measured.path, measured.track, std::move(cues),
+                                                                measured.gridShiftMs, row.offCount))) {
             // The session said why (another page's edits are staged).
             break;
         }

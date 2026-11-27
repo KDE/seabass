@@ -17,6 +17,8 @@
 #include <filesystem>
 #include <fstream>
 #include "application/sync_analysis_policy.hpp"
+#include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "infrastructure/paths/read_access.hpp"
 #include "infrastructure/backup/stick_locks.hpp"
 #include "infrastructure/backup/interrupted_save.hpp"
@@ -628,6 +630,82 @@ public:
         }
         m_roots.append(QString::fromStdString(seabass::pathToUtf8(root)));
         return m_roots.last();
+    }
+
+    // A row's cue points as the stick holds them now, read past every
+    // cache: a DeviceLibrary row's ("rekordbox") from its analysis files,
+    // on rekordbox's timeline; an Engine row's as Engine stores them, on
+    // its own. Each {hot, number, positionMs, loop, loopEndMs, comment,
+    // color}; empty when the row cannot be read.
+    Q_INVOKABLE QVariantList cuesOnStick(const QString &stickRoot, const QString &format, const QString &sourceId)
+    {
+        QVariantList out;
+        try {
+            std::vector<seabass::domain::CuePoint> cues;
+            if (format == QLatin1String("engine")) {
+                seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer((stickRoot + "/Engine Library").toStdString());
+                cues = writer.storedCues(sourceId.toStdString()).value_or(std::vector<seabass::domain::CuePoint>{});
+            } else {
+                seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader((stickRoot + "/PIONEER").toStdString());
+                for (const seabass::domain::Track &row : reader.readTracks()) {
+                    if (row.sourceId == sourceId.toStdString()) {
+                        std::vector<seabass::domain::Track> one{row};
+                        reader.fillCues(one);
+                        cues = one.front().cues;
+                    }
+                }
+            }
+            for (const seabass::domain::CuePoint &cue : cues) {
+                out << QVariantMap{{"hot", cue.kind == seabass::domain::CuePoint::Kind::Hot},
+                                   {"number", cue.hotCueNumber},
+                                   {"positionMs", cue.positionMs},
+                                   {"loop", cue.isLoop},
+                                   {"loopEndMs", cue.loopEndMs},
+                                   {"comment", QString::fromStdString(cue.comment)},
+                                   {"color", QString::fromStdString(cue.color)}};
+            }
+        } catch (const std::exception &) {
+            return {};
+        }
+        return out;
+    }
+
+    // Moves the row's cue at `index` (as cuesOnStick lists them) by
+    // `deltaMs`, written straight to the stick as something other than
+    // the page under test would: what a second program does behind it.
+    Q_INVOKABLE bool moveCueOnStick(const QString &stickRoot, const QString &format, const QString &sourceId, int index,
+                                    double deltaMs)
+    {
+        try {
+            if (format == QLatin1String("engine")) {
+                seabass::infrastructure::engine::LibdjinteropEngineCueWriter writer((stickRoot + "/Engine Library").toStdString());
+                auto cues = writer.storedCues(sourceId.toStdString());
+                if (!cues || index < 0 || index >= static_cast<int>(cues->size())) {
+                    return false;
+                }
+                (*cues)[static_cast<std::size_t>(index)].positionMs += deltaMs;
+                writer.writeEngineStoredCues(sourceId.toStdString(), *cues);
+                return true;
+            }
+            const std::string pioneer = (stickRoot + "/PIONEER").toStdString();
+            seabass::infrastructure::rekordbox::KaitaiRekordboxReader reader(pioneer);
+            for (const seabass::domain::Track &row : reader.readTracks()) {
+                if (row.sourceId != sourceId.toStdString()) {
+                    continue;
+                }
+                std::vector<seabass::domain::Track> one{row};
+                reader.fillCues(one);
+                std::vector<seabass::domain::CuePoint> cues = one.front().cues;
+                if (index < 0 || index >= static_cast<int>(cues.size())) {
+                    return false;
+                }
+                cues[static_cast<std::size_t>(index)].positionMs += deltaMs;
+                seabass::infrastructure::rekordbox::RekordboxCueWriter(pioneer).writeHotCues(sourceId.toStdString(), cues);
+                return true;
+            }
+        } catch (const std::exception &) {
+        }
+        return false;
     }
 
     // stickCopy without its Engine Library: a stick with only a rekordbox

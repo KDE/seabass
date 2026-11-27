@@ -199,8 +199,53 @@ TestCase {
         mouseClick(stage);
         compare(session.pendingCount, 2);
 
+        const stick = o.page.rekordboxPath.replace(/\/PIONEER$/, "");
+        const rekordboxBefore = stickFixture.cuesOnStick(stick, "rekordbox", "102");
+        const engineBefore = stickFixture.cuesOnStick(stick, "engine", "107");
+        verify(rekordboxBefore.length > 1 && engineBefore.length > 0, "both rows have cues to compare");
+
         const summary = saveAndWait(o);
         compare(summary.written, 2, JSON.stringify(summary));
+
+        // On the stick itself, read past every cache: the listed cue point
+        // is on its beat (rekordbox's hot cue B 2 ms earlier, Engine's pad
+        // on a beat of Engine's own grid, 28 ms later than it was), and
+        // every other cue of the two tracks is
+        // exactly as it was, with its colour and comment.
+        const rekordboxAfter = stickFixture.cuesOnStick(stick, "rekordbox", "102");
+        compare(rekordboxAfter.length, rekordboxBefore.length, "no cue lost or gained");
+        let moved = 0;
+        for (let i = 0; i < rekordboxBefore.length; ++i) {
+            const was = rekordboxBefore[i];
+            const is = rekordboxAfter[i];
+            compare(is.hot, was.hot);
+            compare(is.number, was.number);
+            compare(is.color, was.color, "cue " + i + " keeps its colour");
+            compare(is.comment, was.comment, "cue " + i + " keeps its comment");
+            if (is.positionMs !== was.positionMs) {
+                ++moved;
+                compare(was.hot && was.number === 2, true, "only hot cue B moved: " + JSON.stringify(was));
+                // By the 2 ms the page listed, late, so earlier now; the
+                // page no longer listing it (below) says it is on a beat.
+                const by = was.positionMs - is.positionMs;
+                verify(by >= 1.5 && by <= 3, was.positionMs + " to " + is.positionMs);
+            }
+        }
+        compare(moved, 1);
+        const engineAfter = stickFixture.cuesOnStick(stick, "engine", "107");
+        compare(engineAfter.length, engineBefore.length);
+        moved = 0;
+        for (let i = 0; i < engineBefore.length; ++i) {
+            const delta = engineAfter[i].positionMs - engineBefore[i].positionMs;
+            if (Math.abs(delta) > 0.01) {
+                ++moved;
+                compare(engineBefore[i].hot && engineBefore[i].number === 1, true, "only pad 1 moved");
+                verify(Math.abs(delta - 28) < 1.5, "28 ms later, onto its beat: " + delta);
+            }
+            compare(engineAfter[i].color, engineBefore[i].color);
+            compare(engineAfter[i].comment, engineBefore[i].comment);
+        }
+        compare(moved, 1);
         tryVerify(() => o.c.checked && !o.c.busy && o.c.stagedCount === 0, 120000, "read again after the save");
         tryVerify(() => byKey(o.c)["rekordbox:102"] === undefined, 120000, "rekordbox's pad is on its beat");
         const after = byKey(o.c);
@@ -210,6 +255,38 @@ TestCase {
         }
         compare(o.c.tracks.count, 4);
         compare(o.c.tickedCount, 0);
+    }
+
+    // Cue points changed on the stick after the page read them, by
+    // something else: Save leaves those tracks alone and says so, and
+    // what the other program wrote is still there. The list the page
+    // holds is the one it read, and would go over it.
+    function test_cuesChangedSinceTheScanAreNotWrittenOver() {
+        const o = openOn(freshStick());
+        const stick = o.page.rekordboxPath.replace(/\/PIONEER$/, "");
+        o.c.toleranceMs = 100;
+        const index = key => rows(o.c).findIndex(row => row.key === key);
+        o.c.setTicked(index("rekordbox:102"), true);
+        o.c.setTicked(index("engine:107"), true);
+        o.c.setTicked(index("rekordbox:105"), true);
+        mouseClick(findChild(o.page, "stageButton"));
+        compare(o.c.stagedCount, 3);
+
+        // Behind the page's back: another cue of each of two of them moved.
+        verify(stickFixture.moveCueOnStick(stick, "rekordbox", "102", 0, 4000), "rekordbox's first cue moved by 4 s");
+        verify(stickFixture.moveCueOnStick(stick, "engine", "107", 0, 4000), "Engine's first cue moved by 4 s");
+        const rekordboxOutside = JSON.stringify(stickFixture.cuesOnStick(stick, "rekordbox", "102"));
+        const engineOutside = JSON.stringify(stickFixture.cuesOnStick(stick, "engine", "107"));
+
+        const summary = saveAndWait(o);
+        compare(summary.written, 1, "only the track that is as it was read: " + JSON.stringify(summary));
+        verify(JSON.stringify(summary).indexOf("its cue points changed after they were read") > 0, JSON.stringify(summary));
+        compare(JSON.stringify(stickFixture.cuesOnStick(stick, "rekordbox", "102")), rekordboxOutside,
+                "rekordbox's row is as the other program left it");
+        compare(JSON.stringify(stickFixture.cuesOnStick(stick, "engine", "107")), engineOutside,
+                "Engine's row is as the other program left it");
+        tryVerify(() => o.c.checked && !o.c.busy && o.c.stagedCount === 0, 120000, "read again after the save");
+        verify(byKey(o.c)["rekordbox:105"] === undefined, "the one that was as read is aligned");
     }
 
     function test_theSaveButtonSaysAlign() {

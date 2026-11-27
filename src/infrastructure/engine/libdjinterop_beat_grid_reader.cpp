@@ -110,4 +110,46 @@ std::vector<domain::Beat> readBeatGrid(const std::string &engineLibraryPath, con
     }
 }
 
+std::map<std::string, std::vector<domain::Beat>> readBeatGrids(const std::string &engineLibraryPath,
+                                                              const std::vector<std::string> &trackSourceIds,
+                                                              const std::function<bool()> &stop)
+{
+    std::map<std::string, std::vector<domain::Beat>> grids;
+    try {
+        // As readBeatGrid(), each step once: the copy when a read would
+        // write beside m.db (#110), the guard against damaged blobs in the
+        // database the decode reads, then the database itself.
+        const StickDatabaseRead read = StickDatabaseRead::engine(engineLibraryPath);
+        EngineBlobGuard guard(read.rootUtf8());
+        if (!djinterop::engine::database_exists(read.rootUtf8())) {
+            return grids;
+        }
+        auto db = djinterop::engine::load_database(read.rootUtf8());
+        for (const std::string &sourceId : trackSourceIds) {
+            if (stop && stop()) {
+                break;
+            }
+            try {
+                const std::int64_t id = std::stoll(sourceId);
+                std::string error;
+                const std::optional<EngineBlobs> damaged = guard.damaged(id, &error);
+                if (damaged ? contains(*damaged, EngineBlob::BeatData) : !engineBlobGuardFailureReadsUnchecked(error)) {
+                    continue;
+                }
+                const bool rateReadable = !damaged || !contains(*damaged, EngineBlob::TrackData);
+                if (std::optional<djinterop::track> track = db.track_by_id(id)) {
+                    std::vector<domain::Beat> beats = beatGridOf(*track, rateReadable);
+                    if (!beats.empty()) {
+                        grids.emplace(sourceId, std::move(beats));
+                    }
+                }
+            } catch (const std::exception &) {
+                // This track's grid cannot be read: it has none here.
+            }
+        }
+    } catch (const std::exception &) {
+    }
+    return grids;
+}
+
 }  // namespace seabass::infrastructure::engine

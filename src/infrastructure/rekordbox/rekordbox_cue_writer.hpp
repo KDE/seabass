@@ -62,6 +62,25 @@ struct CuesWithNoPlace
 };
 CuesWithNoPlace cuesWithNoPlace(const std::vector<domain::CuePoint> &cues);
 
+// A cue of the list being written that is a cue of the file moved: the
+// same cue (kind, pad, loop or not) at another place. The writer then
+// keeps what the file holds of it that the domain model cannot say (its
+// comment, colour id and a loop's length in beats) instead of encoding it
+// bare. Whole milliseconds, as the files hold them.
+struct MovedCue
+{
+    bool hot = false;
+    uint32_t hotCueNumber = 0;  // 0 for a memory cue
+    bool isLoop = false;
+    uint32_t fromMs = 0;
+    uint32_t fromLoopEndMs = 0;
+    uint32_t toMs = 0;
+    uint32_t toLoopEndMs = 0;
+};
+// The cues of `after` that are `before`'s at another place, the two lists
+// index for index (one made from the other by moving cues).
+std::vector<MovedCue> movedCues(const std::vector<domain::CuePoint> &before, const std::vector<domain::CuePoint> &after);
+
 class RekordboxCueWriter : public application::CueWriter
 {
 public:
@@ -104,8 +123,15 @@ public:
     // from it stops the write with nothing written.
     enum class Rewrite { Always, OnlyIfChanged };
     using BeforeWrite = std::function<void(const std::vector<std::string> &files)>;
+    //
+    // `moved` names the cues of the list that are cues of the file at
+    // another place (see MovedCue): each keeps its stored bytes.
     bool writeCuesToAnalysisFile(const std::string &analyzePath, const std::vector<domain::CuePoint> &cues,
-                                 Rewrite rewrite = Rewrite::Always, const BeforeWrite &beforeWrite = {});
+                                 Rewrite rewrite = Rewrite::Always, const BeforeWrite &beforeWrite = {},
+                                 const std::vector<MovedCue> &moved = {});
+    // writeHotCues() with such cues named.
+    void writeHotCuesMoved(const std::string &trackSourceId, const std::vector<domain::CuePoint> &cues,
+                           const std::vector<MovedCue> &moved);
 
     // Runs after each file is written, before it is read back, so a test
     // can damage a file there. Empty to turn it off.

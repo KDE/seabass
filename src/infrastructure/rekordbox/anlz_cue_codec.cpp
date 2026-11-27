@@ -109,6 +109,27 @@ std::vector<RawHotCueEntry> AnlzCueCodec::decodeHotCues(const std::string &pco2S
     return result;
 }
 
+RawHotCueEntry movedTo(RawHotCueEntry entry, uint32_t timeMs, uint32_t loopEndMs)
+{
+    const auto put = [&entry](std::size_t at, uint32_t value) {
+        for (int i = 0; i < 4; ++i) {
+            entry.rawBytes[at + static_cast<std::size_t>(i)] = static_cast<char>((value >> (24 - 8 * i)) & 0xff);
+        }
+    };
+    entry.timeMs = timeMs;
+    if (entry.isLoop) {
+        entry.loopEndMs = loopEndMs;
+    }
+    // time at 20, loop_time at 24, as decodeHotCues() reads them.
+    if (entry.rawBytes.size() >= 28) {
+        put(20, timeMs);
+        if (entry.isLoop) {
+            put(24, loopEndMs);
+        }
+    }
+    return entry;
+}
+
 std::string AnlzCueCodec::encodeHotCues(const std::vector<RawHotCueEntry> &cues, uint32_t listType)
 {
     std::string body;

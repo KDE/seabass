@@ -344,18 +344,49 @@ std::optional<std::string> RekordboxCueWriter::analyzePathFor(uint32_t trackId) 
 
 void RekordboxCueWriter::writeHotCues(const std::string &trackSourceId, const std::vector<domain::CuePoint> &requested)
 {
+    writeHotCuesMoved(trackSourceId, requested, {});
+}
+
+void RekordboxCueWriter::writeHotCuesMoved(const std::string &trackSourceId, const std::vector<domain::CuePoint> &requested,
+                                           const std::vector<MovedCue> &moved)
+{
     uint32_t trackId = static_cast<uint32_t>(std::stoul(trackSourceId));
 
     auto analyzePath = analyzePathFor(trackId);
     if (!analyzePath) {
         throw std::runtime_error("no rekordbox track with id=" + trackSourceId + " (or it has no analysis file)");
     }
-    writeCuesToAnalysisFile(*analyzePath, requested, Rewrite::Always);
+    writeCuesToAnalysisFile(*analyzePath, requested, Rewrite::Always, {}, moved);
+}
+
+std::vector<MovedCue> movedCues(const std::vector<domain::CuePoint> &before, const std::vector<domain::CuePoint> &after)
+{
+    std::vector<MovedCue> moved;
+    for (std::size_t i = 0; i < before.size() && i < after.size(); ++i) {
+        const domain::CuePoint &was = before[i];
+        const domain::CuePoint &is = after[i];
+        if (was.kind != is.kind || was.hotCueNumber != is.hotCueNumber || was.isLoop != is.isLoop
+            || was.positionMs < 0.0 || is.positionMs < 0.0) {
+            continue;
+        }
+        MovedCue cue;
+        cue.hot = is.kind == domain::CuePoint::Kind::Hot;
+        cue.hotCueNumber = cue.hot ? static_cast<uint32_t>(is.hotCueNumber) : 0;
+        cue.isLoop = is.isLoop;
+        cue.fromMs = static_cast<uint32_t>(was.positionMs);
+        cue.toMs = static_cast<uint32_t>(is.positionMs);
+        cue.fromLoopEndMs = was.isLoop ? static_cast<uint32_t>(std::max(0.0, was.loopEndMs)) : 0;
+        cue.toLoopEndMs = is.isLoop ? static_cast<uint32_t>(std::max(0.0, is.loopEndMs)) : 0;
+        if (cue.fromMs != cue.toMs || cue.fromLoopEndMs != cue.toLoopEndMs) {
+            moved.push_back(cue);
+        }
+    }
+    return moved;
 }
 
 bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
                                                  const std::vector<domain::CuePoint> &requested, Rewrite rewrite,
-                                                 const BeforeWrite &beforeWrite)
+                                                 const BeforeWrite &beforeWrite, const std::vector<MovedCue> &moved)
 {
     const std::vector<domain::CuePoint> cues = writableCues(requested);
     std::string extPath = extAnlzPath(m_pioneerRoot, analyzePath);
@@ -407,6 +438,24 @@ bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
         }
         return std::nullopt;
     };
+    // A cue the caller says is one of the file's at another place: the
+    // file's entry where it was, with its bytes, at the new times.
+    auto carryMoved = [&](const RawHotCueEntry &wanted, bool hot,
+                          std::vector<RawHotCueEntry> &from) -> std::optional<RawHotCueEntry> {
+        for (const MovedCue &move : moved) {
+            if (move.hot != hot || move.hotCueNumber != wanted.hotCueNumber || move.isLoop != wanted.isLoop
+                || move.toMs != wanted.timeMs || (wanted.isLoop && move.toLoopEndMs != wanted.loopEndMs)) {
+                continue;
+            }
+            RawHotCueEntry origin = wanted;
+            origin.timeMs = move.fromMs;
+            origin.loopEndMs = wanted.isLoop ? move.fromLoopEndMs : 0;
+            if (auto taken = carryOver(origin, from)) {
+                return movedTo(std::move(*taken), wanted.timeMs, wanted.loopEndMs);
+            }
+        }
+        return std::nullopt;
+    };
 
     std::vector<RawHotCueEntry> hotEntries;
     std::vector<RawHotCueEntry> memoryEntries;
@@ -418,10 +467,12 @@ bool RekordboxCueWriter::writeCuesToAnalysisFile(const std::string &analyzePath,
         entry.loopEndMs = cue.isLoop ? static_cast<uint32_t>(cue.loopEndMs) : 0;
         if (cue.kind == domain::CuePoint::Kind::Hot) {
             entry.hotCueNumber = static_cast<uint32_t>(cue.hotCueNumber);
-            hotEntries.push_back(carryOver(entry, existingHot).value_or(entry));
+            auto carried = carryOver(entry, existingHot);
+            hotEntries.push_back(carried ? *carried : carryMoved(entry, true, existingHot).value_or(entry));
         } else {
             entry.hotCueNumber = 0;  // memory cues carry no hot-cue slot
-            memoryEntries.push_back(carryOver(entry, existingMemory).value_or(entry));
+            auto carried = carryOver(entry, existingMemory);
+            memoryEntries.push_back(carried ? *carried : carryMoved(entry, false, existingMemory).value_or(entry));
         }
     }
 

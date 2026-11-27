@@ -40,6 +40,13 @@ struct RawHotCueEntry
     std::string rawBytes;
 };
 
+// `entry`, read from a file, at another place: its stored bytes kept
+// (comment, colour, colour id, the loop's length in beats) with only the
+// time, and a loop's end, set anew. For a cue that was moved and is
+// otherwise the cue it was. An entry without stored bytes just takes the
+// times.
+RawHotCueEntry movedTo(RawHotCueEntry entry, uint32_t timeMs, uint32_t loopEndMs);
+
 // cue_list_type values for the PCO2 section's `type` field -- which of
 // the two independent cue lists (hot cues vs memory cues) a given PCO2
 // section holds. Matches Anlz::CUE_LIST_TYPE_HOT_CUES/_MEMORY_CUES in

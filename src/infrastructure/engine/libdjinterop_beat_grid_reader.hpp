@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -28,5 +30,15 @@ std::vector<domain::Beat> beatGridOf(const djinterop::track &track, bool readRec
 // they imply, in milliseconds. Empty when the track is not analysed, or
 // anything about it cannot be read.
 std::vector<domain::Beat> readBeatGrid(const std::string &engineLibraryPath, const std::string &trackSourceId);
+
+// The same for many tracks, the library opened once: a scan of every
+// track's grid (Align Cue Points) otherwise opens the database, and
+// checks whether a read copy is needed, once a track, which on a stick
+// is most of its time. Each grid as readBeatGrid() gives it, by the id
+// asked for; a track with none, or that cannot be read, is left out.
+// `stop`, when set, is asked between tracks and ends the read early.
+std::map<std::string, std::vector<domain::Beat>> readBeatGrids(const std::string &engineLibraryPath,
+                                                              const std::vector<std::string> &trackSourceIds,
+                                                              const std::function<bool()> &stop = {});
 
 }  // namespace seabass::infrastructure::engine

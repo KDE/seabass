@@ -377,7 +377,18 @@ int main()
         assert(again.size() == 1);
         assert(again[0].rawBytes == entry);
         assert(rewritten.find(comment) != std::string::npos && "the DJ's own words are still in the file");
-        std::cout << "case 13 (a cue comment with non-ASCII in it survives a rewrite) OK\n";
+        // Moved, it is still that cue: its bytes with only the time set
+        // anew, so the comment goes where the cue goes (Align Cue Points).
+        const RawHotCueEntry moved = movedTo(decoded[0], 61'480, 0);
+        assert(moved.timeMs == 61'480 && moved.rawBytes.size() == entry.size());
+        for (std::size_t i = 0; i < entry.size(); ++i) {
+            assert((i >= 20 && i < 24) || moved.rawBytes[i] == entry[i]);
+        }
+        const auto movedAgain = AnlzCueCodec::decodeHotCues(AnlzCueCodec::encodeHotCues({moved}));
+        assert(movedAgain.size() == 1 && movedAgain[0].timeMs == 61'480 && movedAgain[0].hotCueNumber == 4);
+        assert(movedAgain[0].rawBytes.find(comment) != std::string::npos && "the comment moved with its cue");
+        assert(!movedAgain[0].isLoop && "and the loop field of a cue that is none is left alone");
+        std::cout << "case 13 (a cue comment with non-ASCII in it survives a rewrite, and a move) OK\n";
     }
 
     // An entry that declares no length at all is refused, not repeated.

@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "infrastructure/rekordbox/rekordbox_cue_writer.hpp"
 #include "domain/onelibrary_cue_table.hpp"
 #include "domain/track.hpp"
 #include "infrastructure/database_read_copy.hpp"
@@ -209,7 +210,10 @@ public:
     // The analysis files are not exportLibrary.db, so a caller backing
     // up before a save must cover them too: cueFilesForPath() names them,
     // and setBeforeCueFileWrite() lets a save back each one up as it goes.
-    void writeCuesForPath(const std::string &filePath, const std::vector<domain::CuePoint> &cues);
+    // `moved`: the cues of the list that are cues of the analysis file at
+    // another place (rekordbox::MovedCue), which keep their stored bytes.
+    void writeCuesForPath(const std::string &filePath, const std::vector<domain::CuePoint> &cues,
+                          const std::vector<rekordbox::MovedCue> &moved = {});
 
     // Library Health's #57 repair: removes these cue rows, each named by
     // (content_id, cue_id), with their hotCueBankList_cue links, in one
