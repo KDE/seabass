@@ -30,6 +30,7 @@
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/fs_remove.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -117,6 +118,9 @@ struct RestoreNotes
 {
     std::map<QString, std::string> refused;
     std::map<QString, std::string> cuesLeft;
+    // The restored tracks whose Engine row keeps its grid: the player's
+    // analysis kept there is Beat Grids & Waveforms' to put back.
+    std::map<QString, bool> engineElsewhere;
 };
 
 RestoreNotes &saveNotesOf(SaveContext &ctx)
@@ -148,6 +152,22 @@ RestoreNotes &saveNotesOf(SaveContext &ctx)
             int left = 0;
             for (const auto &[id, why] : notes->cuesLeft) {
                 left += after.appliedIds.contains(id) && !after.skippedIds.contains(id) ? 1 : 0;
+            }
+            int elsewhere = 0;
+            for (const auto &[id, unused] : notes->engineElsewhere) {
+                (void)unused;
+                elsewhere += after.appliedIds.contains(id) && !after.skippedIds.contains(id) ? 1 : 0;
+            }
+            if (elsewhere > 0) {
+                ctx.addSummaryNote(
+                    elsewhere == 1
+                        ? QStringLiteral("On one restored track Engine keeps the grid it has: the player's analysis "
+                                         "kept there by Copy Beat Grids is put back on the Beat Grids & Waveforms "
+                                         "page, with Restore Engine's Analysis.")
+                        : QStringLiteral("On %1 restored tracks Engine keeps the grid it has: the player's analysis "
+                                         "kept there by Copy Beat Grids is put back on the Beat Grids & Waveforms "
+                                         "page, with Restore Engine's Analysis.")
+                              .arg(elsewhere));
             }
             if (left > 0) {
                 ctx.addSummaryNote(left == 1
@@ -186,46 +206,100 @@ struct FileBack
 namespace
 {
 
-// The cue of `cues` (not yet taken) that is where `move` put it.
-std::optional<std::size_t> cueWhereMoved(const infrastructure::local::KeptCueMove &move,
-                                         const std::vector<domain::CuePoint> &cues, const std::vector<bool> &taken,
-                                         double toleranceMs)
+// Whether `cue` is where `move` put it: the same kind, pad and loop-ness,
+// its place and a loop's end within the tolerance; how far off, or nullopt.
+std::optional<double> offFromWhereMoved(const infrastructure::local::KeptCueMove &move, const domain::CuePoint &cue)
 {
-    const double within = std::max(toleranceMs, 1.0);
-    for (std::size_t i = 0; i < cues.size(); ++i) {
-        const domain::CuePoint &cue = cues[i];
-        if (!taken[i] && (cue.kind == domain::CuePoint::Kind::Hot) == move.hot
-            && (!move.hot || cue.hotCueNumber == move.pad) && cue.isLoop == move.loop
-            && std::abs(cue.positionMs - move.newMs) < within
-            && (!move.loop || std::abs(cue.loopEndMs - move.newEndMs) < within)) {
-            return i;
+    constexpr double within = application::CueMoveMinimumMs;
+    if ((cue.kind == domain::CuePoint::Kind::Hot) != move.hot || (move.hot && cue.hotCueNumber != move.pad)
+        || cue.isLoop != move.loop) {
+        return std::nullopt;
+    }
+    const double start = std::abs(cue.positionMs - move.newMs);
+    const double end = move.loop ? std::abs(cue.loopEndMs - move.newEndMs) : 0.0;
+    if (start >= within || end >= within) {
+        return std::nullopt;
+    }
+    return start + end;
+}
+
+// Each recorded move of `library` with the cue it is made on (index into
+// `cues`), as cueMovesBack() describes it.
+std::vector<std::pair<const infrastructure::local::KeptCueMove *, std::size_t>>
+movesBackOnto(const std::vector<infrastructure::local::KeptCueMove> &moves, const std::string &library,
+              const std::vector<domain::CuePoint> &cues, int *blocked)
+{
+    struct Candidate
+    {
+        double off;
+        std::size_t move;
+        std::size_t cue;
+    };
+    std::vector<Candidate> candidates;
+    for (std::size_t m = 0; m < moves.size(); ++m) {
+        if (moves[m].library != library) {
+            continue;
+        }
+        for (std::size_t c = 0; c < cues.size(); ++c) {
+            if (const auto off = offFromWhereMoved(moves[m], cues[c])) {
+                candidates.push_back({*off, m, c});
+            }
         }
     }
-    return std::nullopt;
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [](const Candidate &a, const Candidate &b) { return a.off < b.off; });
+    std::vector<bool> moveTaken(moves.size(), false);
+    std::vector<bool> cueTaken(cues.size(), false);
+    std::vector<std::pair<const infrastructure::local::KeptCueMove *, std::size_t>> pairs;
+    for (const Candidate &c : candidates) {
+        if (!moveTaken[c.move] && !cueTaken[c.cue]) {
+            moveTaken[c.move] = cueTaken[c.cue] = true;
+            pairs.emplace_back(&moves[c.move], c.cue);
+        }
+    }
+    // A cue does not go back onto another of its kind: each move checked
+    // against the cues as they would be after every other move, until no
+    // move is left that lands on one.
+    std::vector<double> after(cues.size());
+    for (std::size_t c = 0; c < cues.size(); ++c) {
+        after[c] = cues[c].positionMs;
+    }
+    for (const auto &[move, cue] : pairs) {
+        after[cue] = move->oldMs;
+    }
+    for (bool dropped = true; dropped;) {
+        dropped = false;
+        for (auto it = pairs.begin(); it != pairs.end(); ++it) {
+            const auto [move, cue] = *it;
+            bool onAnother = false;
+            for (std::size_t other = 0; other < cues.size() && !onAnother; ++other) {
+                onAnother = other != cue && cues[other].kind == cues[cue].kind && cues[other].isLoop == cues[cue].isLoop
+                            && std::abs(after[other] - move->oldMs) < application::CueMoveMinimumMs;
+            }
+            if (onAnother) {
+                after[cue] = cues[cue].positionMs;
+                pairs.erase(it);
+                if (blocked) {
+                    ++*blocked;
+                }
+                dropped = true;
+                break;
+            }
+        }
+    }
+    return pairs;
 }
 
 }  // namespace
 
 application::CueGridPlan cueMovesBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
                                       const std::string &library, const std::vector<domain::CuePoint> &cues,
-                                      double toleranceMs)
+                                      int *blocked)
 {
     application::CueGridPlan plan;
-    std::vector<bool> taken(cues.size(), false);
-    for (const auto &move : moves) {
-        if (move.library != library) {
-            continue;
-        }
-        std::optional<std::size_t> at;
-        if (!cues.empty()) {
-            at = cueWhereMoved(move, cues, taken, toleranceMs);
-            if (!at) {
-                continue;
-            }
-            taken[*at] = true;
-        }
+    const auto planned = [&](const infrastructure::local::KeptCueMove &move, std::size_t at) {
         application::CueGridMove back;
-        back.cueIndex = at.value_or(0);
+        back.cueIndex = at;
         back.kind = move.hot ? domain::CuePoint::Kind::Hot : domain::CuePoint::Kind::Memory;
         back.hotCueNumber = move.pad;
         back.isLoop = move.loop;
@@ -234,6 +308,17 @@ application::CueGridPlan cueMovesBack(const std::vector<infrastructure::local::K
         back.oldEndMs = move.newEndMs;
         back.newEndMs = move.oldEndMs;
         plan.moves.push_back(back);
+    };
+    if (cues.empty()) {
+        for (const auto &move : moves) {
+            if (move.library == library) {
+                planned(move, 0);
+            }
+        }
+    } else {
+        for (const auto &[move, at] : movesBackOnto(moves, library, cues, blocked)) {
+            planned(*move, at);
+        }
     }
     plan.verdict = plan.moves.empty() ? application::CueGridPlan::Verdict::NothingMoves
                                       : application::CueGridPlan::Verdict::Moves;
@@ -242,26 +327,17 @@ application::CueGridPlan cueMovesBack(const std::vector<infrastructure::local::K
 
 std::optional<std::vector<domain::CuePoint>> cuesMovedBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
                                                            const std::string &library,
-                                                           const std::vector<domain::CuePoint> &cues,
-                                                           double toleranceMs)
+                                                           const std::vector<domain::CuePoint> &cues, int *blocked)
 {
     std::vector<domain::CuePoint> back = cues;
-    std::vector<bool> taken(cues.size(), false);
-    bool any = false;
-    for (const auto &move : moves) {
-        if (move.library != library) {
-            continue;
-        }
-        if (const auto at = cueWhereMoved(move, cues, taken, toleranceMs)) {
-            taken[*at] = true;
-            back[*at].positionMs = move.oldMs;
-            if (move.loop) {
-                back[*at].loopEndMs = move.oldEndMs;
-            }
-            any = true;
+    const auto pairs = movesBackOnto(moves, library, cues, blocked);
+    for (const auto &[move, at] : pairs) {
+        back[at].positionMs = move->oldMs;
+        if (move->loop) {
+            back[at].loopEndMs = move->oldEndMs;
         }
     }
-    return any ? std::optional<std::vector<domain::CuePoint>>(std::move(back)) : std::nullopt;
+    return pairs.empty() ? std::nullopt : std::optional<std::vector<domain::CuePoint>>(std::move(back));
 }
 
 RestoreAnalysisChange::RestoreAnalysisChange(std::string audioFile, std::string stickPath, QString stickRoot,
@@ -368,8 +444,11 @@ std::vector<BackupTarget> RestoreAnalysisChange::filesToBackup(SaveContext &) co
     const std::string stickRoot = ledgerStickRoot();
     const std::string pioneer = m_pioneerRoot.toStdString();
     if (!m_keptDatPaths.empty()) {
-        if (const std::string kept = keptRekordboxAnalysisFileOf(stickRoot, ledgerKey()); !kept.empty()) {
-            targets.push_back({kept, Label, true});
+        for (const std::string &kept :
+             {keptRekordboxAnalysisFileOf(stickRoot, ledgerKey()), keptRekordboxRecordFileOf(stickRoot, ledgerKey())}) {
+            if (!kept.empty()) {
+                targets.push_back({kept, Label, true});
+            }
         }
         for (const std::string &dat : m_keptDatPaths) {
             for (const std::string &anlz : anlzFilesOf(dat)) {
@@ -427,6 +506,7 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
     try {
         // rekordbox's side: what is kept, checked against the stick now.
         std::optional<infrastructure::local::KeptRekordboxAnalysis> kept;
+        infrastructure::local::KeptRekordboxRecord record;
         std::vector<FileBack> filesBack;
         std::vector<std::uint32_t> pdbIds;
         std::vector<RowCues> deviceLibraryRows;
@@ -442,6 +522,15 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
             if (found.status == KeptStatus::None) {
                 return refuse("nothing of rekordbox's analysis is kept for it any more");
             }
+            const auto recorded = store.findRecord(key);
+            using RecordStatus = infrastructure::local::KeptRekordboxRecordLookup::Status;
+            if (recorded.status != RecordStatus::Found) {
+                return refuse("Seabass cannot tell whether the beat grid on the stick is its own: the record of the "
+                              "grids it wrote, kept beside the original, "
+                              + (recorded.status == RecordStatus::None ? std::string("is missing")
+                                                                       : "cannot be read (" + recorded.error + ")"));
+            }
+            record = recorded.record;
             kept = found.entry;
             std::error_code ec;
             const std::uintmax_t size = fs::file_size(pathFromUtf8(m_audioFile), ec);
@@ -541,11 +630,11 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                     return refuse(set.datPath + " names another audio file now than when it was kept");
                 }
                 const std::string gridNow = infrastructure::rekordbox::pqtzGridFingerprint(*dat.current);
-                const bool seabass = isSeabassRekordboxGrid(ctx, stickRoot, gridNow, &*kept);
+                const bool seabass = isSeabassRekordboxGrid(ctx, stickRoot, gridNow, &record);
                 if (!seabass && gridNow != kept->originalGrid) {
                     return refuse("its beat grid in " + set.datPath
-                                  + " was changed since Seabass analysed it (in rekordbox or on a player), and Seabass "
-                                    "does not write over that");
+                                  + " is neither the original nor one Seabass wrote: it was changed outside Seabass "
+                                    "since the original was kept, and Seabass does not write over that");
                 }
             }
         }
@@ -562,6 +651,28 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
         std::vector<EngineCues> engineRows;
         const bool hasEngine = !m_enginePath.isEmpty()
                                && isFile(FormatWriteSession::databaseFileFor("engine", m_enginePath.toStdString()));
+        // Only the player's analysis Analyse again kept goes back with
+        // rekordbox's: the record names it, and the kept one is still it.
+        // One Beat Grids & Waveforms kept stays that page's, and Engine
+        // keeps the grid it has.
+        bool engineHere = hasEngine;
+        if (hasEngine && kept) {
+            const auto engineKept = infrastructure::local::StickKeptEngineAnalysisStore(pathFromUtf8(stickRoot)).find(key);
+            const bool keptByAnalyseAgain =
+                !record.engineKept.empty() && engineKept.status == application::KeptEngineAnalysisLookup::Status::Found
+                && keptEngineOriginalFingerprint(engineKept.entry) == record.engineKept;
+            if (!keptByAnalyseAgain) {
+                engineHere = false;
+                if (engineKept.status != application::KeptEngineAnalysisLookup::Status::None) {
+                    saveNotesOf(ctx).engineElsewhere[id()] = true;
+                    done.push_back(record.engineKept.empty()
+                                       ? "Engine keeps the grid it has: the player's analysis kept for it was kept by "
+                                         "Copy Beat Grids, and goes back on the Beat Grids & Waveforms page"
+                                       : "Engine keeps the grid it has: the player's analysis kept for it is not the "
+                                         "one Analyse again kept");
+                }
+            }
+        }
         if (hasEngine) {
             engineSession = &sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, Label);
             auto &writer = engineAnalysisWriterFor(ctx, *engineSession, stickRoot);
@@ -572,6 +683,10 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                  infrastructure::engine::engineTrackIdsForFile(engineSession->writeRoot(), engineSession->realRoot(),
                                                                m_audioFile)) {
                 using Outcome = application::EngineAnalysisRestoreResult::Outcome;
+                engineRows.push_back({row, reader.readTrack(std::to_string(row)).value_or(domain::Track{}).cues});
+                if (!engineHere) {
+                    continue;
+                }
                 const auto preview = writer.restoreEngineAnalysis(std::to_string(row), key, {false, true});
                 if (preview.outcome == Outcome::Restored || preview.outcome == Outcome::AlreadyEngines) {
                     engineRestores.push_back(row);
@@ -582,7 +697,6 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                 } else if (preview.outcome == Outcome::Stale && why.empty()) {
                     why = preview.reason;
                 }
-                engineRows.push_back({row, reader.readTrack(std::to_string(row)).value_or(domain::Track{}).cues});
             }
             if (m_engineKept && engineRestores.empty() && !kept) {
                 return refuse(why.empty() ? std::string("nothing of the player's analysis is kept for it any more")
@@ -605,7 +719,6 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
             // where they were: no grid is planned, so a cue Analyse again
             // left where it was is never moved, and one set or changed
             // since stays. Each library on its own.
-            const double tolerance = domain::cueToleranceMsFor(m_cueReview.oldBpm, m_cueReview.oldBpm);
             std::vector<std::string> notes;
             bool rekordboxAgrees = true;
             const auto oneSet = [&](const std::vector<RowCues> &rows) {
@@ -619,35 +732,47 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                 && !sameCueSet(deviceLibraryRows.front().cues, oneLibraryRows.front().cues)) {
                 rekordboxAgrees = false;
             }
-            if (!rekordboxAgrees) {
-                notes.push_back("rekordbox's libraries hold different cue points (or cannot be read), so none of theirs "
-                                "moves");
+            const bool rekordboxMoved = std::any_of(kept->cueMoves.begin(), kept->cueMoves.end(),
+                                                    [](const auto &move) { return move.library == "rekordbox"; });
+            if (!rekordboxAgrees && rekordboxMoved) {
+                notes.push_back("rekordbox's libraries hold different cue points (or cannot be read)");
             } else {
                 for (const RowCues &row : deviceLibraryRows) {
-                    if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues, tolerance)) {
+                    if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues)) {
                         deviceLibraryCues.emplace_back(row.sourceId, std::move(*moved));
                     }
                 }
                 if (deviceLibraryRows.empty()) {
                     for (const RowCues &row : oneLibraryRows) {
-                        if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues, tolerance)) {
+                        if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues)) {
                             oneLibraryCues = std::move(*moved);
                         }
                     }
                 }
             }
             for (const EngineCues &row : engineRows) {
-                if (std::find(engineRestores.begin(), engineRestores.end(), row.id) == engineRestores.end()) {
-                    // Its grid stays Seabass's, and its cues with it.
+                auto moved = cuesMovedBack(kept->cueMoves, "engine", row.cues);
+                if (!moved) {
                     continue;
                 }
-                if (auto moved = cuesMovedBack(kept->cueMoves, "engine", row.cues, tolerance)) {
-                    engineCues.emplace_back(row.id, std::move(*moved));
+                if (std::find(engineRestores.begin(), engineRestores.end(), row.id) == engineRestores.end()) {
+                    // Its grid stays Seabass's, and the cues Analyse again
+                    // moved onto it with it: then no library's go back.
+                    notes.push_back("Engine keeps Seabass's grid, and the cue points Analyse again moved onto it");
+                    continue;
                 }
+                engineCues.emplace_back(row.id, std::move(*moved));
+            }
+            // All or nothing across the libraries: one that cannot take
+            // its cues back keeps every library's where they are.
+            if (!notes.empty()) {
+                deviceLibraryCues.clear();
+                oneLibraryCues.reset();
+                engineCues.clear();
             }
             cuesMove = !deviceLibraryCues.empty() || oneLibraryCues || !engineCues.empty();
             if (!cuesMove || !notes.empty()) {
-                const std::string why = !notes.empty() ? notes.front()
+                const std::string why = !notes.empty() ? notes.front() + ", so no cue point moves in any library"
                                                        : "none of the cue points Analyse again moved is where it put "
                                                          "them any more";
                 ctx.log().record(std::string(Label) + ": " + name
@@ -803,7 +928,9 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                 }
             }
             catalogs.invalidateWithOneLibraryMirror("rekordbox", pioneer);
-            done.push_back("rekordbox's analysis files put back");
+            done.push_back(record.originKnown ? "rekordbox's analysis files put back"
+                                              : "the analysis files that were on the stick before put back (who made "
+                                                "them is not known)");
             rekordboxRestored = true;
 
             // The rows' tempo and key, as planned above.

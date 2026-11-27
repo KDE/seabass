@@ -54,17 +54,24 @@ namespace seabass::gui
 // takes the new tempo, with each key's name, written through the save
 // before anything else, so Restore original analysis
 // (RestoreAnalysisChange) can put it back. A grid that is Seabass's
-// (isSeabassRekordboxGrid(): any analysis ledger entry's, or one a kept
-// entry on the stick records) has nothing to keep, and an original kept
-// already stays the original, its entry not written again: only a grid
-// that is neither Seabass's nor the kept one (rekordbox's newer analysis,
-// or a grid set by hand) takes its place (keepOriginalDecision()). Left
-// alone, nothing written, with the reason in the log: what is kept cannot
-// be read; the audio file's size cannot be read, or is not the size it
-// was analysed at; the grid is neither the kept one nor known for
+// (isSeabassRekordboxGrid(): the kept entry's record's, any analysis
+// ledger entry's, or one any record on the stick lists) has nothing to
+// keep, and an original kept already stays the original, never replaced
+// (keepOriginalDecision()): the grid this writes goes into the kept
+// entry's record, in the save, before the .DAT is written, so the record
+// alone knows every grid of Seabass's for its track. Left alone, nothing
+// written, with the reason in the log and the save's summary: what is
+// kept, or its record, cannot be read or is missing; the grid is neither
+// the kept one nor Seabass's (changed outside Seabass since the original
+// was kept); the audio file's size cannot be read, or is not the size it
+// was analysed at; nothing is kept and the grid is not known for
 // Seabass's while the analysis ledger is damaged or cannot be read (a
-// missing ledger is an empty one); the stick has no room for what is
-// to be kept (the analysis files' sizes and a megabyte in hand).
+// missing ledger is an empty one); the stick has no room for what is to
+// be kept (the analysis files' sizes and a megabyte in hand; free space
+// that cannot be read is not "no room"). Where the analysis ledger is
+// incomplete (one was moved aside), what is kept is recorded as of
+// unknown origin. Where the writer keeps the player's analysis of an
+// Engine row, the record names it, so Restore puts back only that one.
 // The grid written is recorded in the beat grid ledger, so the next
 // Analyse again, or a copy, knows it for Seabass's.
 // The analysis written is recorded in the stick's analysis ledger once

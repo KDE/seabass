@@ -63,16 +63,26 @@ ColumnLayout {
         function onLockRefused(holder, libraryId) { section.lockRefused(holder, libraryId); }
     }
 
+    // "earlier": kept where Seabass's record of its own analyses had been
+    // lost, so who made it is not known.
     function groupText(group) {
         if (group.gone) {
-            return group.kind === "engine"
-                ? qsTr("The player's analysis kept for %n track(s) not on the stick under that name any more", "",
-                       group.count)
+            if (group.kind === "engine") {
+                return qsTr("The player's analysis kept for %n track(s) not on the stick under that name any more", "",
+                            group.count);
+            }
+            return group.kind === "earlier"
+                ? qsTr("The analysis that was on the stick before, kept for %n track(s) not on the stick under that "
+                       + "name any more", "", group.count)
                 : qsTr("rekordbox's analysis kept for %n track(s) not on the stick under that name any more", "",
                        group.count);
         }
-        return group.kind === "engine"
-            ? qsTr("The player's analysis of %n track(s) on the stick", "", group.count)
+        if (group.kind === "engine") {
+            return qsTr("The player's analysis of %n track(s) on the stick", "", group.count);
+        }
+        return group.kind === "earlier"
+            ? qsTr("The analysis that was on the stick before, of %n track(s) on the stick (who made it is not known)",
+                   "", group.count)
             : qsTr("rekordbox's analysis of %n track(s) on the stick", "", group.count);
     }
 

@@ -162,13 +162,17 @@ TestCase {
         fake.lastRestore = {playlist: "Warm Up", staged: 2, tracks: 3,
                             leftAlone: [{name: "gone.wav", why: "its audio file is not on the stick"}],
                             cueTracks: 1, cuesToMove: 2, autoCueTracks: 0, askedCueTracks: 1,
-                            cueFollowThresholdMs: 20};
+                            cueFollowThresholdMs: 20, blockedCueTracks: 1, unknownOriginTracks: 1};
         fake.cueReview = [{changeId: "restore:one", subject: "One, Artist", moves: 2, largestMoveMs: 31,
                            moveCues: false, chosen: false}];
         fake.restoreReady();
         tryCompare(dialog, "opened", true);
         verify(dialog.headline.indexOf("2 track(s) will get back the analysis") >= 0, dialog.headline);
         verify(dialog.detailText.indexOf("On 1 track(s) cue points sit on a beat") >= 0, dialog.detailText);
+        verify(dialog.detailText.indexOf("On 1 track(s) a cue point stays where it is: another cue point is already "
+                                         + "at the place it would go back to.") >= 0, dialog.detailText);
+        verify(dialog.detailText.indexOf("On 1 track(s) what goes back is the analysis that was on the stick before "
+                                         + "Seabass analysed them again") >= 0, dialog.detailText);
         const leftLabel = findChild(dialog, "restoreLeftAloneLabel");
         verify(leftLabel.visible && leftLabel.text.indexOf("gone.wav: its audio file is not on the stick") >= 0,
                leftLabel.text);
@@ -209,6 +213,8 @@ TestCase {
         fake.restoreReady();
         tryCompare(dialog, "opened", true);
         compare(dialog.headline, "No track of \"Warm Up\" can get its original analysis back.");
+        verify(dialog.detailText.indexOf("cue point stays") < 0 && dialog.detailText.indexOf("on the stick before") < 0,
+               "no line for what is not there: " + dialog.detailText);
         compare(findChild(dialog, "restoreTakeBackButton").visible, false, "nothing to take back");
         compare(findChild(dialog, "restoreCueTracks").visible, false, "no cue switches");
         verify(findChild(dialog, "restoreLeftAloneLabel").text.indexOf("one.wav") >= 0);

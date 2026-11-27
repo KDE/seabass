@@ -30,7 +30,10 @@
 //   without being read;
 // - a ledger that can be read and not written (a folder where the
 //   temporary file goes) stays as it was, the write saying it failed;
-// - a ledger that cannot be used is moved aside, never deleted.
+// - a ledger that cannot be used is moved aside, never deleted;
+// - a ledger started after one was moved aside says so: its header's
+//   incomplete-since reads back, and a missing ledger beside one moved
+//   aside (damaged or unreadable) is incomplete since that one's time.
 
 #include <cctype>
 #include <chrono>
@@ -601,6 +604,35 @@ int main()
               "a second in the same second is numbered, got \"" + (again ? pathToUtf8(*again) : error) + "\"");
         check(readAnalysisLedger(stick, &error).empty() && error.empty(), "and the stick has no ledger now");
         std::cout << "case 9 (a ledger moved aside, never deleted) done\n";
+    }
+
+    // 10. Incomplete since.
+    {
+        const fs::path stick = freshStick("incomplete");
+        AnalysisLedger ledger;
+        ledger["contents/a/track.mp3"] = entry("contents/a/track.mp3", 'a');
+        std::string error;
+        std::string since;
+        check(writeAnalysisLedger(stick, ledger, NoHook, &error, "20261127T101500Z"), "written: " + error);
+        check(readAnalysisLedger(stick, &error, nullptr, &since) == ledger && error.empty()
+                  && since == "20261127T101500Z",
+              "an incomplete ledger reads back with its time, got \"" + since + "\"");
+        std::string problem;
+        const auto text = serializeAnalysisLedger(ledger, &problem, "20261127T101500Z");
+        check(text && text->rfind("seabass-analysis\t1\tincomplete-since\t20261127T101500Z\n", 0) == 0,
+              "the header holds the field");
+        check(writeAnalysisLedger(stick, ledger, NoHook, &error), "written whole: " + error);
+        readAnalysisLedger(stick, &error, nullptr, &since);
+        check(since.empty(), "a ledger written without the field is complete");
+        const auto at = std::chrono::sys_days{std::chrono::year{2026} / 11 / 27} + std::chrono::hours{9};
+        check(moveAnalysisLedgerAside(stick, at, &error, "damaged").has_value(), "moved aside: " + error);
+        check(readAnalysisLedger(stick, &error, nullptr, &since).empty() && error.empty() && since == "20261127T090000Z",
+              "none beside one moved aside is incomplete since its time, got \"" + since + "\"");
+        const fs::path lone = freshStick("incomplete-none");
+        readAnalysisLedger(lone, &error, nullptr, &since);
+        check(since.empty(), "none and nothing moved aside: an empty ledger that is whole");
+        check(!serializeAnalysisLedger(ledger, &problem, "bad\ttime"), "a time with a tab is refused");
+        std::cout << "case 10 (a ledger incomplete since one was moved aside) done\n";
     }
 
     if (failures > 0) {

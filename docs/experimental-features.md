@@ -99,20 +99,34 @@ from day one.
   .EXT and .2EX as they were, and the tempo and key of its rows in
   export.pdb and exportLibrary.db. Engine's row is kept the same way it
   always was (`Seabass/engine-analysis/`). Both are written by the save,
-  so a save that goes back and Undo Last Save leave them as they were. A
-  grid Seabass wrote itself (any entry of the analysis ledger has it, or
-  any kept file records it) is nothing to keep: analysing again a second
-  time leaves the first original in place, its kept file not written
-  again, and a track only Seabass ever analysed (an imported one) has
-  nothing kept. Only a grid that is neither Seabass's nor the kept one
-  (rekordbox analysed the track anew, or the DJ set its grid, and it was
-  exported over the stick) takes the older one's place, so a grid set by
-  hand is never lost. A track is left as it is, with the reason, when its
-  audio file's size cannot be read or is not the size it was analysed
-  at, when the analysis ledger cannot be read and the grid is not known,
-  and when the stick has no room for what is to be kept. Library Health's
-  relink of a moved file carries what is kept, and both ledgers' lines,
-  to the track's new name.
+  so a save that goes back and Undo Last Save leave them as they were.
+  Beside each kept file is its record (`<name>.seabass.tsv`), small and
+  written again by every save that adds to it, before the analysis files
+  are written: every grid Seabass wrote over the original since, whether
+  Analyse again also kept the player's analysis, and whether the original
+  is rekordbox's or, where Seabass's record of its own analyses had been
+  lost, only "the analysis that was on the stick before". The kept file
+  and its record alone tell Seabass's grids from one changed since, for
+  their track, whatever became of the analysis ledger. A grid Seabass
+  wrote itself (a record lists it, or any entry of the analysis ledger
+  has it) is nothing to keep, and a track only Seabass ever analysed (an
+  imported one) has nothing kept. A kept original is never replaced:
+  analysing again leaves the first original in place, and a track whose
+  grid is neither the kept one nor Seabass's (rekordbox analysed it anew,
+  or the DJ set its grid, and it was exported over the stick) is left
+  alone, with the advice to restore the original first or remove it in
+  Free Up Space. A track is left as it is, with the reason in the log and
+  the save's summary, when its audio file's size cannot be read or is not
+  the size it was analysed at, when the analysis ledger cannot be read
+  and the grid is not known, when its kept original has no record that
+  can be read, and when the stick has no room for what is to be kept. A
+  ledger moved aside (damaged, or reset from the command line) is
+  followed by one that says it is incomplete; a track it does not list
+  then has what is there kept as the analysis that was on the stick
+  before, its maker unknown. Library Health's relink of a moved file
+  carries what is kept, and both ledgers' lines, to the track's new name,
+  as far as it can: it never fails for them, and a kept original already
+  under the new name stays there.
 
   Restore original analysis and Free Up Space's list of what is kept are
   not behind the Experimental switch: with the switch off they still
@@ -127,15 +141,18 @@ from day one.
   old tempo and key of its library, the key by its name (a new export can
   give the kept key id to another key), and a library whose rows were
   renumbered by a new export keeps its tempo and key, which the log says;
-  Engine's row its own analysis. The track is then no longer Seabass's
+  Engine's row its own analysis where Analyse again kept it (one Beat
+  Grids & Waveforms kept is put back there). The track is then no longer Seabass's
   analysis in the ledger, and the kept copy is removed in the same save
   (Undo brings it back). Cue points that Analyse again moved with the grid
   can be moved back with it, reviewed per track like Analyse again's, the
   switch on by itself only where every move is under the same threshold.
   A track is left as it is, with the reason, when its audio file is not
-  the size it was, when its rows name other analysis files, or when its
-  grid was changed since Seabass analysed it, in rekordbox or on a player:
-  Seabass never writes over that. `seabass-cli kept-analysis` counts what
+  the size it was, when its rows name other analysis files, when its
+  record is missing or damaged, or when its grid is neither the original
+  nor one Seabass wrote: Seabass never writes over that. Cue points go
+  back only where they are still exactly where Analyse again put them,
+  never onto another cue, and in every library or none. `seabass-cli kept-analysis` counts what
   is kept on a stick.
 
   Free Up Space lists what is kept, with its size: per track about 235 kB

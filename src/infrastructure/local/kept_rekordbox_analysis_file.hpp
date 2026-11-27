@@ -36,7 +36,6 @@
 //   pathKey<TAB>key                                      (escaped)
 //   audioFile<TAB>size<TAB>mtimeUnix
 //   originalGrid<TAB>64 hex | -
-//   seabassGrids<TAB>64 hex[,64 hex...] | -
 //   anlz<TAB>datPath<TAB>dat<TAB>ext<TAB>2ex             (one line per file set)
 //   row<TAB>library<TAB>id<TAB>tempo<TAB>key<TAB>keyName (one line per row)
 //   cue<TAB>library<TAB>kind<TAB>pad<TAB>loop<TAB>oldMs<TAB>newMs<TAB>oldEndMs<TAB>newEndMs
@@ -50,13 +49,9 @@
 //   decides whether a file is the one kept for, as the analysis ledger's
 //   classifyAnalysis() decides it; the time is for a person reading it.
 // - originalGrid: the fingerprint (rekordbox::pqtzGridFingerprint()) of
-//   the grid in the first kept .DAT; seabassGrids: the grid the Analyse
-//   again that kept the entry wrote into the track's .DAT, in the same
-//   form. Written with the entry and never added to afterwards: the grids
-//   of later Analyse agains are in the analysis ledger, and an entry of
-//   some 235 kB is not written again (and backed up again) to note one.
-//   A grid that is one of these, in any entry on the stick, is Seabass's
-//   (keptRekordboxSeabassGrids()).
+//   the grid in the first kept .DAT. The grids Seabass wrote over it are
+//   in the entry's record beside it (below), which a later Analyse again
+//   rewrites without writing the entry of some 235 kB again.
 // - anlz: the .DAT path as the rows name it ("/PIONEER/USBANLZ/.../
 //   ANLZ0000.DAT", escaped), then each file as "none" or "b64:" and its
 //   bytes in base64.
@@ -81,6 +76,40 @@
 // Every line ends with a newline. A reader that meets any other version,
 // a line out of order, a bad field or a checksum that does not match
 // refuses the file: the entry is Damaged and nothing in it is believed.
+//
+// The entry's record, <name>.seabass.tsv beside it (the same <name>): what
+// Seabass did to the track since it kept the entry, small enough to be
+// written again by every save that adds to it. Format version 1, plain
+// text:
+//
+//   seabass-rekordbox-analysis-record<TAB>1
+//   pathKey<TAB>key                                      (escaped)
+//   origin<TAB>rekordbox | unknown
+//   seabassGrids<TAB>64 hex[,64 hex...] | -
+//   engineKept<TAB>64 hex | -
+//   #sha256<TAB>hex of every byte above
+//
+// - origin: "rekordbox" where the stick's analysis ledger was whole when
+//   the entry was kept, so the grid kept was not Seabass's; "unknown"
+//   where the ledger had been moved aside or reset before (it may then be
+//   an analysis of Seabass's that the lost ledger knew): the entry is the
+//   analysis that was on the stick before, whoever made it.
+// - seabassGrids: every grid Seabass wrote into the track's .DAT since the
+//   entry was kept, as pqtzGridFingerprint(), each written into the record
+//   before the .DAT in the same save. The record alone tells a grid of
+//   Seabass's from one changed outside Seabass for its own track, whatever
+//   became of the analysis ledger.
+// - engineKept: where the Analyse again that kept or added to the entry
+//   also kept the player's analysis of the track's Engine row, the
+//   fingerprint of that kept analysis (keptEngineOriginalFingerprint());
+//   "-" where Analyse again kept none (none was there, or Beat Grids &
+//   Waveforms had kept it before: that one is that page's to restore).
+//
+// An entry with no record, or with one that cannot be read, is one of
+// which Seabass cannot tell what is its own: Analyse again leaves the
+// track alone and Restore refuses it. The two are written, backed up,
+// carried, listed and removed together: the entry first and its record
+// after it, removed in that order too.
 namespace seabass::infrastructure::local
 {
 
@@ -131,7 +160,6 @@ struct KeptRekordboxAnalysis
     std::uint64_t audioFileSize = 0;
     std::int64_t audioFileMtimeUnix = 0;
     std::string originalGrid;
-    std::vector<std::string> seabassGrids;
     std::vector<KeptAnlzFileSet> files;
     std::vector<KeptRekordboxRow> rows;
     std::vector<KeptCueMove> cueMoves;
@@ -147,13 +175,38 @@ struct KeptRekordboxAnalysisLookup
     std::string error;
 };
 
-// The file of a track's entry.
+// The entry's record (above).
+struct KeptRekordboxRecord
+{
+    std::string pathKey;
+    bool originKnown = true;
+    std::vector<std::string> seabassGrids;
+    std::string engineKept;
+
+    friend bool operator==(const KeptRekordboxRecord &, const KeptRekordboxRecord &) = default;
+};
+
+struct KeptRekordboxRecordLookup
+{
+    enum class Status { None, Found, Damaged };
+    Status status = Status::None;
+    KeptRekordboxRecord record;
+    std::string error;
+};
+
+// The file of a track's entry, and of its record.
 std::filesystem::path keptRekordboxAnalysisFile(const std::filesystem::path &stickRoot, const std::string &pathKey);
+std::filesystem::path keptRekordboxRecordFile(const std::filesystem::path &stickRoot, const std::string &pathKey);
+// The record's file beside an entry's file (the same name, the record's
+// suffix).
+std::filesystem::path keptRekordboxRecordFileBeside(const std::filesystem::path &entryFile);
 
 // The entry's text before compression, and back. parse() gives Damaged
 // with `error` for any text that is not this format to the letter.
 std::string serializeKeptRekordboxAnalysis(const KeptRekordboxAnalysis &entry);
 KeptRekordboxAnalysisLookup parseKeptRekordboxAnalysis(const std::string &text);
+std::string serializeKeptRekordboxRecord(const KeptRekordboxRecord &record);
+KeptRekordboxRecordLookup parseKeptRekordboxRecord(const std::string &text);
 
 // The store on one stick. Before a file is created, replaced or removed,
 // `beforeChange` is called with its path (UTF-8): a save backs it up and
@@ -168,8 +221,13 @@ public:
     void setBeforeChange(std::function<void(const std::string &file)> hook) { m_beforeChange = std::move(hook); }
 
     KeptRekordboxAnalysisLookup find(const std::string &pathKey) const;
-    void keep(const KeptRekordboxAnalysis &entry);
-    // Nothing kept for the key is not an error.
+    KeptRekordboxRecordLookup findRecord(const std::string &pathKey) const;
+    // The entry and its record (of the same key), the entry first.
+    void keep(const KeptRekordboxAnalysis &entry, const KeptRekordboxRecord &record);
+    // The record alone, the entry left as it is.
+    void keepRecord(const KeptRekordboxRecord &record);
+    // The entry and its record, the entry first. Nothing kept for the key
+    // is not an error.
     void drop(const std::string &pathKey);
 
 private:
@@ -177,24 +235,21 @@ private:
     std::function<void(const std::string &)> m_beforeChange;
 };
 
-// The entry's first five lines, read without the kept bytes after them
+// The entry's first four lines, read without the kept bytes after them
 // (and so without its checksum, which covers the whole file): what a
-// listing and the question "is this grid Seabass's" need. nullopt for a
-// file whose head is not this format.
+// listing needs. nullopt for a file whose head is not this format.
 struct KeptRekordboxAnalysisHead
 {
     std::string stickPath;
     std::string pathKey;
     std::string originalGrid;
-    std::vector<std::string> seabassGrids;
 };
 std::optional<KeptRekordboxAnalysisHead> readKeptRekordboxAnalysisHead(const std::filesystem::path &file);
 
-// Every grid any entry on the stick records as Seabass's (the heads'
-// seabassGrids), for a decision about a track whose own entry and ledger
-// entry say nothing (a track moved with neither carried). An entry whose
-// head cannot be read adds none. `error` says when the folder cannot be
-// read whole (required).
+// Every grid any record on the stick lists as Seabass's, for a decision
+// about a track whose own record and ledger entry say nothing (a track
+// moved with neither carried). A record that cannot be read adds none.
+// `error` says when the folder cannot be read whole (required).
 std::vector<std::string> keptRekordboxSeabassGrids(const std::filesystem::path &stickRoot, std::string *error);
 
 // One kept entry as a listing sees it, without reading the kept bytes:
@@ -209,9 +264,18 @@ struct KeptAnalysisFileInfo
     std::uintmax_t bytes = 0;
     std::string trackFile;
     bool readable = false;
+    // A rekordbox entry's record, when it is there ("" otherwise): its
+    // size is in `bytes`, and it goes with the entry wherever the entry
+    // goes. `originKnown` is false where the record says the origin is
+    // unknown, or cannot be read.
+    std::string record;
+    bool originKnown = true;
 };
 
-// Every entry in the stick's two kept-analysis folders. A folder that is
+// Every entry in the stick's two kept-analysis folders, a rekordbox entry
+// with its record (a record with no entry beside it is not listed: it
+// holds no analysis, and the next keep of its track writes it again). A
+// folder that is
 // not there is an empty list; one that cannot be read gives what was read
 // and `error` saying why (required).
 std::vector<KeptAnalysisFileInfo> listKeptRekordboxAnalyses(const std::filesystem::path &stickRoot, std::string *error);

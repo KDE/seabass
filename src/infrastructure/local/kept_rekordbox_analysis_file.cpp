@@ -34,6 +34,12 @@ using stick_backup::escapeManifestField;
 using stick_backup::unescapeManifestField;
 
 constexpr std::string_view Magic = "seabass-rekordbox-analysis";
+constexpr std::string_view RecordMagic = "seabass-rekordbox-analysis-record";
+constexpr int RecordFormatVersion = 1;
+constexpr std::string_view EntrySuffix = ".tsv.gz";
+constexpr std::string_view RecordSuffix = ".seabass.tsv";
+// A record lists a grid per Analyse again: a few kilobytes at most.
+constexpr std::uintmax_t MaxRecordBytes = 1024u * 1024u;
 // A track's three files are well under a megabyte; this only stops a
 // damaged file from taking the machine's memory with it.
 constexpr std::uintmax_t MaxBytes = 64u * 1024u * 1024u;
@@ -181,7 +187,19 @@ std::optional<std::string> readWholeFile(const fs::path &file, std::string *prob
 fs::path keptRekordboxAnalysisFile(const fs::path &stickRoot, const std::string &pathKey)
 {
     const std::string hex = hashing::toHex(hashing::Sha256::of(std::string_view(pathKey)));
-    return paths::stickKeptRekordboxAnalysisDir(stickRoot) / (hex.substr(0, 32) + ".tsv.gz");
+    return paths::stickKeptRekordboxAnalysisDir(stickRoot) / (hex.substr(0, 32) + std::string(EntrySuffix));
+}
+
+fs::path keptRekordboxRecordFileBeside(const fs::path &entryFile)
+{
+    const std::string name = pathToUtf8(entryFile.filename());
+    const std::string stem = name.substr(0, name.size() >= EntrySuffix.size() ? name.size() - EntrySuffix.size() : 0);
+    return entryFile.parent_path() / pathFromUtf8(stem + std::string(RecordSuffix));
+}
+
+fs::path keptRekordboxRecordFile(const fs::path &stickRoot, const std::string &pathKey)
+{
+    return keptRekordboxRecordFileBeside(keptRekordboxAnalysisFile(stickRoot, pathKey));
 }
 
 std::string serializeKeptRekordboxAnalysis(const KeptRekordboxAnalysis &e)
@@ -191,7 +209,6 @@ std::string serializeKeptRekordboxAnalysis(const KeptRekordboxAnalysis &e)
     text += "pathKey\t" + escapeManifestField(e.pathKey) + "\n";
     text += "audioFile\t" + std::to_string(e.audioFileSize) + "\t" + std::to_string(e.audioFileMtimeUnix) + "\n";
     text += "originalGrid\t" + (e.originalGrid.empty() ? std::string("-") : e.originalGrid) + "\n";
-    text += "seabassGrids\t" + fingerprintList(e.seabassGrids) + "\n";
     for (const KeptAnlzFileSet &set : e.files) {
         text += "anlz\t" + escapeManifestField(set.datPath) + "\t" + bytesField(set.dat) + "\t" + bytesField(set.ext)
                 + "\t" + bytesField(set.twoEx) + "\n";
@@ -240,7 +257,7 @@ KeptRekordboxAnalysisLookup parseKeptRekordboxAnalysis(const std::string &text)
         lines.push_back(splitTabs(body.substr(start, end - start)));
         start = end + 1;
     }
-    if (lines.size() < 5 || lines[0].size() != 3 || lines[0][0] != Magic) {
+    if (lines.size() < 4 || lines[0].size() != 3 || lines[0][0] != Magic) {
         return refuse("not a Seabass kept rekordbox analysis");
     }
     if (lines[0][1] != std::to_string(KeptRekordboxAnalysisFormatVersion)) {
@@ -274,12 +291,9 @@ KeptRekordboxAnalysisLookup parseKeptRekordboxAnalysis(const std::string &text)
         return refuse("line 4: a bad originalGrid");
     }
     e.originalGrid = lines[3][1] == "-" ? std::string() : std::string(lines[3][1]);
-    if (!named(4, "seabassGrids", 2) || !parseFingerprintList(lines[4][1], e.seabassGrids)) {
-        return refuse("line 5: a bad seabassGrids");
-    }
     bool rowsBegun = false;
     bool cuesBegun = false;
-    for (std::size_t i = 5; i < lines.size(); ++i) {
+    for (std::size_t i = 4; i < lines.size(); ++i) {
         const std::string where = "line " + std::to_string(i + 1) + ": ";
         if (named(i, "anlz", 5) && !rowsBegun) {
             KeptAnlzFileSet set;
@@ -327,6 +341,130 @@ KeptRekordboxAnalysisLookup parseKeptRekordboxAnalysis(const std::string &text)
     return out;
 }
 
+std::string serializeKeptRekordboxRecord(const KeptRekordboxRecord &r)
+{
+    std::string text = std::string(RecordMagic) + "\t" + std::to_string(RecordFormatVersion) + "\n";
+    text += "pathKey\t" + escapeManifestField(r.pathKey) + "\n";
+    text += std::string("origin\t") + (r.originKnown ? "rekordbox" : "unknown") + "\n";
+    text += "seabassGrids\t" + fingerprintList(r.seabassGrids) + "\n";
+    text += "engineKept\t" + (r.engineKept.empty() ? std::string("-") : r.engineKept) + "\n";
+    text += "#sha256\t" + hashing::toHex(hashing::Sha256::of(std::string_view(text))) + "\n";
+    return text;
+}
+
+KeptRekordboxRecordLookup parseKeptRekordboxRecord(const std::string &text)
+{
+    KeptRekordboxRecordLookup out;
+    const auto refuse = [&](const std::string &why) {
+        out = {};
+        out.status = KeptRekordboxRecordLookup::Status::Damaged;
+        out.error = why;
+        return out;
+    };
+    if (text.size() < 2 || text.back() != '\n') {
+        return refuse("does not end with a newline: it was cut short");
+    }
+    const std::size_t lastLine = text.rfind('\n', text.size() - 2);
+    const std::size_t sumStart = lastLine == std::string::npos ? 0 : lastLine + 1;
+    const std::string_view sumLine(text.data() + sumStart, text.size() - 1 - sumStart);
+    constexpr std::string_view SumTag = "#sha256\t";
+    if (sumLine.substr(0, SumTag.size()) != SumTag) {
+        return refuse("has no #sha256 line at its end");
+    }
+    const std::string_view body(text.data(), sumStart);
+    if (hashing::toHex(hashing::Sha256::of(body)) != sumLine.substr(SumTag.size())) {
+        return refuse("its #sha256 does not match: it was changed or damaged");
+    }
+    std::vector<std::vector<std::string_view>> lines;
+    for (std::size_t start = 0; start < body.size();) {
+        const std::size_t end = body.find('\n', start);
+        lines.push_back(splitTabs(body.substr(start, end - start)));
+        start = end + 1;
+    }
+    if (lines.size() != 5 || lines[0].size() != 2 || lines[0][0] != RecordMagic) {
+        return refuse("not a Seabass record of a kept rekordbox analysis");
+    }
+    if (lines[0][1] != std::to_string(RecordFormatVersion)) {
+        return refuse("format version " + std::string(lines[0][1]) + ", this Seabass reads "
+                      + std::to_string(RecordFormatVersion));
+    }
+    const auto named = [&](std::size_t i, std::string_view name) {
+        return lines[i].size() == 2 && lines[i][0] == name;
+    };
+    KeptRekordboxRecord r;
+    const auto key = named(1, "pathKey") ? unescapeManifestField(lines[1][1]) : std::nullopt;
+    if (!key || key->empty()) {
+        return refuse("line 2: a bad pathKey");
+    }
+    r.pathKey = *key;
+    if (!named(2, "origin") || (lines[2][1] != "rekordbox" && lines[2][1] != "unknown")) {
+        return refuse("line 3: a bad origin");
+    }
+    r.originKnown = lines[2][1] == "rekordbox";
+    if (!named(3, "seabassGrids") || !parseFingerprintList(lines[3][1], r.seabassGrids)) {
+        return refuse("line 4: a bad seabassGrids");
+    }
+    if (!named(4, "engineKept") || !(lines[4][1] == "-" || isSha256Hex(lines[4][1]))) {
+        return refuse("line 5: a bad engineKept");
+    }
+    r.engineKept = lines[4][1] == "-" ? std::string() : std::string(lines[4][1]);
+    out.status = KeptRekordboxRecordLookup::Status::Found;
+    out.record = std::move(r);
+    return out;
+}
+
+namespace
+{
+
+// A record's file read and parsed; `key` empty to take any key.
+KeptRekordboxRecordLookup readRecordFile(const fs::path &file, const std::string &key)
+{
+    const std::string name = pathToUtf8(file);
+    KeptRekordboxRecordLookup out;
+    const auto damaged = [&](const std::string &why) {
+        out = {};
+        out.status = KeptRekordboxRecordLookup::Status::Damaged;
+        out.error = name + ": " + why;
+        return out;
+    };
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(file, ec);
+    if (status.type() == fs::file_type::not_found) {
+        return out;
+    }
+    if (ec) {
+        return damaged("cannot be looked at (" + ec.message() + ")");
+    }
+    if (!fs::is_regular_file(file, ec)) {
+        return damaged("is not a file");
+    }
+    const std::uintmax_t size = fs::file_size(file, ec);
+    if (ec || size > MaxRecordBytes) {
+        return damaged(ec ? "cannot be read (" + ec.message() + ")" : std::string("is far larger than a record"));
+    }
+    std::string problem;
+    const std::optional<std::string> text = readWholeFile(file, &problem);
+    if (!text) {
+        return damaged(problem);
+    }
+    out = parseKeptRekordboxRecord(*text);
+    if (out.status == KeptRekordboxRecordLookup::Status::Damaged) {
+        out.error = name + ": " + out.error;
+        return out;
+    }
+    if (!key.empty() && out.record.pathKey != key) {
+        return damaged("holds the record of another track");
+    }
+    return out;
+}
+
+}  // namespace
+
+KeptRekordboxRecordLookup StickKeptRekordboxAnalysisStore::findRecord(const std::string &pathKey) const
+{
+    return readRecordFile(keptRekordboxRecordFile(m_stickRoot, pathKey), pathKey);
+}
+
 KeptRekordboxAnalysisLookup StickKeptRekordboxAnalysisStore::find(const std::string &pathKey) const
 {
     const fs::path file = keptRekordboxAnalysisFile(m_stickRoot, pathKey);
@@ -370,10 +508,13 @@ KeptRekordboxAnalysisLookup StickKeptRekordboxAnalysisStore::find(const std::str
     return out;
 }
 
-void StickKeptRekordboxAnalysisStore::keep(const KeptRekordboxAnalysis &entry)
+void StickKeptRekordboxAnalysisStore::keep(const KeptRekordboxAnalysis &entry, const KeptRekordboxRecord &record)
 {
     if (entry.pathKey.empty() || entry.stickPath.empty()) {
         throw std::invalid_argument("a rekordbox analysis to keep needs the track's key and its place on the stick");
+    }
+    if (record.pathKey != entry.pathKey) {
+        throw std::invalid_argument("a kept rekordbox analysis and its record are of one track");
     }
     const fs::path file = keptRekordboxAnalysisFile(m_stickRoot, entry.pathKey);
     const std::string name = pathToUtf8(file);
@@ -402,24 +543,55 @@ void StickKeptRekordboxAnalysisStore::keep(const KeptRekordboxAnalysis &entry)
         throw std::runtime_error(name + " does not read back as it was written"
                                  + (back.error.empty() ? std::string() : " (" + back.error + ")"));
     }
+    keepRecord(record);
+}
+
+void StickKeptRekordboxAnalysisStore::keepRecord(const KeptRekordboxRecord &record)
+{
+    if (record.pathKey.empty()) {
+        throw std::invalid_argument("a record of a kept rekordbox analysis needs the track's key");
+    }
+    const fs::path file = keptRekordboxRecordFile(m_stickRoot, record.pathKey);
+    const std::string name = pathToUtf8(file);
+    std::error_code ec;
+    if (!fs::is_directory(m_stickRoot, ec)) {
+        throw std::runtime_error(pathToUtf8(m_stickRoot) + " is not a directory");
+    }
+    if (m_beforeChange) {
+        m_beforeChange(name);
+    }
+    fs::create_directories(file.parent_path(), ec);
+    if (ec) {
+        throw std::runtime_error("cannot create " + pathToUtf8(file.parent_path()) + " (" + ec.message() + ")");
+    }
+    if (!writeFileDurablyAtomic(name, serializeKeptRekordboxRecord(record))) {
+        throw std::runtime_error("cannot write " + name);
+    }
+    const KeptRekordboxRecordLookup back = findRecord(record.pathKey);
+    if (back.status != KeptRekordboxRecordLookup::Status::Found || !(back.record == record)) {
+        throw std::runtime_error(name + " does not read back as it was written"
+                                 + (back.error.empty() ? std::string() : " (" + back.error + ")"));
+    }
 }
 
 void StickKeptRekordboxAnalysisStore::drop(const std::string &pathKey)
 {
-    const fs::path file = keptRekordboxAnalysisFile(m_stickRoot, pathKey);
-    std::error_code ec;
-    if (!fs::exists(file, ec) && !ec) {
-        return;
+    for (const fs::path &file :
+         {keptRekordboxAnalysisFile(m_stickRoot, pathKey), keptRekordboxRecordFile(m_stickRoot, pathKey)}) {
+        std::error_code ec;
+        if (fs::symlink_status(file, ec).type() == fs::file_type::not_found) {
+            continue;
+        }
+        const std::string name = pathToUtf8(file);
+        if (m_beforeChange) {
+            m_beforeChange(name);
+        }
+        std::string failure;
+        if (!removeEntry(file, failure)) {
+            throw std::runtime_error("cannot remove " + name + ": " + failure);
+        }
+        fsyncDirectoryContaining(name);
     }
-    const std::string name = pathToUtf8(file);
-    if (m_beforeChange) {
-        m_beforeChange(name);
-    }
-    std::string failure;
-    if (!removeEntry(file, failure)) {
-        throw std::runtime_error("cannot remove " + name + ": " + failure);
-    }
-    fsyncDirectoryContaining(name);
 }
 
 namespace
@@ -456,16 +628,27 @@ std::vector<KeptAnalysisFileInfo> listKeptRekordboxAnalyses(const fs::path &stic
 {
     error->clear();
     std::vector<KeptAnalysisFileInfo> out;
-    for (const fs::path &file : entryFilesIn(paths::stickKeptRekordboxAnalysisDir(stickRoot), ".tsv.gz", error)) {
+    for (const fs::path &file :
+         entryFilesIn(paths::stickKeptRekordboxAnalysisDir(stickRoot), std::string(EntrySuffix), error)) {
         KeptAnalysisFileInfo info;
         info.file = pathToUtf8(file);
         std::error_code ec;
         info.bytes = fs::file_size(file, ec);
         // The head alone: the stick path is on its first line.
-        if (const auto head = readKeptRekordboxAnalysisHead(file)) {
+        const auto head = readKeptRekordboxAnalysisHead(file);
+        if (head) {
             info.trackFile = head->stickPath;
             info.readable = true;
         }
+        const fs::path record = keptRekordboxRecordFileBeside(file);
+        if (fs::exists(fs::symlink_status(record, ec))) {
+            info.record = pathToUtf8(record);
+            std::error_code sizeEc;
+            const std::uintmax_t recordBytes = fs::file_size(record, sizeEc);
+            info.bytes += sizeEc ? 0 : recordBytes;
+        }
+        const KeptRekordboxRecordLookup read = readRecordFile(record, head ? head->pathKey : std::string());
+        info.originKnown = read.status == KeptRekordboxRecordLookup::Status::Found && read.record.originKnown;
         out.push_back(std::move(info));
     }
     return out;
@@ -482,7 +665,7 @@ std::optional<KeptRekordboxAnalysisHead> readKeptRekordboxAnalysisHead(const fs:
         return std::nullopt;
     }
     std::vector<std::vector<std::string_view>> lines;
-    for (std::size_t start = 0; lines.size() < 5;) {
+    for (std::size_t start = 0; lines.size() < 4;) {
         const std::size_t end = text.find('\n', start);
         if (end == std::string::npos) {
             return std::nullopt;
@@ -496,13 +679,13 @@ std::optional<KeptRekordboxAnalysisHead> readKeptRekordboxAnalysisHead(const fs:
     };
     if (lines[0].size() != 3 || lines[0][0] != Magic
         || lines[0][1] != std::to_string(KeptRekordboxAnalysisFormatVersion) || !field(1, "pathKey", 2)
-        || !field(3, "originalGrid", 2) || !field(4, "seabassGrids", 2)) {
+        || !field(3, "originalGrid", 2)) {
         return std::nullopt;
     }
     const auto stickPath = unescapeManifestField(lines[0][2]);
     const auto pathKey = unescapeManifestField(lines[1][1]);
     if (!stickPath || stickPath->empty() || !pathKey || pathKey->empty()
-        || !(lines[3][1] == "-" || isSha256Hex(lines[3][1])) || !parseFingerprintList(lines[4][1], head.seabassGrids)) {
+        || !(lines[3][1] == "-" || isSha256Hex(lines[3][1]))) {
         return std::nullopt;
     }
     head.stickPath = *stickPath;
@@ -515,9 +698,11 @@ std::vector<std::string> keptRekordboxSeabassGrids(const fs::path &stickRoot, st
 {
     error->clear();
     std::vector<std::string> grids;
-    for (const fs::path &file : entryFilesIn(paths::stickKeptRekordboxAnalysisDir(stickRoot), ".tsv.gz", error)) {
-        if (const auto head = readKeptRekordboxAnalysisHead(file)) {
-            grids.insert(grids.end(), head->seabassGrids.begin(), head->seabassGrids.end());
+    for (const fs::path &file :
+         entryFilesIn(paths::stickKeptRekordboxAnalysisDir(stickRoot), std::string(RecordSuffix), error)) {
+        const KeptRekordboxRecordLookup read = readRecordFile(file, std::string());
+        if (read.status == KeptRekordboxRecordLookup::Status::Found) {
+            grids.insert(grids.end(), read.record.seabassGrids.begin(), read.record.seabassGrids.end());
         }
     }
     std::sort(grids.begin(), grids.end());

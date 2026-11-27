@@ -81,6 +81,14 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
 void forgetAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
                                const std::string &pathKey, const std::string &label);
 
+// Notes that the change `changeId` moves the entry of `fromKey` to `toKey`
+// (a relink): after the commit, in the change's turn, the entry the ledger
+// holds under `fromKey` then (one an earlier change of the save recorded
+// included) is filed under `toKey`, in place of one there. Nothing under
+// `fromKey`: nothing moves.
+void renameAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                               const std::string &fromKey, const std::string &toKey, const std::string &label);
+
 // The fingerprint of the grid in the rekordbox analysis file at
 // `datPath` as it is on the stick now (rekordbox::pqtzGridFingerprint()),
 // for an entry. Never throws: the ledger never costs a save, so a file

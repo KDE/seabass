@@ -26,10 +26,15 @@
 //
 // Format version 1: gzip (so `zcat` reads it) around tab-separated text:
 //
-//   seabass-analysis<TAB>1
+//   seabass-analysis<TAB>1[<TAB>incomplete-since<TAB>UTC time]
 //   t<TAB>pathKey<TAB>fileSize<TAB>fileMtimeUnix<TAB>inputRev<TAB>gridRev<TAB>keyRev<TAB>waveformRev<TAB>libraryVersion<TAB>tempoMin<TAB>tempoMax<TAB>rekordboxGrid|-<TAB>engineGrid|-<TAB>key|-<TAB>keyWritten(0|1)<TAB>analysedAtUnix<TAB>gridConfidence|-<TAB>gridFollowsTempo(0|1)|-<TAB>keyMargin|-
 //   #sha256<TAB>hex-of-everything-above
 //
+// - incomplete-since: written into a ledger started after an earlier one
+//   was moved aside (damaged, or reset from the command line), with the
+//   time it was started ("20261127T140300Z"), and carried into every
+//   ledger written after it. Such a ledger lists only what was recorded
+//   since: a track it has no entry for may still hold Seabass's analysis.
 // - pathKey: the audio file's stick-relative path through
 //   application::normalizedPathKey, never a row id (a library hands a
 //   deleted row's id to the next track it adds). One line per key, the
@@ -152,8 +157,15 @@ enum class AnalysisLedgerFault {
 // the caller reports it; a later write replaces the file.
 //
 // `error` is required; a null pointer throws std::invalid_argument.
+//
+// `incompleteSince` (when given) is set to the ledger's incomplete-since
+// time, or emptied for a ledger that lists everything recorded. A ledger
+// that is not there while one was moved aside beside it
+// (analysis.tsv.gz.damaged-<time>, .unreadable-<time>) is incomplete
+// too: that time, the first moved aside's, "unknown" where the name has
+// none.
 AnalysisLedger readAnalysisLedger(const std::filesystem::path &stickRoot, std::string *error,
-                                  AnalysisLedgerFault *fault = nullptr);
+                                  AnalysisLedgerFault *fault = nullptr, std::string *incompleteSince = nullptr);
 
 // Why `entry`, filed under `key`, cannot be written as it is (below);
 // empty when it can.
@@ -167,7 +179,9 @@ AnalysisLedger writableAnalysisLedger(const AnalysisLedger &ledger, std::vector<
 // The file's text for `ledger` before compression, as
 // writeAnalysisLedger() writes it, #sha256 line included; nullopt with
 // `problem` set when an entry cannot be written as it is (below).
-std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger, std::string *problem);
+// `incompleteSince` non-empty writes the header's incomplete-since field.
+std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger, std::string *problem,
+                                                   const std::string &incompleteSince = {});
 
 // For a test: called with the bytes readAnalysisLedger() read, before
 // they are counted against the file's size, so a test can stand in for a
@@ -188,7 +202,8 @@ void setAfterAnalysisLedgerReadForTesting(std::function<void(std::string &bytes)
 // `error` are required; an empty function or a null pointer throws
 // std::invalid_argument.
 bool writeAnalysisLedger(const std::filesystem::path &stickRoot, const AnalysisLedger &ledger,
-                         const std::function<void(const std::string &)> &beforeWrite, std::string *error);
+                         const std::function<void(const std::string &)> &beforeWrite, std::string *error,
+                         const std::string &incompleteSince = {});
 
 // The way out for a ledger that cannot be used (one that cannot be read
 // stays so, and every save warns): the file, or whatever is in its place,

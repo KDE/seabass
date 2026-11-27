@@ -249,6 +249,7 @@ int main(int argc, char **argv)
     const std::string pdbFile = pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb");
 
     TrackImportController importer;
+    importer.setExperimentalEnabled(true);
     OriginalAnalysisController restorer;
     auto *registry = EditSessionRegistry::instance();
     LibraryEditSession *session = registry->sessionFor(registry->libraryIdForPath(pioneer));
@@ -330,6 +331,9 @@ int main(int argc, char **argv)
     const auto anlzOf = [&](const std::string &name, const char *extension) {
         const std::string dat = pdbRow(name).analysisFile;
         return stick.root / pathFromUtf8(dat.substr(1, dat.size() - 4) + extension);
+    };
+    const auto keptRecordFile = [&](const std::string &name) {
+        return local::keptRekordboxRecordFile(stick.root, keyOf(name));
     };
     const auto keptFile = [&](const std::string &name) {
         return local::keptRekordboxAnalysisFile(stick.root, keyOf(name));
@@ -504,7 +508,9 @@ int main(int argc, char **argv)
         require(keptAfter.files == keptBefore.files && keptAfter.rows == keptBefore.rows
                     && keptAfter.originalGrid == keptBefore.originalGrid,
                 "2: the second Analyse again does not replace the kept original");
-        require(!keptAfter.seabassGrids.empty(), "2: the kept entry knows Seabass's grids");
+        const auto record = local::StickKeptRekordboxAnalysisStore(stick.root).findRecord(keyOf("k one.wav"));
+        require(record.status == local::KeptRekordboxRecordLookup::Status::Found && !record.record.seabassGrids.empty(),
+                "2: the kept entry's record knows Seabass's grids");
         (void)before;
         require(!fs::exists(keptFile("k two.wav")), "2: still nothing for k two");
         std::cout << "case 2 (analysing again twice keeps the first original) OK\n";
@@ -539,8 +545,8 @@ int main(int argc, char **argv)
                 "4: the cue review starts off");
         const AnlzFile datNow = AnlzFile::readRaw(pathToUtf8(anlzOf("k one.wav", "DAT")));
         require(saveNow().value("error").toString().isEmpty(), "4: the restore is saved");
-        require(restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Kept")) == -1,
-                "4: after the save the cached answer is out of date");
+        require(restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Kept")) == 0,
+                "4: after the save the cached answer follows what the save put back, with no new count asked");
         // The rule: every section the original's, the cue lists the
         // current file's.
         const AnlzFile datOriginal = AnlzFile::fromBytes(original["k one.wav"]["DAT"], "original");
@@ -642,7 +648,8 @@ int main(int argc, char **argv)
         saved = saveNow();
         require(saved.value("error").toString().isEmpty() && saved.value("written").toInt() == 1,
                 "7: the save lands with k three alone");
-        require(logText().substr(logBefore).find("was changed since Seabass analysed it") != std::string::npos,
+        require(logText().substr(logBefore).find("it was changed outside Seabass since the original was kept")
+                    != std::string::npos,
                 "7: refused for a grid changed by someone else, saying why");
         require(bytesOf(anlzOf("k one.wav", "DAT")) == theirs && bytesOf(keptFile("k one.wav")) == beforeRestore.at("kept"),
                 "7: the other grid not written over, the kept entry as it was");
@@ -752,7 +759,9 @@ int main(int argc, char **argv)
             local::StickKeptRekordboxAnalysisStore(stick.root).find(keyOf("k one.wav")).entry;
         gone.pathKey = "contents/unknownartist/unknownalbum/k gone.wav";
         gone.stickPath = "/Contents/UnknownArtist/UnknownAlbum/k gone.wav";
-        local::StickKeptRekordboxAnalysisStore(stick.root).keep(gone);
+        local::KeptRekordboxRecord goneRecord;
+        goneRecord.pathKey = gone.pathKey;
+        local::StickKeptRekordboxAnalysisStore(stick.root).keep(gone, goneRecord);
         KeptAnalysisSpaceController space;
         QSignalSpy removed(&space, &KeptAnalysisSpaceController::removeFinished);
         space.refresh(pioneer, engine);
@@ -774,9 +783,10 @@ int main(int argc, char **argv)
                 "9: three groups: rekordbox's, the player's, and one of a track gone");
         require(byName["rekordbox"].value("count").toInt() == 2
                     && byName["rekordbox"].value("bytes").toLongLong()
-                           == sizeOf({keptFile("k one.wav"), keptFile("k three.wav")})
+                           == sizeOf({keptFile("k one.wav"), keptRecordFile("k one.wav"), keptFile("k three.wav"),
+                                      keptRecordFile("k three.wav")})
                     && !byName["rekordbox"].value("included").toBool(),
-                "9: rekordbox's kept analyses of two tracks, their size, unticked");
+                "9: rekordbox's kept analyses of two tracks, their size with their records', unticked");
         require(byName["engine"].value("count").toInt() == 2
                     && byName["engine"].value("bytes").toLongLong()
                            == sizeOf({keptEngineFile("k one.wav"), keptEngineFile("k three.wav")})
@@ -798,8 +808,10 @@ int main(int argc, char **argv)
                     && summary.value("warning").toString().isEmpty(),
                 "9: all five removed");
         require(!fs::exists(keptFile("k one.wav")) && !fs::exists(keptEngineFile("k one.wav"))
-                    && !fs::exists(local::keptRekordboxAnalysisFile(stick.root, gone.pathKey)),
-                "9: their files are gone");
+                    && !fs::exists(keptRecordFile("k one.wav"))
+                    && !fs::exists(local::keptRekordboxAnalysisFile(stick.root, gone.pathKey))
+                    && !fs::exists(local::keptRekordboxRecordFile(stick.root, gone.pathKey)),
+                "9: their files are gone, the records with them");
         require(keptCount(QStringLiteral("Kept")) == 0, "9: no track of Kept has an original kept");
         require(restoreRefused(QStringLiteral("Kept")), "9: the restore is no longer offered");
         require(pdbTempoKey("k one.wav").tempo != 11950, "9: Seabass's analysis stays");

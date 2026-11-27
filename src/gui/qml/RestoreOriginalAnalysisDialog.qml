@@ -28,6 +28,8 @@ SeabassDialog {
     readonly property int autoCueTracks: outcome.autoCueTracks ?? 0
     readonly property int askedCueTracks: outcome.askedCueTracks ?? 0
     readonly property int thresholdMs: outcome.cueFollowThresholdMs ?? 0
+    readonly property int blockedCueTracks: outcome.blockedCueTracks ?? 0
+    readonly property int unknownOriginTracks: outcome.unknownOriginTracks ?? 0
     readonly property var tracks: controller.cueReview ?? []
 
     Connections {
@@ -50,6 +52,15 @@ SeabassDialog {
             ? "\n\n" + qsTr("On %n track(s) cue points sit on a beat of Seabass's grid that the original grid has "
                             + "elsewhere. They stay where they are unless you switch them on below.", "",
                             askedCueTracks)
+            : "")
+        + (unknownOriginTracks > 0
+            ? "\n\n" + qsTr("On %n track(s) what goes back is the analysis that was on the stick before Seabass "
+                            + "analysed them again: Seabass had lost its record of its own analyses, so it may not be "
+                            + "rekordbox's.", "", unknownOriginTracks)
+            : "")
+        + (blockedCueTracks > 0
+            ? "\n\n" + qsTr("On %n track(s) a cue point stays where it is: another cue point is already at the "
+                            + "place it would go back to.", "", blockedCueTracks)
             : "")
     width: Math.min(parent ? parent.width - 2 * Theme.pageMargin : Theme.scaled(700), Theme.scaled(700))
 

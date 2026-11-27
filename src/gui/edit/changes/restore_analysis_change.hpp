@@ -40,9 +40,14 @@ namespace seabass::gui
 // renumbered them) keeps its rows' tempo and key, and the log says so,
 // as it says how many rows were not there when the original was kept.
 // Engine:
-// the player's own analysis kept by the analysis writer goes back by
+// the player's own analysis goes back by
 // LibdjinteropEngineCueWriter::restoreEngineAnalysis(), the beat grid
-// ledger's line for the track taken out after the commit.
+// ledger's line for the track taken out after the commit, only where
+// Analyse again kept it: the kept entry's record names it
+// (KeptRekordboxRecord::engineKept) and the player's kept analysis is
+// still that one. One Beat Grids & Waveforms kept is that page's to put
+// back (Restore Engine's Analysis): Engine keeps the grid it has, and the
+// save's summary says where its way back is.
 //
 // Left alone whole, nothing written, a plain reason in the log and the
 // save's summary, when:
@@ -52,11 +57,12 @@ namespace seabass::gui
 // - the kept files do not belong to the track any more: its rows name
 //   other analysis files now, or the .DAT names another audio file than
 //   the kept one did (an export reused the folder);
+// - the kept entry's record is missing or cannot be read: Seabass cannot
+//   tell its own grids from one changed since;
 // - the grid in the track's .DAT is neither one Seabass wrote
-//   (isSeabassRekordboxGrid(): any analysis ledger entry's, or one a kept
-//   entry records) nor the kept original's: rekordbox or a player changed
-//   it since, and that is
-//   never written over;
+//   (isSeabassRekordboxGrid(): the record's, any analysis ledger entry's,
+//   or any record's) nor the kept original's: it was changed outside
+//   Seabass since, and that is never written over;
 // - Engine's row changed since Seabass wrote it (the player analysed it
 //   again, or the DJ moved or locked the grid), or what is kept of it is
 //   damaged or of another row;
@@ -72,14 +78,15 @@ namespace seabass::gui
 // from where to where (KeptCueMove); those, and only those, are offered
 // the move back (setMoveCues(), setMoveCuesByThreshold(), as
 // ReanalyseTrackChange's), and only where they still are where Analyse
-// again put them (within the cue tolerance): each goes back to the place
-// it had, no grid planned. A cue set or changed since stays where it is,
-// and so does every cue where Analyse again moved none (declined or
-// refused): then no move is offered at all. In each library separately:
-// rekordbox's set (DeviceLibrary's, OneLibrary's kept in step) and
-// Engine's rows, Engine's only where its row takes the player's analysis
-// back. Where DeviceLibrary's and OneLibrary's rows hold different cue
-// points, none of rekordbox's moves, and the log and the summary say why.
+// again put them (cueMovesBack()): each goes back to the place it had, no
+// grid planned. A cue set or changed since stays where it is, and so does
+// every cue where Analyse again moved none (declined or refused): then no
+// move is offered at all. Each library is matched on its own (rekordbox's
+// set, DeviceLibrary's with OneLibrary's kept in step, and Engine's rows),
+// and the move back is all or nothing across them: where DeviceLibrary's
+// and OneLibrary's rows hold different cue points, or Engine holds moved
+// cues and keeps Seabass's grid, no cue of the track moves anywhere, and
+// the log and the summary say why.
 //
 // Every file written is read back and compared before it is believed.
 // After the save landed: the analysis ledger's entry for the track is
@@ -91,17 +98,23 @@ namespace seabass::gui
 // The moves back of the cue points `library` ("rekordbox", "engine") of a
 // kept entry records Analyse again moved, as a plan: each from where
 // Analyse again put it to where it was. With `cues`, only those of them
-// still where it put them (the same kind, pad and loop, within
-// `toleranceMs`, each cue matched once); with no cues, every one recorded.
+// still where it put them: the same kind, pad and loop-ness, the place and
+// a loop's end each within application::CueMoveMinimumMs (the libraries
+// store cues to the millisecond or finer, and Analyse again calls a
+// smaller difference no move), each move matched to one cue and each cue
+// to one move, the nearest pairs first. A move whose cue would go back
+// onto another cue of the same kind and loop-ness (within the same
+// tolerance, as the cues will be after the moves) is not made, and
+// `blocked` (when given) counts it. With no cues, every one recorded.
 application::CueGridPlan cueMovesBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
                                       const std::string &library, const std::vector<domain::CuePoint> &cues,
-                                      double toleranceMs);
-// `cues` with every recorded move of `library` still where Analyse again
-// put it taken back to where it was; nullopt when none is.
+                                      int *blocked = nullptr);
+// `cues` with every recorded move of `library` that cueMovesBack() makes
+// taken back to where it was; nullopt when none is.
 std::optional<std::vector<domain::CuePoint>> cuesMovedBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
                                                            const std::string &library,
                                                            const std::vector<domain::CuePoint> &cues,
-                                                           double toleranceMs);
+                                                           int *blocked = nullptr);
 
 class RestoreAnalysisChange : public PendingChange
 {
@@ -138,6 +151,11 @@ public:
         std::vector<domain::CuePoint> cues;
         application::CueGridPlan plan;
         double oldBpm = 0.0;
+        // The moves not offered: another cue is where the cue would go.
+        int blocked = 0;
+        // The kept analysis is the one that was on the stick before, its
+        // maker unknown (KeptRekordboxRecord::originKnown).
+        bool originUnknown = false;
     };
     void setCueReview(CueReview review) { m_cueReview = std::move(review); }
     const CueReview &cueReview() const { return m_cueReview; }

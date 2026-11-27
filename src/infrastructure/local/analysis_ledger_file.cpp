@@ -209,7 +209,22 @@ std::string unwritable(const std::string &key, const AnalysisLedgerEntry &entry)
     return {};
 }
 
-std::optional<AnalysisLedger> parseText(std::string_view text, std::string *problem)
+// An incomplete-since time: what moveAnalysisLedgerAside() names a file
+// by, or "unknown"; letters, digits and '-' only.
+bool isStampText(std::string_view text)
+{
+    if (text.empty() || text.size() > 40) {
+        return false;
+    }
+    for (const char c : text) {
+        if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<AnalysisLedger> parseText(std::string_view text, std::string *problem, std::string *incompleteSince)
 {
     if (text.empty() || text.back() != '\n') {
         *problem = "it does not end with a newline (truncated)";
@@ -251,9 +266,10 @@ std::optional<AnalysisLedger> parseText(std::string_view text, std::string *prob
             if (f[0] != Magic) {
                 return fail("it is not a Seabass analysis ledger");
             }
-            if (f.size() != 2) {
-                return fail("its header has " + std::to_string(f.size()) + " fields, not 2");
+            if (f.size() != 2 && !(f.size() == 4 && f[2] == "incomplete-since" && isStampText(f[3]))) {
+                return fail("its header has " + std::to_string(f.size()) + " fields, not 2 (or 4 with incomplete-since)");
             }
+            incompleteSince->assign(f.size() == 4 ? std::string(f[3]) : std::string());
             int version = 0;
             if (!parseInteger(f[1], version) || version != AnalysisLedgerFormatVersion) {
                 return fail("it is format version " + escapeManifestField(f[1]) + ", this Seabass reads version "
@@ -390,11 +406,20 @@ AnalysisLedger writableAnalysisLedger(const AnalysisLedger &ledger, std::vector<
     return out;
 }
 
-std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger, std::string *problem)
+std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger, std::string *problem,
+                                                   const std::string &incompleteSince)
 {
+    if (!incompleteSince.empty() && !isStampText(incompleteSince)) {
+        *problem = "the time the ledger is incomplete since is not one it can hold";
+        return std::nullopt;
+    }
     std::string out;
     out += Magic;
-    out += '\t' + std::to_string(AnalysisLedgerFormatVersion) + '\n';
+    out += '\t' + std::to_string(AnalysisLedgerFormatVersion);
+    if (!incompleteSince.empty()) {
+        out += "\tincomplete-since\t" + incompleteSince;
+    }
+    out += '\n';
     for (const auto &[key, e] : ledger) {
         if (const std::string why = unwritable(key, e); !why.empty()) {
             *problem = why;
@@ -427,7 +452,37 @@ std::optional<std::string> serializeAnalysisLedger(const AnalysisLedger &ledger,
     return out;
 }
 
-AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error, AnalysisLedgerFault *fault)
+namespace
+{
+
+// The time of the first ledger moved aside beside `file`, "unknown" where
+// its name has none; empty when none was.
+std::string movedAsideSince(const fs::path &file)
+{
+    const std::string prefix = pathToUtf8(file.filename()) + ".";
+    std::string first;
+    std::error_code ec;
+    for (fs::directory_iterator it(file.parent_path(), ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const std::string name = pathToUtf8(it->path().filename());
+        for (const std::string why : {"damaged-", "unreadable-"}) {
+            if (name.rfind(prefix + why, 0) == 0) {
+                std::string stamp = name.substr(prefix.size() + why.size(), 16);
+                if (!isStampText(stamp)) {
+                    stamp = "unknown";
+                }
+                if (first.empty() || (stamp != "unknown" && (first == "unknown" || stamp < first))) {
+                    first = stamp;
+                }
+            }
+        }
+    }
+    return first;
+}
+
+}  // namespace
+
+AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error, AnalysisLedgerFault *fault,
+                                  std::string *incompleteSince)
 {
     if (error == nullptr) {
         throw std::invalid_argument("readAnalysisLedger: the error out-parameter is required");
@@ -436,6 +491,11 @@ AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error,
     if (fault != nullptr) {
         *fault = AnalysisLedgerFault::None;
     }
+    std::string since;
+    if (incompleteSince == nullptr) {
+        incompleteSince = &since;
+    }
+    incompleteSince->clear();
     const fs::path file = paths::stickAnalysisLedger(stickRoot);
     const std::string name = pathToUtf8(file);
     const auto refuse = [&](AnalysisLedgerFault kind, const std::string &why) {
@@ -443,12 +503,16 @@ AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error,
         if (fault != nullptr) {
             *fault = kind;
         }
+        incompleteSince->clear();
         return AnalysisLedger{};
     };
 
     std::error_code ec;
     const fs::file_status status = fs::status(file, ec);
     if (status.type() == fs::file_type::not_found) {
+        // None, but one moved aside: what this stick's ledger knew is not
+        // here, and the one the next save starts knows only from then.
+        *incompleteSince = movedAsideSince(file);
         return {};
     }
     if (ec) {
@@ -493,7 +557,7 @@ AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error,
     if (!gunzip(compressed, false, MaxInflatedBytes, &text, &problem)) {
         return refuse(AnalysisLedgerFault::Damaged, problem);
     }
-    std::optional<AnalysisLedger> ledger = parseText(text, &problem);
+    std::optional<AnalysisLedger> ledger = parseText(text, &problem, incompleteSince);
     if (!ledger) {
         return refuse(AnalysisLedgerFault::Damaged, problem);
     }
@@ -501,7 +565,8 @@ AnalysisLedger readAnalysisLedger(const fs::path &stickRoot, std::string *error,
 }
 
 bool writeAnalysisLedger(const fs::path &stickRoot, const AnalysisLedger &ledger,
-                         const std::function<void(const std::string &)> &beforeWrite, std::string *error)
+                         const std::function<void(const std::string &)> &beforeWrite, std::string *error,
+                         const std::string &incompleteSince)
 {
     if (error == nullptr) {
         throw std::invalid_argument("writeAnalysisLedger: the error out-parameter is required");
@@ -514,7 +579,7 @@ bool writeAnalysisLedger(const fs::path &stickRoot, const AnalysisLedger &ledger
     const std::string fileText = pathToUtf8(file);
 
     std::string problem;
-    const std::optional<std::string> text = serializeAnalysisLedger(ledger, &problem);
+    const std::optional<std::string> text = serializeAnalysisLedger(ledger, &problem, incompleteSince);
     if (!text) {
         *error = fileText + ": not written: " + problem;
         return false;

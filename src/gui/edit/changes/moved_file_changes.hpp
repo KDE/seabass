@@ -71,10 +71,14 @@ private:
 // Engine's Analysis), the analysis ledger's entry and the beat grid
 // ledger's line. Left behind, the kept originals would read as those of a
 // track no longer on the stick, and Analyse again at the new name would
-// take Seabass's own analysis for the original. Refused, nothing written,
-// where an original is kept under the new name already (one of the two
-// would be lost). Repair A needs none of this: the file goes back to the
-// name everything is kept under.
+// take Seabass's own analysis for the original. Carrying is best effort
+// and never fails nor refuses the relink: a kept original of a kind kept
+// under the new name already stays there, and the one under the old name
+// stays where it is, not deleted; one that cannot be read or written
+// stays where it is; each with a plain line in the save's log. Only the
+// kinds whose library is pointed are carried. A relink on a stick with
+// nothing of Seabass's writes nothing but the rows. Repair A needs none of
+// this: the file goes back to the name everything is kept under.
 class RelinkMovedFileChange : public PendingChange
 {
 public:
@@ -98,14 +102,12 @@ private:
     // the keys the rows' old paths have there (not the new one).
     std::string stickRoot() const;
     std::vector<std::string> oldKeys() const;
-    // Why the kept analyses cannot follow the track: one is kept under the
-    // old name and one under the new already. Empty when they can.
-    std::string keptAtNewNameRefusal() const;
     // The kept analyses and ledger lines of the old name moved to the new
-    // one, in this save: rekordbox's kept entry where a rekordbox library
-    // was pointed, the player's kept entry and the beat grid ledger's line
-    // where Engine was, the analysis ledger's entry always. `said` gets a
-    // phrase for the log for each.
+    // one, in this save: rekordbox's kept entry and its record where a
+    // rekordbox library was pointed, the player's kept entry and the beat
+    // grid ledger's line where Engine was, the analysis ledger's entry
+    // always; the ledgers' after the commit, as earlier changes of the save
+    // left them. `said` gets a phrase for the log for each. Never throws.
     void carryTrackRecords(SaveContext &ctx, bool rekordboxPointed, bool enginePointed,
                            const std::string &engineWriteRoot, std::vector<std::string> &said);
 

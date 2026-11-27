@@ -473,6 +473,13 @@ void recordGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoo
 // landed: the row holds the player's own analysis again.
 void forgetGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
                                    const std::string &ledgerKey);
+// The ledger's line for `fromKey` moved to `toKey` after the commit, if
+// the change landed (a relink): the line as the ledger holds it in the
+// change's turn, one an earlier change of the save recorded included, in
+// place of one under `toKey`. A ledger that cannot be written then is a
+// line in the save's log, not a warning: the relink landed.
+void renameGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                                   const std::string &fromKey, const std::string &toKey);
 std::string beatGridLedgerFileOf(const std::string &stickRoot);
 std::string keptEngineAnalysisFileOf(const std::string &stickRoot, const std::string &ledgerKey);
 

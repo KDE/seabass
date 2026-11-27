@@ -4064,6 +4064,14 @@ if(TARGET seabass_edit)
     target_link_libraries(track_import_analysis_test PRIVATE seabass_edit Qt6::Core)
     add_test(NAME track_import_analysis_test COMMAND track_import_analysis_test)
 
+    # rekordbox's kept analysis and its record on the stick, the restore
+    # rule and the keep decision. Needs no TagLib, so it runs wherever the
+    # edit library is built.
+    add_executable(kept_rekordbox_analysis_file_test tests/kept_rekordbox_analysis_file_test.cpp)
+    target_include_directories(kept_rekordbox_analysis_file_test PRIVATE src tests)
+    target_link_libraries(kept_rekordbox_analysis_file_test PRIVATE seabass_edit)
+    add_test(NAME kept_rekordbox_analysis_file_test COMMAND kept_rekordbox_analysis_file_test)
+
     # The track import's controller with the real session: a folder
     # offered as a drop offers it, staged, saved, and found in all three
     # libraries. Needs TagLib to read the files it makes.
@@ -4135,10 +4143,6 @@ if(TARGET seabass_edit)
         if(TARGET seabass_audio_qt)
             target_link_libraries(original_analysis_restore_test PRIVATE seabass_audio_qt)
         endif()
-        add_executable(kept_rekordbox_analysis_file_test tests/kept_rekordbox_analysis_file_test.cpp)
-        target_include_directories(kept_rekordbox_analysis_file_test PRIVATE src tests)
-        target_link_libraries(kept_rekordbox_analysis_file_test PRIVATE seabass_edit)
-        add_test(NAME kept_rekordbox_analysis_file_test COMMAND kept_rekordbox_analysis_file_test)
         add_test(NAME original_analysis_restore_test COMMAND original_analysis_restore_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
         set_tests_properties(original_analysis_restore_test PROPERTIES LABELS "integration"

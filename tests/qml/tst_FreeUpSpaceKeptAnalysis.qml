@@ -90,6 +90,14 @@ TestCase {
         }
         compare(section.controller.includedCount, 0);
         verify(section.visible, "shown with something kept");
+        // Kept where Seabass's record of its analyses had been lost: not
+        // called rekordbox's.
+        compare(section.groupText({kind: "earlier", gone: false, count: 2}),
+                "The analysis that was on the stick before, of 2 track(s) on the stick (who made it is not known)");
+        compare(section.groupText({kind: "earlier", gone: true, count: 1}),
+                "The analysis that was on the stick before, kept for 1 track(s) not on the stick under that name any "
+                + "more");
+        compare(section.groupText(groups[0]), "rekordbox's analysis of 2 track(s) on the stick");
         const button = findChild(page, "removeKeptAnalysisButton");
         compare(button.enabled, false, "nothing to remove until something is ticked");
 

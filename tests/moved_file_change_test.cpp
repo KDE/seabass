@@ -36,6 +36,7 @@
 #include "application/use_cases/scan_library.hpp"
 #include "domain/moved_files.hpp"
 #include "domain/track.hpp"
+#include "gui/edit/changes/copy_analysis_change.hpp"
 #include "gui/edit/changes/moved_file_changes.hpp"
 #include "gui/edit/changes/restore_backups_change.hpp"
 #include "gui/edit/pending_change.hpp"
@@ -49,6 +50,7 @@
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/sqlcipher_dyn.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -583,6 +585,20 @@ int main(int argc, char **argv)
         assert(pointed == 2 && "both rekordbox catalogs' rows point at the new path");
         assert(enginePointed == 1 && "and Engine's at its own");
         assert(fs::is_regular_file(rekordboxFile) && fs::is_regular_file(engineFile) && "the files were not moved");
+        {
+            // A stick with nothing of Seabass's kept: the relink writes the
+            // rows and nothing of Seabass's beside them.
+            const fs::path root =
+                pathFromUtf8(infrastructure::paths::normalStickRootForCatalogPath(pathToUtf8(pioneer)));
+            const bool none = !fs::exists(infrastructure::paths::stickKeptRekordboxAnalysisDir(root))
+                              && !fs::exists(infrastructure::paths::stickKeptEngineAnalysisDir(root))
+                              && !fs::exists(infrastructure::paths::stickAnalysisLedger(root))
+                              && !fs::exists(pathFromUtf8(beatGridLedgerFileOf(pathToUtf8(root))));
+            if (!none) {
+                std::cerr << "a relink wrote something of Seabass's on a stick that had none\n";
+            }
+            assert(none && "a relink on a stick with nothing of Seabass's writes nothing of Seabass's");
+        }
         // Byte for byte in export.pdb: the path and the name exactly as
         // given, with nothing after them.
         for (const auto &r : rekordboxFinding.rows) {

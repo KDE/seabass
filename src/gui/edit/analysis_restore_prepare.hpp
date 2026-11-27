@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "application/ports/cancellation_token.hpp"
+#include "gui/edit/changes/kept_analysis_save.hpp"
 #include "gui/edit/changes/restore_analysis_change.hpp"
 #include "gui/edit/track_import_staging.hpp"
 
@@ -33,6 +34,9 @@ struct AnalysisRestoreRequest
     // this many ms has them follow without being asked; 0 asks about every
     // track.
     int cueFollowThresholdMs = 0;
+    // The stick's identity (EditSessionRegistry::libraryIdForPath()), which
+    // the playlist menu's counts are kept under; empty: by its root.
+    std::string stickId;
 };
 
 struct PreparedAnalysisRestore
@@ -64,27 +68,16 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
 // How many of the playlist's tracks have rekordbox's original analysis
 // kept by Analyse again, for the playlist menu: a track counts when a kept
 // file of its name is in the rekordbox kept-analysis folder
-// (keptAnalysisNamesOf()), nothing parsed, so
-// it can count a kept entry prepareAnalysisRestore() then finds damaged or
-// of another row. -1 when the stick cannot be read. Reads the stick: not
-// for the GUI thread.
+// (keptAnalysisNamesOf()), nothing parsed, so it can count a kept entry
+// prepareAnalysisRestore() then finds damaged or of another row. The
+// playlist's names are kept for keptCountFromCache(). -1 when the stick
+// cannot be read. Reads the stick: not for the GUI thread.
 int countKeptOriginals(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel);
 
-// The file names in a stick's two kept-analysis folders, listed once and
-// kept until forgetKeptAnalysisNames(): the menu asks each time it opens,
-// and a folder of thousands of entries is not listed each time. Safe from
-// any thread. A listing made while the names were forgotten is not kept.
-struct KeptAnalysisNames
-{
-    std::set<std::string> rekordbox;
-    std::set<std::string> engine;
-};
-std::shared_ptr<const KeptAnalysisNames> keptAnalysisNamesOf(const std::filesystem::path &stickRoot);
-// Drops every stick's names: after a save (which may keep or restore), and
-// after Free Up Space removed kept files.
-void forgetKeptAnalysisNames();
-// How many times the names were forgotten: an answer counted from names
-// of an earlier generation is out of date.
-std::uint64_t keptAnalysisNamesGeneration();
+// Every playlist of the stick read once and its tracks' names kept, and
+// the kept folders listed afresh: for a stick Browse has just loaded, and
+// after a save (an Undo puts kept files back without telling). Reads the
+// stick: not for the GUI thread.
+void warmKeptCounts(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel);
 
 }  // namespace seabass::gui

@@ -10,10 +10,11 @@ import SeabassGui
 // least one track of the playlist has the analysis rekordbox or the player
 // made kept on the stick. Decided once each time the menu opens, from the
 // controller's last answer for the playlist on this stick
-// (OriginalAnalysisController::cachedKeptCount), and never changed while
-// the menu is open: the menu does not grow or shrink under the pointer.
-// Each opening asks the controller once for a new answer, for the next
-// opening; while no answer is known the item is absent. Triggered, the
+// (OriginalAnalysisController::cachedKeptCount, which Browse warms when it
+// loads the stick and every save keeps up to date), and never changed
+// while the menu is open: the menu does not grow or shrink under the
+// pointer. Each opening asks the controller once for a new answer, for
+// the next opening; while no answer is known the item is absent. Triggered, the
 // restores are prepared and staged, and the controller's restoreReady()
 // opens RestoreOriginalAnalysisDialog.
 MenuItem {

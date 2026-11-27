@@ -12,15 +12,17 @@
 // libraries rekordbox's tempo, while the stick's Seabass folder (the
 // ledgers, the kept analyses) stays as it was.
 //
-//  1. Sequences of export, Analyse again and Restore in several orders,
-//     table driven: after each step the grid on the stick and the kept
-//     original are what the rule says, and the newest grid rekordbox made
-//     (by hand or not) is always on the stick or kept, never lost.
+//  1. Sequences of export, Analyse again (two tempo ranges) and Restore in
+//     many orders, the ledger lost or damaged between, table driven: after
+//     each step the grid on the stick, the kept original and its record
+//     are what the rule says, a kept original is never replaced, and no
+//     step of Seabass's loses a grid that is not Seabass's.
 //  2. A OneLibrary renumbered by a new export (content ids swapped with
 //     another track's): its rows are left alone and the restore says so;
 //     the other track keeps its tempo.
-//  3. Keys by name: the key ids kept name other keys by the restore; each
-//     library gets the kept key by its name. A row that was not there when
+//  3. Keys by name: export.pdb's kept key id names another key, and
+//     exportLibrary.db's key table is renumbered as a new export does it;
+//     each library gets the kept key by its name (the renumbered id). A row that was not there when
 //     the original was kept gets the kept tempo and key too, and the log
 //     counts it.
 //  4. A kept key that cannot be written: the track is refused with a plain
@@ -33,11 +35,13 @@
 //  6. A Seabass grid known only by another track's ledger entry, or only
 //     by another kept entry's head, is not kept as an original.
 //  7. The audio file's size: changed with a grid Seabass knows, the kept
-//     entry stays byte for byte; changed since the analysis, or not to be
-//     read, the track is left alone with a reason.
+//     entry stays byte for byte and Restore refuses the file of another
+//     size; changed since the analysis, or not to be read, the track is
+//     left alone with a reason.
 //  8. A cue point set in the .EXT after the keep survives the restore.
 //  9. No room on the stick for what is to be kept: the track is left alone
-//     before anything is written, and the save's summary says so.
+//     before anything is written, and the save's summary says so; free
+//     space that cannot be read is not "no room".
 // 10. Restore staged, then Analyse again of the same track: left out, with
 //     the reason in the result.
 // 11. Two changes of one save that record the same track in a ledger: the
@@ -47,15 +51,35 @@
 // 13. Restore moves back only the cue points Analyse again moved, to where
 //     they were, and only those still where it put them: declined at
 //     Analyse again, nothing moves (the cue lists byte for byte); moved,
-//     both go back; moved and one set by hand since, that one stays.
+//     both go back; moved and one set by hand since, that one stays; one
+//     nudged by 20 ms stays; of two memory cues 30 ms apart the one moved
+//     goes back; one whose old place holds another cue stays, and the
+//     review says so.
 // 14. The player's analysis kept alone (Beat Grids & Waveforms): not
 //     counted, not restored (the restore is refused), not listed.
 //
-// KEPT_RULES_CASE=<n> runs that case alone (after the shared import).
+// 15. A relink with a kept original under both names lands; the new
+//     name's stays, the old one stays where it is; the ledger line goes
+//     with the file; an original with no record stays where it is.
+// 16. A ledger moved aside: what is kept has its origin unknown, and the
+//     record, Free Up Space and Restore say so.
+// 17. A damaged ledger moved aside and no new one written: true words, and
+//     the stick's ledger is incomplete from then; a track Seabass cannot
+//     tell about is named in the summary.
+// 18. A kept original with no record: left alone and refused.
+// 19. The player's analysis Copy Beat Grids kept is not Restore's.
+// 20. The playlist menu's count right at the first opening after a save.
+// 21. A relink carries only the kinds whose library it points.
+// 22. A relink carries the ledgers' lines as the same save left them.
+//
+// KEPT_RULES_CASE=<n>[,<n>...] runs those cases alone (after the shared
+// import).
 
 #include <QCoreApplication>
+#include <QSettings>
 #include <QSignalSpy>
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -66,6 +90,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <sstream>
 #include <unistd.h>
 #include <vector>
 
@@ -80,7 +105,10 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/analysis_settings.hpp"
+#include "gui/edit/analysis_restore_prepare.hpp"
 #include "gui/original_analysis_controller.hpp"
+#include "gui/seabass_settings.hpp"
 #include "gui/track_import_controller.hpp"
 #include "infrastructure/engine/libdjinterop_engine_reader.hpp"
 #include "infrastructure/local/analysis_ledger_file.hpp"
@@ -318,7 +346,16 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     const auto runs = [](int n) {
         const char *only = std::getenv("KEPT_RULES_CASE");
-        return only == nullptr || std::atoi(only) == n;
+        if (only == nullptr) {
+            return true;
+        }
+        std::stringstream list(only);
+        for (std::string one; std::getline(list, one, ',');) {
+            if (std::atoi(one.c_str()) == n) {
+                return true;
+            }
+        }
+        return false;
     };
     const fs::path computer = testing::scratchRoot() / "kept_analysis_rules_computer";
     fs::remove_all(computer);
@@ -332,6 +369,7 @@ int main(int argc, char **argv)
     const std::string pdbFile = pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb");
 
     TrackImportController importer;
+    importer.setExperimentalEnabled(true);
     OriginalAnalysisController restorer;
     auto *registry = EditSessionRegistry::instance();
     LibraryEditSession *session = registry->sessionFor(registry->libraryIdForPath(pioneer));
@@ -381,6 +419,23 @@ int main(int argc, char **argv)
     };
     const auto keptFile = [&](const std::string &key) { return local::keptRekordboxAnalysisFile(stick.root, key); };
     const auto keptOf = [&](const std::string &key) { return local::StickKeptRekordboxAnalysisStore(stick.root).find(key); };
+    const auto recordOf = [&](const std::string &key) {
+        return local::StickKeptRekordboxAnalysisStore(stick.root).findRecord(key);
+    };
+    const auto recordFile = [&](const std::string &key) { return local::keptRekordboxRecordFile(stick.root, key); };
+    // An entry written again by hand, its record as it is.
+    const auto rekeep = [&](const local::KeptRekordboxAnalysis &entry) {
+        local::StickKeptRekordboxAnalysisStore store(stick.root);
+        const auto record = store.findRecord(entry.pathKey);
+        require(record.status == local::KeptRekordboxRecordLookup::Status::Found, "the record of a kept entry reads");
+        store.keep(entry, record.record);
+    };
+    // A record of nothing written, for an entry planted by hand.
+    const auto plainRecord = [](const std::string &key) {
+        local::KeptRekordboxRecord record;
+        record.pathKey = key;
+        return record;
+    };
     const auto ledger = [&]() {
         std::string error;
         const auto read = local::readAnalysisLedger(stick.root, &error);
@@ -390,6 +445,22 @@ int main(int argc, char **argv)
     const auto writeLedger = [&](const local::AnalysisLedger &next) {
         std::string error;
         require(local::writeAnalysisLedger(stick.root, next, [](const std::string &) {}, &error), error);
+    };
+    // The ledger as a case found it, put back with what was recorded since
+    // (a case that loses or damages the ledger leaves the others theirs),
+    // and the ledgers moved aside taken away.
+    const auto ledgerAsBefore = [&](const local::AnalysisLedger &before) {
+        std::string error;
+        local::AnalysisLedger merged = before;
+        for (const auto &[key, entry] : local::readAnalysisLedger(stick.root, &error)) {
+            merged[key] = entry;
+        }
+        for (const auto &entry : fs::directory_iterator(stick.root / "Seabass")) {
+            if (pathToUtf8(entry.path().filename()).rfind("analysis.tsv.gz.", 0) == 0) {
+                fs::remove_all(entry.path());
+            }
+        }
+        writeLedger(merged);
     };
     const auto gridLedger = [&]() {
         std::string error;
@@ -436,7 +507,12 @@ int main(int argc, char **argv)
         {"Rows", {"r one.wav", "r two.wav"}},                {"Keys", {"r three.wav"}}, {"Refuse", {"r four.wav"}},
         {"Move", {"m one.wav"}},  {"Elsewhere", {"m two.wav"}}, {"Size", {"z one.wav"}}, {"Cue", {"c one.wav"}},
         {"Room", {"q one.wav"}},  {"Staged", {"g one.wav"}}, {"CueNo", {"u one.wav"}}, {"CueYes", {"u two.wav"}},
-        {"CueEdit", {"u three.wav"}}, {"EngineAlone", {"e one.wav"}}};
+        {"CueEdit", {"u three.wav"}}, {"EngineAlone", {"e one.wav"}}, {"Seq5", {"s five.wav"}},
+        {"Seq6", {"s six.wav"}},  {"Seq7", {"s seven.wav"}}, {"Seq8", {"s eight.wav"}}, {"Lost", {"l one.wav"}},
+        {"Broken", {"b one.wav", "b two.wav"}}, {"NoRecord", {"n one.wav"}}, {"CueNudge", {"u four.wav"}},
+        {"CueMem", {"u five.wav"}}, {"CueHit", {"u six.wav"}}, {"EngineCopied", {"e two.wav"}},
+        {"Relink", {"k one.wav"}}, {"RelinkRb", {"k two.wav"}}, {"Menu", {"w one.wav"}},
+        {"RelinkSave", {"k three.wav"}}};
     int seconds = 16;
     for (const auto &[playlist, names] : playlists) {
         QVariantList files;
@@ -484,47 +560,107 @@ int main(int argc, char **argv)
     };
 
     // 1. Sequences. "E<n>": an export with grid n (each its own shift);
-    //    "A": Analyse again, saved; "R": Restore original analysis, saved.
-    //    The rule: Analyse again keeps the grid on the stick unless it is
-    //    Seabass's, in place of a kept one that is not the same; a restore
-    //    puts the kept one back when the stick holds Seabass's grid or the
-    //    kept one, and refuses a grid someone else set since.
+    //    "A": Analyse again, saved; "T": Analyse again with the tempo range
+    //    58 to 115, which gives Seabass's grid at half the tempo (a grid
+    //    of Seabass's that is not its first); "R": Restore original
+    //    analysis, saved; "L": the analysis ledger moved aside (the
+    //    command line's --reset); "D": the analysis ledger damaged.
+    //    The rule: a kept original is never replaced. Analyse again keeps
+    //    the grid on the stick when nothing is kept and it is not
+    //    Seabass's; with an original kept it writes only over the kept
+    //    grid or one of Seabass's as the kept entry's record lists them,
+    //    whatever became of the ledger, and otherwise leaves the track
+    //    alone. A restore puts the kept one back over the same grids and
+    //    refuses any other. No step of Seabass's ever loses a grid that is
+    //    not Seabass's.
     if (runs(1)) {
+        const local::AnalysisLedger ledgerBefore = ledger();
         const std::vector<std::pair<std::string, std::vector<std::string>>> sequences{
             {"s one.wav", {"E1", "A", "A", "R"}},
             {"s two.wav", {"E1", "A", "E2", "A", "R"}},
             {"s three.wav", {"E1", "A", "R", "A", "R"}},
             {"s four.wav", {"E1", "A", "E2", "R", "A", "A", "R"}},
+            {"s five.wav", {"A", "E1", "A", "T", "L", "A", "R"}},
+            {"s six.wav", {"E1", "A", "T", "D", "A", "R"}},
+            {"s seven.wav", {"E1", "A", "T", "E2", "A", "T", "R"}},
+            {"s eight.wav", {"E1", "R", "A", "T", "L", "T", "E2", "R", "A"}},
         };
         const std::map<std::string, QString> playlistOf{
-            {"s one.wav", "Seq1"}, {"s two.wav", "Seq2"}, {"s three.wav", "Seq3"}, {"s four.wav", "Seq4"}};
+            {"s one.wav", "Seq1"}, {"s two.wav", "Seq2"},   {"s three.wav", "Seq3"}, {"s four.wav", "Seq4"},
+            {"s five.wav", "Seq5"}, {"s six.wav", "Seq6"}, {"s seven.wav", "Seq7"}, {"s eight.wav", "Seq8"}};
+        const auto withRange = [&](const QString &range) {
+            QSettings settings = openSeabassSettings();
+            settings.setValue(QLatin1String(AnalysisTempoRangeKey), range);
+            settings.sync();
+        };
         for (const auto &[name, steps] : sequences) {
             const QString playlist = playlistOf.at(name);
             std::string onTheStick = seabassGrid[name];
             std::string kept;
-            std::string newestTheirs;
+            // Seabass's grids since the original was kept, as the rule
+            // knows them: the record's.
+            std::set<std::string> seabass;
+            std::set<std::string> everSeabass{seabassGrid[name]};
             std::string done;
             for (const std::string &step : steps) {
                 done += (done.empty() ? "" : " ") + step;
                 const std::string at = name + " after " + done;
-                if (step[0] == 'E') {
-                    onTheStick = newestTheirs = exportOver(name, 7 * std::stoi(step.substr(1)));
-                    require(onTheStick != seabassGrid[name], at + ": the export's grid is not Seabass's");
-                } else if (step == "A") {
-                    analyseAgainStaged(playlist, "Analyse again of " + std::string(""));
-                    savedClean(at);
-                    if (onTheStick != seabassGrid[name] && onTheStick != kept) {
-                        kept = onTheStick;
+                // The grids not Seabass's before the step: a step of
+                // Seabass's keeps each on the stick or kept.
+                std::set<std::string> theirs;
+                for (const std::string &grid : {onTheStick, kept}) {
+                    if (!grid.empty() && everSeabass.count(grid) == 0) {
+                        theirs.insert(grid);
                     }
-                    onTheStick = seabassGrid[name];
+                }
+                const std::string keptBefore = kept;
+                if (step[0] == 'E') {
+                    onTheStick = exportOver(name, 7 * std::stoi(step.substr(1)));
+                    require(everSeabass.count(onTheStick) == 0, at + ": the export's grid is not Seabass's");
+                } else if (step == "L") {
+                    std::string error;
+                    require(local::moveAnalysisLedgerAside(stick.root, std::chrono::system_clock::now(), &error)
+                                .has_value(),
+                            at + ": the ledger is moved aside: " + error);
+                } else if (step == "D") {
+                    writeBytes(infrastructure::paths::stickAnalysisLedger(stick.root), "damaged");
+                } else if (step == "A" || step == "T") {
+                    if (step == "T") {
+                        withRange(QStringLiteral("58-115"));
+                    }
+                    analyseAgainStaged(playlist, at);
+                    savedClean(at);
+                    withRange(defaultAnalysisTempoRange());
+                    invalidate();
+                    const bool writes = kept.empty() || onTheStick == kept || seabass.count(onTheStick) > 0;
+                    if (writes) {
+                        if (kept.empty() && everSeabass.count(onTheStick) == 0) {
+                            kept = onTheStick;
+                        }
+                        onTheStick = gridOf(name);
+                        everSeabass.insert(onTheStick);
+                        if (!kept.empty()) {
+                            seabass.insert(onTheStick);
+                        }
+                        require(step == "A" ? onTheStick == seabassGrid[name] : onTheStick != seabassGrid[name],
+                                at + ": Analyse again wrote Seabass's grid of that tempo range");
+                    }
+                } else if (kept.empty()) {
+                    // Nothing kept: the restore is refused before it stages.
+                    require(restorer.restoreOriginalAnalysis(pioneer, engine, playlist), at + ": the restore starts");
+                    require(waitFor(&restorer, &OriginalAnalysisController::busyChanged, [&] { return !restorer.busy(); }),
+                            at + ": the restore is prepared");
+                    require(!restorer.errorMessage().isEmpty() && session->pendingCount() == 0,
+                            at + ": with nothing kept the restore is refused");
                 } else {
                     const QVariantMap staged = restore(playlist);
                     if (staged.value("staged").toInt() > 0) {
                         savedClean(at);
                     }
-                    if (!kept.empty() && (onTheStick == seabassGrid[name] || onTheStick == kept)) {
+                    if (!kept.empty() && (onTheStick == kept || seabass.count(onTheStick) > 0)) {
                         onTheStick = kept;
                         kept.clear();
+                        seabass.clear();
                     }
                 }
                 invalidate();
@@ -534,15 +670,30 @@ int main(int argc, char **argv)
                                      : found.status == local::KeptRekordboxAnalysisLookup::Status::Found
                                            && found.entry.originalGrid == kept,
                         at + ": the kept original is the one the rule says");
-                require(newestTheirs.empty() || gridOf(name) == newestTheirs
-                            || (found.status == local::KeptRekordboxAnalysisLookup::Status::Found
-                                && found.entry.originalGrid == newestTheirs),
-                        at + ": the newest grid rekordbox made is on the stick or kept");
+                require(keptBefore.empty() || kept.empty() || kept == keptBefore,
+                        at + ": a kept original is never replaced");
+                if (step[0] != 'E') {
+                    for (const std::string &grid : theirs) {
+                        require(gridOf(name) == grid
+                                    || (found.status == local::KeptRekordboxAnalysisLookup::Status::Found
+                                        && found.entry.originalGrid == grid),
+                                at + ": a grid that is not Seabass's is on the stick or kept");
+                    }
+                }
+                if (!kept.empty()) {
+                    const auto record = recordOf(keyOf(name));
+                    require(record.status == local::KeptRekordboxRecordLookup::Status::Found
+                                && std::set<std::string>(record.record.seabassGrids.begin(),
+                                                         record.record.seabassGrids.end())
+                                       == seabass,
+                            at + ": the record lists every grid Seabass wrote since the keep");
+                }
             }
             std::cout << "  " << name << ": " << done << " OK\n";
         }
-        std::cout << "case 1 (export, Analyse again and Restore in any order: the newest grid rekordbox made is "
-                     "never lost) OK\n";
+        ledgerAsBefore(ledgerBefore);
+        std::cout << "case 1 (export, Analyse again and Restore in any order, the ledger lost or damaged: a kept "
+                     "original is never replaced and no grid of rekordbox's is lost) OK\n";
     }
 
     // 2. A OneLibrary renumbered by a new export.
@@ -621,17 +772,23 @@ int main(int argc, char **argv)
                 row.keyId = otherId;
             }
         }
-        local::StickKeptRekordboxAnalysisStore(stick.root).keep(entry);
-        // exportLibrary.db's: the kept key's row renamed, so its id names
-        // another key and the kept name no row; and a second row for the
+        rekeep(entry);
+        // exportLibrary.db's as a new export leaves it: the key table
+        // renumbered (every key's id, in every table that names one), so
+        // the kept id names no key or another one; and a second row for the
         // file, which was not there when the original was kept.
         std::int64_t added = 0;
+        std::int64_t keptOneKeyId = 0;
+        constexpr std::int64_t Renumbered = 1000;
         {
             OneLibrarySql sql(stick.pioneer);
+            for (const std::string &table : sql.tablesWith("key_id")) {
+                sql.db.exec("UPDATE \"" + table + "\" SET key_id = key_id + " + std::to_string(Renumbered)
+                            + " WHERE key_id IS NOT NULL AND key_id != 0");
+            }
             for (const auto &row : entry.rows) {
                 if (row.library == "onelibrary") {
-                    sql.db.exec("UPDATE key SET name = 'renamed by a new export' WHERE key_id = "
-                                + std::to_string(*row.keyId));
+                    keptOneKeyId = *row.keyId;
                     infrastructure::onelibrary::SqlCipherStatement top(sql.db, "SELECT max(content_id) FROM content");
                     require(top.step(), "3: the content table has rows");
                     added = top.columnInt64(0) + 1;
@@ -653,8 +810,10 @@ int main(int argc, char **argv)
         const auto oneNow = oneLibraryRows("r three.wav");
         require(oneNow.size() == 2, "3: still two OneLibrary rows");
         for (const auto &row : oneNow) {
-            require(row.bpmx100 == std::optional<std::int64_t>(11950) && row.keyName == oneName,
-                    "3: every OneLibrary row of the file, the added one too, gets the kept tempo and key by name");
+            require(row.bpmx100 == std::optional<std::int64_t>(11950) && row.keyName == oneName
+                        && row.keyId == std::optional<std::int64_t>(keptOneKeyId + Renumbered),
+                    "3: every OneLibrary row of the file, the added one too, gets the kept key by its name: the id the "
+                    "renumbered table gives that name, not the kept id");
         }
         require(logText().substr(logBefore).find("1 of them not there when the original was kept") != std::string::npos,
                 "3: the log counts the row that was not there when the original was kept");
@@ -673,7 +832,7 @@ int main(int argc, char **argv)
                 row.keyName = "Fm ";  // ends in a blank: no row may hold it
             }
         }
-        local::StickKeptRekordboxAnalysisStore(stick.root).keep(entry);
+        rekeep(entry);
         const std::string keptBytes = bytesOf(keptFile(keyOf("r four.wav")));
         const std::string datBefore = bytesOf(anlzOf("r four.wav", "DAT"));
         const std::size_t logBefore = logText().size();
@@ -727,6 +886,9 @@ int main(int argc, char **argv)
                     && carried.entry.stickPath == "/Contents/UnknownArtist/UnknownAlbum/m won.wav"
                     && carried.entry.originalGrid == original,
                 "5: rekordbox's kept original is carried to the new name");
+        require(recordOf(newKey).status == local::KeptRekordboxRecordLookup::Status::Found
+                    && !fs::exists(recordFile(oldKey)),
+                "5: its record goes with it");
         require(ledger().count(oldKey) == 0 && ledger().count(newKey) == 1 && ledger().at(newKey).pathKey == newKey,
                 "5: the analysis ledger's entry is carried");
         require(gridLedger().count(oldKey) == 0 && gridLedger().count(newKey) == 1, "5: the beat grid line is carried");
@@ -775,9 +937,10 @@ int main(int argc, char **argv)
         other.pathKey = "contents/elsewhere/other.wav";
         other.stickPath = "/Contents/elsewhere/other.wav";
         other.originalGrid = std::string(64, 'a');
-        other.seabassGrids = {seabassGrid["m two.wav"]};
         other.files.push_back({"/PIONEER/USBANLZ/P000/00000001/ANLZ0000.DAT", std::string("x"), std::nullopt, std::nullopt});
-        local::StickKeptRekordboxAnalysisStore(stick.root).keep(other);
+        local::KeptRekordboxRecord otherRecord = plainRecord(other.pathKey);
+        otherRecord.seabassGrids = {seabassGrid["m two.wav"]};
+        local::StickKeptRekordboxAnalysisStore(stick.root).keep(other, otherRecord);
         analyseAgainStaged(QStringLiteral("Elsewhere"), "Analyse again of " + std::string("Elsewhere"));
         savedClean("6: Analyse again with no ledger entry");
         require(!fs::exists(keptFile(key)), "6: a grid another kept entry records as Seabass's: nothing kept");
@@ -802,12 +965,23 @@ int main(int argc, char **argv)
         {
             auto entry = keptOf(key).entry;
             entry.audioFileSize += 64;
-            local::StickKeptRekordboxAnalysisStore(stick.root).keep(entry);
+            rekeep(entry);
         }
         const std::string otherSize = bytesOf(keptFile(key));
         analyseAgainStaged(QStringLiteral("Size"), "7: Analyse again of a file of another size than kept for");
         savedClean("7: Analyse again of a file of another size");
         require(bytesOf(keptFile(key)) == otherSize, "7: another size, a grid Seabass knows: the kept entry as it was");
+        {
+            const std::string datBeforeRestore = bytesOf(anlzOf("z one.wav", "DAT"));
+            const std::size_t logBeforeRestore = logText().size();
+            require(restore(QStringLiteral("Size")).value("staged").toInt() == 1, "7: the restore is staged");
+            savedClean("7: the restore of a file of another size than kept for");
+            require(logText().substr(logBeforeRestore).find("its audio file changed since its analysis was kept")
+                            != std::string::npos
+                        && bytesOf(anlzOf("z one.wav", "DAT")) == datBeforeRestore
+                        && bytesOf(keptFile(key)) == otherSize,
+                    "7: Restore refuses a file of another size than kept for, saying why, and writes nothing");
+        }
         writeBytes(keptFile(key), keptBytes);
         // Changed after the analysis: left alone.
         analyseAgainStaged(QStringLiteral("Size"), "Analyse again of " + std::string("Size"));
@@ -888,6 +1062,13 @@ int main(int argc, char **argv)
         const bool noted =
             summary.value("notes").toString().contains(QStringLiteral("no room to keep the analysis rekordbox made"));
         require(noted, "9: the save's summary says so");
+        // Free space that cannot be read is not "no room".
+        setStickBytesAvailableForTesting([](const std::string &) { return std::optional<std::uint64_t>(); });
+        analyseAgainStaged(QStringLiteral("Room"), "9: Analyse again, free space unknown");
+        savedClean("9: Analyse again, free space unknown");
+        setStickBytesAvailableForTesting({});
+        require(fs::exists(keptFile(keyOf("q one.wav"))) && bytesOf(anlzOf("q one.wav", "DAT")) != datTheirs,
+                "9: free space that cannot be read: kept and written");
         std::cout << "case 9 (no room to keep the original: the track is left alone before anything is written) OK\n";
     }
 
@@ -1026,6 +1207,81 @@ int main(int argc, char **argv)
             require(std::abs(hotCue("u three.wav", 2) - two) < 1.0, "13: the other goes back where it was");
             (void)one;
         }
+        // Nudged by the DJ by 20 ms since: it is not where Analyse again
+        // put it any more, and stays.
+        {
+            const auto [one, two] = prepareTrack("u four.wav", QStringLiteral("CueNudge"), true);
+            const double nudged = hotCue("u four.wav", 1) + 20.0;
+            setCue("u four.wav", 1, nudged);
+            require(restore(QStringLiteral("CueNudge")).value("cueTracks").toInt() == 1, "13: the move back is offered");
+            restorer.setMoveCuesBackForAll(true);
+            savedClean("13: the restore of u four");
+            invalidate();
+            require(std::abs(hotCue("u four.wav", 1) - nudged) < 1.0, "13: a cue nudged by 20 ms since stays");
+            require(std::abs(hotCue("u four.wav", 2) - two) < 1.0, "13: the other goes back where it was");
+            (void)one;
+        }
+        // Two memory cues 30 ms apart, the later one on a beat (it moves
+        // with the grid), the earlier off the grid (it stays): the one that
+        // moved goes back, the other is not touched.
+        {
+            const auto memoryCues = [&](const std::string &name) {
+                std::vector<double> at;
+                for (const auto &cue : pdbRow(name).cues) {
+                    if (cue.kind == domain::CuePoint::Kind::Memory && !cue.isLoop) {
+                        at.push_back(cue.positionMs);
+                    }
+                }
+                std::sort(at.begin(), at.end());
+                return at;
+            };
+            const auto setMemory = [&](const std::string &name, double at) {
+                require(session->stage(std::make_unique<AddCueChange>(
+                            QStringLiteral("rekordbox"), pioneer, QString::fromStdString(pdbRow(name).sourceId), at,
+                            QStringLiteral("memory"), 0, QStringLiteral("#FF0000"), QStringLiteral("memory"), false,
+                            0.0, QString::fromStdString(name))),
+                        "13: a memory cue is staged");
+                savedClean("13: the memory cue on " + name);
+                invalidate();
+            };
+            exportOver("u five.wav", 4);
+            const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), pdbRow("u five.wav").sourceId);
+            require(grid.size() > 20, "13: u five has rekordbox's grid");
+            const double onBeat = std::round(grid[8].timeMs);
+            setMemory("u five.wav", onBeat - 30.0);
+            setMemory("u five.wav", onBeat);
+            analyseAgainStaged(QStringLiteral("CueMem"), "13: Analyse again of u five");
+            importer.setMoveCuesForAll(true);
+            savedClean("13: Analyse again of u five");
+            invalidate();
+            const auto moved = memoryCues("u five.wav");
+            require(moved.size() == 2 && std::abs(moved[0] - (onBeat - 30.0)) < 1.0 && std::abs(moved[1] - onBeat) >= 3.0,
+                    "13: the memory cue on the beat moved with the grid, the other did not");
+            require(restore(QStringLiteral("CueMem")).value("cueTracks").toInt() == 1, "13: the move back is offered");
+            restorer.setMoveCuesBackForAll(true);
+            savedClean("13: the restore of u five");
+            invalidate();
+            const auto back = memoryCues("u five.wav");
+            require(back.size() == 2 && std::abs(back[0] - (onBeat - 30.0)) < 1.0 && std::abs(back[1] - onBeat) < 1.0,
+                    "13: the memory cue that moved goes back, the one 30 ms from it stays");
+        }
+        // Another cue set since at the place a moved cue would go back to:
+        // that move is not made, and the review says so.
+        {
+            const auto [one, two] = prepareTrack("u six.wav", QStringLiteral("CueHit"), true);
+            const double movedTwo = hotCue("u six.wav", 2);
+            setCue("u six.wav", 3, two);
+            const QVariantMap staged = restore(QStringLiteral("CueHit"));
+            require(staged.value("cueTracks").toInt() == 1 && staged.value("blockedCueTracks").toInt() == 1,
+                    "13: the review offers the move that is free and says one is blocked");
+            restorer.setMoveCuesBackForAll(true);
+            savedClean("13: the restore of u six");
+            invalidate();
+            require(std::abs(hotCue("u six.wav", 2) - movedTwo) < 1.0,
+                    "13: the cue whose old place holds another stays where it is");
+            require(std::abs(hotCue("u six.wav", 3) - two) < 1.0, "13: the cue at the old place stays");
+            require(std::abs(hotCue("u six.wav", 1) - one) < 1.0, "13: the free one goes back");
+        }
         std::cout << "case 13 (Restore moves back only the cues Analyse again moved, to where they were) OK\n";
     }
 
@@ -1061,6 +1317,346 @@ int main(int argc, char **argv)
         std::cout << "case 14 (the player's analysis kept alone is neither counted, restored nor listed) OK\n";
     }
 
+
+    // The rows of a track as Library Health's moved-file finding lists
+    // them, of the formats given.
+    const auto findingOf = [&](const std::string &name, const std::set<std::string> &formats) {
+        domain::MovedFileFinding finding;
+        const auto add = [&](domain::Track row, const char *format) {
+            if (formats.count(format) > 0) {
+                row.format = format;
+                finding.rows.push_back(row);
+            }
+        };
+        add(pdbRow(name), "rekordbox");
+        add(rowOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)), name), "onelibrary");
+        add(rowOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()), name), "engine");
+        finding.expectedPath = finding.rows.front().filePath;
+        return finding;
+    };
+    // The file moved outside Seabass from `from` to `to`, and relinked.
+    const auto moveAndRelink = [&](const std::string &from, const std::string &to, const std::set<std::string> &formats,
+                                   const std::string &what) {
+        const domain::MovedFileFinding finding = findingOf(from, formats);
+        fs::rename(onStick / from, onStick / to);
+        domain::Track file;
+        file.filePath = pathToUtf8(onStick / to);
+        file.fileSizeBytes = fs::file_size(onStick / to);
+        require(relinkRefusalFor(pioneer, finding, file.filePath).empty(), what + ": the relink can be offered");
+        require(session->stage(std::make_unique<RelinkMovedFileChange>(pioneer, engine, finding, file)),
+                what + ": the relink is staged");
+        const QVariantMap summary = savedClean(what);
+        invalidate();
+        return summary;
+    };
+    const auto engineIdOf = [&](const std::string &name) {
+        return std::stoll(rowOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8()), name).sourceId);
+    };
+    const auto plantEngineKept = [&](const std::string &name, const std::string &mark) {
+        application::KeptEngineAnalysis kept;
+        kept.pathKey = keyOf(name);
+        kept.trackFile = "../Contents/UnknownArtist/UnknownAlbum/" + name;
+        kept.libraryUuid = mark;
+        return kept;
+    };
+
+    // 15. The released relink never fails for what Seabass keeps: Copy
+    //     Beat Grids kept the player's analysis at /B, the file moved to
+    //     /A and was relinked (as on master, the kept entry stayed under
+    //     B), Copy Beat Grids kept again at /A, the file moved back to /B
+    //     and is relinked: it lands, both kept entries are still there, the
+    //     one under the name it gets stays, and the log says so; the beat
+    //     grid ledger's line goes with the file. A kept original with no
+    //     record cannot be told about, and stays where it is.
+    if (runs(15)) {
+        const std::string b = "k one.wav";
+        const std::string a = "k won.wav";
+        const std::set<std::string> all{"rekordbox", "onelibrary", "engine"};
+        moveAndRelink(b, a, all, "15: the first relink");
+        auto atB = plantEngineKept(b, "kept at B");
+        atB.trackId = engineIdOf(a);
+        local::StickKeptEngineAnalysisStore(stick.root).keep(atB);
+        auto atA = plantEngineKept(a, "kept at A");
+        atA.trackId = engineIdOf(a);
+        local::StickKeptEngineAnalysisStore(stick.root).keep(atA);
+        {
+            auto lines = gridLedger();
+            lines[keyOf(b)] = std::string(64, 'b');
+            lines[keyOf(a)] = std::string(64, 'a');
+            std::string error;
+            require(local::writeBeatGridLedger(stick.root, lines, &error), "15: the grid ledger is planted: " + error);
+        }
+        const std::size_t logBefore = logText().size();
+        const QVariantMap summary = moveAndRelink(a, b, all, "15: the relink back");
+        require(summary.value("warning").toString().isEmpty(), "15: the relink back lands without a warning");
+        require(pdbRow(b).filePath.find(b) != std::string::npos, "15: the rows point at the file again");
+        const auto keptB = local::StickKeptEngineAnalysisStore(stick.root).find(keyOf(b));
+        const auto keptA = local::StickKeptEngineAnalysisStore(stick.root).find(keyOf(a));
+        require(keptB.status == application::KeptEngineAnalysisLookup::Status::Found
+                    && keptB.entry.libraryUuid == "kept at B"
+                    && keptA.status == application::KeptEngineAnalysisLookup::Status::Found
+                    && keptA.entry.libraryUuid == "kept at A",
+                "15: both kept entries are still there, the one under the name it gets in its place");
+        require(logText().substr(logBefore).find("the player's analysis is kept under the new name already, and that one "
+                                                 "stays; the one kept under the old name stays where it is")
+                    != std::string::npos,
+                "15: the log says which one stays");
+        require(gridLedger().count(keyOf(a)) == 0 && gridLedger().at(keyOf(b)) == std::string(64, 'a'),
+                "15: the grid ledger's line of the name the file had goes with it");
+        // An original kept with no record beside it: the pair stays where
+        // it is, the relink lands.
+        exportOver(b, 29);
+        analyseAgainStaged(QStringLiteral("Relink"), "15: Analyse again");
+        savedClean("15: Analyse again");
+        fs::remove(recordFile(keyOf(b)));
+        // And the beat grid ledger cannot be written (a folder where its
+        // temporary file goes): the relink lands, no warning of copied
+        // beat grids, a line in the log.
+        const fs::path gridsInTheWay = stick.root / "Seabass" / "beat-grids.tsv.tmp-seabass-write";
+        fs::create_directories(gridsInTheWay / "in the way");
+        const std::size_t logBefore2 = logText().size();
+        const QVariantMap noRecord =
+            moveAndRelink(b, a, {"rekordbox", "onelibrary", "engine"}, "15: a relink of a kept original with no record");
+        fs::remove_all(gridsInTheWay);
+        require(fs::exists(keptFile(keyOf(b))) && !fs::exists(keptFile(keyOf(a)))
+                    && logText().substr(logBefore2).find("is missing, so both stay there") != std::string::npos,
+                "15: an original with no record stays where it is, and the log says so");
+        require(noRecord.value("warning").toString().isEmpty()
+                    && logText().substr(logBefore2).find("beat grids: the ledger could not be written") != std::string::npos,
+                "15: a beat grid ledger a relink cannot write is a line in the log, not a warning about copied grids: "
+                    + noRecord.value("warning").toString().toStdString());
+        std::cout << "case 15 (a relink lands whatever is kept under either name; the new name's stays) OK\n";
+    }
+
+    // 21. Only the kinds whose library is pointed are carried: a relink of
+    //     rekordbox's rows alone carries rekordbox's kept original, not
+    //     the player's.
+    if (runs(21)) {
+        const std::string from = "k two.wav";
+        const std::string to = "k too.wav";
+        exportOver(from, 31);
+        analyseAgainStaged(QStringLiteral("RelinkRb"), "21: Analyse again");
+        savedClean("21: Analyse again");
+        auto player = plantEngineKept(from, "the player's");
+        player.trackId = engineIdOf(from);
+        local::StickKeptEngineAnalysisStore(stick.root).keep(player);
+        moveAndRelink(from, to, {"rekordbox", "onelibrary"}, "21: a relink of rekordbox's rows alone");
+        require(fs::exists(keptFile(keyOf(to))) && recordOf(keyOf(to)).status == local::KeptRekordboxRecordLookup::Status::Found
+                    && !fs::exists(keptFile(keyOf(from))),
+                "21: rekordbox's kept original and its record are carried");
+        require(local::StickKeptEngineAnalysisStore(stick.root).find(keyOf(from)).status
+                        == application::KeptEngineAnalysisLookup::Status::Found
+                    && local::StickKeptEngineAnalysisStore(stick.root).find(keyOf(to)).status
+                           == application::KeptEngineAnalysisLookup::Status::None,
+                "21: the player's, whose library was not pointed, stays under its name");
+        std::cout << "case 21 (a relink carries only the kinds whose library it points) OK\n";
+    }
+
+    // 22. A relink carries the ledgers' lines as the save left them: a
+    //     change earlier in the same save records a line and an entry under
+    //     the old name, and the relink after it carries those, not what the
+    //     ledgers held when the save began.
+    if (runs(22)) {
+        const std::string from = "k three.wav";
+        const std::string to = "k thre3.wav";
+        const std::string fresh(64, 'c');
+        local::AnalysisLedgerEntry entry = ledger().at(keyOf(from));
+        entry.rekordboxGrid = fresh;
+        auto note = std::make_shared<LedgerNoteChange>(
+            QStringLiteral("ledger-order:before-relink"), stickRoot, [&](SaveContext &ctx, const QString &id) {
+                recordGridInLedgerAfterCommit(ctx, stickRoot, id, keyOf(from), fresh);
+                recordAnalysisAfterCommit(ctx, stickRoot, id, entry, "ledger-order");
+            });
+        const domain::MovedFileFinding finding = findingOf(from, {"rekordbox", "onelibrary", "engine"});
+        fs::rename(onStick / from, onStick / to);
+        domain::Track file;
+        file.filePath = pathToUtf8(onStick / to);
+        file.fileSizeBytes = fs::file_size(onStick / to);
+        auto relink = std::make_shared<RelinkMovedFileChange>(pioneer, engine, finding, file);
+        const auto saved = testing::saveChanges({note, relink}, pioneer, engine);
+        invalidate();
+        require(saved.error.isEmpty(), "22: the save lands: " + saved.error.toStdString());
+        require(gridLedger().count(keyOf(from)) == 0 && gridLedger().count(keyOf(to)) == 1
+                    && gridLedger().at(keyOf(to)) == fresh,
+                "22: the beat grid line the save recorded first goes with the file");
+        require(ledger().count(keyOf(from)) == 0 && ledger().count(keyOf(to)) == 1
+                    && ledger().at(keyOf(to)).rekordboxGrid == fresh,
+                "22: the analysis ledger's entry the save recorded first goes with the file");
+        std::cout << "case 22 (a relink carries the ledgers' lines as the same save left them) OK\n";
+    }
+
+    // 16. A ledger moved aside: a track with no ledger entry and nothing
+    //     kept has its analysis kept, as the analysis that was on the stick
+    //     before (it is Seabass's own here, which the lost ledger knew):
+    //     its record, Free Up Space and Restore say who made it is not
+    //     known. The new ledger records that it is incomplete.
+    if (runs(16)) {
+        const local::AnalysisLedger before = ledger();
+        std::string error;
+        require(local::moveAnalysisLedgerAside(stick.root, std::chrono::system_clock::now(), &error).has_value(),
+                "16: the ledger is moved aside: " + error);
+        analyseAgainStaged(QStringLiteral("Lost"), "16: Analyse again");
+        savedClean("16: Analyse again");
+        const auto record = recordOf(keyOf("l one.wav"));
+        require(fs::exists(keptFile(keyOf("l one.wav"))) && record.status == local::KeptRekordboxRecordLookup::Status::Found
+                    && !record.record.originKnown,
+                "16: kept, its origin unknown");
+        std::string since;
+        local::readAnalysisLedger(stick.root, &error, nullptr, &since);
+        require(!since.empty(), "16: the new ledger says it is incomplete");
+        bool earlier = false;
+        for (const auto &group : KeptAnalysisSpaceController::listKept(stickRoot, stick.engineUtf8()).groups) {
+            for (const auto &info : group.files) {
+                earlier = earlier || (group.kind == QLatin1String("earlier") && info.trackFile.find("l one") != std::string::npos);
+            }
+        }
+        require(earlier, "16: Free Up Space lists it as the analysis that was on the stick before");
+        const QVariantMap staged = restore(QStringLiteral("Lost"));
+        require(staged.value("unknownOriginTracks").toInt() == 1, "16: the restore says who made it is not known");
+        const std::size_t logBefore = logText().size();
+        savedClean("16: the restore");
+        require(logText().substr(logBefore).find("the analysis files that were on the stick before put back")
+                    != std::string::npos,
+                "16: and so does its log");
+        ledgerAsBefore(before);
+        std::cout << "case 16 (a ledger moved aside: what is kept is the analysis that was there, its maker unknown) OK\n";
+    }
+
+    // 17. A damaged ledger moved aside and no new one written (a folder
+    //     where its temporary file goes): the warning says what is true,
+    //     and the next save treats the stick's ledger as incomplete. A
+    //     track with nothing kept on the damaged ledger is left alone, and
+    //     the summary says so and what to do.
+    if (runs(17)) {
+        const local::AnalysisLedger before = ledger();
+        exportOver("b one.wav", 33);
+        exportOver("b two.wav", 35);
+        {
+            // b one's original kept; b two's not.
+            const fs::path two = onStick / "b two.wav";
+            const fs::path aside = onStick / "b two.aside";
+            fs::rename(two, aside);
+            invalidate();
+            importer.analyseAgain(pioneer, engine, QStringLiteral("Broken"));
+            require(waitFor(&importer, &TrackImportController::busyChanged, [&] { return !importer.busy(); }),
+                    "17: Analyse again ends");
+            fs::rename(aside, two);
+            savedClean("17: Analyse again of b one");
+            invalidate();
+        }
+        require(fs::exists(keptFile(keyOf("b one.wav"))) && !fs::exists(keptFile(keyOf("b two.wav"))),
+                "17: b one's original kept, b two's not");
+        writeBytes(infrastructure::paths::stickAnalysisLedger(stick.root), "damaged");
+        const fs::path inTheWay = stick.root / "Seabass" / "analysis.tsv.gz.tmp-seabass-write";
+        fs::create_directories(inTheWay / "in the way");
+        analyseAgainStaged(QStringLiteral("Broken"), "17: Analyse again on a damaged ledger");
+        const QVariantMap summary = savedClean("17: Analyse again on a damaged ledger");
+        const QString warning = summary.value("warning").toString();
+        require(warning.contains(QStringLiteral("moved it aside as analysis.tsv.gz.damaged-"))
+                    && warning.contains(QStringLiteral("no new record could be written")),
+                "17: the warning says the damaged record was moved aside and no new one written: "
+                    + warning.toStdString());
+        require(summary.value("notes").toString().contains(
+                    QStringLiteral("Seabass cannot tell whether its beat grid is its own, as its record of the tracks it "
+                                   "analysed cannot be read")),
+                "17: the summary names the track left alone and what to do: "
+                    + summary.value("notes").toString().toStdString());
+        require(!fs::exists(keptFile(keyOf("b two.wav"))), "17: b two is left alone");
+        fs::remove_all(inTheWay);
+        std::string error;
+        std::string since;
+        require(local::readAnalysisLedger(stick.root, &error, nullptr, &since).empty() && error.empty() && !since.empty(),
+                "17: no ledger beside the damaged one moved aside is incomplete");
+        analyseAgainStaged(QStringLiteral("Broken"), "17: Analyse again on no ledger");
+        savedClean("17: Analyse again on no ledger");
+        const auto record = recordOf(keyOf("b two.wav"));
+        require(record.status == local::KeptRekordboxRecordLookup::Status::Found && !record.record.originKnown,
+                "17: then b two's analysis is kept, its origin unknown");
+        ledgerAsBefore(before);
+        std::cout << "case 17 (a damaged ledger moved aside and not written again: true words, and incomplete) OK\n";
+    }
+
+    // 18. A kept original whose record is missing: Analyse again leaves the
+    //     track alone and the summary says why and what to do; Restore
+    //     leaves it out, saying why, and refuses it at the save.
+    if (runs(18)) {
+        exportOver("n one.wav", 37);
+        analyseAgainStaged(QStringLiteral("NoRecord"), "18: Analyse again");
+        savedClean("18: Analyse again");
+        const std::string record = bytesOf(recordFile(keyOf("n one.wav")));
+        // Staged with the record there, the record gone by the save.
+        require(restore(QStringLiteral("NoRecord")).value("staged").toInt() == 1, "18: the restore is staged");
+        fs::remove(recordFile(keyOf("n one.wav")));
+        const std::string datBefore = bytesOf(anlzOf("n one.wav", "DAT"));
+        std::size_t logBefore = logText().size();
+        savedClean("18: the restore with no record");
+        require(logText().substr(logBefore).find("Seabass cannot tell whether the beat grid on the stick is its own") != std::string::npos
+                    && bytesOf(anlzOf("n one.wav", "DAT")) == datBefore,
+                "18: Restore refuses at the save, saying why");
+        const QVariantMap staged = restore(QStringLiteral("NoRecord"));
+        require(staged.value("staged").toInt() == 0 && staged.value("leftAlone").toList().size() == 1
+                    && staged.value("leftAlone").toList()[0].toMap().value("why").toString().contains(
+                           QStringLiteral("record of the grids Seabass wrote")),
+                "18: Restore leaves it out, saying why");
+        analyseAgainStaged(QStringLiteral("NoRecord"), "18: Analyse again with no record");
+        logBefore = logText().size();
+        const QVariantMap summary = savedClean("18: Analyse again with no record");
+        require(bytesOf(anlzOf("n one.wav", "DAT")) == datBefore
+                    && logText().substr(logBefore).find("Seabass cannot tell whether its beat grid is its own") != std::string::npos,
+                "18: Analyse again leaves it alone");
+        require(summary.value("notes").toString().contains(QStringLiteral("Remove the kept original in Free Up Space")),
+                "18: the summary says what to do: " + summary.value("notes").toString().toStdString());
+        writeBytes(recordFile(keyOf("n one.wav")), record);
+        std::cout << "case 18 (a kept original with no record: left alone and refused, with true reasons) OK\n";
+    }
+
+    // 19. The player's analysis kept by Copy Beat Grids, then Analyse again
+    //     and Restore: Engine keeps the grid it has, its kept analysis is
+    //     left for Beat Grids & Waveforms, and the summary says where.
+    if (runs(19)) {
+        auto copied = plantEngineKept("e two.wav", "kept by Copy Beat Grids");
+        copied.trackId = engineIdOf("e two.wav");
+        local::StickKeptEngineAnalysisStore(stick.root).keep(copied);
+        const fs::path file = local::keptEngineAnalysisFile(stick.root, copied.pathKey);
+        const std::string copiedBytes = bytesOf(file);
+        exportOver("e two.wav", 39);
+        analyseAgainStaged(QStringLiteral("EngineCopied"), "19: Analyse again");
+        savedClean("19: Analyse again");
+        require(recordOf(keyOf("e two.wav")).record.engineKept.empty(), "19: the record says Analyse again kept no Engine analysis");
+        require(restore(QStringLiteral("EngineCopied")).value("staged").toInt() == 1, "19: the restore is staged");
+        const QVariantMap summary = savedClean("19: the restore");
+        require(summary.value("notes").toString().contains(
+                    QStringLiteral("Engine keeps the grid it has: the player's analysis kept there by Copy Beat Grids is "
+                                   "put back on the Beat Grids & Waveforms page, with Restore Engine's Analysis.")),
+                "19: the summary says Engine keeps its grid and where its way back is: "
+                    + summary.value("notes").toString().toStdString());
+        require(bytesOf(file) == copiedBytes, "19: the player's kept analysis stays as it was");
+        fs::remove(file);
+        std::cout << "case 19 (the player's analysis Copy Beat Grids kept is not Restore's) OK\n";
+    }
+
+    // 20. The playlist menu: warmed when Browse loads the stick, it knows
+    //     the count right after a save that kept or put back an original,
+    //     with no new count asked for.
+    if (runs(20)) {
+        AnalysisRestoreRequest warm;
+        warm.rekordboxPath = pioneer;
+        warm.enginePath = engine;
+        warm.stickId = registry->libraryIdForPath(pioneer).toStdString();
+        warmKeptCounts(warm, application::CancellationToken());
+        require(restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Menu")) == 0, "20: warmed, nothing kept");
+        exportOver("w one.wav", 41);
+        analyseAgainStaged(QStringLiteral("Menu"), "20: Analyse again");
+        savedClean("20: Analyse again");
+        require(restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Menu")) == 1,
+                "20: right after the save the menu knows the original kept");
+        require(restore(QStringLiteral("Menu")).value("staged").toInt() == 1, "20: the restore is staged");
+        savedClean("20: the restore");
+        require(restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Menu")) == 0,
+                "20: right after the restore it knows none is kept");
+        std::cout << "case 20 (the playlist menu's count is right at the first opening after a save) OK\n";
+    }
+
     // 12. Free Up Space: unticked; the lock. Last: it takes the stick's
     //     lock away from the session.
     if (runs(12)) {
@@ -1070,7 +1666,7 @@ int main(int argc, char **argv)
         local::KeptRekordboxAnalysis gone = keptOf(keyOf("s one.wav")).entry;
         gone.pathKey = "contents/unknownartist/unknownalbum/not here.wav";
         gone.stickPath = "/Contents/UnknownArtist/UnknownAlbum/not here.wav";
-        local::StickKeptRekordboxAnalysisStore(stick.root).keep(gone);
+        local::StickKeptRekordboxAnalysisStore(stick.root).keep(gone, plainRecord(gone.pathKey));
         KeptAnalysisSpaceController space;
         space.refresh(pioneer, engine);
         require(waitFor(&space, &KeptAnalysisSpaceController::busyChanged, [&] { return !space.busy(); }), "12: listed");

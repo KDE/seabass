@@ -1121,8 +1121,9 @@ int runAnalysisLedgerReset(const std::string &stickRoot, const std::string &cata
             return 1;
         }
         Console::info("Moved it aside to " + seabass::pathToUtf8(*aside) + ". Nothing was deleted.");
-        Console::info("The next save that writes an analysis of Seabass's own starts a new record; the tracks "
-                      "the old one listed are not in it.");
+        Console::info("The next save that writes an analysis of Seabass's own starts a new record, marked as "
+                      "incomplete: the tracks the old one listed are not in it, and Seabass does not take a track "
+                      "missing from it for one it never analysed.");
         return 0;
     } catch (const std::exception &e) {
         Console::error(e.what());
@@ -1213,8 +1214,14 @@ int runAnalysisLedgerCommand(bool wantRekordbox, bool wantEngine, const std::opt
     const std::string file = seabass::pathToUtf8(paths::stickAnalysisLedger(seabass::pathFromUtf8(stickRoot)));
     std::string error;
     local::AnalysisLedgerFault fault = local::AnalysisLedgerFault::None;
-    const local::AnalysisLedger ledger = local::readAnalysisLedger(seabass::pathFromUtf8(stickRoot), &error, &fault);
+    std::string incompleteSince;
+    const local::AnalysisLedger ledger =
+        local::readAnalysisLedger(seabass::pathFromUtf8(stickRoot), &error, &fault, &incompleteSince);
     Console::heading("Analysis ledger (" + file + ")");
+    if (error.empty() && !incompleteSince.empty()) {
+        Console::info("It is incomplete since " + incompleteSince + ": an earlier record was moved aside, so a track it "
+                      "does not list may still hold Seabass's analysis.");
+    }
     if (!error.empty()) {
         Console::error("the record of the tracks Seabass analysed cannot be used: " + error);
         if (fault == local::AnalysisLedgerFault::Unreadable) {

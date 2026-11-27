@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -87,6 +88,10 @@ public:
     // moment it opens and must not change while it is open.
     Q_INVOKABLE int cachedKeptCount(const QString &rekordboxPath, const QString &enginePath,
                                     const QString &playlist) const;
+    // Reads the stick's playlists and kept folders in the background, so
+    // cachedKeptCount() knows every playlist's count before its menu first
+    // opens: when Browse loads a stick, and again after each save on it.
+    Q_INVOKABLE void warmKeptCounts(const QString &rekordboxPath, const QString &enginePath);
     // Stages a restore for each such track of the playlist; false, with
     // errorMessage set, when it cannot start. restoreReady() when staged.
     Q_INVOKABLE bool restoreOriginalAnalysis(const QString &rekordboxPath, const QString &enginePath,
@@ -113,6 +118,8 @@ private:
     void setBusy(bool busy);
     void setErrorMessage(const QString &message);
     void prune();
+    // The stick's identity, which the counts are kept under.
+    QString stickIdFor(const QString &rekordboxPath, const QString &enginePath) const;
 
     QPointer<LibraryEditSession> m_session;
     QFutureWatcher<PreparedAnalysisRestore> m_prepareWatcher;
@@ -123,10 +130,13 @@ private:
     QString m_countingPlaylist;
     std::optional<AnalysisRestoreRequest> m_countNext;
     AnalysisRestoreRequest m_counting;
-    std::uint64_t m_countingGeneration = 0;
-    // Answered counts by stick and playlist, with the names' generation
-    // they were counted from.
-    std::map<std::string, std::pair<int, std::uint64_t>> m_counts;
+    // Catalog path to stick identity, and the paths each warmed stick was
+    // loaded by.
+    mutable std::map<QString, QString> m_stickIds;
+    std::map<QString, std::pair<QString, QString>> m_warmPaths;
+    std::vector<QFuture<bool>> m_warmFutures;
+    // Never replaced, so the destructor stops every warm still running.
+    application::CancellationToken m_warmCancel;
     QString m_keptCountPlaylist;
     int m_keptCount = -1;
     bool m_busy = false;
@@ -182,6 +192,8 @@ public:
         int failed = 0;
         int total = 0;
         QString error;
+        // Every kept file the removal took away or tried to.
+        std::set<std::string> touched;
     };
     // The listing as a worker makes it; public for a test.
     static Listing listKept(const std::string &stickRoot, const std::string &enginePath);

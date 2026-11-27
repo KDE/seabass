@@ -909,7 +909,9 @@ public:
                     fs::create_directories(root / "Contents");
                     std::ofstream(root / "Contents" / seabass::pathFromUtf8(name));
                 }
-                store.keep(entry);
+                seabass::infrastructure::local::KeptRekordboxRecord record;
+                record.pathKey = entry.pathKey;
+                store.keep(entry, record);
                 files << QString::fromStdString(seabass::pathToUtf8(
                     seabass::infrastructure::local::keptRekordboxAnalysisFile(root, entry.pathKey)));
             }

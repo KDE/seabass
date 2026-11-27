@@ -63,7 +63,12 @@ Page {
         // finishes, so restoring the last-selected playlist has to wait
         // for this rather than happening at Component.onCompleted
         // alongside rescan() below.
-        onPlaylistNamesChanged: root.restoreSelectedPlaylist()
+        onPlaylistNamesChanged: {
+            root.restoreSelectedPlaylist();
+            // The playlist menu's Restore original analysis is right the
+            // first time it opens.
+            root.originalAnalysisController.warmKeptCounts(root.rekordboxPath, root.enginePath);
+        }
     }
 
     // Backs the "Merge with..." picker below, reuses CleanupController

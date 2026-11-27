@@ -5,6 +5,7 @@
 #include "gui/edit/changes/moved_file_changes.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -366,6 +367,7 @@ std::vector<BackupTarget> RelinkMovedFileChange::filesToBackup(SaveContext &ctx)
         for (const std::string &oldKey : oldKeys()) {
             for (const std::string &kept :
                  {keptRekordboxAnalysisFileOf(root, oldKey), keptRekordboxAnalysisFileOf(root, newKey),
+                  keptRekordboxRecordFileOf(root, oldKey), keptRekordboxRecordFileOf(root, newKey),
                   keptEngineAnalysisFileOf(root, oldKey), keptEngineAnalysisFileOf(root, newKey)}) {
                 if (!kept.empty()) {
                     targets.push_back({kept, RelinkLabel, true});
@@ -405,26 +407,6 @@ std::vector<std::string> RelinkMovedFileChange::oldKeys() const
     return {keys.begin(), keys.end()};
 }
 
-std::string RelinkMovedFileChange::keptAtNewNameRefusal() const
-{
-    const std::string root = stickRoot();
-    const std::string newKey = trackKeyOf(m_file.filePath, root);
-    if (newKey.empty()) {
-        return {};
-    }
-    for (const std::string &oldKey : oldKeys()) {
-        for (const auto &[oldFile, newFile] :
-             {std::pair{keptRekordboxAnalysisFileOf(root, oldKey), keptRekordboxAnalysisFileOf(root, newKey)},
-              std::pair{keptEngineAnalysisFileOf(root, oldKey), keptEngineAnalysisFileOf(root, newKey)}}) {
-            if (existsAt(oldFile) && existsAt(newFile)) {
-                return "an original analysis is kept both for this track and for one that was at that place "
-                       "before, and one of the two would be lost";
-            }
-        }
-    }
-    return {};
-}
-
 void RelinkMovedFileChange::carryTrackRecords(SaveContext &ctx, bool rekordboxPointed, bool enginePointed,
                                               const std::string &engineWriteRoot, std::vector<std::string> &said)
 {
@@ -434,30 +416,76 @@ void RelinkMovedFileChange::carryTrackRecords(SaveContext &ctx, bool rekordboxPo
         return;
     }
     using RekordboxStatus = infrastructure::local::KeptRekordboxAnalysisLookup::Status;
+    using RecordStatus = infrastructure::local::KeptRekordboxRecordLookup::Status;
     using EngineStatus = application::KeptEngineAnalysisLookup::Status;
     const std::string stickPath = "/" + application::stickRelativePathOf(m_file.filePath, root);
-    bool analysisCarried = false;
-    bool gridCarried = false;
+    // Best effort, each on its own: nothing here fails the relink, which
+    // is the repair the person asked for. What cannot be carried stays
+    // where it is, and the log says so.
+    const auto tryTo = [&](const std::string &what, const std::function<void()> &step) {
+        try {
+            step();
+        } catch (const std::exception &e) {
+            said.push_back(what + " could not be carried and stays under the old name (" + e.what() + ")");
+        }
+    };
     for (const std::string &oldKey : oldKeys()) {
         if (rekordboxPointed) {
-            auto &store = saveKeptRekordboxStore(ctx, root);
-            const auto found = store.find(oldKey);
-            if (found.status == RekordboxStatus::Found) {
+            tryTo("rekordbox's kept analysis", [&]() {
+                auto &store = saveKeptRekordboxStore(ctx, root);
+                const auto found = store.find(oldKey);
+                if (found.status == RekordboxStatus::Damaged) {
+                    said.push_back("rekordbox's kept analysis under the old name cannot be read and stays there ("
+                                   + found.error + ")");
+                    return;
+                }
+                if (found.status != RekordboxStatus::Found) {
+                    return;
+                }
+                if (store.find(newKey).status != RekordboxStatus::None) {
+                    // Two kept originals for one name: the one kept for
+                    // the name stays, and the other is not deleted.
+                    said.push_back("rekordbox's analysis is kept under the new name already, and that one stays; the "
+                                   "one kept under the old name stays where it is");
+                    return;
+                }
+                // The pair goes together or not at all: an entry without a
+                // record that can be read stays where it is.
+                const auto record = store.findRecord(oldKey);
+                if (record.status != RecordStatus::Found) {
+                    said.push_back("the record beside rekordbox's kept analysis under the old name "
+                                   + (record.status == RecordStatus::None ? std::string("is missing")
+                                                                          : "cannot be read (" + record.error + ")")
+                                   + ", so both stay there");
+                    return;
+                }
                 infrastructure::local::KeptRekordboxAnalysis entry = found.entry;
                 entry.pathKey = newKey;
                 entry.stickPath = stickPath;
-                store.keep(entry);
+                infrastructure::local::KeptRekordboxRecord next = record.record;
+                next.pathKey = newKey;
+                store.keep(entry, next);
                 store.drop(oldKey);
                 said.push_back("rekordbox's kept analysis carried to the new name");
-            } else if (found.status == RekordboxStatus::Damaged) {
-                said.push_back("rekordbox's kept analysis under the old name cannot be read and stays there ("
-                               + found.error + ")");
-            }
+            });
         }
         if (enginePointed) {
-            auto &store = saveKeptEngineStore(ctx, root);
-            const auto found = store.find(oldKey);
-            if (found.status == EngineStatus::Found) {
+            tryTo("the player's kept analysis", [&]() {
+                auto &store = saveKeptEngineStore(ctx, root);
+                const auto found = store.find(oldKey);
+                if (found.status == EngineStatus::Damaged) {
+                    said.push_back("the player's kept analysis under the old name cannot be read and stays there ("
+                                   + found.error + ")");
+                    return;
+                }
+                if (found.status != EngineStatus::Found) {
+                    return;
+                }
+                if (store.find(newKey).status != EngineStatus::None) {
+                    said.push_back("the player's analysis is kept under the new name already, and that one stays; the "
+                                   "one kept under the old name stays where it is");
+                    return;
+                }
                 application::KeptEngineAnalysis entry = found.entry;
                 entry.pathKey = newKey;
                 // The row's Track.path as the relink left it, which the
@@ -470,28 +498,12 @@ void RelinkMovedFileChange::carryTrackRecords(SaveContext &ctx, bool rekordboxPo
                 store.keep(entry);
                 store.drop(oldKey);
                 said.push_back("the player's kept analysis carried to the new name");
-            } else if (found.status == EngineStatus::Damaged) {
-                said.push_back("the player's kept analysis under the old name cannot be read and stays there ("
-                               + found.error + ")");
-            }
-            const auto &grids = saveBeatGridLedger(ctx, root);
-            if (const auto line = grids.find(oldKey); line != grids.end() && !gridCarried) {
-                recordGridInLedgerAfterCommit(ctx, root, id(), newKey, line->second);
-                forgetGridInLedgerAfterCommit(ctx, root, id(), oldKey);
-                gridCarried = true;
-                said.push_back("the beat grid ledger's line carried");
-            }
+            });
+            // The line as the ledger has it when this change's turn comes
+            // after the commit, a line this save recorded included.
+            renameGridInLedgerAfterCommit(ctx, root, id(), oldKey, newKey);
         }
-        if (const auto *ledger = saveAnalysisLedger(ctx, root); ledger && !analysisCarried) {
-            if (const auto entry = ledger->find(oldKey); entry != ledger->end()) {
-                infrastructure::local::AnalysisLedgerEntry next = entry->second;
-                next.pathKey = newKey;
-                recordAnalysisAfterCommit(ctx, root, id(), next, RelinkLabel);
-                forgetAnalysisAfterCommit(ctx, root, id(), oldKey, RelinkLabel);
-                analysisCarried = true;
-                said.push_back("the analysis ledger's entry carried");
-            }
-        }
+        renameAnalysisAfterCommit(ctx, root, id(), oldKey, newKey, RelinkLabel);
     }
 }
 
@@ -545,13 +557,6 @@ ChangeOutcome RelinkMovedFileChange::apply(SaveContext &ctx)
                                                          "it. Run the check again.")
                                               .arg(QString::fromStdString(old)));
         }
-    }
-
-    // What Seabass keeps of the track by its path goes with it; two kept
-    // originals cannot share the new name.
-    if (const std::string refusal = keptAtNewNameRefusal(); !refusal.empty()) {
-        return ChangeOutcome::failure(QStringLiteral("No library is pointed at %1: %2.")
-                                          .arg(QString::fromStdString(newPath), QString::fromStdString(refusal)));
     }
 
     // A row the scan listed and the write does not find fails the change,
@@ -640,16 +645,16 @@ ChangeOutcome RelinkMovedFileChange::apply(SaveContext &ctx)
             session.noteItemApplied();
             engineWriteRoot = session.writeRoot();
         }
-        if (pointed > 0) {
-            carryTrackRecords(ctx, spellings.count("rekordbox") > 0 || spellings.count("onelibrary") > 0,
-                              spellings.count("engine") > 0, engineWriteRoot, carried);
-        }
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
     }
     if (pointed == 0) {
         return ChangeOutcome::skip();
     }
+    // What Seabass keeps of the track by its path goes with it, as far as
+    // it can: never at the cost of the relink.
+    carryTrackRecords(ctx, spellings.count("rekordbox") > 0 || spellings.count("onelibrary") > 0,
+                      spellings.count("engine") > 0, engineWriteRoot, carried);
     std::string carriedWords;
     for (const std::string &one : carried) {
         carriedWords += "; " + one;

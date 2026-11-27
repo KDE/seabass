@@ -49,6 +49,9 @@ constexpr const char *Label = "beat-grid-copy";
 struct LedgerRecord
 {
     std::map<QString, std::vector<std::pair<std::string, std::optional<std::string>>>> byChange;
+    // Lines a change moves from one key to another (a relink), as the
+    // ledger has them in that change's turn.
+    std::map<QString, std::vector<std::pair<std::string, std::string>>> renameByChange;
 };
 
 std::string ledgerKeyFor(const std::string &stickRoot)
@@ -151,16 +154,15 @@ void recordLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot)
             return;
         }
         // In the order the changes were applied: where two record the same
-        // track, the one applied later left the row as it is.
-        std::map<std::string, std::optional<std::string>> landed;
+        // track, the one applied later left the row as it is; a line moved
+        // by a relink moves as the changes before it left it.
+        bool anyWrite = false;
+        bool anyRename = false;
         for (const QString &changeId : after.appliedIds) {
-            if (const auto entries = record->byChange.find(changeId); entries != record->byChange.end()) {
-                for (const auto &[ledgerKey, fingerprint] : entries->second) {
-                    landed[ledgerKey] = fingerprint;
-                }
-            }
+            anyWrite = anyWrite || record->byChange.count(changeId) > 0;
+            anyRename = anyRename || record->renameByChange.count(changeId) > 0;
         }
-        if (landed.empty()) {
+        if (!anyWrite && !anyRename) {
             return;
         }
         std::string error;
@@ -172,12 +174,28 @@ void recordLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot)
         infrastructure::local::BeatGridLedger next = previous;
         int recorded = 0;
         int dropped = 0;
-        for (const auto &[ledgerKey, fingerprint] : landed) {
-            if (fingerprint) {
-                next[ledgerKey] = *fingerprint;
-                ++recorded;
-            } else if (next.erase(ledgerKey) > 0) {
-                ++dropped;
+        std::vector<std::string> moved;
+        for (const QString &changeId : after.appliedIds) {
+            if (const auto renames = record->renameByChange.find(changeId); renames != record->renameByChange.end()) {
+                for (const auto &[from, to] : renames->second) {
+                    if (const auto line = next.find(from); line != next.end()) {
+                        // The line of the name the file had is of the row
+                        // now; one under the new name gives way.
+                        moved.push_back(from + " to " + to + (next.count(to) > 0 ? ", in place of the line there" : ""));
+                        next[to] = line->second;
+                        next.erase(from);
+                    }
+                }
+            }
+            if (const auto entries = record->byChange.find(changeId); entries != record->byChange.end()) {
+                for (const auto &[ledgerKey, fingerprint] : entries->second) {
+                    if (fingerprint) {
+                        next[ledgerKey] = *fingerprint;
+                        ++recorded;
+                    } else if (next.erase(ledgerKey) > 0) {
+                        ++dropped;
+                    }
+                }
             }
         }
         if (next == previous && !unreadable) {
@@ -186,13 +204,24 @@ void recordLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot)
         ctx.backupOnce(ledgerFileOf(stickRoot), Label);
         std::string writeError;
         if (!infrastructure::local::writeBeatGridLedger(root, next, &writeError)) {
+            ctx.log().record("beat grids: the ledger could not be written: " + writeError);
+            if (!anyWrite) {
+                // Only lines carried by a relink: the save's log says so,
+                // and the relink itself landed.
+                return;
+            }
             throw std::runtime_error("The beat grids were copied, but Seabass could not record which ones it wrote ("
                                      + writeError + "), so the next copy takes them for grids set on the player "
                                        "and leaves them alone.");
         }
+        std::string movedWords;
+        for (const std::string &one : moved) {
+            movedWords += "; moved the line of " + one;
+        }
         ctx.log().record("beat grids: recorded " + std::to_string(recorded) + " grid(s) in the ledger, took "
                          + std::to_string(dropped) + " out"
-                         + (unreadable ? ", replacing one that could not be read (" + error + ")" : std::string()));
+                         + (unreadable ? ", replacing one that could not be read (" + error + ")" : std::string())
+                         + movedWords);
     });
 }
 
@@ -293,6 +322,18 @@ void recordGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoo
     recordLedgerAfterCommit(ctx, stickRoot);
     if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(stickRoot))) {
         record->byChange[changeId].emplace_back(ledgerKey, std::optional<std::string>(gridFingerprint));
+    }
+}
+
+void renameGridInLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
+                                   const std::string &fromKey, const std::string &toKey)
+{
+    if (fromKey.empty() || toKey.empty() || fromKey == toKey) {
+        return;
+    }
+    recordLedgerAfterCommit(ctx, stickRoot);
+    if (auto *record = ctx.sharedForWholeSaveIfPresent<LedgerRecord>(ledgerKeyFor(stickRoot))) {
+        record->renameByChange[changeId].emplace_back(fromKey, toKey);
     }
 }
 

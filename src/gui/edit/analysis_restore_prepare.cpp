@@ -13,6 +13,7 @@
 #include "application/ports/progress_reporter.hpp"
 #include "application/use_cases/plan_engine_update.hpp"
 #include "domain/cue_tolerance.hpp"
+#include "gui/edit/changes/kept_analysis_save.hpp"
 #include "gui/qt_path.hpp"
 #include "gui/stick_catalogs.hpp"
 #include "infrastructure/local/kept_engine_analysis_file.hpp"
@@ -136,8 +137,10 @@ std::string stickPathOf(const std::string &file, const fs::path &root)
     return ec || relative.empty() || stickPath.rfind("/..", 0) == 0 ? std::string() : stickPath;
 }
 
-// Whether the player's analysis of one of the file's Engine rows is kept.
-bool engineKeptFor(const PlaylistFile &file, const fs::path &root, const std::string &key, std::string *damaged)
+// Whether the player's analysis of one of the file's Engine rows is kept
+// by Analyse again: the record names it (`recorded`, its fingerprint).
+bool engineKeptFor(const PlaylistFile &file, const fs::path &root, const std::string &key, const std::string &recorded,
+                   std::string *damaged)
 {
     if (file.engineIds.empty()) {
         return false;
@@ -148,7 +151,8 @@ bool engineKeptFor(const PlaylistFile &file, const fs::path &root, const std::st
         *damaged = found.error;
         return false;
     }
-    if (found.status != application::KeptEngineAnalysisLookup::Status::Found) {
+    if (found.status != application::KeptEngineAnalysisLookup::Status::Found || recorded.empty()
+        || keptEngineOriginalFingerprint(found.entry) != recorded) {
         return false;
     }
     for (const std::string &id : file.engineIds) {
@@ -195,8 +199,19 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
                                                          "read (" + found.error + ")"});
             continue;
         }
+        const auto recorded = rekordboxKept.findRecord(key);
+        if (recorded.status != infrastructure::local::KeptRekordboxRecordLookup::Status::Found) {
+            prepared.leftAlone.push_back(
+                {file.filePath, recorded.status == infrastructure::local::KeptRekordboxRecordLookup::Status::None
+                                    ? "Seabass cannot tell whether its beat grid is Seabass's own: the record of the "
+                                      "grids Seabass wrote, kept beside the original, is missing"
+                                    : "Seabass cannot tell whether its beat grid is Seabass's own: the record of the "
+                                      "grids Seabass wrote, kept beside the original, cannot be read ("
+                                          + recorded.error + ")"});
+            continue;
+        }
         std::string engineDamaged;
-        const bool engineKept = engineKeptFor(file, stick.root, key, &engineDamaged);
+        const bool engineKept = engineKeptFor(file, stick.root, key, recorded.record.engineKept, &engineDamaged);
         std::vector<std::string> datPaths;
         for (const auto &set : found.entry.files) {
             datPaths.push_back(set.datPath);
@@ -212,8 +227,8 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
             RestoreAnalysisChange::CueReview review;
             review.cues = file.cues.value_or(std::vector<domain::CuePoint>{});
             review.oldBpm = file.bpm;
-            review.plan = cueMovesBack(found.entry.cueMoves, "rekordbox", review.cues,
-                                       domain::cueToleranceMsFor(file.bpm, file.bpm));
+            review.originUnknown = !recorded.record.originKnown;
+            review.plan = cueMovesBack(found.entry.cueMoves, "rekordbox", review.cues, &review.blocked);
             if (review.plan.moves.empty()) {
                 // Only Engine's cues moved (rekordbox's libraries held none).
                 bool engineMoved = false;
@@ -221,7 +236,7 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
                     engineMoved = engineMoved || move.library == "engine";
                 }
                 if (engineMoved) {
-                    review.plan = cueMovesBack(found.entry.cueMoves, "engine", {}, 0.0);
+                    review.plan = cueMovesBack(found.entry.cueMoves, "engine", {});
                 }
             }
             const bool onTheirOwn = application::cuesFollowOnTheirOwn(review.plan, request.cueFollowThresholdMs);
@@ -240,67 +255,24 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
 namespace
 {
 
-struct NameCache
+std::string stickIdOr(const std::string &stickId, const fs::path &root)
 {
-    std::mutex mutex;
-    std::map<std::string, std::shared_ptr<const KeptAnalysisNames>> byStick;
-    std::uint64_t generation = 0;
-};
-
-NameCache &nameCache()
-{
-    static NameCache cache;
-    return cache;
+    return stickId.empty() ? "root:" + application::normalizedPathKey(pathToUtf8(root)) : stickId;
 }
 
-std::set<std::string> fileNamesIn(const fs::path &dir)
+// The kept-entry file names of the tracks of `files` on the stick.
+std::vector<std::string> keptNamesOf(const std::vector<PlaylistFile> &files, const fs::path &root)
 {
-    std::set<std::string> names;
-    std::error_code ec;
-    for (fs::directory_iterator it(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
-        names.insert(pathToUtf8(it->path().filename()));
+    std::vector<std::string> names;
+    for (const PlaylistFile &file : files) {
+        if (const std::string key = keyOf(file.filePath, root); !key.empty()) {
+            names.push_back(pathToUtf8(infrastructure::local::keptRekordboxAnalysisFile(root, key).filename()));
+        }
     }
     return names;
 }
 
 }  // namespace
-
-std::shared_ptr<const KeptAnalysisNames> keptAnalysisNamesOf(const fs::path &stickRoot)
-{
-    NameCache &cache = nameCache();
-    const std::string key = application::normalizedPathKey(pathToUtf8(stickRoot));
-    std::uint64_t generation = 0;
-    {
-        std::lock_guard lock(cache.mutex);
-        if (const auto found = cache.byStick.find(key); found != cache.byStick.end()) {
-            return found->second;
-        }
-        generation = cache.generation;
-    }
-    auto names = std::make_shared<KeptAnalysisNames>();
-    names->rekordbox = fileNamesIn(infrastructure::paths::stickKeptRekordboxAnalysisDir(stickRoot));
-    names->engine = fileNamesIn(infrastructure::paths::stickKeptEngineAnalysisDir(stickRoot));
-    std::lock_guard lock(cache.mutex);
-    if (cache.generation == generation) {
-        cache.byStick[key] = names;
-    }
-    return names;
-}
-
-void forgetKeptAnalysisNames()
-{
-    NameCache &cache = nameCache();
-    std::lock_guard lock(cache.mutex);
-    cache.byStick.clear();
-    ++cache.generation;
-}
-
-std::uint64_t keptAnalysisNamesGeneration()
-{
-    NameCache &cache = nameCache();
-    std::lock_guard lock(cache.mutex);
-    return cache.generation;
-}
 
 int countKeptOriginals(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel)
 {
@@ -308,23 +280,65 @@ int countKeptOriginals(const AnalysisRestoreRequest &request, const application:
     if (!stick.refusal.empty()) {
         return -1;
     }
-    const auto names = keptAnalysisNamesOf(stick.root);
+    const std::string id = stickIdOr(request.stickId, stick.root);
+    const auto names = keptAnalysisNamesOf(id, stick.root);
+    // Analyse again's only: an Engine entry alone is Beat Grids &
+    // Waveforms', restored there. Without rekordbox's libraries nothing
+    // is Analyse again's.
+    const std::vector<std::string> mine =
+        stick.pioneerRoot.isEmpty() ? std::vector<std::string>{} : keptNamesOf(stick.files, stick.root);
+    noteKeptAnalysisPlaylist(id, stick.root, request.playlist, mine);
     int count = 0;
-    for (const PlaylistFile &file : stick.files) {
+    for (const std::string &name : mine) {
         cancel.throwIfCancelled();
-        const std::string key = keyOf(file.filePath, stick.root);
-        if (key.empty()) {
-            continue;
-        }
-        // Analyse again's only: an Engine entry alone is Beat Grids &
-        // Waveforms', restored there.
-        const bool rekordbox =
-            !stick.pioneerRoot.isEmpty()
-            && names->rekordbox.count(pathToUtf8(infrastructure::local::keptRekordboxAnalysisFile(stick.root, key).filename()))
-                   > 0;
-        count += rekordbox ? 1 : 0;
+        count += names->rekordbox.count(name) > 0 ? 1 : 0;
     }
     return count;
+}
+
+void warmKeptCounts(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel)
+{
+    const std::string libraryPath =
+        request.rekordboxPath.isEmpty() ? request.enginePath.toStdString() : request.rekordboxPath.toStdString();
+    if (libraryPath.empty()) {
+        return;
+    }
+    application::NullProgressReporter quiet;
+    const StickCatalogRead read = readAllStickCatalogs(libraryPath, quiet, cancel);
+    if (!read.failed.empty()) {
+        return;
+    }
+    QString pioneerRoot;
+    QString enginePath;
+    for (const std::string &format : read.catalogs.present()) {
+        const QString path = QString::fromStdString(catalogPathForFormat(libraryPath, format));
+        (format == "engine" ? enginePath : pioneerRoot) = path;
+    }
+    const fs::path root = pathFromUtf8(infrastructure::paths::normalStickRootForCatalogPath(
+        (pioneerRoot.isEmpty() ? enginePath : pioneerRoot).toStdString()));
+    const std::string id = stickIdOr(request.stickId, root);
+    // Every playlist's files, each file once, as readPlaylist() takes them.
+    std::map<std::string, std::vector<PlaylistFile>> byPlaylist;
+    std::map<std::string, std::set<std::string>> seen;
+    for (const auto *catalog : {&read.catalogs.rekordbox, &read.catalogs.oneLibrary, &read.catalogs.engine}) {
+        if (!*catalog) {
+            continue;
+        }
+        for (const domain::Track &row : **catalog) {
+            cancel.throwIfCancelled();
+            for (const auto &membership : row.playlists) {
+                if (!row.filePath.empty()
+                    && seen[membership.name].insert(application::normalizedPathKey(row.filePath)).second) {
+                    byPlaylist[membership.name].push_back(PlaylistFile{row.filePath, {}, {}, {}, std::nullopt, 0.0});
+                }
+            }
+        }
+    }
+    relistKeptAnalysisNames(id, root);
+    for (const auto &[playlist, files] : byPlaylist) {
+        noteKeptAnalysisPlaylist(id, root, playlist,
+                     pioneerRoot.isEmpty() ? std::vector<std::string>{} : keptNamesOf(files, root));
+    }
 }
 
 }  // namespace seabass::gui
