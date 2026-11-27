@@ -1618,6 +1618,41 @@ public:
         return false;
     }
 
+    // `count` of the Engine library's own tracks (by id) put into its
+    // playlist `name` on a stick copy, the playlist made first when it is
+    // missing; written straight to the file. How many went in.
+    Q_INVOKABLE int fillEnginePlaylist(const QString &stickRoot, const QString &name, int count)
+    {
+        namespace engine = seabass::infrastructure::engine;
+        const std::string library = (stickRoot + QStringLiteral("/Engine Library")).toStdString();
+        std::vector<std::int64_t> ids;
+        sqlite3 *db = nullptr;
+        const std::string file = library + "/Database2/m.db";
+        if (sqlite3_open_v2(file.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK) {
+            sqlite3_stmt *stmt = nullptr;
+            if (sqlite3_prepare_v2(db, "SELECT id FROM Track ORDER BY id LIMIT ?;", -1, &stmt, nullptr) == SQLITE_OK) {
+                sqlite3_bind_int(stmt, 1, count);
+                while (sqlite3_step(stmt) == SQLITE_ROW) {
+                    ids.push_back(sqlite3_column_int64(stmt, 0));
+                }
+            }
+            sqlite3_finalize(stmt);
+        }
+        sqlite3_close(db);
+        int added = 0;
+        try {
+            if (engine::enginePlaylistCountAtPath(library, name.toStdString()) == 0) {
+                engine::createEnginePlaylist(library, name.toStdString());
+            }
+            for (const std::int64_t id : ids) {
+                added += engine::insertIntoEnginePlaylist(library, name.toStdString(), id, std::nullopt) ? 1 : 0;
+            }
+        } catch (const std::exception &e) {
+            qWarning() << "fillEnginePlaylist:" << e.what();
+        }
+        return added;
+    }
+
     // The folders at the top level of export.pdb ("rekordbox") or
     // OneLibrary ("onelibrary") on a stick copy, by name, read from the
     // file; nothing when it cannot be read.

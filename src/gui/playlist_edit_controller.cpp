@@ -586,6 +586,7 @@ bool PlaylistEditController::requestAdd(const QString &rekordboxPath, const QStr
                 return;
             }
             PendingAdd add{rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, libraries, anyway};
+            add.folders = folders;
             add.partial = std::any_of(where.onStick.begin(), where.onStick.end(),
                                       [&](const QString &library) { return !libraries.contains(library); });
             // Made by this Save where a library lacked it: the add goes by
@@ -635,8 +636,11 @@ void PlaylistEditController::stageAdd(const PendingAdd &add)
     const std::string file = add.filePath.toStdString();
     const std::optional<int> place = add.toIndex >= 0 ? std::optional<int>(add.toIndex) : std::nullopt;
     const auto remake = [rekordboxPath = add.rekordboxPath, enginePath = add.enginePath, file, title = add.title,
-                         libraries = add.libraries, place](const std::string &named) -> std::unique_ptr<PendingChange> {
-        return std::make_unique<AddToPlaylistChange>(rekordboxPath, enginePath, named, file, title, libraries, place);
+                         libraries = add.libraries, folders = add.folders,
+                         place](const std::string &named) -> std::unique_ptr<PendingChange> {
+        auto change = std::make_unique<AddToPlaylistChange>(rekordboxPath, enginePath, named, file, title, libraries, place);
+        change->sayLeftAlone(folders);  // said by the save's summary as well
+        return change;
     };
     if (!m_session->stage(remake(name))) {
         return;
@@ -922,7 +926,9 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
             setErrorMessage(QStringLiteral("\"%1\" is not deleted. %2").arg(playlist, why.join(QLatin1Char(' '))));
             return;
         }
-        if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, libraries))) {
+        auto change = std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, libraries);
+        change->sayLeftAlone(folders, holding);  // said by the save's summary as well
+        if (!m_session->stage(std::move(change))) {
             return;  // the session reported why (another page's edits)
         }
         // The playlist alone, whatever was asked of its tracks before.
@@ -1256,6 +1262,24 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
                    setErrorMessage(ambiguous(playlist, where.several));
                    return;
                }
+               // The same folder in two formats: a folder in rekordbox or
+               // OneLibrary, in Engine a playlist holding others. Renamed in
+               // Engine alone, the playlists inside would be under the new
+               // name there and under the old one in the others.
+               QStringList holding;
+               for (const QString &library : where.holdingOthers) {
+                   if (!where.folders.contains(library)) {
+                       holding << library;
+                   }
+               }
+               if (!where.folders.isEmpty() && !holding.isEmpty()) {
+                   setErrorMessage(QStringLiteral("\"%1\" is not renamed. In %2 it is a folder, and in %3 a playlist "
+                                                  "holding other playlists: renamed in %3 only, the playlists inside "
+                                                  "it would be under \"%4\" there and under \"%1\" in %2. Rename "
+                                                  "the folder in rekordbox and the playlist in Engine DJ instead.")
+                                       .arg(playlist, spokenNames(where.folders), spokenNames(holding), renamed));
+                   return;
+               }
                // A folder of that name (rekordbox, OneLibrary) is not this
                // playlist: it keeps its name, and the person is told.
                QStringList libraries;
@@ -1271,8 +1295,10 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
                    setErrorMessage(QStringLiteral("\"%1\" is not renamed. %2").arg(playlist, folderWords));
                    return;
                }
-               if (!m_session->stage(std::make_unique<RenamePlaylistChange>(rekordboxPath, enginePath, from.toStdString(),
-                                                                            name.toStdString(), libraries))) {
+               auto change = std::make_unique<RenamePlaylistChange>(rekordboxPath, enginePath, from.toStdString(),
+                                                                    name.toStdString(), libraries);
+               change->sayLeftAlone(folders);  // said by the save's summary as well
+               if (!m_session->stage(std::move(change))) {
                    return;
                }
                const QString id = RenamePlaylistChange::idFor(from.toStdString());

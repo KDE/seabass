@@ -352,6 +352,9 @@ private:
         QStringList having;
         // Into fewer libraries than the stick has (Edit::partial).
         bool partial = false;
+        // The libraries left out because the playlist's path is a folder
+        // there, said by the save's summary.
+        QStringList folders;
     };
     void stageAdd(const PendingAdd &add);
     // addToPlaylist, with the page's answer to additionNeedsLibraries

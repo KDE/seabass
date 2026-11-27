@@ -1019,6 +1019,37 @@ int main(int argc, char **argv)
     std::cout << "case 13 (a delete and a rename by a path that is a folder in rekordbox and OneLibrary leave the "
                  "folder and what is in it alone, and say so; an Engine playlist holding another is not deleted) OK\n";
 
+    // 14. A root playlist "Solo" without children in each library, and in
+    //     Engine a second root playlist whose name holds a "/"
+    //     ("Solo/Inner"; the rekordbox and OneLibrary writers refuse such
+    //     a name): "Solo" holds no others (by the tree, not the spelling),
+    //     so a delete takes it everywhere and leaves "Solo/Inner".
+    {
+        {
+            infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
+            rows.createPlaylist(0, "Solo", false);
+            assert(rows.commit());
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            w.createPlaylist("", "Solo", false);
+            auto db = djinterop::engine::load_database(pathToUtf8(library));
+            db.create_root_playlist("Solo");
+            db.create_root_playlist("Solo/Inner");
+        }
+        const auto solo = playlistWhereabouts(pioneerQ, libraryQ, "Solo");
+        assert(solo.having == all && solo.several.isEmpty());
+        std::cerr << "case 14: \"Solo\" holds others in " << solo.holdingOthers.join(QStringLiteral(", ")).toStdString()
+                  << "\n";
+        assert(solo.holdingOthers.isEmpty() && "a root playlist named \"Solo/Inner\" is no child of \"Solo\"");
+        const QStringList engineOnly{QStringLiteral("engine")};
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Solo/Inner").having == engineOnly);
+        const auto result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "Solo", all));
+        assert(result.appliedIds.size() == 1 && result.notes.isEmpty() && "deleted, nothing left alone");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Solo").having.isEmpty() && "gone from all three");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Solo/Inner").having == engineOnly
+               && "the other root playlist stays");
+    }
+    std::cout << "case 14 (a root playlist named with a \"/\" is no child of the one its name starts with) OK\n";
+
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";
     return 0;

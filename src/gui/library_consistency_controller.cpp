@@ -2423,24 +2423,62 @@ void LibraryConsistencyController::deletePlaylistEverywhere(const QString &playl
     if (formats.isEmpty()) {
         return;
     }
-    const QStringList names = librariesHaving(finding->difference);
+    // Save leaves a library alone where the node at that path is a folder,
+    // or a playlist holding others (DeletePlaylistChange): not named as
+    // deleted from, and said to stay.
+    const PlaylistWhereabouts where = playlistWhereabouts(m_rekordboxPath, m_enginePath, name);
+    QStringList deletedFrom;
+    QStringList folders;
+    QStringList holding;
+    for (const QString &format : formats) {
+        if (where.folders.contains(format)) {
+            folders << format;
+        } else if (where.holdingOthers.contains(format)) {
+            holding << format;
+        } else {
+            deletedFrom << format;
+        }
+    }
+    const auto spoken = [](const QStringList &list) {
+        QStringList names;
+        for (const QString &format : list) {
+            names << libraryNameOf(format.toStdString());
+        }
+        return spokenList(names);
+    };
+    QStringList stays;
+    if (!folders.isEmpty()) {
+        stays << QStringLiteral("In %1 it is a folder, not a playlist, and it stays with everything in it.")
+                     .arg(spoken(folders));
+    }
+    if (!holding.isEmpty()) {
+        stays << QStringLiteral("In %1 it holds other playlists, and it stays with them: delete or move those first.")
+                     .arg(spoken(holding));
+    }
     setErrorMessage({});
     setStatusMessage({});
+    if (deletedFrom.isEmpty()) {
+        setErrorMessage(QStringLiteral("\"%1\" is not deleted. %2").arg(playlist, stays.join(QLatin1Char(' '))));
+        return;
+    }
     if (!ensureSessionForStaging()) {
         return;
     }
     unstagePlaylistResolution(name);
     // This session's owner, as AlignPlaylistChange's: the session refuses
     // a change of Browse's ("addcue") into Library Health's batch.
-    if (!m_session->stage(std::make_unique<DeletePlaylistChange>(m_rekordboxPath, m_enginePath, name, formats,
-                                                                 QStringLiteral("library-health")))) {
+    auto change = std::make_unique<DeletePlaylistChange>(m_rekordboxPath, m_enginePath, name, deletedFrom,
+                                                         QStringLiteral("library-health"));
+    change->sayLeftAlone(folders, holding);
+    if (!m_session->stage(std::move(change))) {
         emit playlistsChanged();
         return;
     }
     m_stagedPlaylists[DeletePlaylistChange::idFor(name)] = QStringLiteral("delete");
     emit playlistsChanged();
-    setStagedStatusMessage(QStringLiteral("Staged deleting \"%1\" from %2. Press Save to write it.")
-                               .arg(playlist, spokenList(names)));
+    stays.prepend(QStringLiteral("Staged deleting \"%1\" from %2. Press Save to write it.")
+                      .arg(playlist, spoken(deletedFrom)));
+    setStagedStatusMessage(stays.join(QLatin1Char(' ')));
 }
 
 bool LibraryConsistencyController::unstagePlaylistResolution(const std::string &playlist)

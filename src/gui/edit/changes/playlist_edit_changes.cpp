@@ -100,31 +100,43 @@ bool folderAt(const std::vector<Node> &tree, const std::string &path)
     return false;
 }
 
-// Whether a node of the tree lies below `path`: deleting the node at
-// `path` would take it along.
+// Whether a node spelling `path` has a child in the tree: deleting it
+// would take that along. By parent ids, so a root playlist whose name
+// holds a "/" ("X/Y") is not taken for a child of "X".
 template<typename Node>
 bool nodesBelow(const std::vector<Node> &tree, const std::string &path)
 {
-    const std::string prefix = path + "/";
+    std::set<decltype(Node::id)> atPath;
     for (const auto &[node, spelled] : spelledPaths(tree)) {
-        if (spelled.compare(0, prefix.size(), prefix) == 0) {
-            return true;
+        if (spelled == path) {
+            atPath.insert(node.id);
         }
     }
-    return false;
+    return std::any_of(tree.begin(), tree.end(), [&](const Node &n) { return atPath.count(n.parentId) > 0; });
 }
 
-// Whether Engine's library at `engineLibraryPath` has a playlist below
-// `path`. Engine's delete takes those along (deleteEnginePlaylist).
+// Whether a playlist spelling `path` in Engine's library at
+// `engineLibraryPath` has playlists below it. Engine's delete takes those
+// along (deleteEnginePlaylist). By the reader's tree, as nodesBelow.
 bool enginePlaylistsBelow(const std::string &engineLibraryPath, const std::string &path)
 {
-    const std::string prefix = path + "/";
-    for (const auto &info : infrastructure::engine::listEnginePlaylists(engineLibraryPath)) {
-        if (info.path.compare(0, prefix.size(), prefix) == 0) {
-            return true;
+    const auto playlists = infrastructure::engine::listEnginePlaylists(engineLibraryPath);
+    return std::any_of(playlists.begin(), playlists.end(),
+                       [&](const auto &info) { return info.path == path && info.folder; });
+}
+
+// The libraries in `found` or `told`, each once, in the stick's order:
+// what apply() found left alone, with what the stager left out.
+QStringList leftAloneIn(const QStringList &found, const QStringList &told)
+{
+    QStringList libraries;
+    for (const char *name : {"rekordbox", "onelibrary", "engine"}) {
+        const QString library = QString::fromLatin1(name);
+        if (found.contains(library) || told.contains(library)) {
+            libraries << library;
         }
     }
-    return false;
+    return libraries;
 }
 
 // "rekordbox", "OneLibrary and Engine": the libraries named for a person.
@@ -665,6 +677,8 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
         ctx.log().record("playlist-delete: not deleted from \"" + m_playlist + "\" there: " + why);
     }
     const QString name = QString::fromStdString(m_playlist);
+    folders = leftAloneIn(folders, m_leftOutFolders);
+    holding = leftAloneIn(holding, m_leftOutHolding);
     if (!folders.isEmpty()) {
         noteLeftAlone(ctx, id(),
                       QStringLiteral("\"%1\" was not deleted in %2: there it is a folder, not a playlist, and it "
@@ -867,6 +881,7 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
     for (const auto &why : leftAlone) {
         ctx.log().record("playlist-add: \"" + m_filePath + "\" not added to \"" + m_playlist + "\" there: " + why);
     }
+    folders = leftAloneIn(folders, m_leftOutFolders);
     if (!folders.isEmpty()) {
         noteLeftAlone(ctx, id(),
                       QStringLiteral("\"%1\" was not added to \"%2\" in %3: there it is a folder, not a playlist.")
@@ -1511,6 +1526,7 @@ ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
     for (const auto &why : leftAlone) {
         ctx.log().record("playlist-rename: not renamed in \"" + m_playlist + "\" there: " + why);
     }
+    folders = leftAloneIn(folders, m_leftOutFolders);
     if (!folders.isEmpty()) {
         noteLeftAlone(ctx, id(),
                       QStringLiteral("\"%1\" was not renamed in %2: there it is a folder, not a playlist, and it "

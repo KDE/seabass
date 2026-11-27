@@ -199,6 +199,15 @@ public:
     // export.pdb only through sharedPdbRows().
     bool sharesHeldWrites() const override { return true; }
 
+    // The libraries the stager left out for what the node at the path is
+    // there, a folder or a playlist holding others: the save's summary
+    // says so once the save lands, as for those apply() finds itself.
+    void sayLeftAlone(QStringList folders, QStringList holdingOthers)
+    {
+        m_leftOutFolders = std::move(folders);
+        m_leftOutHolding = std::move(holdingOthers);
+    }
+
 private:
     QString m_pioneerRoot;
     QString m_enginePath;
@@ -207,6 +216,8 @@ private:
     QString m_owner;
     int m_itemCountHint = 1;
     std::string m_label;
+    QStringList m_leftOutFolders;
+    QStringList m_leftOutHolding;
 };
 
 // Puts one file at the end of a playlist in every library on the stick
@@ -261,6 +272,9 @@ public:
     // CreatePlaylistChange::stageForImport() says. Both may stand in one
     // save: a file the playlist holds by its turn is not added again.
     void stageForImport() { m_forImport = true; }
+    // The libraries the stager left out because the node at the path is
+    // a folder there: the save's summary says so once the save lands.
+    void sayLeftAlone(QStringList folders) { m_leftOutFolders = std::move(folders); }
 
 private:
     QString m_pioneerRoot;
@@ -272,6 +286,7 @@ private:
     std::optional<int> m_toIndex;
     QString m_unitKey;
     bool m_forImport = false;
+    QStringList m_leftOutFolders;
 };
 
 // Takes one file out of a playlist in every library on the stick that has
@@ -464,6 +479,9 @@ public:
     ChangeOutcome apply(SaveContext &ctx) override;
     // export.pdb only through sharedPdbRows().
     bool sharesHeldWrites() const override { return true; }
+    // The libraries the stager left out because the node at the old path
+    // is a folder there: the save's summary says so once the save lands.
+    void sayLeftAlone(QStringList folders) { m_leftOutFolders = std::move(folders); }
 
 private:
     QString m_pioneerRoot;
@@ -471,6 +489,7 @@ private:
     std::string m_playlist;
     std::string m_newName;
     QStringList m_libraries;
+    QStringList m_leftOutFolders;
 };
 
 }  // namespace seabass::gui

@@ -918,6 +918,61 @@ TestCase {
         verify(stickFixture.playlistsIn(stick, "rekordbox").indexOf("Planted Follow") >= 0, "the other stays");
     }
 
+    // "Delete everywhere" of a name that in Engine is a playlist holding
+    // others: Save leaves Engine's alone (the ones inside would go with
+    // it), so the staged words name only the libraries it is deleted from
+    // and say what stays, and the save's summary says it again. Nothing
+    // but such a playlist: not staged, saying why.
+    function test_deleteEverywhereNamesOnlyWhatItDeletes() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        compare(stickFixture.plantPlaylist(stick, "Holder", ["rekordbox"], 2).length, 2);
+        // Engine's with tracks of their own, so the check lists them.
+        compare(stickFixture.fillEnginePlaylist(stick, "Holder", 2), 2);
+        verify(stickFixture.plantFolder(stick, "Holder", "engine"), "Engine's Holder holds Holder/Inside");
+        compare(stickFixture.fillEnginePlaylist(stick, "Box", 1), 1);
+        verify(stickFixture.plantFolder(stick, "Box", "engine"), "Engine's Box holds Box/Inside");
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        compare(controller.playlistsError, "");
+        const find = (name) => controller.playlistDifferences.find((d) => d.name === name);
+        const holder = find("Holder");
+        verify(holder !== undefined && holder.missingSomewhere, "listed: OneLibrary lacks it");
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"),
+                                                       "TESTSTICK");
+        verify(session !== null);
+
+        verify(find("Box") !== undefined, "listed: only Engine has it");
+        controller.deletePlaylistEverywhere("Box");
+        compare(controller.errorMessage, "\"Box\" is not deleted. In Engine it holds other playlists, and it "
+                + "stays with them: delete or move those first.");
+        verify(find("Box").staged !== "delete", "nothing staged for Box");
+
+        controller.deletePlaylistEverywhere("Holder");
+        compare(controller.errorMessage, "");
+        compare(find("Holder").staged, "delete");
+        compare(controller.statusMessage, "Staged deleting \"Holder\" from rekordbox. Press Save to write it. In "
+                + "Engine it holds other playlists, and it stays with them: delete or move those first.");
+        compare(session.pendingCount, 1, "Holder's delete alone");
+        let summary = null;
+        const done = (result) => { summary = result; };
+        session.saveFinished.connect(done);
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        session.saveFinished.disconnect(done);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.notes, "\"Holder\" was not deleted in Engine: there it holds other playlists, which a "
+                + "delete would take with it. Delete or move those first.");
+        verify(stickFixture.playlistsIn(stick, "rekordbox").indexOf("Holder") < 0, "deleted from rekordbox");
+        const engine = stickFixture.playlistsIn(stick, "engine");
+        // playlistsIn leaves a playlist holding others out: the one inside
+        // is there, so Engine's Holder is too.
+        verify(engine.indexOf("Holder/Inside") >= 0, "Engine's stay: " + engine);
+        tryVerify(() => !controller.busy, 300000, "the rescan finishes");
+    }
+
     // The stray-cue headline counts tracks, each audio file once, and
     // says what the rules are: a cue a library mirrors is a row in each,
     // and "214 cues sit at 0:00" read as 214 separate problems while

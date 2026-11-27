@@ -1108,7 +1108,10 @@ TestCase {
 
         const summary = saveAndWait(session);
         compare(summary.error, "", JSON.stringify(summary));
-        compare(summary.notes, "", "nothing left alone at Save: the folders were never asked of it");
+        compare(summary.notes, "\"Mixed\" was not deleted in rekordbox and OneLibrary: there it is a folder, not a "
+                + "playlist, and it stays with everything in it. \"Mixed R\" was not renamed in rekordbox and "
+                + "OneLibrary: there it is a folder, not a playlist, and it keeps its name.",
+                "the save's summary says what the edits left alone, as the staging did");
         for (const library of ["rekordbox", "onelibrary"]) {
             const folders = stickFixture.topLevelFoldersIn(stick, library);
             verify(folders.indexOf("Mixed") >= 0 && folders.indexOf("Mixed R") >= 0, library + ": " + folders);
@@ -1117,6 +1120,78 @@ TestCase {
         verify(enginePlaylists.indexOf("Mixed") < 0, "Engine's playlist deleted");
         verify(enginePlaylists.indexOf("Moved") >= 0 && enginePlaylists.indexOf("Mixed R") < 0, "Engine's renamed");
         verify(enginePlaylists.indexOf("Holder/Inside") >= 0, "the playlist inside Engine's Holder stays");
+    }
+
+    // Kept over a restart, the delete and the rename are staged again
+    // without a word (nothing pops up while edits are replayed), and the
+    // save's summary still says what they left alone.
+    function test_aLeftAloneNoteIsSaidAfterARestart() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        for (const name of ["Mixed", "Mixed R"]) {
+            compare(stickFixture.plantPlaylist(stick, name, ["engine"], 0).length, 0, name);
+            verify(stickFixture.plantFolder(stick, name, "rekordbox"), name);
+        }
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        let browse = createTemporaryObject(playlistEditComponent, testCase);
+        browse.discardLeftOverEdits(pioneer, engine);
+        verify(edited(browse, browse.deletePlaylist(pioneer, engine, "Mixed")), browse.errorMessage);
+        verify(edited(browse, browse.renamePlaylist(pioneer, engine, "Mixed R", "Moved")), browse.errorMessage);
+        compare(session.pendingCount, 2);
+        // A restart: the controller gone without a discard, the session's
+        // memory with it; the batch kept on this machine.
+        browse.destroy();
+        wait(50);
+        EditSessionRegistry.discardAll();
+        compare(session.pendingCount, 0);
+        browse = createTemporaryObject(playlistEditComponent, testCase);
+        const notes = createTemporaryObject(noteSpyComponent, testCase, {target: browse});
+        const kept = createTemporaryObject(keptSpyComponent, testCase, {target: browse});
+        verify(browse.keepLeftOverEdits(pioneer, engine), browse.errorMessage);
+        tryCompare(kept, "count", 1, 60000);
+        const [keptCount, keptTotal, refusals] = kept.signalArguments[0];
+        compare(JSON.stringify([keptCount, keptTotal]), JSON.stringify([2, 2]), JSON.stringify(refusals));
+        compare(notes.count, 0, "nothing said while the edits are staged again");
+        compare(session.pendingCount, 2);
+        const summary = saveAndWait(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.notes, "\"Mixed\" was not deleted in rekordbox: there it is a folder, not a playlist, and "
+                + "it stays with everything in it. \"Mixed R\" was not renamed in rekordbox: there it is a folder, "
+                + "not a playlist, and it keeps its name.");
+        verify(stickFixture.playlistsIn(stick, "engine").indexOf("Moved") >= 0, "Engine's renamed");
+        browse.discardLeftOverEdits(pioneer, engine);
+    }
+    Component {
+        id: keptSpyComponent
+        SignalSpy { signalName: "leftOverEditsKept" }
+    }
+
+    // A name that is a folder in rekordbox and OneLibrary, and in Engine a
+    // playlist holding others (the same folder in two formats): renamed in
+    // Engine alone, the playlists inside would be split between two
+    // names, so the rename is refused, saying why and what to do.
+    function test_aFolderHoldingPlaylistsInTwoFormatsIsNotRenamed() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        for (const library of ["rekordbox", "onelibrary", "engine"]) {
+            verify(stickFixture.plantFolder(stick, "Crate", library), library);
+        }
+        compare(stickFixture.plantPlaylist(stick, "Crate/Inside", ["rekordbox", "onelibrary"], 0).length, 0);
+        for (const library of ["rekordbox", "onelibrary", "engine"]) {
+            verify(stickFixture.playlistsIn(stick, library).indexOf("Crate/Inside") >= 0, "precondition: " + library);
+        }
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        verify(!edited(browse, browse.renamePlaylist(pioneer, engine, "Crate", "Box")));
+        compare(browse.errorMessage, "\"Crate\" is not renamed. In rekordbox and OneLibrary it is a folder, and in "
+                + "Engine a playlist holding other playlists: renamed in Engine only, the playlists inside it would be "
+                + "under \"Box\" there and under \"Crate\" in rekordbox and OneLibrary. Rename the folder in "
+                + "rekordbox and the playlist in Engine DJ instead.");
+        compare(session.pendingCount, 0, "nothing staged");
     }
 
     // An add by a name that is a playlist in OneLibrary and a folder in
@@ -1148,7 +1223,8 @@ TestCase {
         compare(session.pendingCount, 1);
         const summary = saveAndWait(session);
         compare(summary.error, "", JSON.stringify(summary));
-        compare(summary.notes, "", "the folder was never asked of the save");
+        compare(summary.notes, "\"Source One\" was not added to \"Mixed A\" in rekordbox: there it is a folder, not "
+                + "a playlist.", "the save's summary says the folder was left out");
         verify(stickFixture.topLevelFoldersIn(stick, "rekordbox").indexOf("Mixed A") >= 0, "the folder stays");
 
         // Nothing but folders of that name: refused, saying so.
