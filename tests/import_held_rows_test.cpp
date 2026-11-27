@@ -21,6 +21,15 @@
 //    later (but not exactly an hour, as a FAT volume's local time moves
 //    across a switch to summer time), and one whose analysis has no
 //    provenance. The same file not replaced gets all of it.
+// 5. a comment edited in the track details (TrackFieldEditChange, #108)
+//    between imports: a change with a writer of its own, not one that
+//    shares the held rows, so the rows before it are written first and
+//    the imports after it read its comment back. Long enough that its row
+//    is moved, which drops what the held writer knew of the track table.
+// 6. a change that shares the held rows and then meets a damaged Engine
+//    row (#107): not skipped, as a change with writers of its own is,
+//    since rolling it back cannot take its rows out of the held buffer.
+//    The save goes back whole and export.pdb is its own bytes again.
 
 #include <algorithm>
 #include <cassert>
@@ -41,6 +50,8 @@
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "gui/edit/changes/track_field_edit_change.hpp"
+#include "infrastructure/engine/engine_blob_check.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/generated/rekordbox_pdb.h"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
@@ -195,6 +206,42 @@ public:
         }
         session.noteItemApplied();
         return ChangeOutcome::success();
+    }
+
+private:
+    QString m_pioneer;
+    std::string m_stickPath;
+};
+
+// A change that shares the held rows: it rates a track in the held
+// writer, then meets a damaged Engine row, as a writer reports one before
+// it writes anything of that row.
+class RateHeldThenDamagedRow : public PendingChange
+{
+public:
+    RateHeldThenDamagedRow(QString pioneer, std::string stickPath)
+        : m_pioneer(std::move(pioneer)), m_stickPath(std::move(stickPath))
+    {
+    }
+    QString id() const override { return QStringLiteral("test:rate-held-then-damaged-row"); }
+    QString description() const override { return QStringLiteral("Rate a track in the held rows, then meet a damaged row"); }
+    QString unit() const override { return QStringLiteral("ratings"); }
+    QStringList formatsTouched() const override { return RekordboxOnly; }
+    bool sharesHeldWrites() const override { return true; }
+    std::vector<BackupTarget> filesToBackup(SaveContext &) const override
+    {
+        return {{pathToUtf8(pathFromUtf8(m_pioneer.toStdString()) / "rekordbox" / "export.pdb"), "test-rate"}};
+    }
+    ChangeOutcome apply(SaveContext &ctx) override
+    {
+        FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", m_pioneer.toStdString(), 1, "test-rate");
+        infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
+        const auto ids = rows.trackIdsWithFilePath(m_stickPath);
+        if (ids.size() != 1 || !rows.setTrackRating(ids.front(), 5)) {
+            return ChangeOutcome::failure(QStringLiteral("could not rate"));
+        }
+        rows.endEdit();
+        throw infrastructure::engine::DamagedEngineRowError("track id=1 has a damaged quickCues blob: cues not written");
     }
 
 private:
@@ -446,6 +493,85 @@ int main(int argc, char **argv)
         std::cout << "case 4 (a file replaced after its analysis, by its size or by its time, or an analysis without "
                      "provenance: no analysis file, the tags' tempo and key, the log says why; one not replaced, or only "
                      "two seconds or an hour apart, gets all of it) OK\n";
+    }
+
+    // 5. A comment edited between imports.
+    {
+        const testing::EngineChangeStick stick = rekordboxStick(fixture, "import_held_rows_comment");
+        const auto tracksBefore = libraryOf(stick);
+        std::string file;
+        for (const auto &t : tracksBefore) {
+            if (!t.filePath.empty() && t.comment.empty()) {
+                file = t.filePath;
+                break;
+            }
+        }
+        assert(!file.empty() && "a fixture track with no comment");
+        const std::string comment(300, 'c');
+        auto edit = std::make_shared<TrackFieldEditChange>(stick.pioneerPath(), QString(), file, "T",
+                                                           TrackFieldValue{TrackField::Comment, std::nullopt, comment},
+                                                           findTrackRows(stick.pioneerPath(), QString(), file));
+        assert(!edit->sharesHeldWrites() && "the comment's change opens export.pdb itself");
+        std::vector<std::shared_ptr<PendingChange>> changes;
+        for (int n = 0; n < 6; ++n) {
+            const fs::path source = makeSource(computer / "comment", std::to_string(n) + ".flac", 300 + n);
+            changes.push_back(std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root),
+                                                                  stick.pioneerPath(), QString(), describe(stickPathOf(n), n),
+                                                                  RekordboxOnly, 6));
+            if (n == 2) {
+                changes.push_back(edit);
+            }
+        }
+        const auto countsBefore = countsNow();
+        const SaveLoopResult saved = testing::saveChanges(changes, stick.pioneerPath(), QString());
+        if (!saved.error.isEmpty()) {
+            std::cerr << "save: " << saved.error.toStdString() << "\n";
+        }
+        assert(saved.error.isEmpty() && saved.appliedIds.size() == static_cast<int>(changes.size()));
+        const auto countsAfter = countsNow();
+        // The held rows, the comment's own writer, the held rows again.
+        assert(countsAfter.pdbWriterOpens - countsBefore.pdbWriterOpens == 3);
+        assert(countsAfter.pdbWriterCommits - countsBefore.pdbWriterCommits == 3);
+        const auto tracks = libraryOf(stick);
+        assert(tracks.size() == tracksBefore.size() + 6);
+        int imported = 0;
+        bool commented = false;
+        for (const auto &t : tracks) {
+            for (int n = 0; n < 6; ++n) {
+                imported += pathToUtf8(pathFromUtf8(t.filePath).filename()) == std::to_string(n) + " Held Row.flac";
+            }
+            if (t.filePath == file) {
+                assert(t.comment == comment && "the comment made between the imports stays");
+                commented = true;
+            }
+        }
+        assert(imported == 6 && commented);
+        std::cout << "case 5 (a comment edited between imports: written by its own writer after the rows before "
+                     "it, kept by the imports after it) OK\n";
+    }
+
+    // 6. A change sharing the held rows meets a damaged Engine row.
+    {
+        const testing::EngineChangeStick stick = rekordboxStick(fixture, "import_held_rows_damaged");
+        const fs::path pdb = stick.pioneer / "rekordbox" / "export.pdb";
+        const std::string pdbBefore = testing::fileBytes(pdb);
+        std::vector<std::shared_ptr<PendingChange>> changes;
+        for (int n = 0; n < 2; ++n) {
+            const fs::path source = makeSource(computer / "damaged", std::to_string(n) + ".flac", 400 + n);
+            changes.push_back(std::make_shared<ImportTrackChange>(pathToUtf8(source), pathToQString(stick.root),
+                                                                  stick.pioneerPath(), QString(), describe(stickPathOf(n), n),
+                                                                  RekordboxOnly, 2));
+            if (n == 0) {
+                changes.push_back(std::make_shared<RateHeldThenDamagedRow>(stick.pioneerPath(), stickPathOf(0)));
+            }
+        }
+        const SaveLoopResult saved = testing::saveChanges(changes, stick.pioneerPath(), QString());
+        assert(!saved.error.isEmpty() && "the save fails rather than skip the change");
+        assert(saved.skippedIds.isEmpty());
+        assert(testing::fileBytes(pdb) == pdbBefore && "export.pdb as it was: no held row of the change landed");
+        assert(!fs::exists(stick.root / "Contents" / "Held Rows" / "0 Held Row.flac"));
+        std::cout << "case 6 (a change sharing the held rows meets a damaged Engine row: the save goes back whole, "
+                     "export.pdb its own bytes) OK\n";
     }
 
     std::cout << "import_held_rows_test: all cases passed\n";

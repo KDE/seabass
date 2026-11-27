@@ -4,7 +4,9 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace seabass::infrastructure
 {
@@ -65,5 +67,27 @@ void fsyncDirectoryContaining(const std::string &filePath);
 // platform offers no such call (Windows without elevation) or it failed;
 // nothing depends on the answer.
 bool flushFilesystemOf(const std::string &path);
+
+// Whether `path` names one of rekordbox's analysis files: a name ending in
+// .DAT, .EXT or .2EX, in any case. Where they sit is not asked: a false
+// match only costs a cached analysis being read again.
+bool isAnalysisFilePath(const std::string &path);
+// The one place every write of an analysis file in this process is told,
+// so that what is kept of an analysis on the computer (gui::
+// TrackAnalysisCache) never outlives the file. writeFileDurablyAtomic()
+// and copyFileDurablyAtomic() call it for every analysis file they
+// replace, which covers every writer of one in src/ (the test
+// analysis_file_writers_test lists the others that write files, and fails
+// for one it does not know); a writer that places a file some other way
+// calls it itself. A cache cannot rely on the file's time for this: FAT
+// keeps it to two seconds, and a rewrite of the same size inside one step
+// looks like the file it replaced.
+void noteAnalysisFileWritten(const std::string &path);
+// How many analysis file writes have been noted in this process: a reader
+// that remembers the number sees whether any write came since.
+std::uint64_t analysisFileWriteSerial();
+// The paths noted after the first `serial` writes, in order, and in
+// `serialNow` the serial they bring it to.
+std::vector<std::string> analysisFilesWrittenSince(std::uint64_t serial, std::uint64_t *serialNow);
 
 }  // namespace seabass::infrastructure

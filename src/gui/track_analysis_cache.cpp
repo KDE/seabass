@@ -12,10 +12,12 @@
 
 #include <cmath>
 #include <cstring>
+#include <set>
 
 #include <sqlite3.h>
 
 #include "gui/qt_path.hpp"
+#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/local/sqlite_statement.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -316,6 +318,45 @@ void TrackAnalysisCache::evictIfNeeded()
     });
 }
 
+void TrackAnalysisCache::forgetWrittenFiles()
+{
+    if (infrastructure::analysisFileWriteSerial() == m_writesSeen) {
+        return;
+    }
+    std::uint64_t now = 0;
+    const std::vector<std::string> written = infrastructure::analysisFilesWrittenSince(m_writesSeen, &now);
+    // A key starts with its .DAT's absolute path, and a track's .DAT, .EXT
+    // and .2EX share one folder: an entry goes with any of them.
+    std::set<QString> folders;
+    for (const std::string &path : written) {
+        folders.insert(QFileInfo(QDir::cleanPath(pathToQString(pathFromUtf8(path)))).absolutePath()
+                       + QLatin1Char('/'));
+    }
+    const bool forgotten = withDatabase([&] {
+        exec(m_db, "BEGIN IMMEDIATE;", Context);
+        try {
+            for (const QString &folder : folders) {
+                Statement forget(m_db, "DELETE FROM analyses WHERE lower(substr(key, 1, length(?1))) = lower(?1);",
+                                 Context);
+                forget.bind(1, folder.toStdString());
+                forget.run();
+            }
+            exec(m_db, "COMMIT;", Context);
+        } catch (...) {
+            sqlite3_exec(m_db, "ROLLBACK;", nullptr, nullptr, nullptr);
+            throw;
+        }
+        Statement sum(m_db, "SELECT coalesce(sum(bytes), 0) FROM analyses;", Context);
+        m_storedBytes = sum.step() ? sum.columnInt64(0) : 0;
+    });
+    // Entries that could not be dropped are never served: the files are
+    // read from the stick from now on.
+    if (!forgotten) {
+        closeDatabase();
+    }
+    m_writesSeen = now;
+}
+
 domain::TrackAnalysis TrackAnalysisCache::rekordboxAnalysis(const std::string &pioneerRoot,
                                                             const std::string &trackSourceId,
                                                             const infrastructure::rekordbox::AnlzPathIndex *pathIndex)
@@ -328,6 +369,9 @@ domain::TrackAnalysis TrackAnalysisCache::rekordboxAnalysis(const std::string &p
         }
         return rb::readTrackAnalysis(pioneerRoot, trackSourceId, nullptr, pathIndex, /*threeBandOverview=*/true);
     };
+    // Taken before the files are looked at: an analysis read while one
+    // of them was being written may be the old one under the new key.
+    const std::uint64_t writesBefore = infrastructure::analysisFileWriteSerial();
     std::optional<std::string> analyzePath;
     try {
         const auto trackId = static_cast<std::uint32_t>(std::stoul(trackSourceId));
@@ -354,6 +398,7 @@ domain::TrackAnalysis TrackAnalysisCache::rekordboxAnalysis(const std::string &p
                                 .toStdString();
     {
         const std::lock_guard<std::mutex> guard(m_lock);
+        forgetWrittenFiles();
         if (auto kept = lookup(key)) {
             m_counters.hits++;
             return std::move(*kept);
@@ -362,7 +407,8 @@ domain::TrackAnalysis TrackAnalysisCache::rekordboxAnalysis(const std::string &p
     domain::TrackAnalysis analysis = readFromStick();
     // Nothing read is not kept: the next ask reads again (a file the
     // stick has not finished writing, a read that failed).
-    if (!analysis.waveform.empty() || !analysis.beats.empty()) {
+    if ((!analysis.waveform.empty() || !analysis.beats.empty())
+        && infrastructure::analysisFileWriteSerial() == writesBefore) {
         const std::string value = serialise(analysis);
         const std::lock_guard<std::mutex> guard(m_lock);
         store(key, value);

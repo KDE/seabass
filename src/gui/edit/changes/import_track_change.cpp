@@ -494,7 +494,9 @@ std::vector<BackupTarget> ImportTrackChange::filesToBackup(SaveContext &) const
     }
     // The analysis ledger, which the save adds this track to.
     if (m_analysis && m_analysis->provenance) {
-        targets.push_back(analysisLedgerBackupTarget(ledgerStickRoot(), Label));
+        if (auto ledger = analysisLedgerBackupTarget(ledgerStickRoot(), Label)) {
+            targets.push_back(*ledger);
+        }
     }
     return targets;
 }

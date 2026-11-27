@@ -722,7 +722,45 @@ int main(int argc, char **argv)
             {
                 std::string refusal;
                 check("comment: " + std::to_string(w.setTrackComment(ids[14], "short", &refusal)) + refusal);
+                // Master's comment edit (#108) rebuilds the row: written over
+                // itself where it fits, moved (the old row deleted, the new
+                // one on the same page or the table's last) where it does not.
+                check("comment grown in place: " + std::to_string(w.setTrackComment(ids[14], "a little longer", &refusal))
+                      + refusal);
+                check("comment moved: " + std::to_string(w.setTrackComment(ids[17], std::string(300, 'c'), &refusal))
+                      + refusal);
+                check("comment moved again: "
+                      + std::to_string(w.setTrackComment(ids[17], std::string(900, 'd'), &refusal)) + refusal);
+                check("comment refused: "
+                      + std::to_string(w.setTrackComment(ids[18], std::string(70000, 'e'), &refusal)) + refusal);
+                check("comment on no row: " + std::to_string(w.setTrackComment(999999, "none", &refusal)));
             }
+            check("a moved row found by its file: "
+                  + std::to_string(w.trackIdsWithFilePath(trackNumber(17).pathOnStick).size()));
+            {
+                const auto kept = w.trackTempoAndKeyId(ids[5]);
+                assert(kept);
+                check("tempo and key id put back: " + std::to_string(w.setTrackTempoAndKeyId(ids[19], *kept)));
+            }
+            check("artist renamed in place: " + std::to_string(w.overwriteArtistName(1, "Someone Else")));
+            check("playlist renamed in place: " + std::to_string(w.overwritePlaylistName(playlist, "Held In Place")));
+            check("albums renamed: "
+                  + std::to_string(w.overwriteAllNames(PdbRowWriter::NameTable::Albums,
+                                                        [](size_t index) { return "A" + std::to_string(index); }, &left)));
+            check("labels renamed: "
+                  + std::to_string(w.overwriteAllNames(PdbRowWriter::NameTable::Labels,
+                                                        [](size_t index) { return "L" + std::to_string(index); }, &left)));
+            check("playlists renamed: "
+                  + std::to_string(w.overwriteAllNames(PdbRowWriter::NameTable::Playlists,
+                                                        [](size_t index) { return "Q" + std::to_string(index); }, &left)));
+            check("tags refused on export.pdb: "
+                  + std::to_string(w.overwriteAllTagNames([](size_t index) { return "T" + std::to_string(index); }, &left)));
+            for (int i = 100; i < 105; ++i) {
+                add(trackNumber(i));  // their albums and labels by the old names: new rows
+            }
+            w.endEdit();
+            check("an edit closed, as a save's change closes it");
+            add(trackNumber(105));
             check("extra: " + std::to_string(w.overwriteTrackExtraText(ids[16], {"", "", "", ""})));
             for (int i = 70; i < 80; ++i) {
                 add(trackNumber(i));

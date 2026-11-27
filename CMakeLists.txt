@@ -2123,6 +2123,14 @@ add_executable(no_plain_dialogs_test tests/no_plain_dialogs_test.cpp)
 target_compile_definitions(no_plain_dialogs_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_plain_dialogs_test COMMAND no_plain_dialogs_test)
 
+# Every writer of a file in src/ either cannot write an analysis file or
+# tells TrackAnalysisCache it did (noteAnalysisFileWritten()): a writer
+# that is not listed fails it.
+add_executable(analysis_file_writers_test tests/analysis_file_writers_test.cpp)
+target_include_directories(analysis_file_writers_test PRIVATE src)
+target_compile_definitions(analysis_file_writers_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME analysis_file_writers_test COMMAND analysis_file_writers_test)
+
 add_executable(no_raw_icon_toolbuttons_test tests/no_raw_icon_toolbuttons_test.cpp)
 target_compile_definitions(no_raw_icon_toolbuttons_test PRIVATE SEABASS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME no_raw_icon_toolbuttons_test COMMAND no_raw_icon_toolbuttons_test)

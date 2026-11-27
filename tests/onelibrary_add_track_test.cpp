@@ -41,7 +41,7 @@ std::vector<std::vector<std::string>> query(const std::string &dbFile, const std
 {
     SqlCipherLibrary lib;
     SqlCipherDb db(lib, dbFile, true);
-    db.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+    db.exec(oneLibraryKeyPragma(dbFile));
     SqlCipherStatement statement(db, sql);
     std::vector<std::vector<std::string>> rows;
     while (statement.step()) {
@@ -424,7 +424,7 @@ int main(int argc, char **argv)
         {
             SqlCipherLibrary lib;
             SqlCipherDb raw(lib, otherDb, false);
-            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec(oneLibraryKeyPragma(otherDb));
             raw.exec(change);
         }
         OneLibraryCueWriter strange(pathToUtf8(other / "PIONEER"));
@@ -446,7 +446,7 @@ int main(int argc, char **argv)
         {
             SqlCipherLibrary lib;
             SqlCipherDb raw(lib, otherDb, false);
-            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec(oneLibraryKeyPragma(otherDb));
             raw.exec(change);
         }
         OneLibraryCueWriter strange(pathToUtf8(other / "PIONEER"));
@@ -469,7 +469,7 @@ int main(int argc, char **argv)
         {
             SqlCipherLibrary lib;
             SqlCipherDb raw(lib, brokenDb, false);
-            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec(oneLibraryKeyPragma(brokenDb));
             raw.exec("CREATE TRIGGER refuse BEFORE INSERT ON content BEGIN SELECT RAISE(ABORT, 'refused'); END;");
         }
         OneLibraryCueWriter half(pathToUtf8(broken / "PIONEER"));
@@ -503,7 +503,7 @@ int main(int argc, char **argv)
             {
                 SqlCipherLibrary lib;
                 SqlCipherDb raw(lib, otherDb, false);
-                raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+                raw.exec(oneLibraryKeyPragma(otherDb));
                 raw.exec(leftover);
             }
             OneLibraryCueWriter after(pathToUtf8(other / "PIONEER"));
@@ -530,7 +530,7 @@ int main(int argc, char **argv)
         {
             SqlCipherLibrary lib;
             SqlCipherDb raw(lib, otherDb, false);
-            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec(oneLibraryKeyPragma(otherDb));
             raw.exec("UPDATE content SET path = '/Contents/AN ARTIST/An Album/01 Tagged.flac' WHERE content_id = 1;");
             raw.exec("UPDATE content SET path = '/Contents/an artist/An Album/01 Tagged.flac' WHERE content_id = 2;");
         }
@@ -552,7 +552,7 @@ int main(int argc, char **argv)
         {
             SqlCipherLibrary lib;
             SqlCipherDb raw(lib, otherDb, false);
-            raw.exec("PRAGMA key = '" + deriveOneLibraryKey() + "';");
+            raw.exec(oneLibraryKeyPragma(otherDb));
             raw.exec("CREATE TRIGGER rewrite AFTER INSERT ON content BEGIN "
                      "UPDATE content SET fileSize = 1 WHERE content_id = NEW.content_id; END;");
         }

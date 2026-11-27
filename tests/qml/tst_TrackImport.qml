@@ -1160,6 +1160,85 @@ TestCase {
         menu.close();
     }
 
+    // Browse's track search and playlist filter (#106) over a staged
+    // batch: a staged row is shown when it matches the search and hidden
+    // when it does not, as the stick's rows are; the list counts what it
+    // shows, the playlist's count in the sidebar stays the playlist's;
+    // "Don't import" takes back a row found by the search; the playlist
+    // filter narrows the sidebar alone and leaves the batch in the list.
+    function test_aStagedRowUnderTheSearchAndTheFilter() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        const search = findChild(page, "searchField");
+        const playlistFilter = findChild(page, "playlistFilterField");
+        verify(search !== null && playlistFilter !== null);
+        page.selectPlaylist(1, "Held Playlist");
+        stageTwoIntoHeld(fake);
+        tryCompare(list, "count", 6);
+
+        // By its title: that staged row alone.
+        search.text = "new two";
+        tryCompare(list, "count", 1);
+        compare(titles(page), "New Two");
+        const tracks = findChild(page, "scanController").tracks;
+        compare(tracks.trackCount(), list.count, "the list counts what it shows");
+        compare(tracks.trackAt(0).pendingImport, true);
+        compare(tracks.trackAt(0).importChangeId, testCase.newTwoId);
+        compare(findChild(sidebarRow(page, "Held Playlist"), "playlistRowCount").text, "4 (6)",
+                "the playlist's count is the playlist's, not the search's");
+        // "Don't import" on the row the search found.
+        verify(waitForPolish(page.Window.window), "the rows are laid out");
+        const row = list.itemAtIndex(0);
+        verify(row !== null && row.pendingImport === true);
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(row, row);
+        tryCompare(menu, "opened", true);
+        const dontImport = findChild(page, "dontImportItem");
+        compare(dontImport.visible, true);
+        compare(dontImport.text, "Don't import");
+        dontImport.triggered();
+        compare(JSON.stringify(fake.calls), JSON.stringify([["dropTrack", testCase.newTwoId]]));
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        // By the artist both new rows have: both, in their staged places.
+        search.text = "newcomer";
+        tryCompare(list, "count", 2);
+        compare(titles(page), "New One|New Two");
+        // By a title of the stick's: no staged row.
+        search.text = "held track 1001";
+        tryCompare(list, "count", 1);
+        compare(titles(page), "Held Track 1001");
+        compare(tracks.trackAt(0).pendingImport, false);
+        // Nothing matches: the list says so, in this playlist.
+        search.text = "nothing is called this";
+        tryCompare(list, "count", 0);
+        const empty = findChild(page, "trackListEmptyState");
+        tryCompare(empty, "visible", true);
+        compare(empty.text, "No tracks in this playlist match.");
+        search.text = "";
+        tryCompare(list, "count", 6);
+
+        // The playlist filter narrows the sidebar, not the tracks.
+        playlistFilter.text = "held";
+        tryVerify(() => sidebarRow(page, "Held Playlist") !== null);
+        compare(findChild(sidebarRow(page, "Held Playlist"), "playlistRowCount").text, "4 (6)");
+        playlistFilter.text = "zzz";
+        tryVerify(() => sidebarRow(page, "Held Playlist") === null);
+        compare(list.count, 6, "the batch stays in the list the filter does not narrow");
+        playlistFilter.text = "";
+
+        // Under "All tracks" the search finds the new rows at the end.
+        page.selectPlaylist(0, "");
+        search.text = "new";
+        tryCompare(list, "count", 2);
+        compare(titles(page), "New One|New Two");
+        compare(findChild(sidebarRow(page, "All tracks"), "playlistRowCount").text, "4 (6)");
+        search.text = "";
+        tryCompare(list, "count", 6);
+    }
+
     // Into a playlist the save makes: a track of the stick's shows as an
     // add does, and the last row's "Don't import" says the playlist goes
     // with it.

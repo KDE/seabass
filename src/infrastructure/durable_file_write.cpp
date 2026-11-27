@@ -10,10 +10,14 @@
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/work_counters.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <mutex>
 #include <sstream>
 #include <system_error>
 
@@ -253,6 +257,9 @@ bool writeFileDurablyAtomic(const std::string &path, const std::string &data)
         return false;
     }
     fsyncDirectoryContaining(path);
+    if (isAnalysisFilePath(path)) {
+        noteAnalysisFileWritten(path);
+    }
     return true;
 }
 
@@ -317,6 +324,64 @@ bool flushFilesystemOf(const std::string &path)
     ::close(fd);
     return ok;
 #endif
+}
+
+namespace
+{
+
+// Every analysis file noted, in order. A few thousand paths in a long
+// session at most (one per file Analyse again or an import writes), so
+// kept whole: a reader that asks late still sees every write.
+struct AnalysisFileWrites
+{
+    std::mutex lock;
+    std::vector<std::string> paths;
+    std::atomic<std::uint64_t> serial{0};
+};
+
+AnalysisFileWrites &analysisFileWrites()
+{
+    static AnalysisFileWrites writes;
+    return writes;
+}
+
+}  // namespace
+
+bool isAnalysisFilePath(const std::string &path)
+{
+    if (path.size() < 4) {
+        return false;
+    }
+    std::string extension = path.substr(path.size() - 4);
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return extension == ".DAT" || extension == ".EXT" || extension == ".2EX";
+}
+
+void noteAnalysisFileWritten(const std::string &path)
+{
+    AnalysisFileWrites &writes = analysisFileWrites();
+    const std::lock_guard<std::mutex> guard(writes.lock);
+    writes.paths.push_back(path);
+    writes.serial.store(writes.paths.size());
+}
+
+std::uint64_t analysisFileWriteSerial()
+{
+    return analysisFileWrites().serial.load();
+}
+
+std::vector<std::string> analysisFilesWrittenSince(std::uint64_t serial, std::uint64_t *serialNow)
+{
+    AnalysisFileWrites &writes = analysisFileWrites();
+    const std::lock_guard<std::mutex> guard(writes.lock);
+    if (serialNow != nullptr) {
+        *serialNow = writes.paths.size();
+    }
+    if (serial >= writes.paths.size()) {
+        return {};
+    }
+    return {writes.paths.begin() + static_cast<std::ptrdiff_t>(serial), writes.paths.end()};
 }
 
 }  // namespace seabass::infrastructure

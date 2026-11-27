@@ -373,12 +373,21 @@ SaveLoopResult runSaveLoop(const std::vector<std::shared_ptr<PendingChange>> &ch
             // the change is skipped whole, the rest of its unit with it,
             // and the rest of the save lands. Unless part of its unit has
             // landed already: that part cannot be taken back alone, so the
-            // save fails and goes back whole, as before.
+            // save fails and goes back whole, as before. So does a change
+            // that shares the held writes: its rows are in the save's one
+            // export.pdb buffer with the others', where rolling the change
+            // back does not reach them, and the next landing would write
+            // them.
             if (sharesAKey(change->unitKeys(), landedKeys)) {
                 outcome = ChangeOutcome::failure(
                     QString::fromStdString(e.what())
                     + QStringLiteral(". Other parts of the same change had been written already, so the save "
                                      "puts everything back."));
+            } else if (change->sharesHeldWrites()) {
+                outcome = ChangeOutcome::failure(
+                    QString::fromStdString(e.what())
+                    + QStringLiteral(". Its rows for export.pdb are held with the rest of the save's and cannot be "
+                                     "taken back alone, so the save puts everything back."));
             } else {
                 const std::optional<QString> undoError = ctx.rollBackChange(true);
                 if (undoError) {

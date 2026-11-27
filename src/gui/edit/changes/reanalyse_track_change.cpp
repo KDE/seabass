@@ -262,7 +262,9 @@ std::vector<BackupTarget> ReanalyseTrackChange::filesToBackup(SaveContext &) con
     }
     // The analysis ledger, which the save adds this track's analysis to.
     if (m_analysis && m_analysis->provenance) {
-        targets.push_back(analysisLedgerBackupTarget(ledgerStickRoot(), Label));
+        if (auto ledger = analysisLedgerBackupTarget(ledgerStickRoot(), Label)) {
+            targets.push_back(*ledger);
+        }
     }
     return targets;
 }

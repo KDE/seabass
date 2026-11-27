@@ -33,8 +33,11 @@ class SaveContext;
 // takes away the first.
 
 // The ledger's file on the stick at `stickRoot`, to be backed up before a
-// save that may write it.
-BackupTarget analysisLedgerBackupTarget(const std::string &stickRoot, const std::string &label);
+// save that may write it. None when something that is not a file is at
+// its path (a folder): a save refuses a change that declares such a path
+// (#141), and the ledger never costs a save; the record after the commit
+// then leaves that path as it is and says so.
+std::optional<BackupTarget> analysisLedgerBackupTarget(const std::string &stickRoot, const std::string &label);
 
 // The ledger's key for an audio file under `stickRoot` (its stick-relative
 // path through application::normalizedPathKey), as Beat Grids keys its

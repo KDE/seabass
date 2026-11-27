@@ -219,7 +219,7 @@ int main(int argc, char **argv)
             assert(t->sourceId == std::to_string(change->oneLibraryId()));
             infrastructure::onelibrary::SqlCipherLibrary lib;
             infrastructure::onelibrary::SqlCipherDb raw(lib, pathToUtf8(stick.pioneer / "rekordbox" / "exportLibrary.db"), true);
-            raw.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+            raw.exec(infrastructure::onelibrary::oneLibraryKeyPragma(pathToUtf8(stick.pioneer / "rekordbox" / "exportLibrary.db")));
             infrastructure::onelibrary::SqlCipherStatement size(raw, "SELECT fileSize FROM content WHERE content_id = ?");
             size.bindInt64(1, change->oneLibraryId());
             assert(size.step() && size.columnInt64(0) == static_cast<int64_t>(sourceBytes.size()));
@@ -259,7 +259,7 @@ int main(int argc, char **argv)
             infrastructure::onelibrary::SqlCipherLibrary lib;
             infrastructure::onelibrary::SqlCipherDb raw(
                 lib, pathToUtf8(stick.pioneer / "rekordbox" / "exportLibrary.db"), false);
-            raw.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+            raw.exec(infrastructure::onelibrary::oneLibraryKeyPragma(pathToUtf8(stick.pioneer / "rekordbox" / "exportLibrary.db")));
             raw.exec("ALTER TABLE content ADD COLUMN somethingNew integer;");
         }
         const fs::path pdb = stick.pioneer / "rekordbox" / "export.pdb";

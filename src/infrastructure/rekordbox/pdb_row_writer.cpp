@@ -1702,11 +1702,17 @@ bool PdbRowWriter::setTrackComment(uint32_t trackId, const std::string &comment,
     const auto editedBefore = m_editedPageIndices;
     const auto appendedBefore = m_appendedPages;
     const auto deletedBefore = m_deletedRowsByPage;
+    const auto rowsAddedBefore = m_rowsAdded;
     const auto undo = [&] {
         m_buffer = bufferBefore;
         m_editedPageIndices = editedBefore;
         m_appendedPages = appendedBefore;
         m_deletedRowsByPage = deletedBefore;
+        // The moved row is not one commit() is to look for, and what the
+        // index learnt of the move (the old row gone, the new one added)
+        // is read afresh when next asked.
+        m_rowsAdded = rowsAddedBefore;
+        dropIndex(TracksTableType);
     };
 
     const size_t lenPage = readU32LE(m_buffer, HeaderLenPageOffset);

@@ -54,8 +54,13 @@ std::string ledgerFileOf(const std::string &stickRoot)
 
 }  // namespace
 
-BackupTarget analysisLedgerBackupTarget(const std::string &stickRoot, const std::string &label)
+std::optional<BackupTarget> analysisLedgerBackupTarget(const std::string &stickRoot, const std::string &label)
 {
+    std::error_code ec;
+    const fs::file_status status = fs::symlink_status(pathFromUtf8(ledgerFileOf(stickRoot)), ec);
+    if (status.type() != fs::file_type::not_found && status.type() != fs::file_type::regular) {
+        return std::nullopt;
+    }
     BackupTarget target;
     target.file = ledgerFileOf(stickRoot);
     target.label = label;

@@ -20,8 +20,10 @@
 
 #include "domain/waveform.hpp"
 #include "gui/track_analysis_cache.hpp"
+#include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 #include "infrastructure/rekordbox/anlz_byte_source.hpp"
+#include "infrastructure/rekordbox/anlz_file.hpp"
 #include "infrastructure/rekordbox/anlz_path_index.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/rekordbox/rekordbox_waveform_reader.hpp"
@@ -219,6 +221,98 @@ int main(int argc, char **argv)
                             seabass::infrastructure::rekordbox::readTrackAnalysis(root, id, nullptr, &index, true)));
         assert(none.rekordboxAnalysis(root, "not a number", &index).waveform.empty());
         std::cout << "case 5 (without a database the stick is read as before) OK\n";
+    }
+
+    // ---- 6. Seabass's own rewrite of the same size, in the same step ----
+    // FAT keeps a file's time to two seconds: Analyse again rewriting a
+    // grid in place within one step of the last write leaves the size and
+    // the time as they were. Simulated by setting the time back by hand
+    // after each rewrite. Each way an analysis file is written in place:
+    // AnlzFile::writeRaw() (Analyse again, Restore original analysis, the
+    // cue writers), writeFileDurablyAtomic() (the import's built files),
+    // copyFileDurablyAtomic() (a failed save putting its copy back).
+    {
+        namespace rb = seabass::infrastructure::rekordbox;
+        const std::string datPath = seabass::pathToUtf8(dat);
+        // The first beat's time moved by `shiftMs`, nothing else: the same
+        // size. PQTZ: a 24-byte header, then eight bytes a beat, the time
+        // (u32, big-endian) in the last four.
+        const auto shiftedGrid = [&](std::uint32_t shiftMs) {
+            rb::AnlzFile file = rb::AnlzFile::readRaw(datPath);
+            bool shifted = false;
+            for (auto &section : file.sections) {
+                if (section.rawBytes.compare(0, 4, "PQTZ") == 0 && section.rawBytes.size() >= 32) {
+                    std::string &b = section.rawBytes;
+                    std::uint32_t time = 0;
+                    for (int i = 0; i < 4; ++i) {
+                        time = (time << 8) | static_cast<unsigned char>(b[28 + i]);
+                    }
+                    time += shiftMs;
+                    for (int i = 0; i < 4; ++i) {
+                        b[28 + i] = static_cast<char>((time >> (8 * (3 - i))) & 0xFF);
+                    }
+                    shifted = true;
+                }
+            }
+            assert(shifted && "the fixture's .DAT has a grid");
+            return file;
+        };
+        const auto stamp = [&] { return std::make_pair(fs::file_size(dat), fs::last_write_time(dat)); };
+        const auto putTimeBack = [&](const std::pair<std::uintmax_t, fs::file_time_type> &before) {
+            fs::last_write_time(dat, before.second);
+            assert(stamp() == before && "the same size and time as before the rewrite");
+        };
+
+        TrackAnalysisCache cache(dbFile);
+        const auto before = cache.rekordboxAnalysis(root, id, &index);
+        assert(cache.rekordboxAnalysis(root, id, &index).beats.front().timeMs == before.beats.front().timeMs);
+        const int readsBefore = cache.counters().reads;
+        assert(cache.counters().hits >= 1 && "kept");
+
+        // writeRaw(), as Analyse again writes the grid.
+        {
+            const auto was = stamp();
+            const rb::AnlzFile moved = shiftedGrid(5);
+            moved.writeRaw(datPath);
+            putTimeBack(was);
+            const auto after = cache.rekordboxAnalysis(root, id, &index);
+            assert(cache.counters().reads == readsBefore + 1 && "read again");
+            assert(after.beats.front().timeMs == before.beats.front().timeMs + 5 && "the new grid, not the kept one");
+        }
+        // writeFileDurablyAtomic(), as the import writes its built files.
+        {
+            const auto was = stamp();
+            assert(seabass::infrastructure::writeFileDurablyAtomic(datPath, shiftedGrid(5).toBytes()));
+            putTimeBack(was);
+            const auto after = cache.rekordboxAnalysis(root, id, &index);
+            assert(after.beats.front().timeMs == before.beats.front().timeMs + 10);
+        }
+        // copyFileDurablyAtomic(), as a rollback puts the copy it took back.
+        {
+            const fs::path copy = scratch / "taken-before.DAT";
+            fs::copy_file(dat, copy);
+            assert(seabass::infrastructure::writeFileDurablyAtomic(datPath, shiftedGrid(5).toBytes()));
+            const auto was = stamp();
+            assert(cache.rekordboxAnalysis(root, id, &index).beats.front().timeMs == before.beats.front().timeMs + 15);
+            assert(seabass::infrastructure::copyFileDurablyAtomic(seabass::pathToUtf8(copy), datPath));
+            putTimeBack(was);
+            const auto after = cache.rekordboxAnalysis(root, id, &index);
+            assert(after.beats.front().timeMs == before.beats.front().timeMs + 10 && "the grid put back");
+        }
+        // A cache made after the write (the app's is made at its first
+        // use) forgets it too: its entry was kept by a cache before it.
+        {
+            TrackAnalysisCache earlier(dbFile);
+            const auto kept = earlier.rekordboxAnalysis(root, id, &index);
+            const auto was = stamp();
+            assert(seabass::infrastructure::writeFileDurablyAtomic(datPath, shiftedGrid(5).toBytes()));
+            putTimeBack(was);
+            TrackAnalysisCache later(dbFile);
+            const auto after = later.rekordboxAnalysis(root, id, &index);
+            assert(later.counters().reads == 1 && later.counters().hits == 0);
+            assert(after.beats.front().timeMs == kept.beats.front().timeMs + 5);
+        }
+        std::cout << "case 6 (a rewrite of the same size and time by any of Seabass's writers is read again) OK\n";
     }
 
     fs::remove_all(scratch);

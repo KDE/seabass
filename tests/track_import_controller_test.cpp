@@ -2037,7 +2037,7 @@ int main(int argc, char **argv)
                 infrastructure::onelibrary::SqlCipherLibrary lib;
                 infrastructure::onelibrary::SqlCipherDb raw(lib, pathToUtf8(stick.pioneer / "rekordbox" / "exportLibrary.db"),
                                                            false);
-                raw.exec("PRAGMA key = '" + infrastructure::onelibrary::deriveOneLibraryKey() + "';");
+                raw.exec(infrastructure::onelibrary::oneLibraryKeyPragma(pathToUtf8(stick.pioneer / "rekordbox" / "exportLibrary.db")));
                 raw.exec("UPDATE content SET analysisDataFilePath = '" + ownDat + "' WHERE content_id = " + one.sourceId
                          + ";");
             }

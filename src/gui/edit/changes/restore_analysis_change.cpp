@@ -309,7 +309,9 @@ std::vector<BackupTarget> RestoreAnalysisChange::filesToBackup(SaveContext &) co
         }
         targets.push_back({beatGridLedgerFileOf(stickRoot), Label, true});
     }
-    targets.push_back(analysisLedgerBackupTarget(stickRoot, Label));
+    if (auto ledger = analysisLedgerBackupTarget(stickRoot, Label)) {
+        targets.push_back(*ledger);
+    }
     return targets;
 }
 

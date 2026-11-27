@@ -36,11 +36,19 @@ namespace seabass::gui
 // every change of sticks. Analysis files change only when rekordbox
 // exports again or Seabass writes them, so they are worth keeping.
 //
-// Keyed by content, never by the track's id or its file's name alone: the
-// key is the .DAT's path with its size and modification time, and the
-// .2EX's size and time (or that there is none). Any rewrite of either
-// changes the key, so a stale entry is never found, only evicted. Two
-// `stat`s a row on a hit.
+// Keyed by the files, never by the track's id or its file's name alone:
+// the key is the .DAT's path with its size and modification time, and the
+// .2EX's size and time (or that there is none). Two `stat`s a row on a
+// hit. A rewrite by anyone else changes the key, so a stale entry is never
+// found, only evicted. A rewrite by Seabass may not: FAT keeps a file's
+// time to two seconds, and Analyse again, Restore original analysis, an
+// import and the cue writers rewrite an analysis file in place, often at
+// the same size, within a step of the last write. So every entry of a
+// track folder this process has written an analysis file in since (infra-
+// structure::noteAnalysisFileWritten(), which every such write goes
+// through) is dropped before the next lookup, and an analysis read while
+// one was written is not kept. Hashing the files instead would cost the
+// very read the cache saves.
 //
 // One SQLite file next to the cover cache (defaultDatabaseFile()), in WAL
 // mode, capped (about 64 MB, a few thousand tracks a stick), least
@@ -97,12 +105,16 @@ private:
     std::optional<domain::TrackAnalysis> lookup(const std::string &key);
     void store(const std::string &key, const std::string &value);
     void evictIfNeeded();
+    void forgetWrittenFiles();
 
     QString m_file;
     std::int64_t m_cap = DefaultCapBytes;
     std::int64_t m_storedBytes = 0;
     sqlite3 *m_db = nullptr;
     Counters m_counters;
+    // The analysis file writes (infrastructure::analysisFileWriteSerial())
+    // whose entries are gone.
+    std::uint64_t m_writesSeen = 0;
     mutable std::mutex m_lock;
 };
 

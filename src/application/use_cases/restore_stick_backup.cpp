@@ -586,6 +586,12 @@ std::string writeEntry(const Zip64Reader &reader, const PlannedEntry &planned, c
             fs::remove(longPathSafe(temp), ec);
             return "could not place " + entry.name + ": " + ec.message();
         }
+        // Placed by rename, not through writeFileDurablyAtomic(), and with
+        // the time the backup recorded: an analysis kept on the computer
+        // could not tell it from the file it replaces.
+        if (infrastructure::isAnalysisFilePath(pathToUtf8(destination))) {
+            infrastructure::noteAnalysisFileWritten(pathToUtf8(destination));
+        }
         if (placedIn != nullptr) {
             placedIn->insert(destination.parent_path());
         }
