@@ -92,6 +92,27 @@ int main()
         std::cout << "case 2 (loops: the length kept, or each end onto its own beat) OK\n";
     }
 
+    // 2b. Short loops, which have no beat of their own to end on: an
+    //     eighth of a beat starting on the beat is not listed at all (its
+    //     end is no cue point off a beat), and one starting 6 ms late moves
+    //     as a whole. Neither is ever closed up. A loop of a whole beat
+    //     less a few ms does end on a beat of its own.
+    {
+        const std::vector<CuePoint> cues = {cue(1100.0, 1162.5), cue(2106.0, 2121.0), cue(3100.0, 3594.0)};
+        const CueBeatAlignment a = measureCuesAgainstBeats(cues, beats);
+        assert(a.points.size() == 4 && "only the third loop's end is measured");
+        assert(a.points[3].loopEnd && a.points[3].cueIndex == 2 && near(a.points[3].offMs, -6.0));
+        assert(offBeatWithin(a, 100.0).size() == 2 && "the late start and the near-whole-beat end");
+        const std::vector<CuePoint> aligned = cuesAlignedToBeats(cues, a, 100.0);
+        assert(near(aligned[0].positionMs, 1100.0) && near(aligned[0].loopEndMs, 1162.5) && "untouched");
+        assert(near(aligned[1].positionMs, 2100.0) && near(aligned[1].loopEndMs, 2115.0) && "moved whole, 15 ms long still");
+        assert(near(aligned[2].positionMs, 3100.0) && near(aligned[2].loopEndMs, 3600.0));
+        for (const CuePoint &c : aligned) {
+            assert(c.loopEndMs > c.positionMs && "no loop is closed up");
+        }
+        std::cout << "case 2b (short loops keep their length and are never closed up) OK\n";
+    }
+
     // 3. Every cue 26 ms late, as against a grid that is itself shifted:
     //    said, so nobody moves them all off the music. One of them on the
     //    beat among others off by different amounts: not said.

@@ -147,6 +147,18 @@ std::shared_ptr<const CueAlignmentScan> scanCueAlignment(const QString &rekordbo
             if (domain::offBeatWithin(measured.alignment, CueAlignmentController::MaximumToleranceMs).empty()) {
                 continue;
             }
+            if (std::abs(measured.gridShiftMs) > domain::CueOnBeatWithinMs) {
+                int off = 0;
+                bool all = true;
+                for (const domain::CueBeatDistance &point : measured.alignment.points) {
+                    if (point.loopEnd || std::abs(point.offMs) <= domain::CueOnBeatWithinMs) {
+                        continue;
+                    }
+                    ++off;
+                    all = all && std::abs(std::abs(point.offMs) - std::abs(measured.gridShiftMs)) <= 2.5;
+                }
+                measured.offByLibraryOffset = off > 0 && all;
+            }
             measured.key = junkKeyFor(track);
             measured.path = path;
             measured.track = track;
@@ -202,7 +214,9 @@ QVariant CueAlignmentListModel::data(const QModelIndex &index, int role) const
     case DetailRole:
         return row.detail;
     case SameOffsetRole:
-        return measured.alignment.sameOffset;
+        return measured.held();
+    case LibraryOffsetRole:
+        return measured.offByLibraryOffset;
     case TickedRole:
         return row.ticked;
     case StagedRole:
@@ -217,7 +231,7 @@ QHash<int, QByteArray> CueAlignmentListModel::roleNames() const
         {KeyRole, "key"},         {FormatRole, "format"},         {TitleRole, "title"},
         {ArtistRole, "artist"},   {OffCountRole, "offCount"},     {LargestOffMsRole, "largestOffMs"},
         {DetailRole, "detail"},   {SameOffsetRole, "sameOffset"}, {TickedRole, "ticked"},
-        {StagedRole, "staged"},
+        {StagedRole, "staged"},   {LibraryOffsetRole, "libraryOffset"},
     };
 }
 
@@ -323,7 +337,7 @@ void CueAlignmentController::relist()
                              .arg(point.offMs > 0 ? QStringLiteral("late") : QStringLiteral("early"));
             }
             row.detail = parts.join(QStringLiteral(", "));
-            row.ticked = !measured.alignment.sameOffset && m_ticked.contains(measured.key);
+            row.ticked = !measured.held() && m_ticked.contains(measured.key);
             row.staged = m_staged.contains(measured.key);
             listed.insert(measured.key);
             rows.push_back(std::move(row));
@@ -347,7 +361,7 @@ int CueAlignmentController::cuePointCount() const
 int CueAlignmentController::tickableCount() const
 {
     return static_cast<int>(std::count_if(m_model.rows().begin(), m_model.rows().end(), [this](const auto &row) {
-        return !m_model.trackOf(row).alignment.sameOffset;
+        return !m_model.trackOf(row).held();
     }));
 }
 
@@ -397,7 +411,7 @@ void CueAlignmentController::setTicked(int row, bool ticked)
         return;
     }
     const MeasuredTrack &measured = m_model.trackOf(m_model.rows()[static_cast<std::size_t>(row)]);
-    if (measured.alignment.sameOffset) {
+    if (measured.held()) {
         return;
     }
     if (ticked) {
@@ -416,7 +430,7 @@ void CueAlignmentController::tickAll(bool ticked)
     }
     for (int i = 0; i < m_model.count(); ++i) {
         const MeasuredTrack &measured = m_model.trackOf(m_model.rows()[static_cast<std::size_t>(i)]);
-        if (measured.alignment.sameOffset) {
+        if (measured.held()) {
             continue;
         }
         if (ticked) {
@@ -488,7 +502,7 @@ void CueAlignmentController::stage()
     for (int i = 0; i < m_model.count(); ++i) {
         const CueAlignmentListModel::Row &row = m_model.rows()[static_cast<std::size_t>(i)];
         const MeasuredTrack &measured = m_model.trackOf(row);
-        if (!row.ticked || row.staged || measured.alignment.sameOffset) {
+        if (!row.ticked || row.staged || measured.held()) {
             continue;
         }
         // Aligned on the grid's own timeline, where they were measured,

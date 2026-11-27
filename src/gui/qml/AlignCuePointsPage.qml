@@ -204,6 +204,7 @@ Page {
                 required property int largestOffMs
                 required property string detail
                 required property bool sameOffset
+                required property bool libraryOffset
                 required property bool ticked
                 required property bool staged
                 objectName: "alignRow_" + key
@@ -228,7 +229,10 @@ Page {
                             && !root.controller.writing
                         checked: alignRow.ticked
                         ToolTip.visible: hovered
-                        ToolTip.text: alignRow.sameOffset
+                        ToolTip.text: alignRow.libraryOffset
+                            ? "Off by exactly what this MP3 sits apart in rekordbox and in Engine: one library holds "
+                              + "the other's number. Sync Cue Points puts that right; the nearest beat would not."
+                            : alignRow.sameOffset
                             ? "Every cue point of this track is off by the same amount: its beat grid is more likely "
                               + "shifted than its cue points misplaced, so they are not moved."
                             : alignRow.staged ? "Staged: press Align to write it."
@@ -254,12 +258,16 @@ Page {
                             }
                             StatusBadge {
                                 objectName: "rowState"
-                                label: alignRow.sameOffset ? "All off by " + alignRow.largestOffMs + " ms"
+                                label: alignRow.libraryOffset ? "Off by the MP3's offset, " + alignRow.largestOffMs + " ms"
+                                    : alignRow.sameOffset ? "All off by " + alignRow.largestOffMs + " ms"
                                     : alignRow.staged ? "Staged"
                                     : root.plural(alignRow.offCount, "cue point", "cue points") + ", up to "
                                       + alignRow.largestOffMs + " ms"
                                 badgeColor: alignRow.sameOffset ? Theme.warnText : alignRow.staged ? Theme.good : Theme.textMuted
-                                tooltipText: alignRow.sameOffset
+                                tooltipText: alignRow.libraryOffset
+                                    ? "One library holds the other's number for this cue point. Sync Cue Points "
+                                      + "finds which and puts it right."
+                                    : alignRow.sameOffset
                                     ? "The beat grid looks shifted. Analysing the track again, or copying rekordbox's "
                                       + "beat grid, is the way to put that right."
                                     : alignRow.detail

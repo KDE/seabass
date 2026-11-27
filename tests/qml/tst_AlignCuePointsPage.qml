@@ -109,6 +109,18 @@ TestCase {
         compare(listed["rekordbox:102"].detail, "Hot cue B 2 ms late");
         compare(listed["rekordbox:105"].detail, "Hot cue B 3 ms early");
         compare(o.c.cuePointCount, 6);
+        // The three holding rekordbox's number are off by their file's
+        // own offset between the libraries: listed, said so, and not to
+        // be ticked. Which side is wrong is Sync Cue Points' to say.
+        for (const key of ["engine:103", "engine:104", "engine:92"]) {
+            compare(listed[key].libraryOffset, true, key);
+            compare(listed[key].sameOffset, true, key + " cannot be ticked");
+        }
+        compare(listed["engine:107"].libraryOffset, false, "moved by the player, by another amount");
+        compare(o.c.tickableCount, 3);
+        o.c.tickAll(true);
+        compare(o.c.tickedCount, 3);
+        compare(byKey(o.c)["engine:103"].ticked, false);
         verify(o.c.tracksMeasured > 0 && o.c.tracksWithCues >= o.c.tracksMeasured);
     }
 
@@ -130,8 +142,8 @@ TestCase {
         compare(JSON.stringify(Object.keys(byKey(o.c)).sort()),
                 JSON.stringify(["engine:107", "engine:92", "rekordbox:102", "rekordbox:105"]));
         o.c.tickAll(true);
-        compare(o.c.tickedCount, 4);
-        compare(findChild(o.page, "alignSummary").text, "4 cue points off the beat in 4 tracks, 4 ticked");
+        compare(o.c.tickedCount, 3, "not the one off by its MP3's offset");
+        compare(findChild(o.page, "alignSummary").text, "4 cue points off the beat in 4 tracks, 3 ticked");
 
         // By the slider itself, a step at a time.
         slider.forceActiveFocus();
@@ -141,7 +153,7 @@ TestCase {
         o.c.toleranceMs = 27;
         compare(JSON.stringify(Object.keys(byKey(o.c)).sort()), JSON.stringify(["engine:92", "rekordbox:102", "rekordbox:105"]),
                 "the pad 28 ms off is past the tolerance now");
-        compare(o.c.tickedCount, 3, "and no longer ticked");
+        compare(o.c.tickedCount, 2, "and no longer ticked");
         o.c.toleranceMs = 30;
         compare(byKey(o.c)["engine:107"].ticked, false, "listed again, not ticked again");
 
@@ -166,7 +178,7 @@ TestCase {
         compare(stage.enabled, false, "nothing ticked");
         const index = key => rows(o.c).findIndex(row => row.key === key);
         o.c.setTicked(index("rekordbox:102"), true);
-        o.c.setTicked(index("engine:103"), true);
+        o.c.setTicked(index("engine:107"), true);
         compare(o.c.tickedCount, 2);
         compare(stage.text, "Stage Selected");
         mouseClick(stage);
@@ -175,7 +187,7 @@ TestCase {
         compare(stage.text, "Unstage");
         const session = EditSessionRegistry.sessionFor(o.libraryId);
         compare(session.pendingCount, 2);
-        compare(byKey(o.c)["engine:103"].staged, true);
+        compare(byKey(o.c)["engine:107"].staged, true);
         compare(findChild(o.page, "toleranceSlider").enabled, false, "what is staged was staged at this tolerance");
         o.c.toleranceMs = 10;
         compare(o.c.toleranceMs, 100);
@@ -192,8 +204,8 @@ TestCase {
         tryVerify(() => o.c.checked && !o.c.busy && o.c.stagedCount === 0, 120000, "read again after the save");
         tryVerify(() => byKey(o.c)["rekordbox:102"] === undefined, 120000, "rekordbox's pad is on its beat");
         const after = byKey(o.c);
-        verify(after["engine:103"] === undefined, "Engine's pad is on its beat: " + JSON.stringify(after["engine:103"]));
-        for (const key of ["engine:104", "engine:107", "engine:92", "rekordbox:105"]) {
+        verify(after["engine:107"] === undefined, "Engine's pad is on its beat: " + JSON.stringify(after["engine:107"]));
+        for (const key of ["engine:103", "engine:104", "engine:92", "rekordbox:105"]) {
             compare(JSON.stringify(after[key]), JSON.stringify(before[key]), key + " was not ticked and is as it was");
         }
         compare(o.c.tracks.count, 4);

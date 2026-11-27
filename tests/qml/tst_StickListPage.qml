@@ -1215,7 +1215,7 @@ TestCase {
                       "USB Stick Performance"],
             sync: ["Sync Cue Points", "Metadata", "Restore Metadata", "Create Engine Library"],
             backup: ["Full Stick Backup", "Restore Backup", "Manage Backups", "Format USB Stick"],
-            maintain: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+            maintain: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Align Cue Points", "Clean Up Recordings",
                        "Free Up Space", "Library Health"],
         };
         for (const group of page.groupKeys) {

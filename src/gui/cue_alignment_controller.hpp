@@ -40,6 +40,14 @@ struct MeasuredTrack
     // own, so the cues were measured with this taken off.
     double gridShiftMs = 0.0;
     domain::CueBeatAlignment alignment;
+    // Every cue start that is off its beat is off by what this file's
+    // audio sits apart in rekordbox and in Engine (gridShiftMs, to 2.5
+    // ms): the row holds the other library's number, or its grid does.
+    // Which side is wrong is Sync Cue Points' question (its cue offset
+    // repair), not a matter of the nearest beat.
+    bool offByLibraryOffset = false;
+    // Listed, never ticked or staged.
+    bool held() const { return alignment.sameOffset || offByLibraryOffset; }
 };
 
 struct CueAlignmentScan
@@ -72,8 +80,12 @@ public:
         // "Hot cue C 8 ms late, memory cue 12 ms early", for the row.
         DetailRole,
         // Every cue off by one amount: the grid is more likely shifted
-        // than the cues misplaced. Listed, never ticked or staged.
+        // than the cues misplaced. Or off by the file's own offset
+        // between rekordbox and Engine (MeasuredTrack::
+        // offByLibraryOffset, said by LibraryOffsetRole). Listed, never
+        // ticked or staged.
         SameOffsetRole,
+        LibraryOffsetRole,
         TickedRole,
         StagedRole,
     };

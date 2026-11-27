@@ -207,7 +207,7 @@ TestCase {
              advice: {cloneSource: mainCloneSource(true)},
              expected: ["Restore Backup", "Create Backup USB Stick", "Format USB Stick"]},
             {tag: "maintain", group: "maintain", stick: {},
-             expected: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+             expected: ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Align Cue Points", "Clean Up Recordings",
                  "Free Up Space", "Library Health"]},
         ];
     }
@@ -331,7 +331,7 @@ TestCase {
             "explore": ["Device Profile"],
             "sync": ["Sync Cue Points", "Sync after Rekordbox Export", "Beat Grids & Waveforms", "Restore Metadata"],
             "backup": ["Full Stick Backup", "Update Stick", "Restore Backup", "Manage Backups"],
-            "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+            "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Align Cue Points", "Clean Up Recordings",
                  "Free Up Space", "Library Health"],
         };
         const plain = {
@@ -382,7 +382,7 @@ TestCase {
             "explore": ["USB Stick Performance"],
             "sync": ["Sync Cue Points", "Restore Metadata", "Create Engine Library"],
             "backup": [],
-            "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Clean Up Recordings",
+            "maintain": ["Clean Up Duplicates", "Cues on Duplicate Copies", "Clean Up Stray Cues", "Align Cue Points", "Clean Up Recordings",
                  "Free Up Space"],
         };
         for (const group in writers) {
