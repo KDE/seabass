@@ -488,6 +488,44 @@ TestCase {
         compare(o.c.tickedCount, 0);
     }
 
+    // A grid and its waveform go together whatever is ticked above: a
+    // locked row keeps its waveform with Beat Grids unticked too, and says
+    // it is the lock; so does a row rekordbox has no grid for. The box for
+    // locked grids, ticked and then greyed out with Beat Grids, decides
+    // nothing while it cannot be changed.
+    function test_theWaveformStaysWithAKeptGridWithoutBeatGridsToo() {
+        const stick = t73();
+        verify(stickFixture.removeRekordboxBeatGridFile(stick, b04), "B04's grid file is taken off");
+        compare(stickFixture.lockAnalysedEngineBeatGrids(stick), 5, "the 5 analysed rows are locked");
+        const o = openOn(stick);
+        waitSettled(o.c);
+        o.c.replaceEngineEdits = true;
+        waitSettled(o.c);
+        compare(row(o.c, n1).waveformState, "Replaces Engine's", "asked for: the lock is written over");
+        o.c.grids = false;
+        waitSettled(o.c);
+        compare(row(o.c, n1).gridState, "Not chosen");
+        compare(row(o.c, n1).waveformState, "Stays with the grid", "no grid is written, so the lock keeps its waveform");
+        verify(row(o.c, n1).waveformTip.indexOf("is locked on the player") > 0, row(o.c, n1).waveformTip);
+        compare(row(o.c, b04).waveformState, "Stays with the grid", "rekordbox has no grid for it");
+        compare(row(o.c, b01).waveformState, "Left for the player", "not analysed: only completed with both");
+        o.c.replaceEngineEdits = false;
+        o.c.grids = true;
+        waitSettled(o.c);
+        compare(row(o.c, n1).waveformState, "Stays with the grid");
+
+        // Not locked, and no grid in rekordbox: said as that.
+        const plain = t73();
+        verify(stickFixture.removeRekordboxBeatGridFile(plain, b04), "B04's grid file is taken off");
+        const p = openOn(plain);
+        waitSettled(p.c);
+        p.c.grids = false;
+        waitSettled(p.c);
+        compare(row(p.c, b04).waveformState, "Stays with the grid");
+        verify(row(p.c, b04).waveformTip.indexOf("has no counterpart in rekordbox") > 0, row(p.c, b04).waveformTip);
+        compare(row(p.c, n1).waveformState, "Replaces Engine's", "an unlocked, unmoved grid keeps nothing back");
+    }
+
     // What each kind of row reads, in the model and on screen: analysed,
     // not analysed, no beat grid in rekordbox (its .DAT taken off), locked
     // on the player.
@@ -1540,6 +1578,37 @@ TestCase {
                 }
             }
         }
+    }
+
+    // A row's state is blended in when its check comes back, not switched
+    // on, as its waveform is: an option changed puts the rows back to
+    // "Checking", and the state that then arrives passes through values in
+    // between. A row built with its state worked out shows it at once.
+    function test_rowStateBlendsInAfterChecking() {
+        const o = openOn(t73());
+        showPlaylist(o.page, "T73 Renamed");
+        waitSettled(o.c);
+        const badge = findChild(delegateInView(o.page, b01), "stateBadge");
+        verify(badge !== null);
+        compare(badge.visible, true, "B01's state is worked out");
+        tryCompare(badge, "opacity", 1, 5000);
+
+        const recorder = createTemporaryObject(opacityRecorder, testCase, {target: badge});
+        o.c.replaceEngineEdits = true;
+        compare(row(o.c, b01).pending, true, "worked out again");
+        tryCompare(badge, "visible", false, 5000, "Checking, meanwhile");
+        waitSettled(o.c, "worked out again");
+        compare(badge.visible, true, "the state is back");
+        tryCompare(badge, "opacity", 1, 5000, "and ends fully drawn");
+        verify(recorder.seen.some(value => value > 0 && value < 1),
+               "it got there by blending in: " + JSON.stringify(recorder.seen));
+
+        showPlaylist(o.page, "");
+        waitSettled(o.c);
+        const again = findChild(delegateInView(o.page, b01), "stateBadge");
+        verify(again !== badge, "every row is built anew");
+        compare(again.visible, true);
+        compare(again.opacity, 1, "not blended in again");
     }
 
     // A row's waveform is blended in when its read comes back, not

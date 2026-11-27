@@ -998,8 +998,23 @@ Page {
                         font.italic: true
                     },
                     StatusBadge {
+                        id: stateBadge
                         objectName: "stateBadge"
-                        visible: !trackRow.pending && trackRow.model.state.length > 0
+                        readonly property bool shown: !trackRow.pending && trackRow.model.state.length > 0
+                        visible: stateBadge.shown
+                        // Blended in when its check comes back, as the
+                        // row's waveform is: a page of rows whose states
+                        // arrive together does not switch them all on at
+                        // once. A row built with its state worked out
+                        // shows it at once (trackRow.built).
+                        opacity: stateBadge.shown ? 1 : 0
+                        Behavior on opacity {
+                            enabled: trackRow.built
+                            NumberAnimation {
+                                duration: Theme.arrivalTransitionDuration
+                                easing.type: Easing.OutCubic
+                            }
+                        }
                         label: trackRow.model.state
                         badgeColor: root.toneColor(trackRow.model.stateTone)
                         tooltipText: trackRow.model.stateTip

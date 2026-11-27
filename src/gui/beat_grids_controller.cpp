@@ -721,11 +721,15 @@ Words waveformWords(const BeatGridTrackState &s)
     case Waveform::RowUnreadable:
         return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
     case Waveform::PlayersWaveform:
-        if (s.result.grid.outcome == Outcome::RowLocked || s.result.grid.outcome == Outcome::RowEditedOnEngine
-            || s.result.grid.outcome == Outcome::NoSourceGrid) {
+        if (s.result.waveformStaysWithGrid) {
+            // Why the grid stays, also where beat grids are not chosen
+            // and the grid part says nothing itself.
+            const QString why = s.result.rowLocked ? QStringLiteral("is locked on the player")
+                : s.result.rowEditedOnEngine      ? QStringLiteral("was changed on the player")
+                                                  : QStringLiteral("has no counterpart in rekordbox");
             return {QStringLiteral("Stays with the grid"), QStringLiteral("warn"),
-                    QStringLiteral("The player's beat grid of this track stays, so the waveform the player drew "
-                                   "stays with it.")};
+                    QStringLiteral("The player's beat grid of this track %1 and stays, so the waveform the player "
+                                   "drew stays with it.").arg(why)};
         }
         return {QStringLiteral("Drawn by the player"), QStringLiteral("warn"),
                 QStringLiteral("The player drew its own waveform of this track, and it stays.")};
@@ -798,6 +802,10 @@ QString leftAloneReason(const BeatGridTrackState &s)
     }
     if (s.result.grid.outcome == Outcome::NoSourceGrid && s.result.waveform == Waveform::PlayersWaveform) {
         return QStringLiteral("no beat grid in rekordbox");
+    }
+    if (s.result.waveformStaysWithGrid) {
+        return s.result.rowLocked ? QStringLiteral("locked on the player")
+            : s.result.rowEditedOnEngine ? QStringLiteral("changed on the player") : QStringLiteral("no beat grid in rekordbox");
     }
     if (s.result.waveform == Waveform::PlayersWaveform) {
         return QStringLiteral("waveform drawn by the player");

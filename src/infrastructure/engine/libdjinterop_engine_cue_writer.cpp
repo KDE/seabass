@@ -1523,15 +1523,19 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 // The waveform the player drew stays unless asked for. An
                 // overview column already rekordbox's is Seabass's: only
                 // its file is put right.
-                // Without grids asked for, the grid the player keeps is
-                // one locked or moved there, unless those may be replaced.
+                // The grid the player keeps, by the row's own facts and
+                // not by what the grid part came to, so the answer is the
+                // same with grids asked for or not: one locked or moved on
+                // the player, unless those may be replaced (which only a
+                // call that writes grids can mean), or any grid at all
+                // where rekordbox has none to put in its place. A locked
+                // grid that is rekordbox's already is still the DJ's lock.
+                const bool mayReplaceEdits = options.grids && overwriteEdits;
                 const bool gridKept = options.waveformFollowsKeptGrid
-                    && (options.grids ? (result.grid.outcome == Outcome::RowLocked
-                                         || result.grid.outcome == Outcome::RowEditedOnEngine
-                                         || result.grid.outcome == Outcome::NoSourceGrid)
-                                      : !overwriteEdits && (locked || result.rowEditedOnEngine));
+                    && ((!mayReplaceEdits && (locked || result.rowEditedOnEngine)) || !hasGrid);
                 if (overviewWrite && (gridKept || !options.overwritePlayerWaveforms)
                     && holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint)) {
+                    result.waveformStaysWithGrid = gridKept;
                     overviewWrite.reset();
                     fileWrite.reset();
                     result.overviewFileRelativePath.clear();
@@ -1764,7 +1768,8 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         after.isAnalyzed = EngineSqlValue::ofInteger(1);
     };
     // A completion over the waveform the player drew (asked for: an answer,
-    // or "Overwrite Locked (Hand-Edited) Beat Grids") keeps the player's row first, every
+    // or Beat Grids & Waveforms, which replaces the player's waveforms as it
+    // comes) keeps the player's row first, every
     // column and the overview file, so Restore Engine's Analysis brings it
     // back. What cannot be kept is not replaced, in a preview as in the
     // write.

@@ -50,10 +50,12 @@ struct AnalysisImportOptions
     // ledger's.
     bool overwritePlayerWaveforms = false;
     // A grid and a waveform come from one analysis: where the player's
-    // grid stays (locked or edited on the player with overwriteEngineEdits
-    // off, or rekordbox has none), its waveform stays with it,
-    // PlayersWaveform, whatever overwritePlayerWaveforms says. Only with
-    // grids asked for. The Beat Grids page's rule.
+    // grid stays (locked or edited on the player, unless a call that
+    // writes grids has overwriteEngineEdits; or rekordbox has none), its
+    // waveform stays with it, PlayersWaveform, whatever
+    // overwritePlayerWaveforms says, and whether grids are asked for or
+    // not (AnalysisImportResult::waveformStaysWithGrid). The Beat Grids
+    // page's rule.
     bool waveformFollowsKeptGrid = false;
     // A sync's rule (#136): where both sides hold a grid, or both a
     // waveform, and they differ, neither is picked. The part is left alone
@@ -159,6 +161,11 @@ struct AnalysisImportResult
     // Engine's analysis and not the one Seabass wrote last. Found whatever
     // the options say, so a page can tell hand-edited rows apart.
     bool rowEditedOnEngine = false;
+
+    // The player's waveform was left because the player's grid stays
+    // (waveformFollowsKeptGrid): rowLocked, rowEditedOnEngine, or neither,
+    // which is rekordbox having no grid for the track.
+    bool waveformStaysWithGrid = false;
 
     // The tempo went in with the grid (AnalysisImportOptions::
     // tempoWithGrid; in a preview: would). A completed row takes it as

@@ -328,6 +328,10 @@ Rectangle {
                         id: titleExtra
                         objectName: "rowTitleItems"
                         Layout.alignment: Qt.AlignVCenter
+                        // Never squeezed: the title beside it gives way
+                        // (down to nothing) before these lose any width,
+                        // so a long label does not run over what follows.
+                        Layout.minimumWidth: implicitWidth
                         visible: children.length > 0
                         spacing: Theme.tightSpacing
                     }
