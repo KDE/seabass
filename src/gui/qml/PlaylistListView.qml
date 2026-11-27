@@ -333,7 +333,9 @@ ListView {
         // summary, nothing to delete or rename; its menu takes it back.
         readonly property bool isNew: root.canCreate && root.newPlaylists.indexOf(modelData) >= 0
         pendingNew: isNew
-        count: index === 0 ? root.scanController.totalTrackCount
+        // "All tracks" counts what it lists: the rows a save wrote too,
+        // until the stick has been read again.
+        count: index === 0 ? root.scanController.totalTrackCount + (root.scanController.importAwaitingReadCount ?? 0)
             : isNew ? 0 : (root.scanController.playlistTrackCounts[modelData] ?? 0)
         // By the playlist shown, not ListView.isCurrentItem: a scan
         // rebuilds the model, and the view then puts its current index

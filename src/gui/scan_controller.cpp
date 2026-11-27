@@ -126,6 +126,10 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
         const auto it = m_importChangeIds.find(track.sourceId);
         return it == m_importChangeIds.end() ? QString() : it->second;
     }
+    case AwaitingReadRole:
+        return m_importAwaitingRead.count(track.sourceId) > 0;
+    case UnreadableRole:
+        return m_importNewTracks.count(track.sourceId) > 0 || m_importAwaitingRead.count(track.sourceId) > 0;
     case BpmRole:
         return track.bpm;
     case KeyRole:
@@ -182,6 +186,8 @@ QHash<int, QByteArray> TrackListModel::roleNames() const
         {PendingMoveRole, "pendingMove"},
         {PendingImportRole, "pendingImport"},
         {ImportChangeIdRole, "importChangeId"},
+        {AwaitingReadRole, "awaitingRead"},
+        {UnreadableRole, "unreadable"},
     };
 }
 
@@ -270,10 +276,6 @@ void TrackListModel::setFallbackArtwork(std::shared_ptr<const FallbackArtwork> f
 
 QString TrackListModel::artworkFor(const domain::Track &track) const
 {
-    // A staged import's cover, read from its file: the picture itself.
-    if (track.artworkPath.rfind("data:", 0) == 0) {
-        return QString::fromStdString(track.artworkPath);
-    }
     return track.artworkPath.empty() ? fallbackArtworkFor(track) : toLocalFileUrl(track.artworkPath);
 }
 
@@ -588,7 +590,13 @@ void ScanController::handleResult(ScanTaskResult &result)
         return;
     }
     if (!result.errorMessage.isEmpty()) {
-        // A failed cue phase leaves the list it already published up.
+        // A failed cue phase leaves the list it already published up. The
+        // rows the last save wrote go all the same: the read that was to
+        // give them their identity on the stick has not.
+        if (!m_importRows.empty()) {
+            supersedeLandedRows();
+            applyFilters(true);
+        }
         setErrorMessage(result.errorMessage, result.accessDenied);
         setCuesPending(false);
         setBusy(false);
@@ -613,6 +621,7 @@ void ScanController::publishDetails(ScanTaskResult &result)
     // Nothing about the page's state changes: the rows update where
     // they stand, and only a listener that cares hears about it.
     m_allTracks = std::move(result.tracks);
+    dropImportPathKeys();
     applyFilters(true);
     emit detailsPublished();
 }
@@ -651,11 +660,10 @@ void ScanController::publishTracks(ScanTaskResult &result)
     // in response to that signal would otherwise see the previous scan's
     // track count for one notification cycle.
     m_allTracks = std::move(result.tracks);
+    dropImportPathKeys();
     // The stick read again: what the last save wrote is in it (or is not
     // there to show), and its landed rows go.
-    for (const QVariant &row : m_stagedImport.value(QStringLiteral("landed")).toList()) {
-        m_supersededLanded.insert(row.toMap().value(QStringLiteral("changeId")).toString());
-    }
+    supersedeLandedRows();
     // Before the list and before busy clears, so whatever reacts to
     // either already knows whether the cue counts it sees are final.
     setCuesPending(result.cuesPending);
@@ -688,6 +696,7 @@ void ScanController::publishCues(ScanTaskResult &result)
     // and so is whatever the page has selected among them, so none of
     // that is announced again. The rows update where they stand.
     m_allTracks = std::move(result.tracks);
+    dropImportPathKeys();
     applyFilters(true);
     setCuesPending(false);
     emit tracksPublished(true);
@@ -804,11 +813,101 @@ void ScanController::setPendingEdits(const QVariantMap &additions, const QVarian
 
 void ScanController::setStagedImport(const QVariantMap &import)
 {
-    if (m_stagedImport == import) {
+    // Told again on every change of what is staged: the revision says
+    // whether this is another batch at all, with no look at its rows.
+    const QVariant revision = import.value(QStringLiteral("revision"));
+    if (revision.isValid() && revision == m_stagedImportRevision) {
         return;
     }
-    m_stagedImport = import;
+    m_stagedImportRevision = revision;
+    m_importPlaylist = import.value(QStringLiteral("playlist")).toString();
+    m_importAtIndex = import.value(QStringLiteral("atIndex"), -1).toInt();
+    const QVariantList landed = import.value(QStringLiteral("landed")).toList();
+    if (landed.isEmpty()) {
+        m_supersededLanded.clear();
+    }
+    std::vector<ImportRow> rows;
+    const auto take = [&](const QVariantList &list, bool isLanded) {
+        for (const QVariant &value : list) {
+            const QVariantMap row = value.toMap();
+            ImportRow parsed;
+            parsed.changeId = row.value(QStringLiteral("changeId")).toString();
+            if (isLanded && m_supersededLanded.count(parsed.changeId) > 0) {
+                continue;
+            }
+            parsed.landed = isLanded;
+            parsed.existing = row.value(QStringLiteral("existing")).toBool();
+            const std::string file = row.value(QStringLiteral("filePath")).toString().toStdString();
+            parsed.pathKey = application::normalizedPathKey(file);
+            ++m_importPathKeysComputed;
+            domain::Track &track = parsed.track;
+            track.filePath = file;
+            if (!parsed.existing) {
+                track.sourceId = "import:" + parsed.changeId.toStdString();
+                track.filename = pathToUtf8(pathFromUtf8(file).filename());
+                track.title = row.value(QStringLiteral("title")).toString().toStdString();
+                track.artist = row.value(QStringLiteral("artist")).toString().toStdString();
+                track.album = row.value(QStringLiteral("album")).toString().toStdString();
+                track.durationSeconds = row.value(QStringLiteral("durationSeconds")).toDouble();
+                track.bpm = row.value(QStringLiteral("bpm")).toDouble();
+                track.key = row.value(QStringLiteral("key")).toString().toStdString();
+                track.artworkPath = row.value(QStringLiteral("artworkPath")).toString().toStdString();
+                track.bitrate = row.value(QStringLiteral("bitrate")).toInt();
+            }
+            rows.push_back(std::move(parsed));
+        }
+    };
+    take(landed, true);
+    take(import.value(QStringLiteral("rows")).toList(), false);
+    m_importRows = std::move(rows);
+    if (m_importRows.empty()) {
+        // Nothing of the import left to list: the keys of the scan are of
+        // no use until the next batch.
+        dropImportPathKeys();
+    }
     applyFilters(true);
+}
+
+void ScanController::makeImportPathKeys()
+{
+    if (m_importPathKeysMade) {
+        return;
+    }
+    m_trackByPathKey.clear();
+    m_pathKeyBySourceId.clear();
+    m_trackByPathKey.reserve(m_allTracks.size());
+    m_pathKeyBySourceId.reserve(m_allTracks.size());
+    for (std::size_t i = 0; i < m_allTracks.size(); ++i) {
+        const domain::Track &track = m_allTracks[i];
+        std::string key = application::normalizedPathKey(track.filePath);
+        ++m_importPathKeysComputed;
+        // A track without a file (a streaming one) has no place to match.
+        if (!track.filePath.empty()) {
+            m_trackByPathKey.emplace(key, i);
+        }
+        m_pathKeyBySourceId.emplace(track.sourceId, std::move(key));
+    }
+    m_importPathKeysMade = true;
+}
+
+void ScanController::dropImportPathKeys()
+{
+    if (!m_importPathKeysMade) {
+        return;
+    }
+    m_trackByPathKey = {};
+    m_pathKeyBySourceId = {};
+    m_importPathKeysMade = false;
+}
+
+void ScanController::supersedeLandedRows()
+{
+    std::erase_if(m_importRows, [this](const ImportRow &row) {
+        if (row.landed) {
+            m_supersededLanded.insert(row.changeId);
+        }
+        return row.landed;
+    });
 }
 
 void ScanController::search(const QString &query)
@@ -943,98 +1042,104 @@ void ScanController::applyFilters(bool inPlace)
     std::set<std::string> pendingAdditions;
     std::set<std::string> pendingMoves;
 
-    // The track import's batch: its new tracks as rows of their own, the
-    // stick's tracks it puts into the playlist by their own rows. The
-    // rows the last save wrote first, until a scan has them; never one
-    // the scan already lists.
+    // The track import's rows: the new tracks of the batch and the rows the
+    // last save wrote as rows of their own, the stick's tracks the batch
+    // puts into its playlist by their own rows, in the save's order; never
+    // one the scan already lists. Nothing of this with no import: no work
+    // for a track at all.
     std::map<std::string, QString> importChangeIds;
     std::set<std::string> importNewTracks;
-    std::vector<domain::Track> importRows;
-    const QString importPlaylist = m_stagedImport.value(QStringLiteral("playlist")).toString();
+    std::set<std::string> importAwaiting;
+    struct Listed
     {
-        std::unordered_set<std::string> scanned;
-        for (const auto &track : m_allTracks) {
-            scanned.insert(application::normalizedPathKey(track.filePath));
-        }
-        QVariantList rows;
-        for (const QVariant &row : m_stagedImport.value(QStringLiteral("landed")).toList()) {
-            if (m_supersededLanded.count(row.toMap().value(QStringLiteral("changeId")).toString()) == 0) {
-                rows << row;
-            }
-        }
-        rows << m_stagedImport.value(QStringLiteral("rows")).toList();
-        for (const QVariant &value : rows) {
-            const QVariantMap row = value.toMap();
-            const std::string file = row.value(QStringLiteral("filePath")).toString().toStdString();
-            const QString changeId = row.value(QStringLiteral("changeId")).toString();
-            if (row.value(QStringLiteral("existing")).toBool()) {
-                // The stick's own row, put into the playlist below.
-                const auto it = std::find_if(m_allTracks.begin(), m_allTracks.end(),
-                                             [&](const domain::Track &t) { return t.filePath == file; });
-                if (it != m_allTracks.end()) {
-                    importRows.push_back(*it);
-                    importChangeIds[it->sourceId] = changeId;
+        const domain::Track *track;
+        const ImportRow *row;
+    };
+    std::vector<Listed> importListed;
+    int newShown = 0;
+    int awaitingShown = 0;
+    if (!m_importRows.empty()) {
+        makeImportPathKeys();
+        for (const ImportRow &row : m_importRows) {
+            const auto scanned = m_trackByPathKey.find(row.pathKey);
+            if (row.existing) {
+                // Only the batch's own entries; what landed of them is in
+                // the scan's playlists once it is read.
+                if (!row.landed && scanned != m_trackByPathKey.end()) {
+                    importListed.push_back({&m_allTracks[scanned->second], &row});
                 }
                 continue;
             }
-            if (scanned.count(application::normalizedPathKey(file)) > 0) {
+            if (scanned != m_trackByPathKey.end()) {
                 continue;
             }
-            domain::Track track;
-            track.sourceId = "import:" + changeId.toStdString();
-            track.filePath = file;
-            track.filename = pathToUtf8(pathFromUtf8(file).filename());
-            track.title = row.value(QStringLiteral("title")).toString().toStdString();
-            track.artist = row.value(QStringLiteral("artist")).toString().toStdString();
-            track.album = row.value(QStringLiteral("album")).toString().toStdString();
-            track.durationSeconds = row.value(QStringLiteral("durationSeconds")).toDouble();
-            track.bpm = row.value(QStringLiteral("bpm")).toDouble();
-            track.key = row.value(QStringLiteral("key")).toString().toStdString();
-            track.artworkPath = row.value(QStringLiteral("artworkPath")).toString().toStdString();
-            track.bitrate = row.value(QStringLiteral("bitrate")).toInt();
-            importChangeIds[track.sourceId] = changeId;
-            importNewTracks.insert(track.sourceId);
-            importRows.push_back(std::move(track));
+            importListed.push_back({&row.track, &row});
+            if (row.landed) {
+                ++awaitingShown;
+            } else {
+                ++newShown;
+            }
         }
+    }
+    if (newShown != m_importNewShown || awaitingShown != m_importAwaitingShown) {
+        m_importNewShown = newShown;
+        m_importAwaitingShown = awaitingShown;
+        emit importRowsChanged();
     }
 
     if (m_currentPlaylistFilter.isEmpty()) {
         // "All tracks": the new tracks at the end, as the library will
-        // list them.
-        for (const auto &track : importRows) {
-            if (importNewTracks.count(track.sourceId) > 0) {
-                result.push_back(track);
+        // list them, and those the save wrote until the stick is read.
+        for (const Listed &listed : importListed) {
+            if (listed.row->existing) {
+                continue;
             }
+            if (listed.row->landed) {
+                importAwaiting.insert(listed.track->sourceId);
+            } else {
+                importChangeIds[listed.track->sourceId] = listed.row->changeId;
+                importNewTracks.insert(listed.track->sourceId);
+            }
+            result.push_back(*listed.track);
         }
     }
     if (!m_currentPlaylistFilter.isEmpty()) {
         result = domain::filterByScope(result, domain::TrackScope::playlist(playlistFilter));
         // The batch's entries first, at the end of the playlist, then
-        // moved together to their place when the save moves them.
-        if (!importRows.empty() && (importPlaylist == scannedFilter || importPlaylist == m_currentPlaylistFilter)) {
+        // moved together to their place when the save moves them. A track
+        // is the playlist's once: by its path's key, as the save tells
+        // them apart.
+        if (!importListed.empty() && !m_importPlaylist.isEmpty()
+            && (m_importPlaylist == scannedFilter || m_importPlaylist == m_currentPlaylistFilter)) {
             int last = -1;
-            std::set<std::string> listed;
+            std::unordered_set<std::string> listed;
             for (const auto &track : result) {
                 last = std::max(last, playlistPosition(track, playlistFilter).value_or(-1));
-                listed.insert(track.filePath);
+                const auto key = m_pathKeyBySourceId.find(track.sourceId);
+                if (key != m_pathKeyBySourceId.end()) {
+                    listed.insert(key->second);
+                }
             }
             std::vector<std::string> run;
-            for (domain::Track track : importRows) {
-                if (listed.count(track.filePath) > 0) {
+            for (const Listed &entry : importListed) {
+                if (entry.row->landed || !listed.insert(entry.row->pathKey).second) {
                     continue;
                 }
+                domain::Track track = *entry.track;
                 domain::PlaylistMembership membership;
                 membership.name = playlistFilter;
                 membership.position = ++last;
                 track.playlists.push_back(membership);
-                listed.insert(track.filePath);
-                if (importNewTracks.count(track.sourceId) == 0) {
+                importChangeIds[track.sourceId] = entry.row->changeId;
+                if (entry.row->existing) {
                     pendingAdditions.insert(track.sourceId);
+                } else {
+                    importNewTracks.insert(track.sourceId);
                 }
                 run.push_back(track.sourceId);
                 result.push_back(std::move(track));
             }
-            const int atIndex = m_stagedImport.value(QStringLiteral("atIndex"), -1).toInt();
+            const int atIndex = m_importAtIndex;
             if (atIndex >= 0 && !run.empty()) {
                 std::vector<std::string> order;
                 std::vector<size_t> rows(result.size());
@@ -1213,7 +1318,7 @@ void ScanController::applyFilters(bool inPlace)
 
     m_model.setPendingAdditions(std::move(pendingAdditions));
     m_model.setPendingMoves(std::move(pendingMoves));
-    m_model.setImportRows(std::move(importChangeIds), std::move(importNewTracks));
+    m_model.setImportRows(std::move(importChangeIds), std::move(importNewTracks), std::move(importAwaiting));
     if (inPlace) {
         m_model.updateTracks(std::move(result));
     } else {

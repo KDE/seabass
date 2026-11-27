@@ -15,7 +15,9 @@ import SeabassGui
 //
 // By keyboard it is one stop in the Tab order while it shows: Return,
 // Enter or Space open and close it, Escape closes it, and once open Tab
-// goes on to its buttons.
+// goes on to its buttons. When the work ends with the keyboard on it, the
+// keyboard goes back to where it was before (or to focusFallback when
+// that is gone or hidden), not with the strip out of sight.
 Rectangle {
     id: root
 
@@ -42,8 +44,39 @@ Rectangle {
     // which was pressed.
     property var actions: []
 
+    // Where the keyboard goes when the work ends with it here and the
+    // item it came from is gone or hidden: the page, say.
+    property Item focusFallback: null
+
     signal cancelRequested()
     signal actionTriggered(string key)
+
+    function holds(item) {
+        for (let at = item; at !== null; at = at.parent) {
+            if (at === root) {
+                return true;
+            }
+        }
+        return false;
+    }
+    // The item the keyboard was on before it came here, and whether it is
+    // here: kept while the work runs, so that once it ends (and the strip
+    // hides, which takes the keyboard from it) it can be handed back.
+    property Item focusBefore: null
+    property bool keyboardHere: false
+    Connections {
+        target: root.Window.window
+        function onActiveFocusItemChanged() {
+            if (!root.running) {
+                return;
+            }
+            const item = root.Window.activeFocusItem;
+            root.keyboardHere = item !== null && root.holds(item);
+            if (item !== null && !root.keyboardHere) {
+                root.focusBefore = item;
+            }
+        }
+    }
 
     activeFocusOnTab: root.running
     Keys.onPressed: (event) => {
@@ -63,8 +96,25 @@ Rectangle {
     border.color: Theme.borderSubtle
     border.width: root.expanded ? 1 : 0
     onRunningChanged: {
-        if (!root.running) {
-            root.expanded = false;
+        if (root.running) {
+            root.focusBefore = root.Window.activeFocusItem;
+            root.keyboardHere = false;
+            return;
+        }
+        root.expanded = false;
+        if (root.keyboardHere) {
+            root.keyboardHere = false;
+            // Let go of it first: the scopes the strip is in would give it
+            // back to the strip otherwise.
+            const inHand = root.Window.activeFocusItem;
+            if (inHand !== null && root.holds(inHand)) {
+                inHand.focus = false;
+            }
+            root.focus = false;
+            const back = root.focusBefore !== null && root.focusBefore.visible ? root.focusBefore : root.focusFallback;
+            if (back !== null) {
+                back.forceActiveFocus();
+            }
         }
     }
 

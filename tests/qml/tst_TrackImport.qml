@@ -49,7 +49,14 @@ TestCase {
             property string progressFile: ""
             property var progressFiles: []
             property real progressFraction: 0
+            property bool progressPlanned: false
             function cancel() { calls.push(["cancel"]); }
+            function releaseLanded() {
+                calls.push(["releaseLanded"]);
+                if ((stagedImport.landed ?? []).length > 0) {
+                    stagedImport = Object.assign({}, stagedImport, {landed: []});
+                }
+            }
             property string errorMessage: ""
             property string errorSource: "import"
             property int pendingRevision: 0
@@ -341,6 +348,7 @@ TestCase {
         fake.progressFile = "b two.wav";
         fake.progressFiles = ["b two.wav"];
         fake.progressFraction = 0.2;
+        fake.progressPlanned = true;
         fake.busy = true;
         tryCompare(strip, "visible", true);
         compare(findChild(strip, "passiveProgressSummary").text, "Import: reading file 12 of 40");
@@ -959,8 +967,9 @@ TestCase {
 
     // ---- The staged batch in the track list, one bar, the keyboard ----
 
-    // An 8 by 8 picture, as the import's covers come: a data URL.
-    readonly property string tinyCover: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGPQWHAHK2IYWhIA2iBpAVZ6tYUAAAAASUVORK5CYII="
+    // A picture, as the import's covers come: a small JPEG in a folder of
+    // the computer's, by its path.
+    readonly property string tinyCover: browseFixture.distinctArtwork(7)
     readonly property string newOneId: "addcue:import-track:/Contents/Newcomer/First/new one.mp3"
     readonly property string newTwoId: "addcue:import-track:/Contents/Newcomer/First/new two.mp3"
     function newRow(id, title, seconds, bpm, key, cover) {
@@ -1045,7 +1054,9 @@ TestCase {
         compare(one.durationSeconds, 301);
         compare(one.bpm, 125.5);
         compare(one.key, "8A");
-        compare(one.artworkPath, testCase.tinyCover);
+        // The list is handed the file, as a stick track's cover: a short
+        // string, not the picture.
+        verify(one.artworkPath.startsWith("file:") && one.artworkPath.endsWith("/a7.jpg"), one.artworkPath);
         compare(tracks.trackAt(0).pendingImport, false);
         compare(tracks.trackAt(0).importChangeId, "");
         verify(waitForPolish(page.Window.window), "the rows are laid out");
@@ -1280,52 +1291,52 @@ TestCase {
         menu.close();
     }
 
-    // One bar for the whole run: it follows the run's share
-    // (progressFraction), never the step's count, which starts again at
-    // each step; it never goes back and ends at the end. The steps done
-    // keep their counts in the panel.
+    // One bar for the whole run, as the strip shows it from what the
+    // controller says: busy, with no share, until the run's work is
+    // counted (progressPlanned); then the run's share (progressFraction),
+    // never the step's count, which starts again at each step. The steps
+    // done keep their counts in the panel.
     function test_oneBarAcrossTheSteps() {
         const page = makePage(true);
         const fake = page.trackImportController;
         const strip = findChild(page, "importProgress");
         const bar = findChild(strip, "passiveProgressBar");
-        const samples = [];
-        const sample = () => samples.push(bar.value);
+        fake.progressStep = "stick";
         fake.busy = true;
         tryCompare(strip, "visible", true);
-        const steps = [["stick", 0, 0, 0.0]];
-        for (let i = 0; i <= 10; ++i) {
-            steps.push(["files", i, 10, 0.05 + 0.01 * i]);
+        compare(bar.indeterminate, true, "the stick being read: how far cannot be told yet");
+        fake.progressStep = "files";
+        fake.progressDone = 3;
+        fake.progressTotal = 10;
+        compare(bar.indeterminate, true, "the files counted, the run not planned yet");
+        fake.progressPlanned = true;
+        fake.progressFraction = 0.12;
+        compare(bar.indeterminate, false, "planned: a bar with an end");
+        fuzzyCompare(bar.value, 0.12, 0.0001);
+        fake.progressDone = 10;
+        fake.progressFraction = 0.2;
+        fuzzyCompare(bar.value, 0.2, 0.0001, "the run's share, not the step's 10 of 10");
+        fake.progressStep = "check";
+        fake.progressDone = 0;
+        fake.progressTotal = 0;
+        fake.progressFraction = 0.25;
+        compare(bar.indeterminate, false, "a step that cannot count is still on the run's bar");
+        fuzzyCompare(bar.value, 0.25, 0.0001);
+        fake.progressStep = "analysis";
+        fake.progressDone = 2;
+        fake.progressTotal = 5;
+        fake.progressFraction = 0.55;
+        fuzzyCompare(bar.value, 0.55, 0.0001, "not the step's 2 of 5");
+        mouseClick(strip, 20, 8);
+        compare(strip.expanded, true);
+        fake.progressFiles = ["d four.wav", "e five.wav"];
+        fake.progressFile = "c three.wav";
+        compare(strip.steps.map(s => s.count).join("|"), "|10 of 10 done||2 of 5 done");
+        verify(waitForPolish(page.Window.window), "the open panel is laid out");
+        waitForRendering(page);
+        if (screenshotDir && screenshotDir.length > 0) {
+            grabImage(page).save(screenshotDir + "/browse_import_one_bar.png");
         }
-        steps.push(["check", 0, 0, 0.2]);
-        for (let i = 0; i <= 5; ++i) {
-            steps.push(["analysis", i, 5, 0.25 + 0.15 * i]);
-        }
-        for (const [step, done, total, fraction] of steps) {
-            fake.progressStep = step;
-            fake.progressDone = done;
-            fake.progressTotal = total;
-            fake.progressFraction = fraction;
-            compare(bar.indeterminate, false, step + " " + done);
-            sample();
-            if (step === "analysis" && done === 2) {
-                mouseClick(strip, 20, 8);
-                compare(strip.expanded, true);
-                fake.progressFiles = ["d four.wav", "e five.wav"];
-                fake.progressFile = "c three.wav";
-                compare(strip.steps.map(s => s.count).join("|"), "|10 of 10 done||2 of 5 done");
-                verify(waitForPolish(page.Window.window), "the open panel is laid out");
-                waitForRendering(page);
-                if (screenshotDir && screenshotDir.length > 0) {
-                    grabImage(page).save(screenshotDir + "/browse_import_one_bar.png");
-                }
-            }
-        }
-        for (let i = 1; i < samples.length; ++i) {
-            verify(samples[i] >= samples[i - 1], "the bar never goes back: " + samples.join(" "));
-        }
-        fuzzyCompare(samples[samples.length - 1], 1, 0.0001);
-        verify(samples[samples.length - 2] < 1, "it ends at the end, not before");
         fake.busy = false;
         tryCompare(strip, "visible", false);
     }
@@ -1359,6 +1370,8 @@ TestCase {
         const stepsSeen = [];
         // The bar while the files are analysed: it moves there too.
         const analysing = [];
+        // Whether the run had its plan, at each move.
+        const planned = [];
         const record = () => {
             if (controller.busy) {
                 samples.push(controller.progressFraction);
@@ -1368,9 +1381,13 @@ TestCase {
                 if (stepsSeen.indexOf(controller.progressStep) < 0) {
                     stepsSeen.push(controller.progressStep);
                 }
-                // The strip shows the same.
+                // The strip shows the same: busy until the run is planned.
+                planned.push(controller.progressPlanned);
                 if (strip.running) {
-                    fuzzyCompare(bar.value, controller.progressFraction, 0.0001);
+                    compare(bar.indeterminate, !controller.progressPlanned);
+                    if (controller.progressPlanned) {
+                        fuzzyCompare(bar.value, controller.progressFraction, 0.0001);
+                    }
                 }
             }
         };
@@ -1388,6 +1405,11 @@ TestCase {
         }
         fuzzyCompare(samples[samples.length - 1], 1, 0.0001);
         verify(samples.filter(v => v >= 1).length === 1, "it reaches the end once, at the end: " + samples.join(" "));
+        verify(planned[0] === false, "the stick being read: no plan yet");
+        const firstPlanned = planned.indexOf(true);
+        verify(firstPlanned > 0 && planned.slice(firstPlanned).every(p => p), "planned once, and from then on: "
+               + planned.join(" "));
+        verify(samples.slice(0, firstPlanned).every(v => v === 0), "no share before the plan: " + samples.join(" "));
         verify(analysing.length > 1 && analysing[analysing.length - 1] > analysing[0],
                "the analysis moves the bar: " + analysing.join(" "));
         const dialog = findChild(page, "importResultDialog");
@@ -1500,5 +1522,327 @@ TestCase {
         findChild(page, "trackListView").forceActiveFocus();
         keyClick(Qt.Key_Escape);
         compare(fake.calls.length, 3);
+    }
+
+    // ---- Escape, the stick's tracks of a batch, the rows a save wrote ----
+
+    Component {
+        id: commentEditorComponent
+        TrackCommentEditor {}
+    }
+
+    // The drag card's parts as tst_ScanPage drives them: a press on a row,
+    // moved past the threshold onto a sidebar row in steps, let go there.
+    function dropRow(page, name) {
+        const list = findChild(page, "playlistList");
+        let found = null;
+        (function walk(item) {
+            if (found === null && item.acceptsTrackDrop !== undefined && item.name === name) {
+                found = item;
+            }
+            for (let i = 0; found === null && i < item.children.length; ++i) {
+                walk(item.children[i]);
+            }
+        })(list.contentItem);
+        verify(found !== null, "a sidebar row for " + name);
+        return found;
+    }
+    function dragAndDrop(row, target) {
+        const start = Qt.point(Theme.iconSizeNormal + 3 * Theme.rowSpacing, row.height / 2);
+        mousePress(row, start.x, start.y, Qt.LeftButton);
+        for (let i = 1; i <= 4; ++i) {
+            mouseMove(row, start.x - 6 * i, start.y + 2 * i, 0, Qt.LeftButton);
+        }
+        const p = target.mapToItem(row, target.width / 2, target.height / 2);
+        for (let i = 1; i <= 4; ++i) {
+            mouseMove(row, p.x + (4 - i) * 12, p.y + (4 - i) * 6, 0, Qt.LeftButton);
+        }
+        mouseRelease(row, p.x + 1, p.y, Qt.LeftButton);
+    }
+
+    // While an import is prepared, Escape is still what it was for
+    // whatever has the keyboard and does something with it: the card
+    // asking what a drop should do lets the drop go, the comment being
+    // edited is put back, a menu and a dialog close. Only an Escape
+    // nothing takes stops the run: on the list, or with the keyboard on
+    // no item of the page at all.
+    function test_anEscapeSomethingTakesStopsNothing() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        tryCompare(list, "count", 4);
+        fake.progressStep = "files";
+        fake.progressTotal = 4;
+        fake.busy = true;
+        verify(waitForPolish(page.Window.window), "the rows are laid out");
+        const cancels = () => fake.calls.filter(call => call[0] === "cancel").length;
+
+        // The drag card.
+        const card = findChild(page, "trackDragItem");
+        const row = list.itemAtIndex(1);
+        dragAndDrop(row, dropRow(page, "Held Playlist"));
+        compare(card.confirming, true, "the card asks");
+        tryCompare(card, "activeFocus", true);
+        keyClick(Qt.Key_Escape);
+        compare(card.confirming, false, "Escape lets the drop go");
+        tryCompare(card, "visible", false);
+        compare(cancels(), 0, "and the run goes on");
+
+        // A comment being edited (the details pane's editor, on the page).
+        const editor = createTemporaryObject(commentEditorComponent, page, {
+            width: 300, text: "as it was", commitFn: () => true,
+            limit: {known: true, editable: true, limited: false, units: 0, asciiOnly: false, reason: ""}});
+        editor.startEditing();
+        verify(editor.editing);
+        keyClick(Qt.Key_A);
+        keyClick(Qt.Key_Escape);
+        compare(editor.editing, false, "Escape puts the comment back");
+        compare(editor.text, "as it was");
+        compare(cancels(), 0, "and the run goes on");
+
+        // The track's menu.
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(list.itemAtIndex(0), list.itemAtIndex(0));
+        tryCompare(menu, "opened", true);
+        keyClick(Qt.Key_Escape);
+        tryCompare(menu, "visible", false);
+        compare(cancels(), 0, "the menu's Escape");
+
+        // The zoomed waveform of the details pane.
+        const zoom = findChild(page, "waveformZoomPopup");
+        verify(zoom !== null);
+        zoom.open();
+        tryCompare(zoom, "opened", true);
+        keyClick(Qt.Key_Escape);
+        tryCompare(zoom, "visible", false);
+        compare(cancels(), 0, "the zoomed waveform's Escape");
+
+        // Nothing takes it: the run stops, from the list...
+        list.forceActiveFocus();
+        keyClick(Qt.Key_Escape);
+        compare(cancels(), 1, "an Escape nobody takes stops the run");
+        // ...and with the keyboard on no item of the page (as on the
+        // player bar, which is the window's).
+        testCase.forceActiveFocus();
+        verify(page.Window.activeFocusItem === testCase);
+        keyClick(Qt.Key_Escape);
+        compare(cancels(), 2, "nor there");
+        fake.busy = false;
+    }
+
+    // When the run ends with the keyboard on the strip, the keyboard goes
+    // back where it came from, or to the page when that is gone; never
+    // with the strip out of sight.
+    function test_theKeyboardComesBackWhenTheRunEnds() {
+        const page = makePage(true);
+        const fake = page.trackImportController;
+        const strip = findChild(page, "importProgress");
+        const list = findChild(page, "trackListView");
+        fake.busy = true;
+        tryCompare(strip, "visible", true);
+        verify(waitForPolish(page.Window.window), "the strip is laid out");
+        list.forceActiveFocus();
+        let presses = 0;
+        let cameFrom = null;
+        while (!strip.activeFocus && presses < 80) {
+            cameFrom = page.Window.activeFocusItem;
+            keyClick(Qt.Key_Tab);
+            ++presses;
+        }
+        verify(strip.activeFocus, "Tab reaches the strip");
+        verify(cameFrom !== null && cameFrom.visible);
+        fake.busy = false;
+        tryCompare(strip, "visible", false);
+        tryVerify(() => page.Window.activeFocusItem === cameFrom, 1000,
+                  "back where it came from: " + page.Window.activeFocusItem + " " + cameFrom);
+
+        // Come from an item that is hidden by the end: the page has it.
+        const field = createTemporaryObject(commentEditorComponent, page, {width: 100});
+        fake.busy = true;
+        tryCompare(strip, "visible", true);
+        field.forceActiveFocus();
+        verify(field.activeFocus);
+        strip.forceActiveFocus();
+        verify(strip.activeFocus);
+        field.visible = false;
+        fake.busy = false;
+        tryCompare(strip, "visible", false);
+        const item = page.Window.activeFocusItem;
+        verify(item !== null && item.visible, "the keyboard is on something that shows: " + item);
+        verify(page.within(item, page) || item === page, "on the page: " + item);
+        verify(!page.within(item, strip), "not on the strip");
+    }
+
+    // A track of the stick's that the batch puts into its playlist is the
+    // batch's there and only there: in another playlist that holds it, and
+    // in "All tracks", it is the stick's track with its own menu. Its path
+    // is matched as the save matches it, whatever its case.
+    function test_aStickTrackOfTheBatchIsOrdinaryElsewhere() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        const tracks = findChild(page, "scanController").tracks;
+        const entryId = "addcue:import:add-to-playlist:Fresh";
+        fake.stagedPlaylist = "Fresh";
+        fake.stagedPlaylistIsNew = true;
+        fake.stagedCount = 1;
+        // The stick's own spelling is ".../held-1002.mp3".
+        fake.stagedImport = {playlist: "Fresh", isNew: true, atIndex: -1, landed: [],
+                             rows: [{changeId: entryId, existing: true,
+                                     filePath: "/nonexistent/HELD/Contents/HELD-1002.MP3", title: "Held Track 1002"}]};
+        fake.pendingRevision++;
+        const menu = findChild(page, "trackMenu");
+        const ordinary = (where) => {
+            const index = tracks.indexOfSourceId("3");
+            verify(index >= 0, where + ": listed");
+            compare(tracks.trackAt(index).importChangeId, "", where + ": not the batch's");
+            compare(tracks.trackAt(index).pendingAddition, false, where);
+            verify(waitForPolish(page.Window.window), "the rows are laid out");
+            const row = list.itemAtIndex(index);
+            const button = findChild(row, "trackRowMenuButton");
+            verify(button.ToolTip.text.startsWith("Merge, find matching tracks"), where + ": " + button.ToolTip.text);
+            page.openTrackMenu(row, row);
+            tryCompare(menu, "opened", true);
+            compare(findChild(page, "dontImportItem").visible, false, where + ": no \"Don't add\"");
+            compare(findChild(page, "removeFromPlaylistItem").visible, page.shownPlaylist.length > 0,
+                    where + ": its own actions");
+            compare(findChild(page, "findMatchingItem").enabled, true, where);
+            menu.close();
+            tryCompare(menu, "visible", false);
+        };
+        page.selectPlaylist(1, "Held Playlist");
+        tryCompare(list, "count", 4);
+        ordinary("another playlist");
+        page.selectPlaylist(0, "");
+        tryCompare(list, "count", 4);
+        ordinary("All tracks");
+        // In the batch's playlist it is the batch's entry, found by its key.
+        page.selectPlaylist(-1, "Fresh");
+        tryCompare(list, "count", 1);
+        compare(tracks.trackAt(0).title, "Held Track 1002", "the path in another case is the same file");
+        compare(tracks.trackAt(0).importChangeId, entryId);
+        compare(tracks.trackAt(0).pendingAddition, true);
+    }
+
+    // Nothing staged and nothing saved waiting for the read: the import
+    // costs a list of thousands nothing per track on any rebuild. With a
+    // batch, the scan's paths are made into keys once, not per rebuild,
+    // and the same revision again is not read again.
+    function test_theImportCostsNothingUntilItIsThere() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        browseFixture.holdCues(3000, false, true);
+        browseFixture.releaseCues();
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1000, height: 660, stickLabel: "TESTSTICK",
+            rekordboxPath: "/nonexistent/TESTSTICK/PIONEER", enginePath: "/nonexistent/TESTSTICK/Engine Library",
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        verify(page !== null);
+        const fake = createTemporaryObject(fakeImportComponent, testCase);
+        page.trackImportController = fake;
+        const list = findChild(page, "trackListView");
+        const scan = findChild(page, "scanController");
+        tryCompare(list, "count", 3000, 30000);
+        tryVerify(() => !scan.busy && !scan.cuesPending, 30000);
+        const rebuildAll = () => {
+            page.selectPlaylist(1, "Held Playlist");
+            scan.search("Held Track 2");
+            scan.setSort("title", false);
+            scan.search("");
+            scan.setSort("playlist", true);
+            page.selectPlaylist(0, "");
+        };
+        rebuildAll();
+        compare(scan.importPathKeysComputed(), 0, "nothing staged: no key made for a single track");
+        stageTwoIntoHeld(fake);
+        tryCompare(list, "count", 3002);
+        compare(scan.importPathKeysComputed(), 3000 + 2, "the scan's tracks and the batch's rows, once");
+        rebuildAll();
+        rebuildAll();
+        compare(scan.importPathKeysComputed(), 3002, "rebuilds look the rows up");
+        // The controller's revision: the same one again is no change.
+        const revised = Object.assign({revision: 424242}, fake.stagedImport);
+        scan.setStagedImport(revised);
+        compare(scan.importPathKeysComputed(), 3004, "a new revision: its two rows read");
+        scan.setStagedImport(revised);
+        compare(scan.importPathKeysComputed(), 3004, "the same revision: nothing read");
+        // Taken back: nothing per track again.
+        fake.stagedImport = ({});
+        tryCompare(list, "count", 3000);
+        const after = scan.importPathKeysComputed();
+        rebuildAll();
+        compare(scan.importPathKeysComputed(), after, "taken back: no keys made");
+    }
+
+    // The rows a save wrote, until the stick is read again: saved, not
+    // new; nothing plays, opens, drags or edits them, the player's queue
+    // included, and "All tracks" counts them. Read again, they are the
+    // stick's; a read that fails drops them with the rest.
+    function test_savedRowsWaitForTheRead() {
+        const page = makeHeldPage();
+        const fake = page.trackImportController;
+        const list = findChild(page, "trackListView");
+        const scan = findChild(page, "scanController");
+        const tracks = scan.tracks;
+        // A file that is there, as the copy the save made is.
+        const written = newRow(testCase.newOneId, "New One", 301, 125.5, "8A", "");
+        written.filePath = browseFixture.presentArtwork();
+        fake.stagedImport = {playlist: "", isNew: false, atIndex: -1, rows: [], landed: [written]};
+        tryCompare(list, "count", 5);
+        const landed = tracks.trackAt(4);
+        compare(landed.title, "New One");
+        compare(landed.awaitingRead, true);
+        compare(landed.unreadable, true);
+        compare(landed.pendingImport, false, "saved: not new");
+        compare(landed.importChangeId, "", "nothing of it waits for Save");
+        const all = sidebarRow(page, "All tracks");
+        compare(findChild(all, "playlistRowCount").text, "5", "counted as listed");
+        verify(waitForPolish(page.Window.window), "the rows are laid out");
+        const row = list.itemAtIndex(4);
+        compare(findChild(row, "pendingImportBadge").visible, false);
+        compare(findChild(row, "awaitingReadLabel").visible, true);
+        compare(findChild(row, "awaitingReadLabel").text, "saved, reading the stick again");
+        mouseMove(findChild(row, "rowTitle"));
+        tryCompare(row, "waitTipShown", true);
+        compare(row.ToolTip.text, "Saved to the stick. Playing, editing and dragging it are available once the "
+                + "stick has been read again.");
+        mouseClick(findChild(row, "rowTitle"));
+        compare(page.trackPanelOpen, false, "no details for it");
+        mouseClick(findChild(row, "rowArtwork"));
+        compare(realPlayback.hasTrack, false, "nothing plays");
+        compare(page.trackDragCard.canDrag(row), false, "nor drags");
+        const menu = findChild(page, "trackMenu");
+        page.openTrackMenu(row, row);
+        waitForRendering(page);
+        compare(menu.opened, false, "no menu of edits");
+        compare(findChild(row, "trackRowMenuButton").enabled, false);
+        // The player: the queue steps over it, and refuses it outright.
+        page.playRow(list.itemAtIndex(3));
+        compare(realPlayback.currentSourceId, "4");
+        compare(realPlayback.hasNext, false, "the row waiting for the read is no next track");
+        realPlayback.next();
+        compare(realPlayback.currentSourceId, "4", "the queue does not go on to a row waiting for the read");
+        realPlayback.load(page.format, page.currentPath(), landed.sourceId, landed.filePath, landed.title,
+                          landed.artist, "", []);
+        compare(realPlayback.currentSourceId, "4", "nor does the player load it");
+        realPlayback.stop();
+        // Read again: the stick's rows, and the controller lets go of them.
+        page.rescan();
+        tryVerify(() => !scan.busy, 10000);
+        tryCompare(list, "count", 4);
+        verify(fake.calls.some(call => call[0] === "releaseLanded"), JSON.stringify(fake.calls));
+        compare(findChild(all, "playlistRowCount").text, "4");
+
+        // A read that fails drops them with the rest.
+        fake.stagedImport = {playlist: "", isNew: false, atIndex: -1, rows: [], landed: [written]};
+        tryCompare(list, "count", 5);
+        fake.calls = [];
+        browseFixture.failReading(false);
+        page.rescan();
+        const dialog = findChild(page, "scanErrorDialog");
+        tryCompare(dialog, "opened", true, 10000);
+        compare(list.count, 4, "not listed past a read that failed");
+        compare(scan.importAwaitingReadCount, 0);
+        verify(fake.calls.some(call => call[0] === "releaseLanded"), JSON.stringify(fake.calls));
+        dialog.close();
     }
 }

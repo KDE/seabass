@@ -27,6 +27,8 @@
 #include <QBuffer>
 #include <QCoreApplication>
 #include <QColor>
+#include <QFileInfo>
+#include <QFile>
 #include <QImage>
 #include <QSettings>
 #include <QSignalSpy>
@@ -3279,9 +3281,10 @@ int main(int argc, char **argv)
         std::cerr << "  r two: " << rows[1].toMap().value("bpm").toDouble() << " BPM; r three: key "
                   << rows[2].toMap().value("key").toString().toStdString() << std::endl;
         {
+            // The cover as a file of the app's cache folder, for the list
+            // to draw as it draws the stick's (case 28).
             const QString cover = rows[0].toMap().value("artworkPath").toString();
-            assert(cover.startsWith(QLatin1String("data:image/jpeg;base64,")));
-            const QImage picture = QImage::fromData(QByteArray::fromBase64(cover.mid(cover.indexOf(',') + 1).toLatin1()));
+            const QImage picture(cover);
             assert(picture.width() == 80 && picture.height() == 80 && "the small square the libraries keep");
             assert(rows[1].toMap().value("artworkPath").toString().isEmpty());
         }
@@ -3418,6 +3421,111 @@ int main(int argc, char **argv)
         assert(rowsSession->pendingCount() == 0 && !made() && "the last row takes the batch back, the playlist too");
         assert(rowsOf("rows").isEmpty() && shown.stagedPlaylist().isEmpty());
         std::cout << "case 27 (a discard takes the rows; the first and the last of a new playlist's batch taken back) OK\n";
+    }
+
+    // 28 and 29, on a stick of their own: the covers of a batch's rows are
+    // small files of the app's cache folder, there while a row shows them
+    // and no longer; and the one bar of an import is busy until the run
+    // is planned, then moves while the covers are read after the check.
+    {
+        const testing::EngineChangeStick coverStick =
+            testing::makeEngineChangeStick(fixture, "track_import_controller_covers");
+        testing::levelImportCounter(coverStick);
+        const QString coverPioneer = coverStick.pioneerPath();
+        const QString coverEngine = coverStick.enginePath();
+        LibraryEditSession *coverSession = registry->sessionFor(registry->libraryIdForPath(coverPioneer));
+        assert(coverSession && coverSession != session);
+        const fs::path in = computer / "covers";
+        QByteArray png;
+        {
+            QImage drawn(120, 120, QImage::Format_RGB32);
+            drawn.fill(QColor(200, 60, 30));
+            QBuffer buffer(&png);
+            buffer.open(QIODevice::WriteOnly);
+            assert(drawn.save(&buffer, "PNG"));
+        }
+        QVariantList files;
+        for (int i = 0; i < 4; ++i) {
+            const fs::path file = in / ("cover " + std::to_string(i) + ".wav");
+            writeWavWithCover(file, 44100, static_cast<std::int16_t>(80 + i), png.toStdString());
+            files << pathToQString(file);
+        }
+        TrackImportController covered;
+        // No analysis: nothing here is about it, and a stand-in is quick.
+        covered.setAnalyserForTesting(
+            [](const std::string &, const application::CancellationToken &) { return std::shared_ptr<const ImportAnalysis>(); });
+        struct Move
+        {
+            QString step;
+            int done;
+            int total;
+            double fraction;
+            bool planned;
+        };
+        std::vector<Move> moves;
+        QObject::connect(&covered, &TrackImportController::progressChanged, [&] {
+            if (covered.busy()) {
+                moves.push_back({covered.progressStep(), covered.progressDone(), covered.progressTotal(),
+                                 covered.progressFraction(), covered.progressPlanned()});
+            }
+        });
+        QSignalSpy coveredResults(&covered, &TrackImportController::resultReady);
+        assert(covered.importFiles(coverPioneer, coverEngine, files, QString(), false));
+        assert(waitFor(&covered, &TrackImportController::busyChanged, [&] { return !covered.busy(); }));
+        assert(coveredResults.count() == 1 && covered.stagedCount() == 4);
+
+        // 28. The covers: a file each (one picture, so one file), in the
+        //     cache folder; the rows name them. Saved, kept while the rows
+        //     wait for the read; released, gone.
+        const QVariantList rows = covered.stagedImport().value("rows").toList();
+        assert(rows.size() == 4);
+        // The test's SEABASS_HOME is the app's home: its cache folder.
+        const QString cacheFolder = pathToQString(infrastructure::paths::localRoot() / "cache");
+        const QString cover = rows[0].toMap().value("artworkPath").toString();
+        assert(cover.startsWith(cacheFolder + QLatin1String("/import-covers/")) && cover.endsWith(QLatin1String(".jpg")));
+        assert(QFile::exists(cover) && QImage(cover).width() == 80);
+        for (const QVariant &row : rows) {
+            assert(row.toMap().value("artworkPath").toString() == cover && "the same picture is one file");
+        }
+        const int revision = covered.stagedImport().value("revision").toInt();
+        {
+            QSignalSpy done(coverSession, &LibraryEditSession::saveFinished);
+            coverSession->save();
+            assert(waitFor(coverSession, &LibraryEditSession::saveFinished, [&] { return !done.isEmpty(); }));
+            assert(coverSession->lastSummary().value("error").toString().isEmpty());
+        }
+        assert(covered.stagedImport().value("landed").toList().size() == 4);
+        assert(covered.stagedImport().value("revision").toInt() != revision && "another revision for another list");
+        assert(QFile::exists(cover) && "the rows that wait for the read still show it");
+        covered.releaseLanded();
+        assert(covered.stagedImport().value("landed").toList().isEmpty());
+        assert(!QFile::exists(cover) && "read again: the stick has the covers, the copy goes");
+        std::cout << "case 28 (a batch's covers are files of the cache folder, kept while rows show them) OK\n";
+
+        // 29. The bar: busy (no plan, no share) while the stick is read and
+        //     the folders walked, then planned to the end; the covers read
+        //     after the check move it, a cover a step.
+        assert(!moves.empty() && !moves.front().planned && moves.front().fraction == 0.0);
+        const auto firstPlanned = std::find_if(moves.begin(), moves.end(), [](const Move &m) { return m.planned; });
+        assert(firstPlanned != moves.end() && firstPlanned != moves.begin());
+        assert(std::all_of(moves.begin(), firstPlanned, [](const Move &m) { return m.fraction == 0.0; })
+               && "no share before the plan");
+        assert(std::all_of(firstPlanned, moves.end(), [](const Move &m) { return m.planned; }) && "planned stays");
+        std::vector<double> covering;
+        for (const Move &m : moves) {
+            if (m.step == QLatin1String("check") && m.total == 4) {
+                covering.push_back(m.fraction);
+            }
+        }
+        for (const double at : covering) {
+            std::cerr << "  reading covers: " << at << "\n";
+        }
+        assert(covering.size() >= 4 && "a move a cover");
+        for (std::size_t i = 1; i < covering.size(); ++i) {
+            assert(covering[i] > covering[i - 1] && "each cover read moves the bar");
+        }
+        assert(covering.back() < 1.0 && moves.back().fraction == 1.0);
+        std::cout << "case 29 (one bar: busy until planned, moved by the covers read after the check) OK\n";
     }
 
     std::cout << "track_import_controller_test: all cases passed\n";

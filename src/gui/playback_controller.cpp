@@ -253,6 +253,21 @@ void PlaybackController::load(const QString &format, const QString &libraryPath,
                                const QString &artworkPath, const QVariantList &cues,
                                const QString &fallbackArtworkPath, bool startPlaying)
 {
+    // A row of the queue that stands for no track the library has read (a
+    // track an import has not saved yet, or one it saved before the stick
+    // was read again) is nothing to play: its id is no library's.
+    if (m_queue && format == m_queueFormat && libraryPath == m_queueLibraryPath) {
+        const int role = m_queue->roleNames().key("sourceId", -1);
+        const int rows = m_queue->rowCount();
+        for (int row = 0; role >= 0 && row < rows; ++row) {
+            if (m_queue->data(m_queue->index(row, 0), role).toString() == sourceId) {
+                if (queueValue(row, "unreadable").toBool()) {
+                    return;
+                }
+                break;
+            }
+        }
+    }
     emit trackAboutToChange();
     if (m_player) {
         m_player->stop();
@@ -1003,7 +1018,7 @@ int PlaybackController::playableRowFrom(int row, int step) const
     for (int candidate = row + step; candidate >= 0 && candidate < rows; candidate += step) {
         const QString filePath = queueValue(candidate, "filePath").toString();
         if (queueValue(candidate, "streamingSource").toString().isEmpty() && !filePath.isEmpty()
-            && QFile::exists(filePath)) {
+            && !queueValue(candidate, "unreadable").toBool() && QFile::exists(filePath)) {
             return candidate;
         }
     }

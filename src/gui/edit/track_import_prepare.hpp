@@ -133,8 +133,9 @@ using ImportProgressSink = std::function<void(const ImportProgress &)>;
 // (ImportProgress::barDone). The plan is made once the work can be counted
 // (the stick read, the offered folders walked, the files to analyse
 // known); until then the bar stays at its start. A stretch moves by its
-// step's count (the files read), by bytes in the analysis, or not at all
-// before it ends (reading the stick, the check); a later step reported
+// step's count (the files read, the covers read after the check), by
+// bytes in the analysis, or not at all before it ends (reading the
+// stick, the check itself); a later step reported
 // means the ones before it are done. The bar never goes back, and only
 // end() takes it to its end.
 class ImportBar
@@ -148,6 +149,10 @@ public:
     static constexpr std::uint64_t StickUnits = 2000;
     static constexpr std::uint64_t UnitsPerFileRead = 10;
     static constexpr std::uint64_t CheckUnits = 500;
+    // A staged track's cover read for its row, after the check and in its
+    // stretch (Step::Check counting the covers): about as long as a
+    // file's tags.
+    static constexpr std::uint64_t UnitsPerCoverRead = 10;
     static constexpr std::uint64_t AnalysisUnitsPerMiB = 150;
     // The analysis of `bytes` of audio, at least a unit per file.
     static std::uint64_t analysisUnits(std::uint64_t bytes, std::size_t files);

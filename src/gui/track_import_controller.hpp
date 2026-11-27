@@ -70,6 +70,11 @@ class TrackImportController : public QObject
     // to what is staged: each step a stretch of it as long as its work
     // (ImportBar), never going back while busy, 1 when the work is done.
     Q_PROPERTY(double progressFraction READ progressFraction NOTIFY progressChanged)
+    // The run's work is counted and the bar has its plan: until then (the
+    // stick being read, the offered folders walked) how far it is cannot
+    // be told, and progressFraction stays 0. Once true it stays so until
+    // the run ends.
+    Q_PROPERTY(bool progressPlanned READ progressPlanned NOTIFY progressChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     // What errorMessage is of: "import" (importFiles(), the possible
     // duplicates, "Don't import") or "reanalysis" (Analyse again), so the
@@ -84,19 +89,21 @@ class TrackImportController : public QObject
     Q_PROPERTY(QString stagedPlaylist READ stagedPlaylist NOTIFY pendingChanged)
     Q_PROPERTY(bool stagedPlaylistIsNew READ stagedPlaylistIsNew NOTIFY pendingChanged)
     // The staged batch as the track list shows it until Save, read from
-    // the changes the save will apply, in their order: {playlist (""
-    // for none), isNew, atIndex (where the save moves the run in the
-    // playlist, -1 for its end), rows: [{changeId, existing, filePath,
-    // title, artist, album, durationSeconds, bpm, key, artworkPath,
-    // bitrate}], landed: [the same]}. A row is one track: a new one
-    // (existing false: its import's change id, the file where the save
-    // puts it on the stick, what its tags and its analysis say, its
-    // cover as a data URL or "") or one the stick has, which the batch
-    // puts into the playlist (existing true: its playlist entry's change
-    // id and its file on the stick). `landed`: the rows the last save
-    // wrote, until the next batch is staged or the session discarded,
-    // for the list to show while it reads the stick again.
-    Q_PROPERTY(QVariantMap stagedImport READ stagedImport NOTIFY pendingChanged)
+    // the changes the save will apply, in their order: {revision (another
+    // number each time it changes, in this run never the same twice),
+    // playlist ("" for none), isNew, atIndex (where the save moves the
+    // run in the playlist, -1 for its end), rows: [{changeId, existing,
+    // filePath, title, artist, album, durationSeconds, bpm, key,
+    // artworkPath, bitrate}], landed: [the same]}. A row is one track: a
+    // new one (existing false: its import's change id, the file where
+    // the save puts it on the stick, what its tags and its analysis say,
+    // its cover as the path of a small JPEG in the app's cache folder, or
+    // "") or one the stick has, which the batch puts into the playlist
+    // (existing true: its playlist entry's change id and its file on the
+    // stick). `landed`: the rows the last save wrote, until the page has
+    // read the stick again (releaseLanded()), the next batch is staged
+    // or the session discarded.
+    Q_PROPERTY(QVariantMap stagedImport READ stagedImport NOTIFY stagedImportChanged)
     // What the last import asked for came to, as {staged, addedToPlaylist
     // (tracks the stick already has, staged to go into the playlist),
     // analysed and withGrid (of the staged tracks: how many Seabass
@@ -163,6 +170,7 @@ public:
     QString progressFile() const { return m_progressFile; }
     QStringList progressFiles() const { return m_progressFiles; }
     double progressFraction() const { return m_progressFraction; }
+    bool progressPlanned() const { return m_progressPlanned; }
     QString errorMessage() const { return m_errorMessage; }
     QString errorSource() const { return m_errorSource; }
     QVariantMap stagedImport() const { return m_stagedImport; }
@@ -213,6 +221,10 @@ public:
     // changed, for an id the batch does not have, and while a save is
     // writing.
     Q_INVOKABLE bool dropStagedTrack(const QString &changeId);
+    // The page has read the stick again since the last save (or could
+    // not): the rows that save wrote are the stick's own now, or gone,
+    // and stagedImport's `landed` is emptied, their covers deleted.
+    Q_INVOKABLE void releaseLanded();
     // By how many tracks `playlist` grows at Save; "" for the library
     // ("All tracks"): by the new tracks.
     Q_INVOKABLE int trackCountChange(const QString &playlist) const;
@@ -257,6 +269,7 @@ signals:
     void progressChanged();
     void errorMessageChanged();
     void pendingChanged();
+    void stagedImportChanged();
     void resultReady();
     // Analyse again has staged what it could (lastReanalysis).
     void reanalysisReady();
@@ -285,13 +298,18 @@ private:
     ImportProgressSink progressSink();
     void setBusy(bool busy);
     void setProgress(const QString &step, int done, int total, const QString &file, const QStringList &inHand = {},
-                     double fraction = 0.0);
+                     double fraction = 0.0, bool planned = false);
     void setErrorMessage(const QString &message);
     // Sets what the next errorMessage is of.
     void setErrorSource(const QString &source) { m_errorSource = source; }
     // stagedImport from the session's changes of the batch, as they are
     // now; a row each save change applied moves to `landed`.
     void refreshStagedImport();
+    // A staged track's cover as a file of m_coverFolder, named by its
+    // bytes; "" when it cannot be written.
+    QString keepCover(const std::string &jpeg);
+    // Drops the covers no row shows any more, their files too.
+    void pruneCovers();
     void forgetStaged();
     void forgetReanalysis();
     // Drops from the cue review the changes no longer staged.
@@ -320,14 +338,20 @@ private:
     QString m_progressFile;
     QStringList m_progressFiles;
     double m_progressFraction = 0.0;
+    bool m_progressPlanned = false;
     QString m_errorMessage;
     QString m_errorSource = QStringLiteral("import");
     // The source errorMessage was last told with.
     QString m_shownErrorSource = m_errorSource;
     QVariantMap m_stagedImport;
     QVariantList m_landed;
-    // Each staged track's cover for its row (a data URL), and each row's
-    // source file on the computer, by change id.
+    // This controller's folder for the rows' covers, in the app's cache
+    // folder beside the cover cache's file, removed with it; the files
+    // written there.
+    QString m_coverFolder;
+    std::set<QString> m_coverFiles;
+    // Each staged track's cover for its row (a file of m_coverFolder),
+    // and each row's source file on the computer, by change id.
     std::map<QString, QString> m_covers;
     std::map<QString, std::string> m_sourceOf;
     int m_pendingRevision = 0;

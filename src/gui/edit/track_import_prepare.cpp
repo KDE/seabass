@@ -161,10 +161,18 @@ std::uint64_t ImportBar::positionOf(const ImportProgress &at) const
         double share = 0.0;
         if (step == ImportProgress::Step::Analysis && at.totalBytes > 0) {
             share = static_cast<double>(at.doneBytes) / static_cast<double>(at.totalBytes);
-        } else if ((step == ImportProgress::Step::Analysis || step == ImportProgress::Step::Files) && at.total > 0) {
+        } else if ((step == ImportProgress::Step::Analysis || step == ImportProgress::Step::Files
+                    || step == ImportProgress::Step::Check)
+                   && at.total > 0) {
             share = static_cast<double>(at.done) / static_cast<double>(at.total);
         }
         share = std::clamp(share, 0.0, 1.0);
+        // The check's stretch: the check itself, then the covers it
+        // counts.
+        if (step == ImportProgress::Step::Check && at.total > 0) {
+            const std::uint64_t fixed = std::min(units, CheckUnits);
+            return start + fixed + static_cast<std::uint64_t>(std::floor(share * static_cast<double>(units - fixed)));
+        }
         return start + static_cast<std::uint64_t>(std::floor(share * static_cast<double>(units)));
     }
     // A step the plan does not have: where the bar is.
@@ -423,7 +431,8 @@ PreparedImport prepareTrackImportOn(const ImportRequest &request, const applicat
     std::vector<std::pair<ImportProgress::Step, std::uint64_t>> stretches{
         {ImportProgress::Step::Stick, ImportBar::StickUnits},
         {ImportProgress::Step::Files, ImportBar::UnitsPerFileRead * sources.size()},
-        {ImportProgress::Step::Check, ImportBar::CheckUnits}};
+        {ImportProgress::Step::Check,
+         ImportBar::CheckUnits + (request.coverReader ? ImportBar::UnitsPerCoverRead * sources.size() : 0)}};
     if (request.analyser) {
         stretches.emplace_back(ImportProgress::Step::Analysis, ImportBar::analysisUnits(offeredBytes, sources.size()));
     }
@@ -543,16 +552,26 @@ PreparedImport prepareTrackImportOn(const ImportRequest &request, const applicat
     // Each staged track's cover, small, for its row in the track list
     // until Save (which reads it again, at its own sizes, for the rows).
     if (request.coverReader) {
+        std::vector<std::shared_ptr<ImportTrackChange>> withCover;
         for (const auto &change : prepared.staged.changes) {
-            cancel.throwIfCancelled();
             const auto import = std::dynamic_pointer_cast<ImportTrackChange>(change);
-            if (!import || !import->withCover()) {
-                continue;
+            if (import && import->withCover()) {
+                withCover.push_back(import);
             }
+        }
+        // On the bar, as the check's last stretch: a cover a track.
+        for (std::size_t i = 0; i < withCover.size(); ++i) {
+            cancel.throwIfCancelled();
+            const auto &import = withCover[i];
+            bar.report({ImportProgress::Step::Check, i, withCover.size(), nameOf(import->sourceFile()),
+                        {nameOf(import->sourceFile())}});
             if (const std::optional<CoverPictures> pictures = request.coverReader(import->sourceFile());
                 pictures && !pictures->small.empty()) {
                 prepared.covers.emplace(import->id(), pictures->small);
             }
+        }
+        if (!withCover.empty()) {
+            bar.report({ImportProgress::Step::Check, withCover.size(), withCover.size(), {}, {}});
         }
     }
     if (request.analyser) {

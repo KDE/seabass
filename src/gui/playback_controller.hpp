@@ -317,7 +317,9 @@ public:
     // The loaded track is found in it by its id each time, so re-sorting
     // the list under a playing track moves "next" with it; a track that
     // is no longer in the list has no next. Rows that cannot be played (a
-    // streaming track, a missing file) are stepped over.
+    // streaming track, a missing file, a row whose `unreadable` role is
+    // true: no track a library has read) are stepped over, and load()
+    // refuses such a row of the queue outright.
     // A plain load() keeps the queue as long as it stays in the same
     // library.
     Q_INVOKABLE void setQueue(QAbstractItemModel *model, const QString &format, const QString &libraryPath);

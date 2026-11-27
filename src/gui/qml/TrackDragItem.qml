@@ -82,10 +82,11 @@ Rectangle {
     // A track with a file on this stick: a streaming track has none, and
     // nothing can be put into a playlist without one.
     function canDrag(track) {
-        // A track an import has not put on the stick yet goes nowhere
-        // until Save.
+        // A row of the import's that no library has read yet (a track
+        // not on the stick until Save, or one the save wrote before the
+        // stick is read again) goes nowhere.
         return track !== null && track !== undefined && (track.filePath || "").length > 0
-            && (track.streamingSource || "").length === 0 && track.pendingImport !== true;
+            && (track.streamingSource || "").length === 0 && track.unreadable !== true;
     }
 
     // The track as one map, the contract's fields only: what the page's

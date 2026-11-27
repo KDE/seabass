@@ -5,9 +5,14 @@
 #include "track_import_controller.hpp"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDate>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QStandardPaths>
 #include <QThread>
+#include <QUuid>
 
 #include <algorithm>
 #include <chrono>
@@ -22,9 +27,11 @@
 #include "gui/analysis_settings.hpp"
 #include "gui/async_request.hpp"
 #include "gui/future_result.hpp"
+#include "gui/qt_path.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/track_import_analysis.hpp"
 #include "gui/track_import_cover.hpp"
+#include "infrastructure/paths/seabass_paths.hpp"
 
 namespace seabass::gui
 {
@@ -47,10 +54,31 @@ int shownMoveMs(double oldMs, double newMs)
     return newMs < oldMs ? -amount : amount;
 }
 
+// Where the rows' covers are kept: beside the cover cache's file
+// (CoverCache::defaultDatabaseFile()), in the platform's cache folder, or
+// under SEABASS_HOME when that is set.
+QString importCoverRoot()
+{
+    if (qEnvironmentVariableIsSet("SEABASS_HOME")) {
+        return pathToQString(infrastructure::paths::localRoot() / "cache" / "import-covers");
+    }
+    return QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/seabass/import-covers");
+}
+
+// stagedImport's revision: never the same twice in a run, across
+// controllers too, so a page handed another controller is never told
+// that nothing changed.
+int nextStagedImportRevision()
+{
+    static int revision = 0;
+    return ++revision;
+}
+
 }  // namespace
 
 TrackImportController::TrackImportController(QObject *parent)
     : QObject(parent)
+    , m_coverFolder(importCoverRoot() + QLatin1Char('/') + QUuid::createUuid().toString(QUuid::WithoutBraces))
 {
     connect(&m_watcher, &QFutureWatcher<PreparedImport>::finished, this, &TrackImportController::onPrepared);
     connect(&m_reanalysisWatcher, &QFutureWatcher<PreparedReanalysis>::finished, this,
@@ -82,6 +110,10 @@ TrackImportController::~TrackImportController()
     }
     disconnect(&m_watcher, nullptr, this, nullptr);
     disconnect(&m_reanalysisWatcher, nullptr, this, nullptr);
+    // The rows' covers were for this controller's list alone.
+    if (!m_coverFiles.empty()) {
+        QDir(m_coverFolder).removeRecursively();
+    }
 }
 
 void TrackImportController::setExperimentalEnabled(bool enabled)
@@ -125,12 +157,13 @@ void TrackImportController::setBusy(bool busy)
 }
 
 void TrackImportController::setProgress(const QString &step, int done, int total, const QString &file,
-                                        const QStringList &inHand, double fraction)
+                                        const QStringList &inHand, double fraction, bool planned)
 {
     if (m_progressStep != step || m_progressDone != done || m_progressTotal != total || m_progressFile != file
-        || m_progressFiles != inHand || m_progressFraction != fraction) {
+        || m_progressFiles != inHand || m_progressFraction != fraction || m_progressPlanned != planned) {
         m_progressFiles = inHand;
         m_progressFraction = fraction;
+        m_progressPlanned = planned;
         m_progressStep = step;
         m_progressDone = done;
         m_progressTotal = total;
@@ -218,12 +251,70 @@ void TrackImportController::refreshStagedImport()
         }
     }
     m_stagedImport = QVariantMap{
+        {QStringLiteral("revision"), nextStagedImportRevision()},
         {QStringLiteral("playlist"), stagedPlaylist()},
         {QStringLiteral("isNew"), stagedPlaylistIsNew()},
         {QStringLiteral("atIndex"), atIndex},
         {QStringLiteral("rows"), rows},
         {QStringLiteral("landed"), m_landed},
     };
+    pruneCovers();
+    emit stagedImportChanged();
+}
+
+QString TrackImportController::keepCover(const std::string &jpeg)
+{
+    const QByteArray bytes = QByteArray::fromStdString(jpeg);
+    const QString file = m_coverFolder + QLatin1Char('/')
+                         + QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex())
+                         + QStringLiteral(".jpg");
+    if (m_coverFiles.count(file) > 0) {
+        return file;
+    }
+    QDir().mkpath(m_coverFolder);
+    QFile out(file);
+    if (!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size() || !out.flush()) {
+        out.close();
+        QFile::remove(file);
+        // The row shows the track without a cover; the save reads it from
+        // the file all the same.
+        return {};
+    }
+    m_coverFiles.insert(file);
+    return file;
+}
+
+void TrackImportController::pruneCovers()
+{
+    // A cover is kept while a row shows it: a staged track's, or one the
+    // last save wrote until the stick has been read again.
+    std::set<QString> shown;
+    for (const QVariant &row : m_landed) {
+        shown.insert(row.toMap().value(QStringLiteral("changeId")).toString());
+    }
+    std::erase_if(m_covers, [&](const auto &entry) {
+        return m_staged.count(entry.first) == 0 && shown.count(entry.first) == 0;
+    });
+    std::set<QString> used;
+    for (const auto &[id, file] : m_covers) {
+        used.insert(file);
+    }
+    std::erase_if(m_coverFiles, [&](const QString &file) {
+        if (used.count(file) > 0) {
+            return false;
+        }
+        QFile::remove(file);
+        return true;
+    });
+}
+
+void TrackImportController::releaseLanded()
+{
+    if (m_landed.isEmpty()) {
+        return;
+    }
+    m_landed.clear();
+    refreshStagedImport();
 }
 
 void TrackImportController::pruneCueReview()
@@ -272,9 +363,13 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
         if (m_session) {
             disconnect(m_session, nullptr, this, nullptr);
         }
+        const bool landed = !m_landed.isEmpty();
         m_landed.clear();
         forgetStaged();
         forgetReanalysis();
+        if (landed) {
+            refreshStagedImport();
+        }
         m_session = session;
         emit saveWritingChanged();
         if (m_session) {
@@ -492,7 +587,7 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged)
     m_preparing = request;
     m_cancel = application::CancellationToken();
     setBusy(true);
-    setProgress(QStringLiteral("stick"), 0, 0, {}, {}, 0.0);
+    setProgress(QStringLiteral("stick"), 0, 0, {}, {}, 0.0, false);
     const ImportProgressSink progress = progressSink();
     // A read, on a thread of its own (runRead(), not the pool the writes
     // use): one let go at the end (see the destructor) must not hold up
@@ -516,16 +611,19 @@ ImportProgressSink TrackImportController::progressSink()
         const int total = static_cast<int>(at.total);
         const double fraction =
             at.barTotal > 0 ? static_cast<double>(at.barDone) / static_cast<double>(at.barTotal) : 0.0;
+        const bool planned = at.barTotal > 0;
         QStringList inHand;
         for (const std::string &name : at.inHand) {
             inHand.push_back(QString::fromStdString(name));
         }
         QMetaObject::invokeMethod(
             qApp,
-            [self, offer, step, done, total, file, inHand, fraction]() {
+            [self, offer, step, done, total, file, inHand, fraction, planned]() {
                 if (self && self->m_busy && self->m_offer == offer && !self->m_cancel.cancelled()) {
-                    // The one bar only goes forward.
-                    self->setProgress(step, done, total, file, inHand, std::max(self->m_progressFraction, fraction));
+                    // The one bar only goes forward, and once it has a
+                    // plan it keeps it.
+                    self->setProgress(step, done, total, file, inHand, std::max(self->m_progressFraction, fraction),
+                                      self->m_progressPlanned || planned);
                 }
             },
             Qt::QueuedConnection);
@@ -642,10 +740,14 @@ void TrackImportController::onPrepared()
             return;
         }
         m_sourceOf = std::move(sources);
+        // Each row's cover as a file of the app's cache folder: the list
+        // is handed its path, and draws it as it draws the stick's
+        // covers, through the cover cache.
         m_covers.clear();
         for (const auto &[id, jpeg] : prepared.covers) {
-            m_covers[id] = QStringLiteral("data:image/jpeg;base64,")
-                           + QString::fromLatin1(QByteArray::fromStdString(jpeg).toBase64());
+            if (QString file = keepCover(jpeg); !file.isEmpty()) {
+                m_covers[id] = std::move(file);
+            }
         }
         m_landed.clear();
         m_staged = std::move(ids);
