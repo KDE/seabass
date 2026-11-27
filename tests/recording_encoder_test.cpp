@@ -788,16 +788,16 @@ void headerReadings(const std::string &dir)
         WavSpec factor{48000, 1, 16, 48000};
         factor.rf64 = true;
         factor.ds64DataBytes = 48000ULL * 2 * 1001;
-        const auto far = read("rf64-factor", factor, WavReading::AsDeclared);
-        check(far->unfinished() && !far->unfinished()->declaredUsable,
-              "an RF64 size of more than a thousand times the audio held: not usable: " + far->error());
+        const auto beyond = read("rf64-factor", factor, WavReading::AsDeclared);
+        check(beyond->unfinished() && !beyond->unfinished()->declaredUsable,
+              "an RF64 size of more than a thousand times the audio held: not usable: " + beyond->error());
         WavSpec within{48000, 1, 16, 48000};
         within.rf64 = true;
         within.ds64DataBytes = 48000ULL * 2 * 1000;
-        const auto near = read("rf64-within-factor", within, WavReading::AsDeclared);
-        check(near->unfinished() && near->unfinished()->declaredUsable
-                  && near->error().find("it declares 16:40 of audio") != std::string::npos,
-              "an RF64 size of a thousand times the audio held: said: " + near->error());
+        const auto within1000 = read("rf64-within-factor", within, WavReading::AsDeclared);
+        check(within1000->unfinished() && within1000->unfinished()->declaredUsable
+                  && within1000->error().find("it declares 16:40 of audio") != std::string::npos,
+              "an RF64 size of a thousand times the audio held: said: " + within1000->error());
         WavSpec plainLong{44100, 1, 16, 44100};
         plainLong.declaredDataBytes = 0xFFFFFFF0U;  // 13.5 hours, cut to a second
         const auto plain = read("plain-cut-to-a-second", plainLong, WavReading::AsDeclared);
