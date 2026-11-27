@@ -108,6 +108,12 @@ QVariant BeatGridTrackListModel::data(const QModelIndex &index, int role) const
         return row.note;
     case NoteToneRole:
         return row.noteTone;
+    case StateRole:
+        return stateOf(row).text;
+    case StateToneRole:
+        return stateOf(row).tone;
+    case StateTipRole:
+        return stateOf(row).tip;
     default:
         return {};
     }
@@ -134,6 +140,9 @@ QHash<int, QByteArray> BeatGridTrackListModel::roleNames() const
         {WaveformTipRole, "waveformTip"},
         {NoteRole, "note"},
         {NoteToneRole, "noteTone"},
+        {StateRole, "state"},
+        {StateToneRole, "stateTone"},
+        {StateTipRole, "stateTip"},
     };
 }
 
@@ -146,6 +155,52 @@ void BeatGridTrackListModel::setRows(std::vector<Row> rows)
     if (countMoved) {
         emit countChanged();
     }
+}
+
+BeatGridTrackListModel::State BeatGridTrackListModel::stateOf(const Row &row)
+{
+    if (!row.matched) {
+        return {QStringLiteral("Not in Engine"), QStringLiteral("muted"), row.note};
+    }
+    if (row.pending) {
+        return {};
+    }
+    const auto rank = [](const QString &tone) {
+        return tone == QLatin1String("danger") ? 3 : tone == QLatin1String("warn") ? 2 : tone == QLatin1String("good") ? 1 : 0;
+    };
+    const auto lowerFirst = [](QString text) {
+        if (!text.isEmpty() && !text.startsWith(QLatin1String("Engine"))) {
+            text[0] = text[0].toLower();
+        }
+        return text;
+    };
+    State state;
+    const QString &grid = row.gridState;
+    const QString &waveform = row.waveformState;
+    const QString notChosen = QStringLiteral("Not chosen");
+    const QString leftForPlayer = QStringLiteral("Left for the player");
+    const QString leftAsItIs = QStringLiteral("Left as it is");
+    if (grid == leftForPlayer || grid == leftAsItIs) {
+        state = {grid, row.gridTone, {}};
+    } else if (waveform == leftForPlayer || waveform == leftAsItIs) {
+        state = {waveform, row.waveformTone, {}};
+    } else if (grid == waveform || waveform.isEmpty() || waveform == QLatin1String("Stays with the grid")
+        || waveform == notChosen) {
+        state = {grid, row.gridTone, {}};
+    } else if (grid.isEmpty() || grid == notChosen) {
+        state = {waveform, row.waveformTone, {}};
+    } else {
+        state = {QStringLiteral("Beat grid ") + lowerFirst(grid) + QStringLiteral(", waveform ") + lowerFirst(waveform),
+                 rank(row.gridTone) >= rank(row.waveformTone) ? row.gridTone : row.waveformTone, {}};
+    }
+    QStringList tips;
+    for (const QString &tip : {row.gridTip, row.waveformTip, row.note}) {
+        if (!tip.isEmpty() && !tips.contains(tip)) {
+            tips << tip;
+        }
+    }
+    state.tip = tips.join(QLatin1Char('\n'));
+    return state;
 }
 
 void BeatGridTrackListModel::refresh(const std::function<void(Row &)> &update, const QSet<QString> &rekordboxIds)

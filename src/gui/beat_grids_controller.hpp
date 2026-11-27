@@ -71,6 +71,11 @@ public:
         WaveformTipRole,
         NoteRole,
         NoteToneRole,
+        // The row's one label: the grid's and the waveform's states said
+        // once (stateOf()).
+        StateRole,
+        StateToneRole,
+        StateTipRole,
     };
 
     struct Row
@@ -97,6 +102,17 @@ public:
         QString note;
         QString noteTone;
     };
+
+    // A row's one label: its text, tone and tip. The two parts' states
+    // said once where they agree, the one that matters where the other
+    // follows it or was not chosen, both where they differ.
+    struct State
+    {
+        QString text;
+        QString tone;
+        QString tip;
+    };
+    static State stateOf(const Row &row);
 
     using QAbstractListModel::QAbstractListModel;
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;

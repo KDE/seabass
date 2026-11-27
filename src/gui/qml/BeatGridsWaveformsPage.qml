@@ -761,8 +761,6 @@ Page {
                 selected: trackRow.model.ticked
                 selectTooltip: trackRow.matched ? "Copy this track's beat grid and waveform"
                     : "Not in the Engine library yet: sync the libraries first"
-                note: trackRow.model.note
-                noteColor: root.toneColor(trackRow.model.noteTone)
                 onSelectionToggled: selected => root.controller.setTicked(trackRow.rekordboxId, selected)
 
                 // The cover plays rekordbox's copy of the track (#133),
@@ -987,42 +985,24 @@ Page {
                     }
                 ]
 
-                // Two lines, the same on every row: the grid's state over
-                // the waveform's, each badge after a caption column as
-                // wide as the wider caption, so the badges line up from
-                // row to row whatever they say. A row with no state yet
-                // (Checking) or none at all (not in Engine) keeps them,
-                // and the note under them is always one line.
-                noteOnOneLine: true
-                detailItems: [
-                    Column {
-                        id: stateMarks
-                        objectName: "stateMarks"
-                        // The title column's width: a badge with more to
-                        // say than that elides, never reaching the tempo.
-                        // The Flow fills that column and its width does not
-                        // follow the badges back: one width change of the
-                        // page moves it once (test_stateMarksSettleInOnePass).
-                        readonly property real room: parent ? parent.width : 0
-                        spacing: Theme.tightSpacing / 2
-                        StateMark {
-                            objectName: "gridMark"
-                            maxWidth: stateMarks.room
-                            caption: "Beat grid"
-                            pending: trackRow.pending
-                            value: trackRow.model.gridState
-                            tone: trackRow.model.gridTone
-                            tip: trackRow.model.gridTip
-                        }
-                        StateMark {
-                            objectName: "waveformMark"
-                            maxWidth: stateMarks.room
-                            caption: "Waveform"
-                            pending: trackRow.pending
-                            value: trackRow.model.waveformState
-                            tone: trackRow.model.waveformTone
-                            tip: trackRow.model.waveformTip
-                        }
+                // One label, on the title's line: the beat grid's and the
+                // waveform's states said once (the model's `state`), the
+                // reasons on hover. "Checking" while the preview is out.
+                titleItems: [
+                    Label {
+                        objectName: "pendingLabel"
+                        visible: trackRow.pending && trackRow.matched
+                        text: "Checking"
+                        color: Theme.textMuted
+                        font.pointSize: Theme.fontTiny
+                        font.italic: true
+                    },
+                    StatusBadge {
+                        objectName: "stateBadge"
+                        visible: !trackRow.pending && trackRow.model.state.length > 0
+                        label: trackRow.model.state
+                        badgeColor: root.toneColor(trackRow.model.stateTone)
+                        tooltipText: trackRow.model.stateTip
                     }
                 ]
                 actionItems: [
@@ -1097,86 +1077,19 @@ Page {
         }
     }
 
-    // A part's state on a row: what it is, and the badge saying what
-    // copying does to it. As tall as a badge even without one, and its
-    // caption as wide as the wider of the two, so the badge's x is the same
-    // on every row.
-    component StateMark: Row {
-        id: mark
-        property string caption: ""
-        property bool pending: false
-        property string value: ""
-        property string tone: ""
-        property string tip: ""
-        // The most the mark may take; its badge elides to stay inside it.
-        property real maxWidth: Infinity
-        readonly property bool shown: mark.pending || mark.value.length > 0
-        height: badgeMetric.implicitHeight
-        spacing: Theme.tightSpacing
-        Label {
-            objectName: "stateCaption"
-            anchors.verticalCenter: parent.verticalCenter
-            width: root.stateCaptionWidth
-            visible: mark.shown
-            text: mark.caption
-            color: Theme.textMuted
-            font.pointSize: Theme.fontTiny
-        }
-        Label {
-            objectName: "pendingLabel"
-            anchors.verticalCenter: parent.verticalCenter
-            visible: mark.pending
-            text: "Checking"
-            color: Theme.textMuted
-            font.pointSize: Theme.fontTiny
-            font.italic: true
-        }
-        StatusBadge {
-            objectName: "stateBadge"
-            anchors.verticalCenter: parent.verticalCenter
-            visible: !mark.pending && mark.value.length > 0
-            width: Math.min(implicitWidth, Math.max(0, mark.maxWidth - root.stateCaptionWidth - mark.spacing))
-            label: mark.value
-            badgeColor: root.toneColor(mark.tone)
-            // Elided, the badge's words are said in full on hover.
-            tooltipText: truncated ? mark.value + (mark.tip.length > 0 ? "\n" + mark.tip : "") : mark.tip
-        }
-    }
-    // What StateMark measures itself by: never shown.
-    Label {
-        id: gridCaptionMetric
-        visible: false
-        text: "Beat grid"
-        font.pointSize: Theme.fontTiny
-    }
-    Label {
-        id: waveformCaptionMetric
-        visible: false
-        text: "Waveform"
-        font.pointSize: Theme.fontTiny
-    }
-    StatusBadge {
-        id: badgeMetric
-        visible: false
-        label: "New"
-        badgeColor: Theme.good
-    }
-    readonly property real stateCaptionWidth: Math.ceil(Math.max(gridCaptionMetric.implicitWidth,
-                                                                 waveformCaptionMetric.implicitWidth))
-
     // A row's waveform: up to rowWaveformMaximumWidth, narrower on a
     // narrow page and none at all where the title column would have too
-    // little left (the badges under the title need it more). Taken from
+    // little left (the title and its label need it more). Taken from
     // the page's width, not the list's: it is then known before the rows
     // are laid out again, and the title column beside it moves once per
-    // change of width (see StateMark's room). As tall as the expanded
+    // change of width. As tall as the expanded
     // waveform of a metadata row, below the height of the row's text.
     readonly property real rowWaveformMaximumWidth: Theme.scaled(160)
     readonly property real rowWaveformWidth: {
         const room = Math.round(Math.min(root.rowWaveformMaximumWidth, (root.width - Theme.scaled(640)) / 2));
         return room >= Theme.scaled(64) ? room : 0;
     }
-    readonly property real rowWaveformHeight: Math.round(Theme.scaled(40))
+    readonly property real rowWaveformHeight: Math.round(Theme.scaled(32))
 
     // The row opened for comparing, by rekordbox id; empty for none.
     property string openTrackId: ""

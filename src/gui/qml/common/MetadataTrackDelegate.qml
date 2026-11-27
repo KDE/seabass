@@ -177,6 +177,9 @@ Rectangle {
     // as the row narrows (Beat Grids & Waveforms: what copying does to the
     // track's grid and its waveform). Shown when there are any.
     property alias detailItems: detailFlow.data
+    // Items on the title's line, right after the title (a page's one
+    // state badge): the title elides to leave them room.
+    property alias titleItems: titleExtra.data
     // Page-specific content under the expanded half's facts, lined up with
     // the title like they are. Only shown while expanded.
     property alias expandedItems: expandedExtra.data
@@ -293,25 +296,45 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 spacing: 0
-                Label {
-                    objectName: "rowTitle"
+                RowLayout {
+                    objectName: "rowTitleLine"
                     Layout.fillWidth: true
-                    text: delegate.title.length > 0 ? delegate.title : delegate.filename
-                    color: Theme.text
-                    // Explicit, and the line under it is the reason.
-                    // Theme.fontSmall has a floor of the system's
-                    // smallest readable size, so on a machine whose
-                    // default QML font is smaller than that floor an
-                    // unsized title came out SMALLER than the artist
-                    // beneath it -- the row's own heading set in the
-                    // smallest type on it.
-                    font.pointSize: Theme.fontNormal
-                    elide: Text.ElideRight
-                    font.strikeout: delegate.markedForRemoval
-                    HoverHandler { id: titleHover }
-                    ToolTip.visible: titleHover.hovered && delegate.titleTooltip.length > 0
-                    ToolTip.delay: 400
-                    ToolTip.text: delegate.titleTooltip
+                    spacing: Theme.rowSpacing
+                    Label {
+                        objectName: "rowTitle"
+                        // As wide as its words where something follows it on
+                        // the line, eliding first when the line is short.
+                        Layout.fillWidth: titleExtra.children.length === 0
+                        Layout.maximumWidth: titleExtra.children.length === 0 ? Number.POSITIVE_INFINITY : implicitWidth
+                        Layout.minimumWidth: 0
+                        text: delegate.title.length > 0 ? delegate.title : delegate.filename
+                        color: Theme.text
+                        // Explicit, and the line under it is the reason.
+                        // Theme.fontSmall has a floor of the system's
+                        // smallest readable size, so on a machine whose
+                        // default QML font is smaller than that floor an
+                        // unsized title came out SMALLER than the artist
+                        // beneath it -- the row's own heading set in the
+                        // smallest type on it.
+                        font.pointSize: Theme.fontNormal
+                        elide: Text.ElideRight
+                        font.strikeout: delegate.markedForRemoval
+                        HoverHandler { id: titleHover }
+                        ToolTip.visible: titleHover.hovered && delegate.titleTooltip.length > 0
+                        ToolTip.delay: 400
+                        ToolTip.text: delegate.titleTooltip
+                    }
+                    Row {
+                        id: titleExtra
+                        objectName: "rowTitleItems"
+                        Layout.alignment: Qt.AlignVCenter
+                        visible: children.length > 0
+                        spacing: Theme.tightSpacing
+                    }
+                    Item {
+                        Layout.fillWidth: true
+                        visible: titleExtra.children.length > 0
+                    }
                 }
                 Label {
                     Layout.fillWidth: true

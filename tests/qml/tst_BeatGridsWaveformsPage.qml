@@ -251,43 +251,32 @@ TestCase {
         }, 5000, "track " + id + "'s row is in view");
         return found;
     }
-    function shownBadges(delegate) {
-        const shown = [];
-        for (const name of ["gridMark", "waveformMark"]) {
-            const badge = findChild(findChild(delegate, name), "stateBadge");
-            shown.push(badge !== null && badge.visible ? badge.label : null);
-        }
-        return shown;
+    // The row's one label, or null where it shows none.
+    function shownBadge(delegate) {
+        const badge = findChild(delegate, "stateBadge");
+        return badge !== null && badge.visible ? badge.label : null;
     }
-    // Every row one shape, whatever its states say: the same height, the
-    // beat grid's badge over the waveform's on two lines, both badges at
-    // one x on every row, and the badges clear of the tempo.
+    // Every row one shape, whatever its state says: the same height, the
+    // label on the title's line right after the title, and clear of the
+    // tempo.
     function verifyRowsAlike(page, ids, why) {
         let height = -1;
-        let badgeX = -1;
         for (const id of ids) {
             const delegate = delegateInView(page, id);
             if (height < 0) {
                 height = delegate.height;
             }
             compare(delegate.height, height, why + ": " + id + " is as tall as the first row");
-            const grid = findChild(findChild(delegate, "gridMark"), "stateBadge");
-            const waveform = findChild(findChild(delegate, "waveformMark"), "stateBadge");
-            verify(grid.visible && waveform.visible, why + ": " + id + " shows both badges");
-            const gridX = grid.mapToItem(delegate, 0, 0).x;
-            if (badgeX < 0) {
-                badgeX = gridX;
-            }
-            compare(gridX, badgeX, why + ": " + id + "'s grid badge (" + grid.label + ") lines up with the first row's");
-            compare(waveform.mapToItem(delegate, 0, 0).x, badgeX,
-                    why + ": " + id + "'s waveform badge (" + waveform.label + ") too");
-            verify(waveform.mapToItem(delegate, 0, 0).y >= grid.mapToItem(delegate, 0, grid.height).y,
-                   why + ": " + id + ": the waveform's line is under the grid's");
+            const badge = findChild(delegate, "stateBadge");
+            const title = findChild(delegate, "rowTitle");
+            verify(badge.visible, why + ": " + id + " shows its label");
+            const middle = (item) => item.mapToItem(delegate, 0, item.height / 2).y;
+            verify(Math.abs(middle(badge) - middle(title)) <= 1, why + ": " + id + "'s label is on the title's line");
+            verify(badge.mapToItem(delegate, 0, 0).x >= title.mapToItem(delegate, title.width, 0).x,
+                   why + ": " + id + "'s label follows the title");
             const bpm = findChild(delegate, "bpmLabel");
-            for (const badge of [grid, waveform]) {
-                verify(badge.mapToItem(delegate, badge.width, 0).x <= bpm.mapToItem(delegate, 0, 0).x,
-                       why + ": " + id + "'s " + badge.label + " stops before the tempo");
-            }
+            verify(badge.mapToItem(delegate, badge.width, 0).x <= bpm.mapToItem(delegate, 0, 0).x,
+                   why + ": " + id + "'s " + badge.label + " stops before the tempo");
         }
     }
     // A box's words a gap from Theme's scale off the box itself.
@@ -530,10 +519,12 @@ TestCase {
         showPlaylist(o.page, "T73 Renamed");
         waitSettled(o.c);
         verify(waitForPolish(o.page.Window.window));
-        compare(JSON.stringify(shownBadges(trackDelegate(o.page, b01))), JSON.stringify(["New", "New"]));
-        compare(findChild(trackDelegate(o.page, b01), "rowNote").text.trim(), "", "its line stays, empty");
-        compare(JSON.stringify(shownBadges(trackDelegate(o.page, b02))),
-                JSON.stringify(["No beat grid in rekordbox", "Left for the player"]));
+        compare(shownBadge(trackDelegate(o.page, b01)), "New", "one label for the grid and the waveform");
+        compare(findChild(trackDelegate(o.page, b01), "rowNote").visible, false, "and no line of notes");
+        compare(shownBadge(trackDelegate(o.page, b02)), "Left for the player");
+        verify(findChild(trackDelegate(o.page, b02), "stateBadge").tooltipText.indexOf(
+                   "rekordbox has no beat grid to complete it with") >= 0, "the reason on hover");
+        compare(shownBadge(trackDelegate(o.page, b04)), "No beat grid in rekordbox", "the waveform follows the grid");
         compare(findChild(trackDelegate(o.page, b04), "bpmLabel").text, "108 BPM");
         // The longest states the page shows, beside the shortest, at its
         // widest and at its narrowest: one shape, the badges in one column.
@@ -916,7 +907,8 @@ TestCase {
                 "Engine's own analysis is kept for 3 ticked tracks, ready to be put back.");
         showPlaylist(o.page, "T73 Folder/T73 New");
         tryVerify(() => trackDelegate(o.page, n1) !== null
-                  && findChild(trackDelegate(o.page, n1), "rowNote").text === "Engine's analysis kept", 5000,
+                  && findChild(trackDelegate(o.page, n1), "stateBadge").tooltipText.indexOf("Engine's analysis kept") >= 0,
+                  5000,
                   "and on screen");
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-kept.png");
@@ -1141,10 +1133,9 @@ TestCase {
             const titleRight = title.mapToItem(delegate, title.width, 0).x;
             verify(titleRight <= bpm.mapToItem(delegate, 0, 0).x,
                    id + ": the title (to " + titleRight + ") stops before the tempo");
-            const marks = findChild(delegate, "rowDetailItems");
-            const titleBottom = title.mapToItem(delegate, 0, title.height).y;
-            verify(marks.mapToItem(delegate, 0, 0).y >= titleBottom, id + ": the marks are under the title");
-            verify(marks.mapToItem(delegate, 0, marks.height).y <= delegate.height, id + ": inside the row");
+            const badge = findChild(delegate, "stateBadge");
+            verify(badge.mapToItem(delegate, badge.width, 0).x <= bpm.mapToItem(delegate, 0, 0).x,
+                   id + ": the label stops before the tempo");
             verify(delegate.mapToItem(list, delegate.width, 0).x <= list.width, id + ": the row fits the list");
         }
         if (screenshotDir) {
@@ -1171,53 +1162,6 @@ TestCase {
     // narrowest width, on a Mac-sized font, each change of the page's
     // width moves `room` at most once, `room` is the title column's
     // width as the row laid it out, and nothing moves afterwards.
-    function test_stateMarksSettleInOnePass_data() {
-        return [
-            {tag: "system font", pointSize: 0},
-            {tag: "13pt", pointSize: 13},
-        ];
-    }
-    function test_stateMarksSettleInOnePass(data) {
-        SystemFontMetrics.generalPointSizeOverride = data.pointSize;
-        const o = openOn(t73(), {width: 800, height: 760});
-        o.c.setTicked(b01, true);
-        o.c.setTicked(b04, true);
-        waitSettled(o.c);
-        verify(waitForPolish(o.page.Window.window));
-        const delegate = delegateInView(o.page, b04);
-        const marks = findChild(delegate, "stateMarks");
-        const flow = findChild(delegate, "rowDetailItems");
-        const column = flow.parent;
-        const badge = findChild(findChild(delegate, "gridMark"), "stateBadge");
-        verify(badge !== null && badge.visible, "B04 has a beat grid badge");
-        let roomMoves = 0;
-        let badgeMoves = 0;
-        const onRoom = () => ++roomMoves;
-        const onBadge = () => ++badgeMoves;
-        marks.roomChanged.connect(onRoom);
-        badge.widthChanged.connect(onBadge);
-        try {
-            for (const width of [720, 760, 720]) {
-                roomMoves = 0;
-                badgeMoves = 0;
-                o.page.width = width;
-                verify(waitForPolish(o.page.Window.window));
-                waitForRendering(o.page);
-                // Time for frames more, for anything a second pass would move.
-                wait(100);
-                verify(roomMoves <= 1, width + " px: room moved " + roomMoves + " times");
-                verify(badgeMoves <= 1, width + " px: the badge's width moved " + badgeMoves + " times");
-                compare(marks.room, flow.width, width + " px: room is the Flow's width");
-                compare(flow.width, column.width, width + " px: and the Flow fills the title column");
-                verify(badge.mapToItem(delegate, badge.width, 0).x <= column.mapToItem(delegate, column.width, 0).x + 0.5,
-                       width + " px: the badge ends inside the title column");
-            }
-        } finally {
-            marks.roomChanged.disconnect(onRoom);
-            badge.widthChanged.disconnect(onBadge);
-        }
-    }
-
     // The anonymized library: its export has no waveform for the analysed
     // rows, and the preview of every track is timed for the report.
     function test_anonymizedLibraryHasNoWaveforms() {
@@ -1543,7 +1487,7 @@ TestCase {
         // The rows keep one shape, and the waveform fits beside the text.
         compare(withRow.height, withoutRow.height, "a row with a waveform is as tall as one without");
         const slot = withView.parent;
-        const textColumn = findChild(withRow, "rowTitle").parent;
+        const textColumn = findChild(withRow, "rowTitle").parent.parent;
         verify(slot.height <= textColumn.height,
                "the waveform (" + slot.height + ") is no taller than the row's text (" + textColumn.height + ")");
 
