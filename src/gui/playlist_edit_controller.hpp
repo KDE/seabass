@@ -124,6 +124,11 @@ public:
     Q_INVOKABLE bool isNewPlaylistStaged(const QString &name) const;
     // Staged by createPlaylistWhereMissing while some library has it.
     Q_INVOKABLE bool isMadeWhereMissing(const QString &name) const;
+    // Why `playlist` may not be made where it is missing now because of
+    // adds staged into it before (into the libraries that had it then
+    // only: made now, the others would have it without them), or "". The
+    // import into Own Recordings heeds it too.
+    Q_INVOKABLE QString partialAdditionsRefusal(const QString &playlist) const;
     // `playlist` deleted from every library on the stick that has it as a
     // playlist: a library where the node at that path is a folder, or a
     // playlist holding others (Engine), is left alone and the page told
@@ -262,10 +267,12 @@ signals:
     void playlistsSaved();
     // An add asked for is waiting: `missingLibraries` (display names:
     // "rekordbox", "OneLibrary", "Engine") hold the playlist but have no
-    // row for the file; `addedLibraries` the ones the add would reach.
-    // Nothing is staged until addAnyway().
+    // row for the file; `addedLibraries` the ones the add would reach;
+    // `folderLibraries` have a folder of that name, which takes no
+    // tracks. Nothing is staged until addAnyway().
     void additionNeedsLibraries(const QString &playlist, const QString &filePath, const QString &title,
-                                const QStringList &missingLibraries, int toIndex, const QStringList &addedLibraries);
+                                const QStringList &missingLibraries, int toIndex, const QStringList &addedLibraries,
+                                const QStringList &folderLibraries);
     // What planDeleteWithTracks found: playlist, libraries (display names
     // of the ones holding the playlist), going and staying (tracks that
     // would be deleted, and ones another playlist keeps), withoutFile
@@ -343,6 +350,8 @@ private:
         bool whereMissing = false;
         QStringList createIn;
         QStringList having;
+        // Into fewer libraries than the stick has (Edit::partial).
+        bool partial = false;
     };
     void stageAdd(const PendingAdd &add);
     // addToPlaylist, with the page's answer to additionNeedsLibraries
@@ -365,6 +374,9 @@ private:
                                  const QStringList &lacking, const QStringList &having);
     // The track import's create of `playlist` waits in the session.
     bool importMakes(const QString &playlist) const;
+    // The create of `playlist` made where missing, when nothing staged or
+    // asked for goes into it any more.
+    void takeBackUnneededCreate(const QString &playlist);
     // Adds waiting for the page's answer, by playlist + "|" + file.
     std::map<QString, PendingAdd> m_waitingAdds;
 
@@ -412,6 +424,10 @@ private:
         int toIndex = -1;
         std::uint64_t sequence = 0;
         std::function<std::unique_ptr<PendingChange>(const std::string &playlist)> remake;
+        // An add staged into fewer libraries than the stick has (those
+        // holding the playlist then): the playlist is not made where it is
+        // missing while it waits (partialAdditionsRefusal).
+        bool partial = false;
     };
     // Every add staged, in order; the ones no longer in m_staged are left
     // out when read.

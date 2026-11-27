@@ -1118,4 +1118,69 @@ TestCase {
         verify(enginePlaylists.indexOf("Moved") >= 0 && enginePlaylists.indexOf("Mixed R") < 0, "Engine's renamed");
         verify(enginePlaylists.indexOf("Holder/Inside") >= 0, "the playlist inside Engine's Holder stays");
     }
+
+    // An add by a name that is a playlist in OneLibrary and a folder in
+    // rekordbox: the folder takes no tracks, so it is left out, and the
+    // page is asked first, naming it; added anyway, the save leaves the
+    // folder alone and has nothing to say of it.
+    function test_anAddLeavesAFolderOfItsNameOut() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        const files = stickFixture.plantPlaylist(stick, "Source", ["rekordbox", "onelibrary"], 1);
+        compare(files.length, 1);
+        compare(stickFixture.plantPlaylist(stick, "Mixed A", ["onelibrary"], 0).length, 0);
+        verify(stickFixture.plantFolder(stick, "Mixed A", "rekordbox"));
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        const browse = createTemporaryObject(askingEditComponent, testCase);
+        const spy = createTemporaryObject(addSpyComponent, testCase, {target: browse});
+        verify(browse.addToPlaylist(pioneer, engine, "Mixed A", files[0], "Source One"));
+        tryCompare(browse, "busy", false, 60000);
+        compare(browse.errorMessage, "");
+        compare(spy.count, 1, "asked");
+        const args = spy.signalArguments[0];
+        compare(JSON.stringify(args[3]), "[]", "every library holding the playlist has the track");
+        compare(JSON.stringify(args[5]), JSON.stringify(["OneLibrary"]), "the one it reaches");
+        compare(JSON.stringify(args[6]), JSON.stringify(["rekordbox"]), "the folder, left out");
+        compare(session.pendingCount, 0, "nothing staged while the page asks");
+        browse.addAnyway("Mixed A", files[0]);
+        compare(session.pendingCount, 1);
+        const summary = saveAndWait(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.notes, "", "the folder was never asked of the save");
+        verify(stickFixture.topLevelFoldersIn(stick, "rekordbox").indexOf("Mixed A") >= 0, "the folder stays");
+
+        // Nothing but folders of that name: refused, saying so.
+        verify(stickFixture.plantFolder(stick, "Only Folder", "rekordbox"));
+        verify(browse.addToPlaylist(pioneer, engine, "Only Folder", files[0], "Source One"));
+        tryCompare(browse, "busy", false, 60000);
+        compare(browse.errorMessage, "\"Only Folder\" is a folder in rekordbox, not a playlist, so it takes no tracks.");
+        compare(spy.count, 1, "not asked");
+        compare(session.pendingCount, 0);
+    }
+
+    // A track added at a place into a new playlist still counts in it, and
+    // shows at its place, after the playlist is renamed before Save.
+    function test_aPlacedAddCountsAfterItsNewPlaylistIsRenamed() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        const files = stickFixture.plantPlaylist(stick, "Source", ["rekordbox", "onelibrary"], 1);
+        compare(files.length, 1);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        verify(edited(browse, browse.createPlaylist(pioneer, engine, "Fresh")), browse.errorMessage);
+        verify(edited(browse, browse.addToPlaylist(pioneer, engine, "Fresh", files[0], "Source One", 0)),
+               browse.errorMessage);
+        compare(browse.trackCountChange("Fresh"), 1);
+        verify(edited(browse, browse.renamePlaylist(pioneer, engine, "Fresh", "Fresher")), browse.errorMessage);
+        compare(JSON.stringify(browse.newPlaylists), JSON.stringify(["Fresher"]));
+        verify(browse.isAdditionStaged("Fresher", files[0]));
+        compare(browse.trackCountChange("Fresher"), 1, "the placed add counts under the new name");
+        const placed = browse.pendingMoves["Fresher"] ?? [];
+        compare(placed.length, 1, "shown at its place");
+        compare(JSON.stringify([placed[0].filePath, placed[0].toIndex, placed[0].addedAt]),
+                JSON.stringify([files[0], 0, true]), "as added");
+    }
 }

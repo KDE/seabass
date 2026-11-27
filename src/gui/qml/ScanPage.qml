@@ -185,6 +185,12 @@ Page {
             return qsTr("\"%1\" is to be renamed \"%2\" when you Save. Keep its name first (the row's menu), then "
                         + "add to it.").arg(root.ownRecordingsRename.from).arg(root.ownRecordingsRename.to);
         }
+        // Tracks staged into it before, into the libraries that have it now
+        // only (with Experimental off, say): made where missing now, the
+        // others would have it without them.
+        if (typeof root.playlistEditController.partialAdditionsRefusal === "function") {
+            return root.playlistEditController.partialAdditionsRefusal(root.ownRecordingsPlaylist);
+        }
         return "";
     }
     // Every way a track of the library goes into a playlist from Browse
@@ -1220,8 +1226,14 @@ Page {
         property string trackTitle: ""
         property var missing: []
         property var added: []
+        // The libraries with a folder of the playlist's name, which takes
+        // no tracks: left out as well.
+        property var folders: []
         readonly property bool engineMissing: missing.indexOf("Engine") >= 0
         readonly property bool pioneerMissing: missing.indexOf("rekordbox") >= 0 || missing.indexOf("OneLibrary") >= 0
+        readonly property bool pioneerLeftOut: pioneerMissing || folders.indexOf("rekordbox") >= 0
+            || folders.indexOf("OneLibrary") >= 0
+        readonly property bool engineLeftOut: engineMissing || folders.indexOf("Engine") >= 0
         severity: SeabassDialog.Warning
         title: qsTr("Not in every library")
         headline: missingLibrariesDialog.text
@@ -1231,12 +1243,23 @@ Page {
             return list.length <= 1 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
         }
         readonly property string text: {
-            const players = engineMissing && pioneerMissing ? qsTr("Denon and Pioneer players")
-                : engineMissing ? qsTr("a Denon player") : qsTr("a Pioneer player");
-            const lines = [qsTr("\"%1\" is not in the %2 %3 on this stick, so it would be added to \"%4\" in %5 only, "
+            const players = engineLeftOut && pioneerLeftOut ? qsTr("Denon and Pioneer players")
+                : engineLeftOut ? qsTr("a Denon player") : qsTr("a Pioneer player");
+            const lines = [];
+            if (missing.length > 0) {
+                lines.push(qsTr("\"%1\" is not in the %2 %3 on this stick, so it would be added to \"%4\" in %5 only, "
                                 + "and %6 would not see it there.")
                                .arg(trackTitle).arg(names(missing)).arg(missing.length === 1 ? qsTr("library") : qsTr("libraries"))
-                               .arg(playlist).arg(names(added)).arg(players)];
+                               .arg(playlist).arg(names(added)).arg(players));
+            }
+            if (folders.length > 0) {
+                lines.push(missing.length > 0
+                    ? qsTr("In %1, \"%2\" is a folder, not a playlist, so it is not added there either.")
+                          .arg(names(folders)).arg(playlist)
+                    : qsTr("In %1, \"%2\" is a folder, not a playlist, so \"%3\" would be added to it in %4 only, "
+                           + "and %5 would not see it there.")
+                          .arg(names(folders)).arg(playlist).arg(trackTitle).arg(names(added)).arg(players));
+            }
             if (engineMissing) {
                 lines.push(qsTr("Run Sync after Rekordbox Export first to bring the track into Engine."));
             }
@@ -1290,12 +1313,13 @@ Page {
     Connections {
         target: root.playlistEditController
         ignoreUnknownSignals: true
-        function onAdditionNeedsLibraries(playlist, filePath, title, missing, toIndex, added) {
+        function onAdditionNeedsLibraries(playlist, filePath, title, missing, toIndex, added, folders) {
             missingLibrariesDialog.playlist = playlist;
             missingLibrariesDialog.filePath = filePath;
             missingLibrariesDialog.trackTitle = title;
             missingLibrariesDialog.missing = missing;
             missingLibrariesDialog.added = added ?? [];
+            missingLibrariesDialog.folders = folders ?? [];
             missingLibrariesDialog.open();
         }
         function onDeleteWithTracksPlanned(plan) {

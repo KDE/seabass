@@ -919,6 +919,10 @@ int main(int argc, char **argv)
         const std::string log = logText().substr(logBefore);
         assert(log.find("rekordbox's \"Holder\" is a folder") != std::string::npos);
         assert(log.find("OneLibrary's \"Holder\" is a folder") != std::string::npos);
+        assert(result.notes.join(QLatin1Char(' '))
+                   == QStringLiteral("\"Tone A01\" was not added to \"Holder\" in rekordbox and OneLibrary: there it "
+                                     "is a folder, not a playlist.")
+               && "the save's summary says so");
     }
     std::cout << "case 12 (an add by a path that is a folder in rekordbox and OneLibrary: nothing written against "
                  "the folder there, said in the log) OK\n";
@@ -1002,6 +1006,15 @@ int main(int argc, char **argv)
         const auto parent = playlistWhereabouts(pioneerQ, libraryQ, "Parent");
         assert(parent.holdingOthers == QStringList{QStringLiteral("engine")} && parent.folders.isEmpty()
                && "an Engine playlist holding another is no folder, and is said to hold others");
+        // It takes tracks as any Engine playlist does (Engine has no folder
+        // of its own kind; the reader lists its tracks), as Browse's add
+        // always wrote it.
+        result = save(std::make_shared<AddToPlaylistChange>(pioneerQ, libraryQ, "Parent", file(A01),
+                                                            QStringLiteral("Tone A01"),
+                                                            QStringList{QStringLiteral("engine")}));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty() && result.notes.isEmpty());
+        assert(engineMembers(library, "Parent") == std::vector<std::int64_t>{engineId[A01.relative]}
+               && "Engine's playlist holding another takes the track");
     }
     std::cout << "case 13 (a delete and a rename by a path that is a folder in rekordbox and OneLibrary leave the "
                  "folder and what is in it alone, and say so; an Engine playlist holding another is not deleted) OK\n";

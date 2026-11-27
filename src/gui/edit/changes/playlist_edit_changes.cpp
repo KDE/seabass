@@ -758,6 +758,9 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
     const std::string pioneer = m_pioneerRoot.toStdString();
     int added = 0;
     std::vector<std::string> leftAlone;
+    // The libraries where the node at that path is a folder: said in the
+    // save's summary too.
+    QStringList folders;
     // Added, but not put at the place asked (it should never be: the add
     // just made the file's one entry).
     std::vector<std::string> notPlaced;
@@ -769,6 +772,7 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
             const auto ids = rows.trackIdsWithFilePath(pathOnStick(pioneer, m_filePath));
             if (playlist && folderAt(rows.playlistTree(), m_playlist)) {
                 leftAlone.push_back("rekordbox's \"" + m_playlist + "\" is a folder, not a playlist");
+                folders << QStringLiteral("rekordbox");
             } else if (!playlist || ids.empty()) {
                 leftAlone.push_back(playlist ? "rekordbox has no row for the file" : "rekordbox has no such playlist");
             } else if (rows.appendPlaylistEntries(*playlist, {ids.front()}) > 0) {
@@ -798,6 +802,7 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
                 leftAlone.push_back("OneLibrary has no such playlist");
             } else if (folderAt(writer.playlistTree(), m_playlist)) {
                 leftAlone.push_back("OneLibrary's \"" + m_playlist + "\" is a folder, not a playlist");
+                folders << QStringLiteral("onelibrary");
             } else {
                 bool addedHere = false;
                 try {
@@ -861,6 +866,11 @@ ChangeOutcome AddToPlaylistChange::apply(SaveContext &ctx)
     }
     for (const auto &why : leftAlone) {
         ctx.log().record("playlist-add: \"" + m_filePath + "\" not added to \"" + m_playlist + "\" there: " + why);
+    }
+    if (!folders.isEmpty()) {
+        noteLeftAlone(ctx, id(),
+                      QStringLiteral("\"%1\" was not added to \"%2\" in %3: there it is a folder, not a playlist.")
+                          .arg(m_title, QString::fromStdString(m_playlist), spokenLibraries(folders)));
     }
     for (const auto &why : notPlaced) {
         ctx.log().record("playlist-add: \"" + m_filePath + "\" added to \"" + m_playlist + "\" but not placed there: "

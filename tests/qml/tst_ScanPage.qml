@@ -99,17 +99,22 @@ TestCase {
             // staging (additionNeedsLibraries), as the real one does for a
             // track some library holding the playlist has no row for.
             property var missingForNextAdd: []
+            // ...and the libraries with a folder of the playlist's name.
+            property var foldersForNextAdd: []
             signal additionNeedsLibraries(string playlist, string filePath, string title, var missingLibraries,
-                                          int toIndex, var addedLibraries)
+                                          int toIndex, var addedLibraries, var folderLibraries)
             function addAnyway(playlist, filePath) { calls.push(["addAnyway", playlist, filePath]); }
             function dropAddition(playlist, filePath) { calls.push(["dropAddition", playlist, filePath]); }
             function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom) {
-                if (missingForNextAdd.length > 0) {
+                if (missingForNextAdd.length > 0 || foldersForNextAdd.length > 0) {
                     const missing = missingForNextAdd;
+                    const folders = foldersForNextAdd;
                     missingForNextAdd = [];
+                    foldersForNextAdd = [];
                     calls.push(["asked", playlist, filePath, moveFrom || ""]);
                     additionNeedsLibraries(playlist, filePath, title, missing, toIndex === undefined ? -1 : toIndex,
-                                           ["rekordbox", "OneLibrary", "Engine"].filter(n => missing.indexOf(n) < 0));
+                                           ["rekordbox", "OneLibrary", "Engine"].filter(
+                                               n => missing.indexOf(n) < 0 && folders.indexOf(n) < 0), folders);
                     return true;
                 }
                 // A place only when one is given, as the page passes -1 for none.
@@ -644,6 +649,38 @@ TestCase {
     // button answers as it says; Escape is "Don't add"; Open Sync drops the
     // add and asks for Sync after Rekordbox Export.
     Component { id: openSyncSpyComponent; SignalSpy { signalName: "openRekordboxExportSyncRequested" } }
+
+    // A library with a folder of the playlist's name is left out of an
+    // add: the dialog says so, alone or beside a library without the
+    // track, and names the players that would not see it.
+    function test_theDialogNamesAFolderLeftOut() {
+        const page = makeEditingPage();
+        const fake = page.playlistEditController;
+        const dialog = findChild(page, "missingLibrariesDialog");
+        const text = findChild(page, "missingLibrariesText");
+        fake.foldersForNextAdd = ["rekordbox"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/a.mp3", "A Track", -1);
+        tryCompare(dialog, "opened", true);
+        compare(text.text, "In rekordbox, \"Peak\" is a folder, not a playlist, so \"A Track\" would be added to it "
+                + "in OneLibrary and Engine only, and a Pioneer player would not see it there.");
+        compare(findChild(page, "openSyncButton").visible, false, "nothing to sync");
+        findChild(page, "addAnywayButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["addAnyway", "Peak", "/nonexistent/a.mp3"]]));
+
+        fake.missingForNextAdd = ["Engine"];
+        fake.foldersForNextAdd = ["rekordbox"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/b.mp3", "B Track", -1);
+        tryCompare(dialog, "opened", true);
+        compare(text.text, "\"B Track\" is not in the Engine library on this stick, so it would be added to \"Peak\" "
+                + "in OneLibrary only, and Denon and Pioneer players would not see it there. In rekordbox, \"Peak\" is "
+                + "a folder, not a playlist, so it is not added there either. Run Sync after Rekordbox Export first to "
+                + "bring the track into Engine.");
+        verify(text.text.indexOf("\u2014") < 0 && text.text.indexOf("--") < 0, "no dashes on screen");
+        findChild(page, "dontAddButton").clicked();
+        tryCompare(dialog, "visible", false);
+        cleanupExperimental();
+    }
     function test_anAddTheControllerAsksAboutOpensTheDialog() {
         const page = makeEditingPage();
         const fake = page.playlistEditController;

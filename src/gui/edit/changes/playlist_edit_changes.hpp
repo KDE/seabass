@@ -215,8 +215,8 @@ private:
 // whose playlist already holds the file, or that has no row for the file
 // (an Engine-only track has no export.pdb row), is left alone and the log
 // says so, as is an export.pdb or OneLibrary whose node at that path is a
-// folder (an entry against it is a row no player reads); nothing added
-// anywhere is a skip. The playlist may be one a
+// folder (an entry against it is a row no player reads; the save's summary
+// says that one too); nothing added anywhere is a skip. The playlist may be one a
 // CreatePlaylistChange staged before it makes in the same save. Given a
 // place, each library that took the entry then has it moved there the way
 // MoveInPlaylistChange writes a move: one change for a track dropped

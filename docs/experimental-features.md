@@ -298,10 +298,19 @@ from day one.
   `PlaylistEditController::addToPlaylistMakingItWhereMissing`, which
   stages the create and the add from one lookup, or neither). Refused
   before anything is staged, saying why: a folder of that name in a
-  library, a name a library holds twice, a staged delete or a staged
-  rename from or to that name; and, while it waits to be made where
-  some library has it already, a rename or a delete of it (either would
-  reach only the libraries that have it). A second add before Save joins
+  library (in Engine, a playlist holding others: Browse's ordinary add
+  writes into one, but whether a player lists its tracks is not known), a
+  name a library holds twice, a staged delete or a staged rename from or
+  to that name, tracks staged into it before into the libraries that had
+  it then only (with Experimental off, say: made now, the others would
+  lack them); and, while it waits to be made where some library has it
+  already, a rename or a delete of it (either would reach only the
+  libraries that have it), also one asked while an add's lookup still
+  runs. A plain add into it while the import waits to make it is refused
+  too, and one after the create is staged goes by the row's rule, also
+  over a restart. An add not made ("Don't add", or taken back) takes the
+  create made for it back when nothing else waits for the playlist. A
+  second add before Save joins
   the import that waits and goes on top of it: the newest added first,
   the files of the waiting import after it, at the waiting batch's
   place; files put at another place are refused until Save. While a
