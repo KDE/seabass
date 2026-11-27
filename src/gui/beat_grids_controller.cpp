@@ -6,6 +6,8 @@
 #include "gui/track_analysis_cache.hpp"
 #include "infrastructure/database_read_copy.hpp"
 
+#include <QElapsedTimer>
+#include <QLoggingCategory>
 #include <QCryptographicHash>
 #include <QTimer>
 
@@ -460,6 +462,10 @@ struct PreviewInput
     application::AnalysisCopyOptions options;
 };
 
+// Where a preview's time goes, per batch: off unless asked for
+// (QT_LOGGING_RULES="seabass.beatgrids.info=true").
+Q_LOGGING_CATEGORY(lcBeatGrids, "seabass.beatgrids", QtWarningMsg)
+
 // rekordbox's analysis of an item, as the command line reads it: the grid,
 // the waveform sections, the key in Engine's numbering and the tempo.
 application::RekordboxAnalysis readAnalysis(const BeatGridLibrary &library, const application::BeatGridCopyItem &item)
@@ -500,6 +506,10 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
     options.previewOnly = true;
 
     reporter->start("Checking tracks", in.items.size());
+    QElapsedTimer batchTimer;
+    batchTimer.start();
+    QElapsedTimer step;
+    qint64 readNs = 0, importNs = 0, digestNs = 0, factsNs = 0, restoreNs = 0;
     PreviewRows chunk;
     // Small enough that rows appear while the bar moves, large enough that
     // a thousand rows are not a thousand hops to the GUI thread.
@@ -512,18 +522,28 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
         const application::BeatGridCopyItem &item = in.items[i];
         BeatGridTrackState state;
         try {
+            step.start();
             application::RekordboxAnalysis analysis = readAnalysis(library, item);
+            readNs += step.nsecsElapsed();
+            step.start();
             const application::AnalysisItemOutcome outcome =
                 application::importAnalysisItem(item, analysis, writer, ledger, options, facts);
+            importNs += step.nsecsElapsed();
             state.result = outcome.result;
             state.options = outcome.options;
+            step.start();
             if (state.wouldWrite()) {
                 state.analysisDigest = infrastructure::local::rekordboxAnalysisDigest(analysis);
             }
+            digestNs += step.nsecsElapsed();
+            step.start();
             state.facts = writer.engineAnalysisFacts(item.engineTrackId, item.ledgerKey);
+            factsNs += step.nsecsElapsed();
+            step.start();
             if (state.facts.kept == application::EngineAnalysisFacts::Kept::Kept) {
                 state.restore = writer.restoreEngineAnalysis(item.engineTrackId, item.ledgerKey, {false, true});
             }
+            restoreNs += step.nsecsElapsed();
         } catch (const std::exception &e) {
             state.failed = true;
             state.failure = QString::fromStdString(e.what());
@@ -539,6 +559,11 @@ QString runPreviewBatch(const PreviewInput &in, const std::function<void(Preview
         deliver(std::move(chunk));
     }
     reporter->finish();
+    const auto ms = [](qint64 ns) { return ns / 1000000; };
+    qCInfo(lcBeatGrids).nospace() << "preview: " << in.items.size() << " tracks in " << batchTimer.elapsed()
+                                  << " ms: rekordbox read " << ms(readNs) << ", Engine check " << ms(importNs)
+                                  << ", digest " << ms(digestNs) << ", kept facts " << ms(factsNs)
+                                  << ", restore preview " << ms(restoreNs);
     if (cancel.cancelled()) {
         throw application::OperationCancelled();
     }
