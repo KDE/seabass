@@ -277,9 +277,9 @@ Page {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             text: "Copies rekordbox's beat grids and waveforms into this stick's Engine library, "
-                                + "for the tracks you tick. A track the player has not analysed yet then loads "
-                                + "without analysis; on one it has, Engine's own grid is kept as a backup, even "
-                                + "with Overwrite Engine's Analysis ticked, so it can be restored."
+                                + "for the tracks you tick, each grid with its waveform. A grid locked or moved on "
+                                + "the player stays, with its waveform, unless you tick Overwrite Locked "
+                                + "(Hand-Edited) Beat Grids. Engine's own analysis is kept, so it can be restored."
                         }
                     }
                 }
@@ -343,35 +343,37 @@ Page {
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: root.staged ? "Unstage to change what is copied"
-                                : "rekordbox's waveform, for a track the player has drawn none of"
+                                : "rekordbox's waveform, also over one the player drew, unless the track's beat grid stays"
                             onToggled: {
                                 root.controller.waveforms = checked;
                                 checked = Qt.binding(() => root.controller.waveforms);
                             }
                         }
-                        // A grid locked or moved on the player and a waveform
-                        // the player drew: the player's own analysis, left
-                        // alone unless this is ticked.
+                        // A grid locked or moved on the player is the DJ's
+                        // own: it and its waveform stay unless this is ticked.
                         SeabassCheckBox {
                             objectName: "overwriteCheckBox"
                             width: Math.min(implicitWidth, optionsRow.width)
-                            text: "Overwrite Engine's Analysis"
-                            checked: root.controller.overwriteEngineAnalysis
-                            // Only for a copy of something.
-                            enabled: root.ticksEnabled && (root.controller.grids || root.controller.waveforms)
+                            text: "Overwrite Locked (Hand-Edited) Beat Grids"
+                            checked: root.controller.replaceEngineEdits
+                            enabled: root.ticksEnabled && root.controller.grids
                             ToolTip.visible: hovered
                             ToolTip.delay: 400
                             ToolTip.text: root.staged ? "Unstage to change what is copied"
-                                : "Also replace a beat grid the DJ locked or moved on the player, and a waveform "
-                                  + "the player drew. Off, they are left as they are"
+                                : "Also replace a beat grid the DJ locked or moved on the player, and its waveform. "
+                                  + "Off, they stay as they are"
                             onToggled: {
-                                root.controller.overwriteEngineAnalysis = checked;
-                                checked = Qt.binding(() => root.controller.overwriteEngineAnalysis);
+                                root.controller.replaceEngineEdits = checked;
+                                checked = Qt.binding(() => root.controller.replaceEngineEdits);
                             }
                         }
                     }
 
-                    RowLayout {
+                    // The playlist, the selection buttons and Stage on one
+                    // line where they fit; where they do not, the selection
+                    // buttons on a line of their own above the playlist and
+                    // Stage.
+                    GridLayout {
                         id: actionsRow
                         objectName: "actionsRow"
                         Layout.alignment: (controlsRow.oneLine ? Qt.AlignRight : Qt.AlignLeft) | Qt.AlignVCenter
@@ -380,7 +382,15 @@ Page {
                         Layout.maximumWidth: controlsRow.width
                         // As wide as it asks, the boxes take the rest.
                         Layout.fillWidth: false
-                        spacing: Theme.rowSpacing
+                        columnSpacing: Theme.rowSpacing
+                        rowSpacing: Theme.tightSpacing
+                        // Read from the parts, not from the layout's own
+                        // implicit width, which follows `twoLines`.
+                        readonly property real oneLineWidth: playlistPicker.Layout.preferredWidth
+                            + selectButtons.implicitWidth + stageButton.implicitWidth + 2 * columnSpacing
+                        // Against the page, not the row, which grows with
+                        // what it holds.
+                        readonly property bool twoLines: root.width - 2 * Theme.pageMargin < oneLineWidth
                         // Which playlist's tracks are listed, picked as on Sync
                         // Cue Points and Clean Up Duplicates (#115), with a box on
                         // each playlist in the combo that ticks all of its tracks,
@@ -389,6 +399,8 @@ Page {
                         PlaylistPickerCombo {
                             id: playlistPicker
                             objectName: "playlistPicker"
+                            Layout.row: actionsRow.twoLines ? 1 : 0
+                            Layout.column: 0
                             Layout.preferredWidth: Theme.snap(Math.max(Theme.scaled(180), Math.min(Theme.scaled(280), controlsRow.width * 0.25)))
                             Layout.alignment: Qt.AlignVCenter
                             Layout.minimumWidth: 0
@@ -410,36 +422,70 @@ Page {
                             onPlaylistPicked: (index, modelData) => root.controller.shownPlaylist = index === 0 ? "" : modelData.name
                             onPlaylistCheckToggled: (name, checked) => root.controller.setPlaylistTicked(name, checked)
                         }
-                        // Every row the list shows ticked, as the shown
-                        // playlist's box (or All tracks') ticks them; and every
-                        // tick taken off. Each is off where it would change
-                        // nothing, and while a batch is staged, as the row
-                        // boxes are.
-                        Button {
-                            objectName: "selectAllButton"
-                            text: "Select All"
-                            // Asked again when the ticks move and when the
-                            // library is read again (playlistNames' signal),
-                            // which can change what can be ticked.
-                            enabled: root.ticksEnabled && root.controller.tickRevision >= 0
-                                && root.controller.playlistNames !== undefined
-                                && root.controller.tickablePlaylistTracks(root.controller.shownPlaylist) > 0
-                                && root.controller.playlistCheckState(root.controller.shownPlaylist) !== Qt.Checked
-                            ToolTip.visible: hovered
-                            ToolTip.text: root.controller.shownPlaylist.length > 0
-                                ? "Tick every track of this playlist" : "Tick every track"
-                            onClicked: root.controller.setPlaylistTicked(root.controller.shownPlaylist, true)
+                        RowLayout {
+                            id: selectButtons
+                            objectName: "selectButtons"
+                            Layout.row: 0
+                            Layout.column: actionsRow.twoLines ? 0 : 1
+                            Layout.columnSpan: actionsRow.twoLines ? 2 : 1
+                            spacing: Theme.rowSpacing
+                            // Every row the list shows ticked, as the shown
+                            // playlist's box (or All tracks') ticks them; and every
+                            // tick taken off. Each is off where it would change
+                            // nothing, and while a batch is staged, as the row
+                            // boxes are.
+                            Button {
+                                objectName: "selectAllButton"
+                                text: "Select All"
+                                // Asked again when the ticks move and when the
+                                // library is read again (playlistNames' signal),
+                                // which can change what can be ticked.
+                                enabled: root.ticksEnabled && root.controller.tickRevision >= 0
+                                    && root.controller.playlistNames !== undefined
+                                    && root.controller.tickablePlaylistTracks(root.controller.shownPlaylist) > 0
+                                    && root.controller.playlistCheckState(root.controller.shownPlaylist) !== Qt.Checked
+                                ToolTip.visible: hovered
+                                ToolTip.text: root.controller.shownPlaylist.length > 0
+                                    ? "Tick every track of this playlist" : "Tick every track"
+                                onClicked: root.controller.setPlaylistTicked(root.controller.shownPlaylist, true)
+                            }
+                            // The shown tracks of one kind, ticked, and the rest
+                            // of them unticked. Off until every shown track's
+                            // preview is in, and where it would change nothing.
+                            Button {
+                                objectName: "selectUneditedButton"
+                                text: "Select Unedited"
+                                enabled: root.ticksEnabled && root.controller.statesRevision >= 0
+                                    && root.controller.tickRevision >= 0
+                                    && root.controller.selectionCount("unedited") > 0
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Select all but hand-edited (locked) tracks"
+                                onClicked: root.controller.selectOnly("unedited")
+                            }
+                            Button {
+                                objectName: "selectUnanalysedButton"
+                                text: "Select Unanalysed"
+                                enabled: root.ticksEnabled && root.controller.statesRevision >= 0
+                                    && root.controller.tickRevision >= 0
+                                    && root.controller.selectionCount("unanalysed") > 0
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Select all tracks that have no beat grid or waveform on Engine"
+                                onClicked: root.controller.selectOnly("unanalysed")
+                            }
+                            Button {
+                                objectName: "selectNoneButton"
+                                text: "Select None"
+                                enabled: root.ticksEnabled && root.controller.tickedCount > 0
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Untick every track, in every playlist"
+                                onClicked: root.controller.setPlaylistTicked("", false)
+                            }
                         }
                         Button {
-                            objectName: "selectNoneButton"
-                            text: "Select None"
-                            enabled: root.ticksEnabled && root.controller.tickedCount > 0
-                            ToolTip.visible: hovered
-                            ToolTip.text: "Untick every track, in every playlist"
-                            onClicked: root.controller.setPlaylistTicked("", false)
-                        }
-                        Button {
+                            id: stageButton
                             objectName: "stageButton"
+                            Layout.row: actionsRow.twoLines ? 1 : 0
+                            Layout.column: actionsRow.twoLines ? 1 : 2
                             highlighted: !root.staged
                             text: root.staged ? "Unstage" : "Stage Selected"
                             enabled: root.staged ? !root.controller.writing

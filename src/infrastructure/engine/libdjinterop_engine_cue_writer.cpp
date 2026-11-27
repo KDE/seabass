@@ -1456,6 +1456,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
     const bool overwriteEdits = options.overwriteEngineEdits && !(options.respectLock && locked);
     const std::filesystem::path fileRoot = pathFromUtf8(overviewFileRoot());
 
+    if (flags.analysed && existing && existing->adjusted_beat_grid != existing->default_beat_grid) {
+        const bool ours = options.ownGridFingerprint && *options.ownGridFingerprint == gridFingerprint(*existing);
+        result.rowEditedOnEngine = !ours;
+    }
     if (flags.analysed) {
         std::optional<BeatDataBlob> gridWrite;
         if (options.grids) {
@@ -1515,7 +1519,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 // The waveform the player drew stays unless asked for. An
                 // overview column already rekordbox's is Seabass's: only
                 // its file is put right.
-                if (overviewWrite && !options.overwritePlayerWaveforms
+                const bool gridKept = options.waveformFollowsKeptGrid && options.grids
+                    && (result.grid.outcome == Outcome::RowLocked || result.grid.outcome == Outcome::RowEditedOnEngine
+                        || result.grid.outcome == Outcome::NoSourceGrid);
+                if (overviewWrite && (gridKept || !options.overwritePlayerWaveforms)
                     && holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint)) {
                     overviewWrite.reset();
                     fileWrite.reset();
@@ -1749,7 +1756,7 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
         after.isAnalyzed = EngineSqlValue::ofInteger(1);
     };
     // A completion over the waveform the player drew (asked for: an answer,
-    // or "Overwrite Engine's Analysis") keeps the player's row first, every
+    // or "Overwrite Locked (Hand-Edited) Beat Grids") keeps the player's row first, every
     // column and the overview file, so Restore Engine's Analysis brings it
     // back. What cannot be kept is not replaced, in a preview as in the
     // write.

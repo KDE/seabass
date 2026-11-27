@@ -578,12 +578,12 @@ Words gridWords(const BeatGridTrackState &s)
         return leftWords(s);
     case Outcome::RowLocked:
         return {QStringLiteral("Locked on the player"), QStringLiteral("warn"),
-                QStringLiteral("The beat grid is locked on the player. \"Overwrite Engine's Analysis\" "
-                               "replaces it all the same.")};
+                QStringLiteral("The beat grid is locked on the player, so it and its waveform stay. "
+                               "\"Overwrite Locked (Hand-Edited) Beat Grids\" replaces them all the same.")};
     case Outcome::RowEditedOnEngine:
         return {QStringLiteral("Changed on the player"), QStringLiteral("warn"),
-                QStringLiteral("The beat grid was moved on the player. \"Overwrite Engine's Analysis\" "
-                               "replaces it all the same.")};
+                QStringLiteral("The beat grid was moved on the player, so it and its waveform stay. "
+                               "\"Overwrite Locked (Hand-Edited) Beat Grids\" replaces them all the same.")};
     case Outcome::UnsupportedSchema:
         return {QStringLiteral("Engine library too old"), QStringLiteral("warn"), QString()};
     case Outcome::NotRequested:
@@ -631,9 +631,14 @@ Words waveformWords(const BeatGridTrackState &s)
     case Waveform::RowUnreadable:
         return {QStringLiteral("Cannot be read"), QStringLiteral("warn"), unreadableTip()};
     case Waveform::PlayersWaveform:
+        if (s.result.grid.outcome == Outcome::RowLocked || s.result.grid.outcome == Outcome::RowEditedOnEngine
+            || s.result.grid.outcome == Outcome::NoSourceGrid) {
+            return {QStringLiteral("Stays with the grid"), QStringLiteral("warn"),
+                    QStringLiteral("The player's beat grid of this track stays, so the waveform the player drew "
+                                   "stays with it.")};
+        }
         return {QStringLiteral("Drawn by the player"), QStringLiteral("warn"),
-                QStringLiteral("The player drew its own waveform of this track, and it stays. \"Overwrite "
-                               "Engine's Analysis\" replaces it all the same.")};
+                QStringLiteral("The player drew its own waveform of this track, and it stays.")};
     case Waveform::DiffersFromEngine:
         return {QStringLiteral("Differs on Engine"), QStringLiteral("warn"),
                 QStringLiteral("Engine has its own waveform for this track, and it differs from rekordbox's.")};
@@ -695,6 +700,15 @@ QString leftAloneReason(const BeatGridTrackState &s)
     if (s.result.grid.outcome == Outcome::RowUnreadable || s.result.waveform == Waveform::RowUnreadable) {
         return QStringLiteral("analysed or not cannot be read");
     }
+    if (s.result.grid.outcome == Outcome::RowLocked && s.result.waveform != Waveform::Written) {
+        return QStringLiteral("locked on the player");
+    }
+    if (s.result.grid.outcome == Outcome::RowEditedOnEngine && s.result.waveform != Waveform::Written) {
+        return QStringLiteral("changed on the player");
+    }
+    if (s.result.grid.outcome == Outcome::NoSourceGrid && s.result.waveform == Waveform::PlayersWaveform) {
+        return QStringLiteral("no beat grid in rekordbox");
+    }
     if (s.result.waveform == Waveform::PlayersWaveform) {
         return QStringLiteral("waveform drawn by the player");
     }
@@ -722,7 +736,8 @@ BeatGridsController::BeatGridsController(QObject *parent) : QObject(parent)
     m_options.grids = true;
     m_options.waveforms = true;
     m_options.overwriteEngineEdits = false;
-    m_options.overwritePlayerWaveforms = false;
+    m_options.overwritePlayerWaveforms = true;
+    m_options.waveformFollowsKeptGrid = true;
     recount();
     // The rows' reads wait while any library is being written.
     connect(EditSessionRegistry::instance(), &EditSessionRegistry::stateChanged, this,
@@ -1468,6 +1483,8 @@ void BeatGridsController::adoptLibrary(std::shared_ptr<BeatGridLibrary> library)
         emit ticksChanged();
     }
     m_states.clear();
+    ++m_statesRevision;
+    emit statesChanged();
     ++m_generation;
     // Another read of the stick: the rows' analyses are read again, from
     // this one.
@@ -1673,22 +1690,12 @@ void BeatGridsController::setReplacePlayerWaveforms(bool on)
     invalidateStates();
 }
 
-void BeatGridsController::setOverwriteEngineAnalysis(bool on)
-{
-    if ((m_options.overwriteEngineEdits == on && m_options.overwritePlayerWaveforms == on)
-        || !m_stagedIds.isEmpty()) {
-        return;
-    }
-    m_options.overwriteEngineEdits = on;
-    m_options.overwritePlayerWaveforms = on;
-    emit optionsChanged();
-    invalidateStates();
-}
-
 void BeatGridsController::invalidateStates()
 {
     ++m_generation;
     m_states.clear();
+    ++m_statesRevision;
+    emit statesChanged();
     refreshRows();
     recount();
     schedulePreview();
@@ -1759,6 +1766,55 @@ int BeatGridsController::playlistCheckState(const QString &name) const
 int BeatGridsController::tickablePlaylistTracks(const QString &name) const
 {
     return static_cast<int>(tickableIn(name).size());
+}
+
+bool BeatGridsController::isOfKind(const BeatGridTrackState &state, const QString &kind) const
+{
+    if (state.failed) {
+        return false;
+    }
+    if (kind == QLatin1String("unedited")) {
+        return !state.result.rowLocked && !state.result.rowEditedOnEngine;
+    }
+    if (kind == QLatin1String("unanalysed")) {
+        return state.result.completedRow || notAnalysed(state) || state.result.analysedNothingStored;
+    }
+    return false;
+}
+
+int BeatGridsController::selectionCount(const QString &kind) const
+{
+    int count = 0;
+    for (const std::string &id : tickableIn(m_shownPlaylist)) {
+        const auto state = m_states.find(id);
+        if (state == m_states.end()) {
+            return -1;
+        }
+        count += isOfKind(state->second, kind) ? 1 : 0;
+    }
+    return count;
+}
+
+void BeatGridsController::selectOnly(const QString &kind)
+{
+    if (!m_stagedIds.isEmpty() || selectionCount(kind) < 0) {
+        return;
+    }
+    bool moved = false;
+    for (const std::string &id : tickableIn(m_shownPlaylist)) {
+        const QString qid = QString::fromStdString(id);
+        if (isOfKind(m_states.at(id), kind)) {
+            if (!m_ticked.contains(qid)) {
+                m_ticked.insert(qid);
+                moved = true;
+            }
+        } else if (m_ticked.remove(qid)) {
+            moved = true;
+        }
+    }
+    if (moved) {
+        ticksMoved();
+    }
 }
 
 // --- previews ----------------------------------------------------------
@@ -1886,6 +1942,8 @@ void BeatGridsController::takePreviewRows(std::uint64_t generation, std::vector<
     for (auto &[id, state] : rows) {
         m_states[id] = std::move(state);
     }
+    ++m_statesRevision;
+    emit statesChanged();
     refreshRows();
     recount();
 }

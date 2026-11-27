@@ -207,6 +207,8 @@ struct AnalysisCopyOptions
     bool overwriteEngineEdits = false;
     // As AnalysisImportOptions::overwritePlayerWaveforms.
     bool overwritePlayerWaveforms = false;
+    // As AnalysisImportOptions::waveformFollowsKeptGrid.
+    bool waveformFollowsKeptGrid = false;
     // As AnalysisImportOptions::differingIsConflict and respectLock.
     bool differingIsConflict = false;
     bool respectLock = false;

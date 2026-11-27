@@ -1058,6 +1058,28 @@ public:
         return changed;
     }
 
+    // One analysed Engine row's beat grid locked, the one with the lowest
+    // id. How many rows changed (1), -1 on failure.
+    Q_INVOKABLE int lockOneAnalysedEngineBeatGrid(const QString &stickRoot)
+    {
+        const std::string file = stickRoot.toStdString() + "/Engine Library/Database2/m.db";
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(file.c_str(), &db) != SQLITE_OK) {
+            sqlite3_close(db);
+            return -1;
+        }
+        int changed = -1;
+        if (sqlite3_exec(db,
+                         "UPDATE Track SET isBeatGridLocked = 1 WHERE id = "
+                         "(SELECT MIN(id) FROM Track WHERE isAnalyzed = 1);",
+                         nullptr, nullptr, nullptr)
+            == SQLITE_OK) {
+            changed = sqlite3_changes(db);
+        }
+        sqlite3_close(db);
+        return changed;
+    }
+
     // Every Engine row's beat data, as stored, by track id: the sha256 of
     // the blob in hex, "" for NULL. Read straight from m.db, so a test can
     // count the rows a save really changed. Empty on failure.

@@ -312,7 +312,8 @@ TestCase {
     }
 
     // Nothing is copied that the user did not choose: nothing ticked, the
-    // action off, the parts both on and both replace boxes off.
+    // action off, the parts both on, the player's waveforms replaced and
+    // its hand-edited grids not.
     function test_nothingTickedAtFirstAndTheActionIsOff() {
         const o = openOn(t73());
         waitSettled(o.c);
@@ -326,10 +327,9 @@ TestCase {
         compare(o.c.grids, true);
         compare(o.c.waveforms, true);
         compare(o.c.replaceEngineEdits, false);
-        compare(o.c.replacePlayerWaveforms, false);
+        compare(o.c.replacePlayerWaveforms, true, "rekordbox's waveform replaces the player's by default");
         compare(findChild(o.page, "gridsCheckBox").checked, true);
         compare(findChild(o.page, "waveformsCheckBox").checked, true);
-        compare(o.c.overwriteEngineAnalysis, false);
         compare(findChild(o.page, "overwriteCheckBox").checked, false);
         const button = findChild(o.page, "stageButton");
         compare(button.text, "Stage Selected");
@@ -382,13 +382,13 @@ TestCase {
         compare(row(o.c, b07).ticked, false);
         waitSettled(o.c);
         compare(o.c.gridsToCopy, 5);
-        compare(o.c.waveformsToCopy, 4, "B04's waveform is the player's");
+        compare(o.c.waveformsToCopy, 5, "B04's waveform goes with its grid");
         compare(o.c.tracksToComplete, 4);
         compare(o.c.tracksToWrite, 5);
         compare(o.c.leftAloneCount, 0);
         compare(findChild(o.page, "summaryLabel").text,
-                "5 tracks ticked: 5 beat grids and 4 waveforms to copy, 4 tracks then load without analysis.");
-        compare(findChild(o.page, "leftAloneLabel").text, "One track to copy keeps the waveform the player drew.");
+                "5 tracks ticked: 5 beat grids and 5 waveforms to copy, 4 tracks then load without analysis.");
+        compare(findChild(o.page, "leftAloneLabel").visible, false, "nothing of the player's kept");
         verify(findChild(o.page, "stageButton").enabled, "something to stage");
 
         // And off again, all of it.
@@ -511,15 +511,16 @@ TestCase {
         waitSettled(o.c);
         // N1: analysed, locked.
         compare(row(o.c, n1).gridState, "Locked on the player");
-        compare(row(o.c, n1).waveformState, "Drawn by the player", "the player's waveform stays");
+        compare(row(o.c, n1).waveformState, "Stays with the grid", "the player's waveform stays with its grid");
         compare(row(o.c, n1).note, "");
         // B01: not analysed, completed from rekordbox.
         compare(row(o.c, b01).gridState, "New");
         compare(row(o.c, b01).waveformState, "New");
         compare(row(o.c, b01).note, "Loads without analysis");
-        // B04: analysed, no grid in rekordbox.
+        // B04: analysed, no grid in rekordbox: Engine's grid stays, and
+        // its waveform with it.
         compare(row(o.c, b04).gridState, "No beat grid in rekordbox");
-        compare(row(o.c, b04).waveformState, "Drawn by the player");
+        compare(row(o.c, b04).waveformState, "Stays with the grid");
         // B02: not analysed and no grid: cannot be completed.
         compare(row(o.c, b02).gridState, "No beat grid in rekordbox");
         compare(row(o.c, b02).waveformState, "Left for the player");
@@ -549,7 +550,7 @@ TestCase {
         compare(o.c.tracksToWrite, 3, "B01, B03, B12 completed");
         compare(o.c.leftAloneCount, 2);
         compare(findChild(o.page, "leftAloneLabel").text,
-                "2 ticked tracks are left alone: 1 left for the player, 1 waveform drawn by the player.");
+                "2 ticked tracks are left alone: 1 left for the player, 1 no beat grid in rekordbox.");
     }
 
     // The box that replaces grids set on the player: off, a locked grid is
@@ -563,80 +564,114 @@ TestCase {
         waitSettled(o.c);
         compare(row(o.c, n1).gridState, "Locked on the player");
         compare(o.c.gridsToCopy, 6, "only the 6 rows the player has not analysed");
-        compare(o.c.waveformsToCopy, 6, "the 5 analysed rows keep the waveform the player drew");
-        compare(o.c.leftAloneCount, 5, "locked, and the player's waveform: nothing to copy");
+        compare(o.c.waveformsToCopy, 6, "the 5 locked rows keep their waveform with their grid");
+        compare(row(o.c, n1).waveformState, "Stays with the grid");
+        compare(o.c.leftAloneCount, 5, "locked: nothing to copy");
 
         const box = findChild(o.page, "overwriteCheckBox");
         compare(box.checked, false, "off by default");
         clickOn(box);
         compare(o.c.replaceEngineEdits, true);
-        compare(o.c.replacePlayerWaveforms, true, "one box for the player's grid and waveform both");
+        compare(o.c.replacePlayerWaveforms, true, "the player's waveforms are replaced either way");
         compare(row(o.c, n1).pending, true, "worked out again");
         waitSettled(o.c);
         compare(row(o.c, n1).gridState, "Replaces Engine's");
+        compare(row(o.c, n1).waveformState, "Replaces Engine's", "the waveform goes with the grid");
         compare(o.c.gridsToCopy, 11);
+        compare(o.c.waveformsToCopy, 11);
 
         clickOn(box);
         compare(o.c.replaceEngineEdits, false);
-        compare(o.c.replacePlayerWaveforms, false);
         waitSettled(o.c);
         compare(row(o.c, n1).gridState, "Locked on the player", "and back");
         compare(o.c.gridsToCopy, 6);
+        compare(o.c.waveformsToCopy, 6);
     }
 
-    // The box that replaces the waveforms the player drew: off by default,
-    // only there to tick while "Waveforms" is; off, an analysed row keeps
-    // its waveform and says so (a row the player has not analysed gets
-    // rekordbox's either way); on, the states are worked out again and the
-    // player's is replaced; and back.
-    function test_alsoReplaceWaveformsBox() {
+    // Select Unedited ticks every listed track but the ones whose grid is
+    // locked or moved on the player; Select Unanalysed every one Engine
+    // holds no grid or waveform for. Each ticks exactly those and unticks
+    // the rest of the list, and is off where it would change nothing.
+    function test_selectUneditedAndUnanalysed() {
+        const stick = t73();
+        compare(stickFixture.lockOneAnalysedEngineBeatGrid(stick), 1);
+        const o = openOn(stick);
+        waitSettled(o.c);
+        const unedited = findChild(o.page, "selectUneditedButton");
+        const unanalysed = findChild(o.page, "selectUnanalysedButton");
+        compare(unedited.text, "Select Unedited");
+        compare(unedited.ToolTip.text, "Select all but hand-edited (locked) tracks");
+        compare(unanalysed.text, "Select Unanalysed");
+        compare(unanalysed.ToolTip.text, "Select all tracks that have no beat grid or waveform on Engine");
+        compare(o.c.selectionCount("unedited"), 10);
+        compare(o.c.selectionCount("unanalysed"), 6);
+        verify(unedited.enabled && unanalysed.enabled);
+
+        clickOn(unedited);
+        compare(o.c.tickedCount, 10, "all but the locked one");
+        const locked = [];
+        for (let i = 0; i < o.c.tracks.count; ++i) {
+            const r = o.c.tracks.get(i);
+            if (!r.ticked) {
+                locked.push(r.rekordboxId);
+            }
+        }
+        compare(locked.length, 1);
+        waitSettled(o.c);
+        compare(row(o.c, locked[0]).gridState, "Locked on the player", "the one left out is the locked one");
+
+        clickOn(unanalysed);
+        compare(o.c.tickedCount, 6, "the others unticked");
+        for (let i = 0; i < o.c.tracks.count; ++i) {
+            const r = o.c.tracks.get(i);
+            compare(r.ticked, r.note === "Loads without analysis", r.rekordboxId);
+        }
+        compare(unanalysed.enabled, true, "enabled while it has tracks to tick");
+
+        // In a listed playlist, only its tracks.
+        clickOn(findChild(o.page, "selectNoneButton"));
+        showPlaylist(o.page, "T73 Renamed");
+        closePicker(o.page);
+        waitSettled(o.c);
+        clickOn(unanalysed);
+        compare(o.c.tickedCount, 4, "the playlist's 4 the player has not analysed");
+    }
+
+    // The player's waveform is replaced by default, beside the grid that
+    // replaces Engine's (rekordbox's analysis holds more). The box is for
+    // locked and hand-edited grids only: there to tick while "Beat Grids"
+    // is, and off with it.
+    function test_overwriteBoxIsForHandEditedGrids() {
         const o = openOn(t73());
         clickPlaylistBox(o.page, "T73 Renamed");
         waitSettled(o.c);
         const box = findChild(o.page, "overwriteCheckBox");
-        compare(box.text, "Overwrite Engine's Analysis");
+        compare(box.text, "Overwrite Locked (Hand-Edited) Beat Grids");
         compare(box.checked, false, "off by default");
-        compare(box.enabled, true, "Waveforms is ticked");
-        compare(row(o.c, b04).waveformState, "Drawn by the player");
-        compare(row(o.c, b04).waveformTip,
-                "The player drew its own waveform of this track, and it stays. \"Overwrite Engine's "
-                + "Analysis\" replaces it all the same.");
+        compare(box.enabled, true, "Beat Grids is ticked");
+        compare(row(o.c, b04).gridState, "Replaces Engine's");
+        compare(row(o.c, b04).waveformState, "Replaces Engine's", "the player's waveform goes with its grid");
         compare(row(o.c, b01).waveformState, "New", "a row the player has not analysed gets rekordbox's");
+        compare(o.c.waveformsToCopy, 5);
 
-        // With neither part ticked there is nothing for it to replace.
         clickOn(findChild(o.page, "waveformsCheckBox"));
         compare(o.c.waveforms, false);
         compare(box.enabled, true, "still there for the grids");
+        clickOn(findChild(o.page, "waveformsCheckBox"));
         clickOn(findChild(o.page, "gridsCheckBox"));
         compare(o.c.grids, false);
-        compare(box.enabled, false, "off with both parts off");
-        clickOn(findChild(o.page, "gridsCheckBox"));
-        clickOn(findChild(o.page, "waveformsCheckBox"));
-        compare(o.c.waveforms, true);
-        compare(box.enabled, true, "and back with them");
-        waitSettled(o.c);
-
-        clickOn(box);
-        compare(o.c.replacePlayerWaveforms, true, "the box reaches the controller");
-        compare(row(o.c, b04).pending, true, "worked out again");
+        compare(box.enabled, false, "off without beat grids");
+        // Waveforms alone: what was asked for, the player's replaced too.
         waitSettled(o.c);
         compare(row(o.c, b04).waveformState, "Replaces Engine's");
-        compare(row(o.c, b01).waveformState, "New");
-        compare(o.c.waveformsToCopy, 5);
-        compare(findChild(o.page, "leftAloneLabel").visible, false, "nothing of the player's left alone now");
-
-        clickOn(box);
-        compare(o.c.replacePlayerWaveforms, false);
-        waitSettled(o.c);
-        compare(row(o.c, b04).waveformState, "Drawn by the player", "and back");
-        compare(o.c.waveformsToCopy, 4);
+        clickOn(findChild(o.page, "gridsCheckBox"));
+        compare(box.enabled, true, "and back with them");
     }
 
-    // Off, the save leaves the waveform the player drew as it is: B04, the
-    // one analysed track ticked, gets rekordbox's grid and keeps every
-    // overview byte for byte; with only its waveform ticked it is left
-    // alone, and the summary says why.
-    function test_saveLeavesTheWaveformThePlayerDrew() {
+    // The save writes a grid and its waveform together: B04, the one
+    // analysed track ticked, gets rekordbox's grid and rekordbox's waveform
+    // in place of the player's, and nothing else on the stick changes.
+    function test_saveWritesTheWaveformWithTheGrid() {
         const stick = t73();
         const overviewsBefore = stickFixture.engineOverviewDigests(stick);
         const gridsBefore = stickFixture.engineBeatDataDigests(stick);
@@ -645,19 +680,9 @@ TestCase {
         waitSettled(o.c);
         compare(o.c.tracksToWrite, 1);
         compare(o.c.gridsToCopy, 1);
-        compare(o.c.waveformsToCopy, 0);
-        compare(findChild(o.page, "summaryLabel").text, "One track ticked: one beat grid and 0 waveforms to copy.");
-        compare(findChild(o.page, "leftAloneLabel").text, "One track to copy keeps the waveform the player drew.");
-
-        // Waveforms alone: nothing to copy for B04, and why.
-        clickOn(findChild(o.page, "gridsCheckBox"));
-        waitSettled(o.c);
-        compare(o.c.leftAloneCount, 1);
-        compare(findChild(o.page, "leftAloneLabel").text,
-                "One ticked track is left alone: 1 waveform drawn by the player.");
-        compare(findChild(o.page, "stageButton").enabled, false);
-        clickOn(findChild(o.page, "gridsCheckBox"));
-        waitSettled(o.c);
+        compare(o.c.waveformsToCopy, 1);
+        compare(findChild(o.page, "summaryLabel").text, "One track ticked: one beat grid and one waveform to copy.");
+        compare(findChild(o.page, "leftAloneLabel").visible, false);
 
         clickOn(findChild(o.page, "stageButton"));
         const session = EditSessionRegistry.sessionFor(o.libraryId);
@@ -665,16 +690,37 @@ TestCase {
         compare(saved.error, "", JSON.stringify(saved));
         compare(saved.written, 1);
         compare(o.c.lastSaveGrids, 1);
-        compare(o.c.lastSaveWaveforms, 0);
-        compare(JSON.stringify(stickFixture.engineOverviewDigests(stick)), JSON.stringify(overviewsBefore),
-                "every overview byte for byte as it was");
-        const gridsAfter = stickFixture.engineBeatDataDigests(stick);
+        compare(o.c.lastSaveWaveforms, 1);
+        const changedIn = (before, after) => Object.keys(before).filter((id) => after[id] !== before[id]).length;
+        compare(changedIn(overviewsBefore, stickFixture.engineOverviewDigests(stick)), 1, "B04's overview, and only that");
+        compare(changedIn(gridsBefore, stickFixture.engineBeatDataDigests(stick)), 1, "B04's grid, and only that");
+    }
+
+    // A locked row keeps its grid and, with it, its waveform: the save
+    // leaves every overview byte for byte.
+    function test_saveLeavesTheWaveformOfALockedGrid() {
+        const stick = t73();
+        compare(stickFixture.lockAnalysedEngineBeatGrids(stick), 5);
+        const overviewsBefore = stickFixture.engineOverviewDigests(stick);
+        const o = openOn(stick);
+        o.c.setTicked(b04, true);
+        o.c.setTicked(b01, true);
+        waitSettled(o.c);
+        compare(row(o.c, b04).gridState, "Locked on the player");
+        compare(row(o.c, b04).waveformState, "Stays with the grid");
+        compare(o.c.waveformsToCopy, 1, "only B01's, which the player has not analysed");
+        compare(findChild(o.page, "leftAloneLabel").text,
+                "One ticked track is left alone: 1 locked on the player.");
+        clickOn(findChild(o.page, "stageButton"));
+        const session = EditSessionRegistry.sessionFor(o.libraryId);
+        const saved = finished(session, () => session.save(), "the save");
+        compare(saved.error, "", JSON.stringify(saved));
+        const after = stickFixture.engineOverviewDigests(stick);
         let changed = 0;
-        for (const id in gridsBefore) {
-            changed += gridsAfter[id] !== gridsBefore[id] ? 1 : 0;
+        for (const id in overviewsBefore) {
+            changed += after[id] !== overviewsBefore[id] ? 1 : 0;
         }
-        compare(changed, 1, "B04's grid, and only that");
-        compare(stickFixture.engineAnalysisRows(stick).overviewFiles, 0, "no overview file written");
+        compare(changed, 1, "B01's overview only: B04's stays with its locked grid");
     }
 
     // A row the player has not analysed is completed with both parts or
@@ -718,8 +764,7 @@ TestCase {
         compare(rowsBefore.analysed, 5);
         compare(rowsBefore.overviewFiles, 0);
         const o = openOn(stick);
-        // Every waveform, the player's too: the box reaches the save.
-        clickOn(findChild(o.page, "overwriteCheckBox"));
+        // Every waveform, the player's too, by default.
         compare(o.c.replacePlayerWaveforms, true);
         clickPlaylistBox(o.page, "");
         waitSettled(o.c);
@@ -1278,7 +1323,8 @@ TestCase {
         compare(row.oneLine, true, "1600 px: one row");
         const middle = item => item.mapToItem(o.page, 0, item.height / 2).y;
         const grids = findChild(o.page.header, "gridsCheckBox");
-        for (const name of ["playlistPicker", "selectAllButton", "selectNoneButton", "stageButton"]) {
+        for (const name of ["playlistPicker", "selectAllButton", "selectUneditedButton", "selectUnanalysedButton",
+                            "selectNoneButton", "stageButton"]) {
             const item = findChild(o.page.header, name);
             verify(Math.abs(middle(item) - middle(grids)) <= 1, name + " is on the boxes' row");
             verify(item.mapToItem(o.page, 0, 0).x > grids.mapToItem(o.page, grids.width, 0).x,
@@ -1287,7 +1333,7 @@ TestCase {
         const stage = findChild(o.page.header, "stageButton");
         compare(stage.mapToItem(o.page, stage.width, 0).x, o.page.width - Theme.pageMargin,
                 "the actions end on the page's right line");
-        compare(findChild(o.page, "overwriteCheckBox").text, "Overwrite Engine's Analysis");
+        compare(findChild(o.page, "overwriteCheckBox").text, "Overwrite Locked (Hand-Edited) Beat Grids");
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-one-row.png");
         }
@@ -1301,7 +1347,9 @@ TestCase {
                "the actions are under the boxes");
         compare(actions.mapToItem(o.page, 0, 0).x, Theme.pageMargin, "on the page's left line");
         verify(actions.mapToItem(o.page, actions.width, 0).x <= o.page.width - Theme.pageMargin + 0.5,
-               "and inside the page");
+               "and inside the page: " + actions.width + " wide, the selection buttons "
+               + findChild(o.page.header, "selectButtons").implicitWidth + ", the page " + o.page.width
+               + ", two lines " + actions.twoLines);
     }
 
     // The grey notes in the header say rather than offer: scrolling the
@@ -1998,7 +2046,7 @@ TestCase {
         compare(all.text, "Select All");
         compare(none.text, "Select None");
         const stage = findChild(o.page, "stageButton");
-        compare(all.parent, stage.parent, "in the Stage Selected row");
+        compare(all.parent.parent, stage.parent, "in the Stage Selected row");
         compare(all.enabled, true);
         compare(none.enabled, false, "nothing ticked: nothing to untick");
 

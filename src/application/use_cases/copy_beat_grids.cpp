@@ -272,6 +272,7 @@ AnalysisImportOptions analysisImportOptionsFor(const BeatGridCopyItem &item,
     write.waveforms = options.waveforms;
     write.overwriteEngineEdits = options.overwriteEngineEdits;
     write.overwritePlayerWaveforms = options.overwritePlayerWaveforms;
+    write.waveformFollowsKeptGrid = options.waveformFollowsKeptGrid;
     write.differingIsConflict = options.differingIsConflict;
     write.respectLock = options.respectLock;
     write.previewOnly = options.previewOnly;

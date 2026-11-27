@@ -239,17 +239,18 @@ class BeatGridsController : public QObject
     Q_PROPERTY(QAbstractListModel *tracks READ tracks CONSTANT)
 
     // What to copy, and whether over a grid set on the player and over a
-    // waveform the player drew. Both parts on by default; the last two off.
+    // waveform the player drew. Both parts on by default, and a waveform
+    // the player drew replaced too: rekordbox's analysis holds more than
+    // Engine's (2026-11-27). A grid set on the player stays unless asked,
+    // and its waveform stays with it (waveformFollowsKeptGrid).
     Q_PROPERTY(bool grids READ grids WRITE setGrids NOTIFY optionsChanged)
     Q_PROPERTY(bool waveforms READ waveforms WRITE setWaveforms NOTIFY optionsChanged)
     Q_PROPERTY(bool replaceEngineEdits READ replaceEngineEdits WRITE setReplaceEngineEdits NOTIFY optionsChanged)
     Q_PROPERTY(bool replacePlayerWaveforms READ replacePlayerWaveforms WRITE setReplacePlayerWaveforms
                    NOTIFY optionsChanged)
-    // Both of the above as the page offers them, one box: a grid set on
-    // the player and a waveform the player drew are the player's analysis,
-    // overwritten together or not at all.
-    Q_PROPERTY(bool overwriteEngineAnalysis READ overwriteEngineAnalysis WRITE setOverwriteEngineAnalysis
-                   NOTIFY optionsChanged)
+    // Moves whenever a track's preview comes in or the previews are
+    // dropped, for bindings that ask selectionCount().
+    Q_PROPERTY(int statesRevision READ statesRevision NOTIFY statesChanged)
 
     // Moves whenever a tick does, for bindings that ask playlistCheckState().
     Q_PROPERTY(int tickRevision READ tickRevision NOTIFY ticksChanged)
@@ -335,11 +336,7 @@ public:
     void setReplaceEngineEdits(bool on);
     bool replacePlayerWaveforms() const { return m_options.overwritePlayerWaveforms; }
     void setReplacePlayerWaveforms(bool on);
-    bool overwriteEngineAnalysis() const
-    {
-        return m_options.overwriteEngineEdits && m_options.overwritePlayerWaveforms;
-    }
-    void setOverwriteEngineAnalysis(bool on);
+    int statesRevision() const { return m_statesRevision; }
     int tickRevision() const { return m_tickRevision; }
     bool previewBusy() const { return m_preview.busy(); }
     int previewCurrent() const { return m_previewCurrent; }
@@ -480,6 +477,14 @@ public:
     Q_INVOKABLE int playlistCheckState(const QString &name) const;
     // How many of a playlist's tracks can be ticked.
     Q_INVOKABLE int tickablePlaylistTracks(const QString &name) const;
+    // The shown playlist's tickable tracks of one kind: "unedited", every
+    // track whose Engine grid is neither locked nor moved on the player;
+    // "unanalysed", every track Engine holds no beat grid or waveform for.
+    // -1 while a shown track's preview is still to come.
+    Q_INVOKABLE int selectionCount(const QString &kind) const;
+    // Ticks exactly those of the shown playlist's tracks, and unticks the
+    // rest of them. Refused while selectionCount() is -1.
+    Q_INVOKABLE void selectOnly(const QString &kind);
 
     // One change per ticked track that would change, into the library's
     // edit session, which Save writes. Refused unless canStage.
@@ -502,6 +507,7 @@ signals:
     void optionsChanged();
     void ticksChanged();
     void previewBusyChanged();
+    void statesChanged();
     void previewProgressChanged();
     void summaryChanged();
     void stagedChanged();
@@ -657,6 +663,9 @@ private:
     // before belongs to another generation and is dropped on arrival.
     std::uint64_t m_generation = 1;
     std::map<std::string, BeatGridTrackState> m_states;
+    int m_statesRevision = 0;
+    // Whether a track's preview puts it among `kind` (selectionCount()).
+    bool isOfKind(const BeatGridTrackState &state, const QString &kind) const;
     bool m_previewScheduled = false;
     int m_previewCurrent = 0;
     int m_previewTotal = 0;
