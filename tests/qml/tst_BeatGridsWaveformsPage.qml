@@ -635,6 +635,31 @@ TestCase {
         waitSettled(o.c);
         clickOn(unanalysed);
         compare(o.c.tickedCount, 4, "the playlist's 4 the player has not analysed");
+
+        // Once every playlist has been shown, switching runs no preview:
+        // the buttons still follow the playlist shown. Some step must turn
+        // a button on or off, or the check could not fail.
+        const names = ["", "T73 Folder/T73 New", "T73 Order", "T73 Renamed"];
+        for (const name of names) {
+            showPlaylist(o.page, name);
+            closePicker(o.page);
+            waitSettled(o.c);
+        }
+        let flips = 0;
+        let before = null;
+        for (const name of names.concat(names)) {
+            showPlaylist(o.page, name);
+            closePicker(o.page);
+            for (const [button, kind] of [[unedited, "unedited"], [unanalysed, "unanalysed"]]) {
+                const count = o.c.selectionCount(kind);
+                verify(count >= 0, name + ": every preview is in");
+                compare(button.enabled, count > 0, (name || "All tracks") + ": " + kind + " follows the playlist shown");
+            }
+            const now = unedited.enabled + "/" + unanalysed.enabled;
+            flips += before !== null && now !== before ? 1 : 0;
+            before = now;
+        }
+        verify(flips > 0, "a switch turned a button on or off");
     }
 
     // The player's waveform is replaced by default, beside the grid that
@@ -1323,8 +1348,7 @@ TestCase {
         compare(row.oneLine, true, "1600 px: one row");
         const middle = item => item.mapToItem(o.page, 0, item.height / 2).y;
         const grids = findChild(o.page.header, "gridsCheckBox");
-        for (const name of ["playlistPicker", "selectAllButton", "selectUneditedButton", "selectUnanalysedButton",
-                            "selectNoneButton", "stageButton"]) {
+        for (const name of ["playlistPicker", "stageButton"]) {
             const item = findChild(o.page.header, name);
             verify(Math.abs(middle(item) - middle(grids)) <= 1, name + " is on the boxes' row");
             verify(item.mapToItem(o.page, 0, 0).x > grids.mapToItem(o.page, grids.width, 0).x,
@@ -1334,6 +1358,17 @@ TestCase {
         compare(stage.mapToItem(o.page, stage.width, 0).x, o.page.width - Theme.pageMargin,
                 "the actions end on the page's right line");
         compare(findChild(o.page, "overwriteCheckBox").text, "Overwrite Locked (Hand-Edited) Beat Grids");
+        // The selection helpers on a line of their own under the controls,
+        // the first one's words on the page's left line.
+        const helpers = findChild(o.page.header, "selectButtons");
+        verify(helpers.mapToItem(o.page, 0, 0).y >= row.mapToItem(o.page, 0, row.height).y, "under the controls");
+        const all = findChild(o.page.header, "selectAllButton");
+        compare(all.mapToItem(o.page, all.leftPadding, 0).x, Theme.pageMargin, "Select All's words on the left line");
+        for (const name of ["selectUneditedButton", "selectUnanalysedButton", "selectNoneButton"]) {
+            const b = findChild(o.page.header, name);
+            compare(b.parent, helpers, name + " among them");
+            verify(b.flat, name + " is a helper, flat");
+        }
         if (screenshotDir) {
             grabImage(o.page).save(screenshotDir + "/BeatGridsWaveformsPage-one-row.png");
         }
@@ -1347,9 +1382,11 @@ TestCase {
                "the actions are under the boxes");
         compare(actions.mapToItem(o.page, 0, 0).x, Theme.pageMargin, "on the page's left line");
         verify(actions.mapToItem(o.page, actions.width, 0).x <= o.page.width - Theme.pageMargin + 0.5,
-               "and inside the page: " + actions.width + " wide, the selection buttons "
-               + findChild(o.page.header, "selectButtons").implicitWidth + ", the page " + o.page.width
-               + ", two lines " + actions.twoLines);
+               "and inside the page");
+        // Stage in the same place as on a wide page: at the right line.
+        const stageNarrow = findChild(o.page.header, "stageButton");
+        compare(stageNarrow.mapToItem(o.page, stageNarrow.width, 0).x, o.page.width - Theme.pageMargin,
+                "Stage ends on the page's right line");
     }
 
     // The grey notes in the header say rather than offer: scrolling the
@@ -2046,7 +2083,8 @@ TestCase {
         compare(all.text, "Select All");
         compare(none.text, "Select None");
         const stage = findChild(o.page, "stageButton");
-        compare(all.parent.parent, stage.parent, "in the Stage Selected row");
+        compare(all.parent.objectName, "selectButtons", "among the selection helpers");
+        compare(none.parent, all.parent);
         compare(all.enabled, true);
         compare(none.enabled, false, "nothing ticked: nothing to untick");
 

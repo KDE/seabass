@@ -148,6 +148,16 @@ void BeatGridTrackListModel::setRows(std::vector<Row> rows)
     }
 }
 
+void BeatGridTrackListModel::refresh(const std::function<void(Row &)> &update, const QSet<QString> &rekordboxIds)
+{
+    for (size_t i = 0; i < m_rows.size(); ++i) {
+        if (rekordboxIds.contains(m_rows[i].rekordboxId)) {
+            update(m_rows[i]);
+            emit dataChanged(index(static_cast<int>(i)), index(static_cast<int>(i)));
+        }
+    }
+}
+
 void BeatGridTrackListModel::refresh(const std::function<void(Row &)> &update)
 {
     // One announcement for the run of rows between the first and the last
@@ -1638,6 +1648,11 @@ void BeatGridsController::refreshRows()
     m_tracks.refresh([this](BeatGridTrackListModel::Row &row) { describe(row); });
 }
 
+void BeatGridsController::refreshRows(const QSet<QString> &rekordboxIds)
+{
+    m_tracks.refresh([this](BeatGridTrackListModel::Row &row) { describe(row); }, rekordboxIds);
+}
+
 void BeatGridsController::setShownPlaylist(const QString &name)
 {
     const QString wanted = playlistIds(name) ? name : QString();
@@ -1797,7 +1812,7 @@ int BeatGridsController::selectionCount(const QString &kind) const
 
 void BeatGridsController::selectOnly(const QString &kind)
 {
-    if (!m_stagedIds.isEmpty() || selectionCount(kind) < 0) {
+    if (!m_stagedIds.isEmpty() || selectionCount(kind) <= 0) {
         return;
     }
     bool moved = false;
@@ -1939,12 +1954,14 @@ void BeatGridsController::takePreviewRows(std::uint64_t generation, std::vector<
     if (generation != m_generation) {
         return;
     }
+    QSet<QString> ids;
     for (auto &[id, state] : rows) {
+        ids.insert(QString::fromStdString(id));
         m_states[id] = std::move(state);
     }
     ++m_statesRevision;
     emit statesChanged();
-    refreshRows();
+    refreshRows(ids);
     recount();
 }
 

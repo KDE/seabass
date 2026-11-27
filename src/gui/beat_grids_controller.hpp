@@ -106,6 +106,9 @@ public:
     void setRows(std::vector<Row> rows);
     // Every row through `update`; the rows it changed are announced.
     void refresh(const std::function<void(Row &)> &update);
+    // The same for the rows of these tracks only: a batch of previews
+    // describes its own dozen rows, not the whole list again.
+    void refresh(const std::function<void(Row &)> &update, const QSet<QString> &rekordboxIds);
     const std::vector<Row> &rows() const { return m_rows; }
 
     // For tests and the page: a row as the delegate sees it, by index or by
@@ -623,6 +626,7 @@ private:
     void adoptLibrary(std::shared_ptr<BeatGridLibrary> library);
     void rebuildRows();
     void refreshRows();
+    void refreshRows(const QSet<QString> &rekordboxIds);
     void schedulePreview();
     void runPreview();
     void takePreviewRows(std::uint64_t generation, std::vector<std::pair<std::string, BeatGridTrackState>> rows);

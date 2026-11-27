@@ -1478,6 +1478,10 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                                                              overwriteEdits || overEmpty, options.ownGridFingerprint);
                     result.grid = plan.result;
                     gridWrite = std::move(plan.write);
+                    // rekordbox's grid there already is not the DJ's edit.
+                    if (result.grid.outcome == Outcome::AlreadySame) {
+                        result.rowEditedOnEngine = false;
+                    }
                 }
             }
         }
@@ -1519,9 +1523,13 @@ AnalysisImportResult LibdjinteropEngineCueWriter::importAnalysis(const std::stri
                 // The waveform the player drew stays unless asked for. An
                 // overview column already rekordbox's is Seabass's: only
                 // its file is put right.
-                const bool gridKept = options.waveformFollowsKeptGrid && options.grids
-                    && (result.grid.outcome == Outcome::RowLocked || result.grid.outcome == Outcome::RowEditedOnEngine
-                        || result.grid.outcome == Outcome::NoSourceGrid);
+                // Without grids asked for, the grid the player keeps is
+                // one locked or moved there, unless those may be replaced.
+                const bool gridKept = options.waveformFollowsKeptGrid
+                    && (options.grids ? (result.grid.outcome == Outcome::RowLocked
+                                         || result.grid.outcome == Outcome::RowEditedOnEngine
+                                         || result.grid.outcome == Outcome::NoSourceGrid)
+                                      : !overwriteEdits && (locked || result.rowEditedOnEngine));
                 if (overviewWrite && (gridKept || !options.overwritePlayerWaveforms)
                     && holdsPlayersWaveform(id, options.keepKey, now, options.ownGridFingerprint)) {
                     overviewWrite.reset();
