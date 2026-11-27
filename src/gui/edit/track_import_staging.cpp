@@ -150,7 +150,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
                 continue;
             }
             if (allLibraries(known.inPlaylist)) {
-                leave("it is in \"" + playlist->path + "\" already");
+                staged.leftOut.push_back({source, "it is in \"" + playlist->path + "\" already", true});
                 continue;
             }
             if (!known.inPlaylist.isEmpty()) {

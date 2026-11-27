@@ -109,7 +109,7 @@ class TrackImportController : public QObject
     // analysed and withGrid (of the staged tracks: how many Seabass
     // analysed, and how many of those got a beat grid), followedGrids
     // (the names of those whose grid follows a moving tempo), megabytes,
-    // playlist, playlistIsNew, note, notImported: [{name, why}],
+    // playlist, playlistIsNew, note, notImported: [{name, why, onStick}],
     // possibleDuplicates}: `staged` tracks are in the session, the
     // `notImported` ones are not, `possibleDuplicates` of those may be
     // asked for all the same (importPossibleDuplicates).

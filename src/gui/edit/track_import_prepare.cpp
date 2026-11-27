@@ -525,9 +525,9 @@ PreparedImport prepareTrackImportOn(const ImportRequest &request, const applicat
         prepared.refusal = prepared.staged.refusal;
         return prepared;
     }
-    std::map<std::string, std::string> leftOut;
+    std::map<std::string, LeftOut> leftOut;
     for (const LeftOut &left : prepared.staged.leftOut) {
-        leftOut[left.sourceFile] = left.why;
+        leftOut[left.sourceFile] = left;
     }
     for (const domain::ImportPlanEntry &entry : plan.entries) {
         const std::string &source = entry.offered.file.filePath;
@@ -539,16 +539,17 @@ PreparedImport prepareTrackImportOn(const ImportRequest &request, const applicat
             // Staged into the playlist, or left out of it with a reason
             // of its own.
             if (left != leftOut.end()) {
-                prepared.notImported.push_back({source, left->second, true});
+                prepared.notImported.push_back(left->second);
             }
         } else if (entry.verdict != domain::ImportVerdict::Import) {
             prepared.notImported.push_back(
-                {source, whyNot(entry, rootText), entry.verdict == domain::ImportVerdict::AlreadyOnStick});
+                {source, whyNot(entry, rootText),
+                 entry.verdict == domain::ImportVerdict::AlreadyOnStick && entry.inLibrary});
             if (entry.verdict == domain::ImportVerdict::PossibleDuplicate) {
                 prepared.possibleDuplicates.push_back(source);
             }
         } else if (left != leftOut.end()) {
-            prepared.notImported.push_back({source, left->second});
+            prepared.notImported.push_back(left->second);
         } else {
             prepared.bytesToCopy += entry.offered.file.fileSizeBytes;
         }

@@ -436,6 +436,18 @@ int main(int argc, char **argv)
         assert(already == 3 && onStick == 3 && result.value("addedToPlaylist").toInt() == 0);
         std::cout << "case 4 (the same folder again on its playlist: nothing staged, each file named as in it already) OK\n";
 
+        // 4b. The same folder again with no playlist named: listed already,
+        //     so marked as on the stick too.
+        assert(offer(dropped, QString(), false));
+        result = controller.lastResult();
+        assert(result.value("staged").toInt() == 0 && session->pendingCount() == 0);
+        onStick = 0;
+        for (const QVariant &line : result.value("notImported").toList()) {
+            onStick += line.toMap().value("onStick").toBool() ? 1 : 0;
+        }
+        assert(result.value("notImported").toList().size() == 4 && onStick == 3);
+        std::cout << "case 4b (the same folder again with no playlist: its three tracks marked as on the stick) OK\n";
+
         // 5.
         writeWav(computer / "d four.wav", 4 * 44100, 4);
         const QVariantList one{pathToQString(computer / "d four.wav")};
@@ -569,6 +581,9 @@ int main(int argc, char **argv)
             assert(left.size() == 1 && session->pendingCount() == 0);
             const QString why = left[0].toMap().value("why").toString();
             assert(why.contains(QLatin1String("in no library, so it was not added")) && why.contains(QLatin1String("not supported yet")));
+            // On the stick, but not where it was asked to be: not one of
+            // the files there was nothing to do for.
+            assert(!left[0].toMap().value("onStick").toBool());
             fs::remove(stick.root / "Contents" / "loose one.wav");
 
             writeWav(computer / "e gone.wav", 44100, 5);

@@ -58,8 +58,11 @@ struct LeftOut
 {
     std::string sourceFile;
     std::string why;
-    // The file is on the stick already: left out because there was
-    // nothing to bring, not because it cannot be imported.
+    // The file is on the stick and where it was asked to be (listed, and
+    // in the playlist if one was named): left out because there was
+    // nothing to do, not because something could not be done. A file on
+    // the stick that could not be listed or put into the playlist is not
+    // marked.
     bool onStick = false;
 };
 

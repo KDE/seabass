@@ -321,18 +321,18 @@ Page {
         readonly property var notImported: outcome.notImported ?? []
         readonly property int possibleDuplicates: outcome.possibleDuplicates ?? 0
         readonly property string playlist: outcome.playlist ?? ""
-        // Left out because they are on the stick already: nothing went
-        // wrong with those, there was nothing to bring.
+        // Left out because they are on the stick and where they were asked
+        // to be: nothing went wrong with those, there was nothing to do.
         readonly property int onStick: notImported.filter(left => left.onStick === true).length
         readonly property bool allOnStick: notImported.length > 0 && onStick === notImported.length
-        severity: staged + (outcome.addedToPlaylist ?? 0) > 0 || onStick > 0 ? SeabassDialog.Info : SeabassDialog.Warning
+        severity: staged + (outcome.addedToPlaylist ?? 0) > 0 || allOnStick ? SeabassDialog.Info : SeabassDialog.Warning
         title: qsTr("Import tracks")
         readonly property int added: outcome.addedToPlaylist ?? 0
         headline: staged === 0 && added > 0 ? qsTr("%n track(s) of the stick ready to go into \"%1\".", "", added).arg(playlist)
             : staged === 0 && allOnStick ? qsTr("Nothing to import: %n file(s) on the stick already.", "", onStick)
             : staged === 0 && onStick > 0
-                ? qsTr("Nothing to import: %1 on the stick already, %2 cannot be imported.")
-                    .arg(onStick).arg(notImported.length - onStick)
+                ? qsTr("Nothing to import: %n file(s) on the stick already.", "", onStick) + " "
+                    + qsTr("%n other file(s) cannot be imported.", "", notImported.length - onStick)
             : staged === 0 ? qsTr("None of these files can be imported.")
             : playlist.length === 0 ? qsTr("%n track(s) ready to import.", "", staged)
             : (outcome.playlistIsNew ? qsTr("%n track(s) ready to import into the new playlist \"%1\".", "", staged)
