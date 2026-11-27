@@ -133,7 +133,8 @@ enum class AnalysisLedgerFault {
     // is not known, so it must not be replaced.
     Unreadable,
     // It was read and is not this format to the letter: nothing in it is
-    // believed, and a later write replaces it.
+    // believed, and a save that records moves it aside before it starts a
+    // new one (analysis_ledger_record.hpp): never overwritten in place.
     Damaged,
 };
 
@@ -200,5 +201,10 @@ bool writeAnalysisLedger(const std::filesystem::path &stickRoot, const AnalysisL
 std::optional<std::filesystem::path> moveAnalysisLedgerAside(const std::filesystem::path &stickRoot,
                                                              std::chrono::system_clock::time_point now,
                                                              std::string *error);
+// The same, the moved file named for `why` in place of "unreadable"
+// (a save moves a damaged ledger aside as analysis.tsv.gz.damaged-<UTC>).
+std::optional<std::filesystem::path> moveAnalysisLedgerAside(const std::filesystem::path &stickRoot,
+                                                             std::chrono::system_clock::time_point now,
+                                                             std::string *error, const std::string &why);
 
 }  // namespace seabass::infrastructure::local

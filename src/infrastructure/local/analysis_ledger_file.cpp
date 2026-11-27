@@ -550,6 +550,12 @@ bool writeAnalysisLedger(const fs::path &stickRoot, const AnalysisLedger &ledger
 std::optional<fs::path> moveAnalysisLedgerAside(const fs::path &stickRoot, std::chrono::system_clock::time_point now,
                                                 std::string *error)
 {
+    return moveAnalysisLedgerAside(stickRoot, now, error, "unreadable");
+}
+
+std::optional<fs::path> moveAnalysisLedgerAside(const fs::path &stickRoot, std::chrono::system_clock::time_point now,
+                                                std::string *error, const std::string &why)
+{
     if (error == nullptr) {
         throw std::invalid_argument("moveAnalysisLedgerAside: the error out-parameter is required");
     }
@@ -571,7 +577,7 @@ std::optional<fs::path> moveAnalysisLedgerAside(const fs::path &stickRoot, std::
         *error = pathToUtf8(file) + ": the computer's clock gives no time to name the moved file by";
         return std::nullopt;
     }
-    const std::string base = pathToUtf8(file.filename()) + ".unreadable-" + stamp;
+    const std::string base = pathToUtf8(file.filename()) + "." + why + "-" + stamp;
     // Two in one second keep each other: the second is numbered.
     fs::path aside = file.parent_path() / pathFromUtf8(base);
     for (int n = 2; fs::exists(fs::symlink_status(aside, ec)); ++n) {

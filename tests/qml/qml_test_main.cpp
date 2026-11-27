@@ -27,6 +27,7 @@
 #include "application/use_cases/scan_library.hpp"
 #include "infrastructure/rekordbox/kaitai_rekordbox_reader.hpp"
 #include "infrastructure/work_counters.hpp"
+#include "infrastructure/local/kept_engine_analysis_file.hpp"
 #include "infrastructure/local/kept_rekordbox_analysis_file.hpp"
 #include "infrastructure/local/metadata_store.hpp"
 #include "application/ports/progress_reporter.hpp"
@@ -916,6 +917,31 @@ public:
             return {};
         }
         return files;
+    }
+
+    // The player's analysis kept on the stick (as Beat Grids & Waveforms
+    // keeps it) for a track whose audio file is there ("/Contents/<name>",
+    // made empty); the kept file's path, or empty when it could not be
+    // written.
+    Q_INVOKABLE QString plantKeptEngineAnalysis(const QString &stickRoot, const QString &name)
+    {
+        namespace fs = std::filesystem;
+        const fs::path root = seabass::gui::pathFromQString(stickRoot);
+        try {
+            const std::string file = name.toStdString();
+            fs::create_directories(root / "Contents");
+            std::ofstream(root / "Contents" / seabass::pathFromUtf8(file));
+            seabass::application::KeptEngineAnalysis entry;
+            entry.pathKey = "contents/" + name.toLower().toStdString();
+            entry.trackFile = "../Contents/" + file;
+            entry.trackId = 1;
+            entry.libraryUuid = "planted";
+            seabass::infrastructure::local::StickKeptEngineAnalysisStore(root).keep(entry);
+            return QString::fromStdString(
+                seabass::pathToUtf8(seabass::infrastructure::local::keptEngineAnalysisFile(root, entry.pathKey)));
+        } catch (const std::exception &) {
+            return {};
+        }
     }
 
     // How many of the object's own children inherit `className`: for a

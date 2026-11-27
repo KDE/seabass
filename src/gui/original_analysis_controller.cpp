@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <set>
 
 #include "application/use_cases/carry_cues_to_new_grid.hpp"
 #include "gui/analysis_settings.hpp"
@@ -68,6 +69,10 @@ OriginalAnalysisController::OriginalAnalysisController(QObject *parent) : QObjec
     connect(&m_prepareWatcher, &QFutureWatcher<PreparedAnalysisRestore>::finished, this,
             &OriginalAnalysisController::onPrepared);
     connect(&m_countWatcher, &QFutureWatcher<int>::finished, this, &OriginalAnalysisController::onCounted);
+    // A save (or its undo) may keep or restore something: the kept
+    // folders' names the count goes by are listed again.
+    connect(EditSessionRegistry::instance(), &EditSessionRegistry::saveFinished, this,
+            []() { forgetKeptAnalysisNames(); });
 }
 
 OriginalAnalysisController::~OriginalAnalysisController()
@@ -156,7 +161,28 @@ void OriginalAnalysisController::refreshKeptCount(const QString &rekordboxPath, 
         return;
     }
     m_countingPlaylist = playlist;
+    m_counting = request;
+    m_countingGeneration = keptAnalysisNamesGeneration();
     m_countWatcher.setFuture(runRead([request, cancel = m_cancel]() { return countKeptOriginals(request, cancel); }));
+}
+
+namespace
+{
+
+std::string countKey(const QString &rekordboxPath, const QString &enginePath, const QString &playlist)
+{
+    const QString any = rekordboxPath.isEmpty() ? enginePath : rekordboxPath;
+    return (any.isEmpty() ? std::string() : infrastructure::paths::normalStickRootForCatalogPath(any.toStdString()))
+           + '\n' + playlist.toStdString();
+}
+
+}  // namespace
+
+int OriginalAnalysisController::cachedKeptCount(const QString &rekordboxPath, const QString &enginePath,
+                                                const QString &playlist) const
+{
+    const auto found = m_counts.find(countKey(rekordboxPath, enginePath, playlist));
+    return found != m_counts.end() && found->second.second == keptAnalysisNamesGeneration() ? found->second.first : -1;
 }
 
 void OriginalAnalysisController::onCounted()
@@ -171,6 +197,10 @@ void OriginalAnalysisController::onCounted()
     }
     m_keptCount = thrown.isEmpty() ? count : -1;
     m_keptCountPlaylist = m_countingPlaylist;
+    if (m_keptCount >= 0) {
+        m_counts[countKey(m_counting.rekordboxPath, m_counting.enginePath, m_countingPlaylist)] = {m_keptCount,
+                                                                                                  m_countingGeneration};
+    }
     emit keptCountChanged();
 }
 
@@ -399,14 +429,32 @@ KeptAnalysisSpaceController::Listing KeptAnalysisSpaceController::listKept(const
     const fs::path engineLibrary = enginePath.empty() ? root / "Engine Library" : pathFromUtf8(enginePath);
     Group rekordbox{QStringLiteral("rekordbox"), false, {}, false};
     Group engine{QStringLiteral("engine"), false, {}, false};
-    Group rekordboxGone{QStringLiteral("rekordbox"), true, {}, true};
-    Group engineGone{QStringLiteral("engine"), true, {}, true};
+    // Unticked like the others: deleting is always the person's choice,
+    // and a track not on the stick under its name may have been moved or
+    // renamed outside Seabass.
+    Group rekordboxGone{QStringLiteral("rekordbox"), true, {}, false};
+    Group engineGone{QStringLiteral("engine"), true, {}, false};
     std::string error;
+    // The kept files of one track share their name's stem (both are the
+    // hash of its key).
+    const auto stemOf = [](const std::string &file) {
+        const std::string name = pathToUtf8(pathFromUtf8(file).filename());
+        return name.substr(0, name.find('.'));
+    };
+    std::set<std::string> analysedAgain;
     for (auto &info : infrastructure::local::listKeptRekordboxAnalyses(root, &error)) {
+        analysedAgain.insert(stemOf(info.file));
         (rekordboxTrackGone(info, root) ? rekordboxGone : rekordbox).files.push_back(std::move(info));
     }
+    // The player's analysis only of tracks Analyse again kept rekordbox's
+    // of. One that Beat Grids & Waveforms kept alone is that page's, with
+    // its own way back (Restore Engine's Analysis), and is not listed:
+    // Free Up Space never offered to remove those.
     std::string engineError;
     for (auto &info : infrastructure::local::listKeptEngineAnalyses(root, &engineError)) {
+        if (analysedAgain.count(stemOf(info.file)) == 0) {
+            continue;
+        }
         (engineTrackGone(info, engineLibrary) ? engineGone : engine).files.push_back(std::move(info));
     }
     const std::string both = error.empty() ? engineError : engineError.empty() ? error : error + "; " + engineError;
@@ -511,11 +559,14 @@ void KeptAnalysisSpaceController::removeIncluded()
     if (busy() || includedCount() == 0) {
         return;
     }
-    const QString path = m_rekordboxPath.isEmpty() ? m_enginePath : m_rekordboxPath;
+    // The stick's lock by the path the page's other removals take it by
+    // (PendingDeletionsPage: Engine's first), and named in the refusal, so
+    // the locked dialog and Remove Lock speak of the lock that refused.
+    const QString path = lockPath();
     const QString libraryId = EditSessionRegistry::instance()->libraryIdForPath(path);
     if (auto refusal = m_writeHold.acquire({libraryId}, QString())) {
         if (refusal->showsLockedDialog()) {
-            emit lockRefused(refusal->holder);
+            emit lockRefused(refusal->holder, libraryId);
         }
         return;
     }
@@ -558,11 +609,18 @@ void KeptAnalysisSpaceController::removeIncluded()
     }));
 }
 
+QString KeptAnalysisSpaceController::lockPath() const
+{
+    return m_enginePath.isEmpty() ? m_rekordboxPath : m_enginePath;
+}
+
 void KeptAnalysisSpaceController::onRemoved()
 {
     QString thrown;
     const Removal removal = takeResult(m_removeWatcher, &thrown);
     m_writeHold.release();
+    // The playlist menu's count lists the kept folders once; they changed.
+    forgetKeptAnalysisNames();
     m_removing = false;
     emit busyChanged();
     QVariantMap summary{

@@ -3423,44 +3423,91 @@ std::optional<PdbRowWriter::TrackTempoAndKeyId> PdbRowWriter::trackTempoAndKeyId
     if (!row) {
         return std::nullopt;
     }
-    return TrackTempoAndKeyId{readU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset),
-                              readU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset)};
+    TrackTempoAndKeyId values{readU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset),
+                              readU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset), std::nullopt};
+    if (values.keyId != 0) {
+        forEachPresentRow(m_buffer, Pdb::PAGE_TYPE_KEYS, [&](kaitai::kstruct *body) {
+            if (auto *key = dynamic_cast<Pdb::key_row_t *>(body); key != nullptr && key->id() == values.keyId
+                                                                   && !values.keyName) {
+                values.keyName = sqlText(key->name());
+            }
+        });
+    }
+    return values;
 }
 
-bool PdbRowWriter::setTrackTempoAndKeyId(uint32_t trackId, const TrackTempoAndKeyId &values)
+void PdbRowWriter::checkTrackTempoAndKeyPutBack(const TrackTempoAndKeyPutBack &values) const
 {
     if (m_format != Format::Export) {
         throw std::logic_error("tracks live in export.pdb");
     }
-    if (values.keyId != 0) {
-        bool known = false;
-        forEachPresentRow(m_buffer, Pdb::PAGE_TYPE_KEYS, [&](kaitai::kstruct *body) {
-            auto *key = dynamic_cast<Pdb::key_row_t *>(body);
-            known = known || (key != nullptr && key->id() == values.keyId);
-        });
-        if (!known) {
-            throw std::invalid_argument("export.pdb: no key row with id " + std::to_string(values.keyId));
+    if (values.key == TrackTempoAndKeyPutBack::Key::Named) {
+        if (!m_indexed) {
+            throw std::logic_error("export.pdb: a key put back by its name needs the row index");
+        }
+        if (values.keyName.empty() || !domain::isStorableText(values.keyName)) {
+            throw std::invalid_argument("export.pdb: the key \"" + values.keyName
+                                        + "\" is empty, not UTF-8, or ends in a blank");
         }
     }
-    const auto row = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+}
+
+bool PdbRowWriter::putBackTrackTempoAndKey(uint32_t trackId, const TrackTempoAndKeyPutBack &values)
+{
+    checkTrackTempoAndKeyPutBack(values);
+    const auto before = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
         auto *t = dynamic_cast<Pdb::track_row_t *>(body);
         return t != nullptr && t->id() == trackId;
     });
-    if (!row) {
+    if (!before) {
         return false;
     }
-    if (m_indexed) {
-        beginUndo();
+    if (!m_indexed) {
+        // Only Leave and None reach here: neither makes a keys row.
+        writeU32LE(m_buffer, before->rowBodyOffset + TrackTempoOffset, values.tempo);
+        if (values.key == TrackTempoAndKeyPutBack::Key::None) {
+            writeU32LE(m_buffer, before->rowBodyOffset + TrackKeyIdOffset, 0);
+        }
+        m_editedPageIndices.insert(before->pageIndex);
+        return true;
+    }
+    beginUndo();
+    try {
+        std::optional<uint32_t> keyId;
+        if (values.key == TrackTempoAndKeyPutBack::Key::None) {
+            keyId = 0;
+        } else if (values.key == TrackTempoAndKeyPutBack::Key::Named) {
+            // The keys row of that name, made where there is none, as
+            // setTrackTempoAndKey() makes one: an id from another export
+            // would name another key in this one.
+            const NameTableIndex &keys = nameIndex(KeysTableType);
+            const auto named = keys.idByName.find(values.keyName);
+            uint32_t found = named == keys.idByName.end() ? 0 : named->second;
+            if (found == 0) {
+                found = idAfter(keys.highestId, "lookup");
+                addRow(KeysTableType, [&](uint32_t) { return encodePdbKeyRow(found, values.keyName); });
+            }
+            keyId = found;
+        }
+        // Found after the key row is placed: addRow() may grow the buffer.
+        auto row = findRow(m_buffer, Pdb::PAGE_TYPE_TRACKS, [&](kaitai::kstruct *body) {
+            auto *t = dynamic_cast<Pdb::track_row_t *>(body);
+            return t != nullptr && t->id() == trackId;
+        });
+        if (!row) {
+            throw std::logic_error("export.pdb: the track row went while its key was added");
+        }
         keepPageForUndo(row->pageIndex);
-    }
-    writeU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset, values.tempo);
-    writeU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset, values.keyId);
-    if (m_indexed) {
+        writeU32LE(m_buffer, row->rowBodyOffset + TrackTempoOffset, values.tempo);
+        if (keyId) {
+            writeU32LE(m_buffer, row->rowBodyOffset + TrackKeyIdOffset, *keyId);
+        }
         markEdited(row->pageIndex);
-        endUndo();
-    } else {
-        m_editedPageIndices.insert(row->pageIndex);
+    } catch (...) {
+        undo();
+        throw;
     }
+    endUndo();
     return true;
 }
 

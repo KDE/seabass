@@ -6,7 +6,10 @@
 
 #include <QString>
 
+#include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -46,18 +49,42 @@ struct PreparedAnalysisRestore
 };
 
 // Reads the stick's libraries and its kept analyses, and stages nothing:
-// one change per playlist track that has rekordbox's analysis or the
-// player's kept, with the review of its cues (old grid the .DAT's now,
+// one change per playlist track that has rekordbox's analysis kept by
+// Analyse again (the player's goes back with it where it is kept too; the
+// player's kept alone, by Beat Grids & Waveforms, is that page's to
+// restore and is not touched here), with the review of its cues (old grid the .DAT's now,
 // new grid the kept one's) switched on where it follows on its own under
 // the request's threshold. A track whose kept entry cannot be read is
-// left out with the reason. Reads the stick and writes nothing: not for
+// left out with the reason. Refused (`refusal`) when no track of the
+// playlist has anything of Analyse again's kept. Reads the stick and writes nothing: not for
 // the GUI thread. Throws application::OperationCancelled on a cancel.
 PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &request,
                                                const application::CancellationToken &cancel);
 
-// How many of the playlist's tracks have an original analysis kept (the
-// changes prepareAnalysisRestore() would stage, counted without the cue
-// reviews). Same rules; -1 when the stick cannot be read.
+// How many of the playlist's tracks have rekordbox's original analysis
+// kept by Analyse again, for the playlist menu: a track counts when a kept
+// file of its name is in the rekordbox kept-analysis folder
+// (keptAnalysisNamesOf()), nothing parsed, so
+// it can count a kept entry prepareAnalysisRestore() then finds damaged or
+// of another row. -1 when the stick cannot be read. Reads the stick: not
+// for the GUI thread.
 int countKeptOriginals(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel);
+
+// The file names in a stick's two kept-analysis folders, listed once and
+// kept until forgetKeptAnalysisNames(): the menu asks each time it opens,
+// and a folder of thousands of entries is not listed each time. Safe from
+// any thread. A listing made while the names were forgotten is not kept.
+struct KeptAnalysisNames
+{
+    std::set<std::string> rekordbox;
+    std::set<std::string> engine;
+};
+std::shared_ptr<const KeptAnalysisNames> keptAnalysisNamesOf(const std::filesystem::path &stickRoot);
+// Drops every stick's names: after a save (which may keep or restore), and
+// after Free Up Space removed kept files.
+void forgetKeptAnalysisNames();
+// How many times the names were forgotten: an answer counted from names
+// of an earlier generation is out of date.
+std::uint64_t keptAnalysisNamesGeneration();
 
 }  // namespace seabass::gui

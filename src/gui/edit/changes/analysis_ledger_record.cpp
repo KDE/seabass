@@ -197,16 +197,23 @@ void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const 
         const auto landedChange = [&](const QString &changeId) {
             return after.appliedIds.contains(changeId) && !after.skippedIds.contains(changeId);
         };
+        // In the order the changes were applied: where two speak of the
+        // same track, the one applied later left it as it is. One change
+        // may take one entry out and record another (a relink carries a
+        // track's entry to its new name).
         std::map<std::string, AnalysisLedgerEntry> landed;
-        for (const auto &[changeId, entry] : record->byChange) {
-            if (landedChange(changeId)) {
-                landed[entry.pathKey] = entry;
-            }
-        }
         std::set<std::string> forgotten;
-        for (const auto &[changeId, pathKey] : record->forgetByChange) {
-            if (landedChange(changeId) && landed.count(pathKey) == 0) {
-                forgotten.insert(pathKey);
+        for (const QString &changeId : after.appliedIds) {
+            if (!landedChange(changeId)) {
+                continue;
+            }
+            if (const auto forget = record->forgetByChange.find(changeId); forget != record->forgetByChange.end()) {
+                landed.erase(forget->second);
+                forgotten.insert(forget->second);
+            }
+            if (const auto entry = record->byChange.find(changeId); entry != record->byChange.end()) {
+                forgotten.erase(entry->second.pathKey);
+                landed[entry->second.pathKey] = entry->second;
             }
         }
         if (landed.empty() && forgotten.empty()) {
@@ -227,6 +234,28 @@ void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const 
                   "Seabass leaves it as it is and says this at every save. Check the stick for errors on a computer. "
                   "If it stays unreadable, \"seabass-cli analysis-ledger --reset\" moves the record aside, deleting "
                   "nothing, and the next save starts a new one.");
+        }
+        // A damaged ledger is never written over: whatever it still holds
+        // stays on the stick, moved aside, and a new one starts with this
+        // save's tracks. One that cannot be moved is left as it is, as one
+        // that cannot be read.
+        std::string movedAside;
+        if (fault == infrastructure::local::AnalysisLedgerFault::Damaged) {
+            std::string moveError;
+            const auto aside =
+                infrastructure::local::moveAnalysisLedgerAside(root, std::chrono::system_clock::now(), &moveError, "damaged");
+            if (!aside) {
+                ctx.log().record("analysis ledger: " + std::to_string(landed.size() + forgotten.size())
+                                 + " track(s) not recorded, the damaged ledger left as it is: " + readError + "; "
+                                 + moveError);
+                throw std::runtime_error(
+                    "Your changes are saved, but Seabass could not record which tracks it analysed: the record on the "
+                    "stick is damaged (" + readError + ") and could not be moved aside (" + moveError + "). Seabass "
+                    "leaves it as it is. Check the stick for errors on a computer.");
+            }
+            movedAside = pathToUtf8(aside->filename());
+            ctx.log().record("analysis ledger: the damaged ledger (" + readError + ") moved aside as " + movedAside
+                             + "; a new one starts");
         }
         const std::int64_t now =
             std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -290,8 +319,13 @@ void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const 
         ctx.log().record("analysis ledger: recorded " + std::to_string(landed.size()) + " track(s), "
                          + (taken > 0 ? "took " + std::to_string(taken) + " out, " : std::string())
                          + std::to_string(next.size()) + " in all"
-                         + (readError.empty() ? std::string()
-                                              : ", replacing a damaged ledger (" + readError + ")"));
+                         + (movedAside.empty() ? std::string() : ", in a new ledger; the damaged one is " + movedAside));
+        if (!movedAside.empty()) {
+            throw std::runtime_error("Your changes are saved. The record of which tracks Seabass analysed was damaged, "
+                                     "so Seabass moved it aside as " + movedAside + ", deleting nothing, and started a "
+                                     "new one with the tracks of this save. Tracks analysed before are not in the new "
+                                     "record, and Seabass does not know them for its own analyses any more.");
+        }
     });
 }
 

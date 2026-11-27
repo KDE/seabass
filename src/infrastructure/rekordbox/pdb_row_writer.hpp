@@ -135,21 +135,39 @@ public:
     bool setTrackTempoAndKey(uint32_t trackId, double bpm, const std::string &keyWhereNone, bool *keyWritten = nullptr);
 
     // A track row's tempo (hundredths of a BPM) and key id exactly as
-    // stored, for keeping them before Analyse again replaces them; nullopt
-    // when no present track row has this id.
+    // stored, and the name of the keys row that id names (nullopt for id
+    // 0, or an id no present keys row has), for keeping them before
+    // Analyse again replaces them; nullopt when no present track row has
+    // this id.
     struct TrackTempoAndKeyId
     {
         uint32_t tempo = 0;
         uint32_t keyId = 0;
+        std::optional<std::string> keyName;
     };
     std::optional<TrackTempoAndKeyId> trackTempoAndKeyId(uint32_t trackId) const;
-    // The same two fields put back as they were kept (Restore original
-    // analysis), overwritten in place; nothing else on the row changes, and
-    // no keys row is made: a key id is put back only as one that was
-    // there. Returns false when no present track row has this id, and
-    // refuses (std::invalid_argument) a key id the keys table does not
-    // hold, other than 0 for none.
-    bool setTrackTempoAndKeyId(uint32_t trackId, const TrackTempoAndKeyId &values);
+    // A kept tempo and key put back (Restore original analysis): the
+    // tempo as stored, and the key left as the row has it, set to none
+    // (id 0), or set by its name, through the keys row spelled exactly so,
+    // made where there is none, as setTrackTempoAndKey() makes one. Never
+    // by a kept id: after a new export the same id can name another key.
+    struct TrackTempoAndKeyPutBack
+    {
+        enum class Key { Leave, None, Named };
+        uint32_t tempo = 0;
+        Key key = Key::Leave;
+        std::string keyName;
+    };
+    // Throws what putBackTrackTempoAndKey() would throw for `values` before
+    // it touches the buffer (a name that is empty or not storable text),
+    // writing nothing: for a caller that asks every question before its
+    // first write.
+    void checkTrackTempoAndKeyPutBack(const TrackTempoAndKeyPutBack &values) const;
+    // Overwrites the row's tempo and key in place; nothing else on the
+    // row changes. All or nothing: a keys row that cannot be placed leaves
+    // the buffer as it was, and throws what addRow() throws. Returns false
+    // when no present track row has this id.
+    bool putBackTrackTempoAndKey(uint32_t trackId, const TrackTempoAndKeyPutBack &values);
 
     // A track's free-text fields, to be written into the row's existing
     // device_sql_string spans in place -- see overwriteTrackText()'s own

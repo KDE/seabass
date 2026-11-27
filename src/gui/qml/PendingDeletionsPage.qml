@@ -383,10 +383,11 @@ Page {
             rekordboxPath: root.rekordboxPath
             enginePath: root.enginePath
             onSummaryReady: summary => summaryDialog.show(summary)
-            onLockRefused: holder => {
+            // The library the removal asked the lock of, so Remove Lock
+            // removes the lock that refused.
+            onLockRefused: (holder, libraryId) => {
                 root.refusedAction = "kept";
-                lockedDialog.openFor(EditSessionRegistry.libraryIdForPath(root.hasEngine ? root.enginePath
-                                                                                          : root.rekordboxPath), holder);
+                lockedDialog.openFor(libraryId, holder);
             }
         }
     }

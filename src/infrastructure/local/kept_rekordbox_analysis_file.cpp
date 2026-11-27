@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -84,6 +85,20 @@ bool parseNumberOrNull(std::string_view text, std::optional<std::int64_t> &into)
     }
     into = v;
     return true;
+}
+
+// The shortest decimal that reads back as the same double.
+std::string exactMs(double value)
+{
+    char buffer[64];
+    const auto [end, ec] = std::to_chars(buffer, buffer + sizeof buffer, value);
+    return ec == std::errc() ? std::string(buffer, end) : std::string("0");
+}
+
+bool parseMs(std::string_view text, double &into)
+{
+    const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), into);
+    return !text.empty() && ec == std::errc() && end == text.data() + text.size() && std::isfinite(into);
 }
 
 std::vector<std::string_view> splitTabs(std::string_view line)
@@ -183,7 +198,13 @@ std::string serializeKeptRekordboxAnalysis(const KeptRekordboxAnalysis &e)
     }
     for (const KeptRekordboxRow &row : e.rows) {
         text += "row\t" + escapeManifestField(row.library) + "\t" + std::to_string(row.rowId) + "\t"
-                + numberOrNull(row.tempo) + "\t" + numberOrNull(row.keyId) + "\n";
+                + numberOrNull(row.tempo) + "\t" + numberOrNull(row.keyId) + "\t"
+                + (row.keyName ? "name:" + escapeManifestField(*row.keyName) : std::string("none")) + "\n";
+    }
+    for (const KeptCueMove &cue : e.cueMoves) {
+        text += "cue\t" + escapeManifestField(cue.library) + "\t" + (cue.hot ? "hot" : "memory") + "\t"
+                + std::to_string(cue.pad) + "\t" + (cue.loop ? "1" : "0") + "\t" + exactMs(cue.oldMs) + "\t"
+                + exactMs(cue.newMs) + "\t" + exactMs(cue.oldEndMs) + "\t" + exactMs(cue.newEndMs) + "\n";
     }
     text += "#sha256\t" + hashing::toHex(hashing::Sha256::of(std::string_view(text))) + "\n";
     return text;
@@ -257,6 +278,7 @@ KeptRekordboxAnalysisLookup parseKeptRekordboxAnalysis(const std::string &text)
         return refuse("line 5: a bad seabassGrids");
     }
     bool rowsBegun = false;
+    bool cuesBegun = false;
     for (std::size_t i = 5; i < lines.size(); ++i) {
         const std::string where = "line " + std::to_string(i + 1) + ": ";
         if (named(i, "anlz", 5) && !rowsBegun) {
@@ -266,17 +288,38 @@ KeptRekordboxAnalysisLookup parseKeptRekordboxAnalysis(const std::string &text)
                 return refuse(where + "a bad anlz");
             }
             e.files.push_back(std::move(set));
-        } else if (named(i, "row", 5)) {
+        } else if (named(i, "row", 6) && !cuesBegun) {
             rowsBegun = true;
             KeptRekordboxRow row;
+            const std::string_view keyName = lines[i][5];
+            bool keyNameRead = keyName == "none";
+            if (keyName.substr(0, 5) == "name:") {
+                std::string name;
+                keyNameRead = unescaped(keyName.substr(5), name);
+                row.keyName = std::move(name);
+            }
             if (!unescaped(lines[i][1], row.library) || (row.library != "rekordbox" && row.library != "onelibrary")
                 || !parseNumber(lines[i][2], row.rowId) || !parseNumberOrNull(lines[i][3], row.tempo)
-                || !parseNumberOrNull(lines[i][4], row.keyId)) {
+                || !parseNumberOrNull(lines[i][4], row.keyId) || !keyNameRead) {
                 return refuse(where + "a bad row");
             }
             e.rows.push_back(std::move(row));
+        } else if (named(i, "cue", 9)) {
+            rowsBegun = true;
+            cuesBegun = true;
+            KeptCueMove cue;
+            const auto &f = lines[i];
+            if (!unescaped(f[1], cue.library) || (cue.library != "rekordbox" && cue.library != "engine")
+                || (f[2] != "hot" && f[2] != "memory") || !parseNumber(f[3], cue.pad) || (f[4] != "0" && f[4] != "1")
+                || !parseMs(f[5], cue.oldMs) || !parseMs(f[6], cue.newMs) || !parseMs(f[7], cue.oldEndMs)
+                || !parseMs(f[8], cue.newEndMs)) {
+                return refuse(where + "a bad cue");
+            }
+            cue.hot = f[2] == "hot";
+            cue.loop = f[4] == "1";
+            e.cueMoves.push_back(std::move(cue));
         } else {
-            return refuse(where + "not an anlz or row line in its place");
+            return refuse(where + "not an anlz, row or cue line in its place");
         }
     }
     out.status = KeptRekordboxAnalysisLookup::Status::Found;
@@ -418,23 +461,68 @@ std::vector<KeptAnalysisFileInfo> listKeptRekordboxAnalyses(const fs::path &stic
         info.file = pathToUtf8(file);
         std::error_code ec;
         info.bytes = fs::file_size(file, ec);
-        // The first line alone: the stick path is on it.
-        std::ifstream in(file, std::ios::binary);
-        std::string first;
-        std::string problem;
-        if (in && gunzip(in, true, 64 * 1024, &first, &problem)) {
-            const std::size_t newline = first.find('\n');
-            const auto fields = splitTabs(std::string_view(first).substr(0, newline));
-            if (fields.size() == 3 && fields[0] == Magic) {
-                if (const auto path = unescapeManifestField(fields[2])) {
-                    info.trackFile = *path;
-                    info.readable = !path->empty();
-                }
-            }
+        // The head alone: the stick path is on its first line.
+        if (const auto head = readKeptRekordboxAnalysisHead(file)) {
+            info.trackFile = head->stickPath;
+            info.readable = true;
         }
         out.push_back(std::move(info));
     }
     return out;
+}
+
+std::optional<KeptRekordboxAnalysisHead> readKeptRekordboxAnalysisHead(const fs::path &file)
+{
+    // The head is a few hundred bytes; the first 64 kB of text hold it
+    // with room to spare, and gunzip stops there.
+    std::ifstream in(file, std::ios::binary);
+    std::string text;
+    std::string problem;
+    if (!in || !gunzip(in, true, 64 * 1024, &text, &problem)) {
+        return std::nullopt;
+    }
+    std::vector<std::vector<std::string_view>> lines;
+    for (std::size_t start = 0; lines.size() < 5;) {
+        const std::size_t end = text.find('\n', start);
+        if (end == std::string::npos) {
+            return std::nullopt;
+        }
+        lines.push_back(splitTabs(std::string_view(text).substr(start, end - start)));
+        start = end + 1;
+    }
+    KeptRekordboxAnalysisHead head;
+    const auto field = [&](std::size_t line, std::string_view name, std::size_t fields) {
+        return lines[line].size() == fields && lines[line][0] == name;
+    };
+    if (lines[0].size() != 3 || lines[0][0] != Magic
+        || lines[0][1] != std::to_string(KeptRekordboxAnalysisFormatVersion) || !field(1, "pathKey", 2)
+        || !field(3, "originalGrid", 2) || !field(4, "seabassGrids", 2)) {
+        return std::nullopt;
+    }
+    const auto stickPath = unescapeManifestField(lines[0][2]);
+    const auto pathKey = unescapeManifestField(lines[1][1]);
+    if (!stickPath || stickPath->empty() || !pathKey || pathKey->empty()
+        || !(lines[3][1] == "-" || isSha256Hex(lines[3][1])) || !parseFingerprintList(lines[4][1], head.seabassGrids)) {
+        return std::nullopt;
+    }
+    head.stickPath = *stickPath;
+    head.pathKey = *pathKey;
+    head.originalGrid = lines[3][1] == "-" ? std::string() : std::string(lines[3][1]);
+    return head;
+}
+
+std::vector<std::string> keptRekordboxSeabassGrids(const fs::path &stickRoot, std::string *error)
+{
+    error->clear();
+    std::vector<std::string> grids;
+    for (const fs::path &file : entryFilesIn(paths::stickKeptRekordboxAnalysisDir(stickRoot), ".tsv.gz", error)) {
+        if (const auto head = readKeptRekordboxAnalysisHead(file)) {
+            grids.insert(grids.end(), head->seabassGrids.begin(), head->seabassGrids.end());
+        }
+    }
+    std::sort(grids.begin(), grids.end());
+    grids.erase(std::unique(grids.begin(), grids.end()), grids.end());
+    return grids;
 }
 
 std::vector<KeptAnalysisFileInfo> listKeptEngineAnalyses(const fs::path &stickRoot, std::string *error)

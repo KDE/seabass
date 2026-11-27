@@ -119,6 +119,7 @@ class TrackImportController : public QObject
     Q_PROPERTY(QString reanalysingPlaylist READ reanalysingPlaylist NOTIFY busyChanged)
     // What the last Analyse again came to: {playlist, analysed (tracks
     // staged with a new analysis), leftAlone (tracks left as they are),
+    // leftAloneTracks ([{name, why}], the same tracks with the reason),
     // cueTracks (tracks with cues on the old grid that would move),
     // cuesToMove (how many), of those autoCueTracks and autoCues (the
     // tracks whose cues follow the new grid on their own, all moves under

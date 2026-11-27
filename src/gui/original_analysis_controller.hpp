@@ -30,14 +30,17 @@ namespace seabass::gui
 class LibraryEditSession;
 
 // Restore original analysis, for Browse's playlist menu: the tracks of a
-// playlist whose analysis by rekordbox or the player is kept on the stick
-// (Analyse again keeps it before it first replaces it) are each given it
-// back, one RestoreAnalysisChange per track, staged in the stick's edit
-// session; nothing is written until the save.
+// playlist whose analysis by rekordbox Analyse again kept on the stick
+// (before it first replaced it) are each given it back, the player's too
+// where it is kept with it, one RestoreAnalysisChange per track, staged in
+// the stick's edit session; nothing is written until the save. A track
+// whose player's analysis alone is kept (Beat Grids & Waveforms) is not
+// counted nor touched: Restore Engine's Analysis is its way back.
 //
 // keptCount() is the menu's question, answered on a worker
 // (refreshKeptCount()): how many of the playlist's tracks have an original
-// kept. restoreOriginalAnalysis() prepares the changes on a worker and
+// kept, by the kept files' names alone (countKeptOriginals()), the two
+// folders listed once until the next save. restoreOriginalAnalysis() prepares the changes on a worker and
 // stages them; lastRestore() then holds the summary, and cueReview() the
 // tracks whose cue points Analyse again moved, each with the switch that
 // moves them back with the grid (off unless every move is under the
@@ -78,6 +81,12 @@ public:
     // How many of the playlist's tracks have an original analysis kept;
     // the answer comes as keptCountChanged().
     Q_INVOKABLE void refreshKeptCount(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
+    // The last count answered for the playlist on that stick, at once, or
+    // -1 when none is known or the kept files changed since (a save, a
+    // removal in Free Up Space): for a menu that has to be right the
+    // moment it opens and must not change while it is open.
+    Q_INVOKABLE int cachedKeptCount(const QString &rekordboxPath, const QString &enginePath,
+                                    const QString &playlist) const;
     // Stages a restore for each such track of the playlist; false, with
     // errorMessage set, when it cannot start. restoreReady() when staged.
     Q_INVOKABLE bool restoreOriginalAnalysis(const QString &rekordboxPath, const QString &enginePath,
@@ -113,6 +122,11 @@ private:
     QString m_preparingPlaylist;
     QString m_countingPlaylist;
     std::optional<AnalysisRestoreRequest> m_countNext;
+    AnalysisRestoreRequest m_counting;
+    std::uint64_t m_countingGeneration = 0;
+    // Answered counts by stick and playlist, with the names' generation
+    // they were counted from.
+    std::map<std::string, std::pair<int, std::uint64_t>> m_counts;
     QString m_keptCountPlaylist;
     int m_keptCount = -1;
     bool m_busy = false;
@@ -121,13 +135,15 @@ private:
     std::vector<std::shared_ptr<RestoreAnalysisChange>> m_staged;
 };
 
-// Free Up Space's kept original analyses: rekordbox's (Analyse again) and
-// the player's (Analyse again, Beat Grids & Waveforms), in four groups:
+// Free Up Space's kept original analyses: rekordbox's kept by Analyse
+// again, and the player's of the same tracks (one Beat Grids & Waveforms
+// kept alone is not listed: it is that page's), in four groups:
 // of tracks on the stick and of tracks gone from it, for each. Removing a
 // group deletes its files for good, a direct write under the stick's
-// edit lock, as the page's other removals are. The groups of tracks on
-// the stick start unticked, those of tracks gone ticked (nothing can be
-// restored from them).
+// edit lock, as the page's other removals are, taken by the same path
+// (Engine's first). Every group starts unticked: deleting is always the
+// person's choice, and of a track not on the stick under its name all
+// that is known is that, not that it was deleted.
 class KeptAnalysisSpaceController : public QObject
 {
     Q_OBJECT
@@ -189,11 +205,15 @@ signals:
     void groupsChanged();
     void busyChanged();
     void removeFinished(const QVariantMap &summary);
-    void lockRefused(const QVariantMap &holder);
+    // The lock of `libraryId` is held elsewhere: the id the removal asked
+    // for, for the locked dialog and its Remove Lock.
+    void lockRefused(const QVariantMap &holder, const QString &libraryId);
 
 private:
     void onListed();
     void onRemoved();
+    // The catalog path the stick's lock is taken by.
+    QString lockPath() const;
 
     QFutureWatcher<Listing> m_listWatcher;
     QFutureWatcher<Removal> m_removeWatcher;

@@ -104,8 +104,9 @@ KeptRekordboxAnalysis sample()
     e.seabassGrids = {std::string(64, 'b'), std::string(64, 'c')};
     e.files.push_back({"/PIONEER/USBANLZ/P001/0000ABCD/ANLZ0000.DAT", every256(), every256() + "x", std::nullopt});
     e.files.push_back({"/PIONEER/USBANLZ/P002/0000ABCE/ANLZ0000.DAT", std::string(), std::nullopt, every256()});
-    e.rows.push_back({"rekordbox", 17, 12800, 0});
-    e.rows.push_back({"onelibrary", 9000000001, std::nullopt, 42});
+    e.rows.push_back({"rekordbox", 17, 12800, 0, std::nullopt});
+    e.rows.push_back({"onelibrary", 9000000001, std::nullopt, 42, std::string("A\tm\n\\")});
+    e.rows.push_back({"rekordbox", 18, 12800, 7, std::string("none")});
     return e;
 }
 
@@ -305,36 +306,66 @@ int main()
         std::cout << "case 5 (the restore rule) OK\n";
     }
 
-    // 6.
+    // 6. The keep decision: (grid now, whether it is Seabass's, whether
+    //    the ledger is believed, what is kept).
     {
         using gui::KeepOriginal;
         const std::string a(64, 'a');
         const std::string b(64, 'b');
-        const std::string c(64, 'c');
         const std::string d(64, 'd');
-        check(gui::keepOriginalDecision(b, b, nullptr, 10) == KeepOriginal::Nothing,
-              "6: the ledger's grid and nothing kept: nothing to keep");
-        check(gui::keepOriginalDecision(a, b, nullptr, 10) == KeepOriginal::KeepNow,
+        check(gui::keepOriginalDecision(b, true, true, nullptr) == KeepOriginal::Nothing,
+              "6: Seabass's grid and nothing kept: nothing to keep");
+        check(gui::keepOriginalDecision(a, false, true, nullptr) == KeepOriginal::KeepNow,
               "6: someone else's grid: kept now");
-        check(gui::keepOriginalDecision(a, "", nullptr, 10) == KeepOriginal::KeepNow,
-              "6: no ledger entry: kept now");
+        check(gui::keepOriginalDecision(a, false, false, nullptr) == KeepOriginal::CannotTell,
+              "6: nothing kept and the ledger damaged: Seabass cannot tell whose grid it is, left alone");
+        check(gui::keepOriginalDecision(b, true, false, nullptr) == KeepOriginal::Nothing,
+              "6: nothing kept, the ledger damaged, the grid known from a kept entry: nothing to keep");
+        check(gui::keepOriginalDecision("", false, true, nullptr) == KeepOriginal::KeepNow,
+              "6: no grid at all, nothing kept: rekordbox's waveforms kept now");
         KeptRekordboxAnalysis kept;
         kept.originalGrid = a;
         kept.seabassGrids = {b};
-        kept.audioFileSize = 10;
-        check(gui::keepOriginalDecision(b, b, &kept, 10) == KeepOriginal::KeptStays,
-              "6: Seabass's grid by the ledger: the kept original stays");
-        check(gui::keepOriginalDecision(b, "", &kept, 10) == KeepOriginal::KeptStays,
-              "6: Seabass's grid by the kept entry, the ledger lost: the kept original stays");
-        check(gui::keepOriginalDecision(c, c, &kept, 10) == KeepOriginal::KeptStays,
-              "6: a later Seabass grid the ledger has: the kept original stays");
-        check(gui::keepOriginalDecision(a, "", &kept, 10) == KeepOriginal::KeptStays,
+        check(gui::keepOriginalDecision(b, true, true, &kept) == KeepOriginal::KeptStays,
+              "6: Seabass's grid: the kept original stays");
+        check(gui::keepOriginalDecision(b, true, false, &kept) == KeepOriginal::KeptStays,
+              "6: Seabass's grid, the ledger lost: the kept original stays");
+        check(gui::keepOriginalDecision(a, false, true, &kept) == KeepOriginal::KeptStays,
               "6: the kept original's grid itself: it stays");
-        check(gui::keepOriginalDecision(d, b, &kept, 10) == KeepOriginal::KeepNewer,
+        check(gui::keepOriginalDecision("", false, true, &kept) == KeepOriginal::KeptStays,
+              "6: no grid in the file: no evidence of a newer analysis, the kept one stays");
+        check(gui::keepOriginalDecision(d, false, true, &kept) == KeepOriginal::KeepNewer,
               "6: a grid nobody knows: rekordbox's newer analysis replaces the kept one");
-        check(gui::keepOriginalDecision(b, b, &kept, 11) == KeepOriginal::KeepNewer,
-              "6: another audio file: what is kept is not of it");
+        check(gui::keepOriginalDecision(d, false, false, &kept) == KeepOriginal::CannotTell,
+              "6: a grid nobody knows and the ledger lost: Seabass cannot tell, the track is left alone");
         std::cout << "case 6 (the keep decision) OK\n";
+    }
+
+    // 7. The head: read without the kept bytes; every head's seabassGrids.
+    {
+        StickKeptRekordboxAnalysisStore store(stick);
+        KeptRekordboxAnalysis e = sample();
+        e.files[0].dat = std::string(200000, 'x');  // the head is read without it
+        store.keep(e);
+        KeptRekordboxAnalysis other = sample();
+        other.pathKey = "contents/other.wav";
+        other.stickPath = "/Contents/other.wav";
+        other.seabassGrids = {std::string(64, 'e')};
+        store.keep(other);
+        writeBytes(infrastructure::paths::stickKeptRekordboxAnalysisDir(stick) / "0123456789abcdef0123456789abcdef.tsv.gz",
+                   gz("damaged\n"));
+        const auto head = infrastructure::local::readKeptRekordboxAnalysisHead(
+            infrastructure::local::keptRekordboxAnalysisFile(stick, e.pathKey));
+        check(head && head->pathKey == e.pathKey && head->stickPath == e.stickPath && head->originalGrid == e.originalGrid
+                  && head->seabassGrids == e.seabassGrids,
+              "7: the head reads back");
+        std::string error;
+        const auto grids = infrastructure::local::keptRekordboxSeabassGrids(stick, &error);
+        check(error.empty()
+                  && grids == std::vector<std::string>{std::string(64, 'b'), std::string(64, 'c'), std::string(64, 'e')},
+              "7: every entry's Seabass grids, a damaged head adding none");
+        fs::remove_all(stick / "Seabass");
+        std::cout << "case 7 (the head, and the Seabass grids of every entry) OK\n";
     }
 
     if (failures > 0) {

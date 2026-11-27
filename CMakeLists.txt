@@ -4143,6 +4143,32 @@ if(TARGET seabass_edit)
             ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
         set_tests_properties(original_analysis_restore_test PROPERTIES LABELS "integration"
             ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+        # The rules around the kept original (sequences, renumbered rows and
+        # keys, relink, sizes, room, the ledgers' order, Free Up Space).
+        add_executable(kept_analysis_rules_test
+            src/gui/track_import_controller.hpp
+            src/gui/track_import_controller.cpp
+            src/gui/track_import_analysis.cpp
+            src/gui/analysis_resources.cpp
+            src/gui/track_import_cover.cpp
+            src/gui/edit/track_import_prepare.cpp
+            src/gui/edit/track_reanalysis_prepare.cpp
+            src/gui/edit/analysis_restore_prepare.cpp
+            src/gui/original_analysis_controller.hpp
+            src/gui/original_analysis_controller.cpp
+            src/gui/stick_catalogs.cpp
+            tests/kept_analysis_rules_test.cpp
+        )
+        target_include_directories(kept_analysis_rules_test PRIVATE src tests)
+        target_link_libraries(kept_analysis_rules_test PRIVATE seabass_gui_edit_session_testing seabass_edit
+            seabass_taglib Qt6::Core Qt6::Gui Qt6::Concurrent Qt6::Qml Qt6::Test)
+        if(TARGET seabass_audio_qt)
+            target_link_libraries(kept_analysis_rules_test PRIVATE seabass_audio_qt)
+        endif()
+        add_test(NAME kept_analysis_rules_test COMMAND kept_analysis_rules_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+        set_tests_properties(kept_analysis_rules_test PROPERTIES LABELS "integration"
+            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
     endif()
 
     # The #73 hardware round of 2026-11-13 replayed on what the stick

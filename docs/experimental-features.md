@@ -100,18 +100,33 @@ from day one.
   export.pdb and exportLibrary.db. Engine's row is kept the same way it
   always was (`Seabass/engine-analysis/`). Both are written by the save,
   so a save that goes back and Undo Last Save leave them as they were. A
-  grid Seabass wrote itself (the analysis ledger says so, or the kept
-  file records it) is nothing to keep: analysing again a second time
-  leaves the first original in place, and a track only Seabass ever
-  analysed (an imported one) has nothing kept. Only when rekordbox
-  analysed the track anew since (an export over the stick) does the
-  newer one take the older one's place.
+  grid Seabass wrote itself (any entry of the analysis ledger has it, or
+  any kept file records it) is nothing to keep: analysing again a second
+  time leaves the first original in place, its kept file not written
+  again, and a track only Seabass ever analysed (an imported one) has
+  nothing kept. Only a grid that is neither Seabass's nor the kept one
+  (rekordbox analysed the track anew, or the DJ set its grid, and it was
+  exported over the stick) takes the older one's place, so a grid set by
+  hand is never lost. A track is left as it is, with the reason, when its
+  audio file's size cannot be read or is not the size it was analysed
+  at, when the analysis ledger cannot be read and the grid is not known,
+  and when the stick has no room for what is to be kept. Library Health's
+  relink of a moved file carries what is kept, and both ledgers' lines,
+  to the track's new name.
+
+  Restore original analysis and Free Up Space's list of what is kept are
+  not behind the Experimental switch: with the switch off they still
+  show, but only when something is kept on the stick, since they are the
+  way back from Analyse again. With nothing kept, neither shows at all.
 
   "Restore original analysis", in a playlist's menu, puts back what is
   kept for each of its tracks, in every library that has something kept:
   the analysis files as they were, except for their cue lists, which stay
   as they are now (cue points set since are kept); a .2EX that Analyse
-  again added is taken away again; the rows get their old tempo and key;
+  again added is taken away again; every row that names the file gets the
+  old tempo and key of its library, the key by its name (a new export can
+  give the kept key id to another key), and a library whose rows were
+  renumbered by a new export keeps its tempo and key, which the log says;
   Engine's row its own analysis. The track is then no longer Seabass's
   analysis in the ledger, and the kept copy is removed in the same save
   (Undo brings it back). Cue points that Analyse again moved with the grid
@@ -128,9 +143,10 @@ from day one.
   about 320 kB) and 2 to 8 kB for Engine's. Removing it deletes the grids
   and waveforms rekordbox or the player made for those tracks for good;
   Seabass's analysis stays and the tracks play as they do now, but
-  Restore original analysis is no longer possible for them. What is kept
-  for tracks no longer on the stick is listed apart, ticked, as safe to
-  remove.
+  Restore original analysis (and, for the player's, Restore Engine's
+  Analysis) is no longer possible for them. What is kept for tracks not
+  on the stick under that name any more is listed apart, unticked like
+  the rest: deleting is always the person's choice.
 
   **The analysis ledger** (added 2026-11-26): after a save that wrote an
   analysis of Seabass's, by the import or by Analyse again, the stick's

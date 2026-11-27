@@ -22,7 +22,8 @@
 // 1. Analyse again keeps rekordbox's analysis files as they were and the
 //    rows' tempo and key, and Engine's row; nothing for "k two".
 // 2. Analysing again a second time keeps the kept original as it was.
-// 3. The count of the playlist's tracks with an original kept.
+// 3. The count of the playlist's tracks with an original kept, cached for
+//    the menu until the next save.
 // 4. Restore with the cue switch off (the review's default for a 30 ms
 //    move): the analysis files are the originals but for the cue lists,
 //    which are the current ones; .2EX taken away again; tempo and key in
@@ -38,9 +39,9 @@
 // 8. A save that goes back with a restore in it, and one with Analyse
 //    again in it: the kept store and the files as before. Undo Last Save
 //    of Analyse again takes away what it kept.
-// 9. Free Up Space lists the kept originals with their sizes, those of a
-//    track gone ticked, removes them, and the restore is no longer
-//    offered for those tracks.
+// 9. Free Up Space lists the kept originals with their sizes, every group
+//    unticked (those of a track gone too), removes them, and the restore
+//    is no longer offered for those tracks.
 // 10. A five-minute track: what is kept of it, for the size it takes.
 
 #include <QCoreApplication>
@@ -94,10 +95,28 @@ using infrastructure::rekordbox::AnlzFile;
 namespace
 {
 
+// The stick's log, whose Analyse again and restore lines a failure shows:
+// the scratch tree goes with the process.
+fs::path &stickLog()
+{
+    static fs::path log;
+    return log;
+}
+
 void require(bool ok, const std::string &what)
 {
     if (!ok) {
         std::cerr << "FAILED: " << what << std::endl;
+        std::ifstream in(stickLog());
+        std::vector<std::string> lines;
+        for (std::string line; std::getline(in, line);) {
+            if (line.find("track-reanalysis") != std::string::npos) {
+                lines.push_back(line);
+            }
+        }
+        for (std::size_t i = lines.size() > 12 ? lines.size() - 12 : 0; i < lines.size(); ++i) {
+            std::cerr << "  log: " << lines[i].substr(0, 700) << std::endl;
+        }
         std::exit(1);
     }
 }
@@ -225,6 +244,7 @@ int main(int argc, char **argv)
     testing::levelImportCounter(stick);
     const QString pioneer = stick.pioneerPath();
     const QString engine = stick.enginePath();
+    stickLog() = stick.root / "Seabass" / "seabass.log";
     const fs::path onStick = stick.root / "Contents" / "UnknownArtist" / "UnknownAlbum";
     const std::string pdbFile = pathToUtf8(stick.pioneer / "rekordbox" / "export.pdb");
 
@@ -267,6 +287,15 @@ int main(int argc, char **argv)
         waitFor(&restorer, &OriginalAnalysisController::keptCountChanged,
                 [&] { return restorer.keptCountPlaylist() == QLatin1String("-"); });
         return n;
+    };
+    // A restore that has nothing of Analyse again's to give back is
+    // refused, saying so, and stages nothing.
+    const auto restoreRefused = [&](const QString &playlist) {
+        require(restorer.restoreOriginalAnalysis(pioneer, engine, playlist), "the restore starts");
+        require(waitFor(&restorer, &OriginalAnalysisController::busyChanged, [&] { return !restorer.busy(); }),
+                "the restore is prepared");
+        return restorer.errorMessage().contains(QStringLiteral("has an original analysis that Analyse again kept"))
+               && session->pendingCount() == 0;
     };
     const auto restore = [&](const QString &playlist) {
         require(restorer.restoreOriginalAnalysis(pioneer, engine, playlist),
@@ -483,6 +512,8 @@ int main(int argc, char **argv)
 
     // 3.
     require(keptCount(QStringLiteral("Kept")) == 2, "3: two tracks of Kept have an original kept");
+    require(restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Kept")) == 2,
+            "3: the answer is there at once for the menu's next opening");
     std::cout << "case 3 (the count of a playlist's tracks with an original kept) OK\n";
 
     // What a restore must leave as it was found, for 5.
@@ -508,6 +539,8 @@ int main(int argc, char **argv)
                 "4: the cue review starts off");
         const AnlzFile datNow = AnlzFile::readRaw(pathToUtf8(anlzOf("k one.wav", "DAT")));
         require(saveNow().value("error").toString().isEmpty(), "4: the restore is saved");
+        require(restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Kept")) == -1,
+                "4: after the save the cached answer is out of date");
         // The rule: every section the original's, the cue lists the
         // current file's.
         const AnlzFile datOriginal = AnlzFile::fromBytes(original["k one.wav"]["DAT"], "original");
@@ -550,8 +583,7 @@ int main(int argc, char **argv)
                     && std::abs(hotCueOf(engineRow("k one.wav")) - seabassCue) < 1.5,
                 "4: the cue stays where Analyse again left it, its switch off");
         require(keptCount(QStringLiteral("Kept")) == 0, "4: nothing kept any more");
-        const QVariantMap twice = restore(QStringLiteral("Kept"));
-        require(twice.value("staged").toInt() == 0 && session->pendingCount() == 0, "4: a second restore finds nothing");
+        require(restoreRefused(QStringLiteral("Kept")), "4: a second restore finds nothing, and says so");
         std::cout << "case 4 (restore: the originals with the current cue lists, rows and Engine back, the ledgers "
                      "and kept entries cleared; the cue left by its switch) OK\n";
     }
@@ -750,9 +782,9 @@ int main(int argc, char **argv)
                            == sizeOf({keptEngineFile("k one.wav"), keptEngineFile("k three.wav")})
                     && !byName["engine"].value("included").toBool(),
                 "9: the player's kept analyses of two tracks, their size, unticked");
-        require(byName["rekordbox:gone"].value("count").toInt() == 1 && byName["rekordbox:gone"].value("included").toBool()
-                    && space.includedCount() == 1,
-                "9: the one of a track gone ticked");
+        require(byName["rekordbox:gone"].value("count").toInt() == 1 && !byName["rekordbox:gone"].value("included").toBool()
+                    && space.includedCount() == 0,
+                "9: the one of a track not on the stick under its name unticked too");
         std::cerr << "  Free Up Space: " << space.totalCount() << " kept, " << space.totalBytesHuman().toStdString()
                   << std::endl;
         for (int i = 0; i < groups.size(); ++i) {
@@ -769,8 +801,7 @@ int main(int argc, char **argv)
                     && !fs::exists(local::keptRekordboxAnalysisFile(stick.root, gone.pathKey)),
                 "9: their files are gone");
         require(keptCount(QStringLiteral("Kept")) == 0, "9: no track of Kept has an original kept");
-        require(restore(QStringLiteral("Kept")).value("staged").toInt() == 0 && session->pendingCount() == 0,
-                "9: the restore is no longer offered");
+        require(restoreRefused(QStringLiteral("Kept")), "9: the restore is no longer offered");
         require(pdbTempoKey("k one.wav").tempo != 11950, "9: Seabass's analysis stays");
         std::cout << "case 9 (Free Up Space lists, sizes and removes the kept originals; restore is not offered "
                      "after) OK\n";

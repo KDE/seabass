@@ -64,6 +64,17 @@ private:
 // fails the change, so the save puts back whatever it had written: the
 // catalogs never end up pointing at two places. Refused, too, when the
 // file is not the size the scan saw, or a file is at the old path again.
+//
+// What Seabass keeps about a track by its path goes with it in the same
+// save, declared for backup and taken back with it: rekordbox's and the
+// player's kept original analyses (Restore original analysis, Restore
+// Engine's Analysis), the analysis ledger's entry and the beat grid
+// ledger's line. Left behind, the kept originals would read as those of a
+// track no longer on the stick, and Analyse again at the new name would
+// take Seabass's own analysis for the original. Refused, nothing written,
+// where an original is kept under the new name already (one of the two
+// would be lost). Repair A needs none of this: the file goes back to the
+// name everything is kept under.
 class RelinkMovedFileChange : public PendingChange
 {
 public:
@@ -83,6 +94,20 @@ public:
 
 private:
     bool has(const std::string &format) const;
+    // The stick root the ledgers and kept analyses are keyed under, and
+    // the keys the rows' old paths have there (not the new one).
+    std::string stickRoot() const;
+    std::vector<std::string> oldKeys() const;
+    // Why the kept analyses cannot follow the track: one is kept under the
+    // old name and one under the new already. Empty when they can.
+    std::string keptAtNewNameRefusal() const;
+    // The kept analyses and ledger lines of the old name moved to the new
+    // one, in this save: rekordbox's kept entry where a rekordbox library
+    // was pointed, the player's kept entry and the beat grid ledger's line
+    // where Engine was, the analysis ledger's entry always. `said` gets a
+    // phrase for the log for each.
+    void carryTrackRecords(SaveContext &ctx, bool rekordboxPointed, bool enginePointed,
+                           const std::string &engineWriteRoot, std::vector<std::string> &said);
 
     QString m_pioneerRoot;
     QString m_enginePath;

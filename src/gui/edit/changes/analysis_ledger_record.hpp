@@ -73,9 +73,11 @@ void recordAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, c
 
 // Notes that the change `changeId` takes the entry of `pathKey` out of the
 // ledger (Restore original analysis: the track holds an analysis that is
-// not Seabass's again), by the same record after the commit: only if the
-// change landed, and never over an entry another change of the save
-// records for the same track.
+// not Seabass's again; a relink, whose track has another name now), by
+// the same record after the commit: only if the change landed. Where two
+// changes of the save speak of the same track, the one applied later
+// decides; a change that both takes one entry out and records another
+// has both done.
 void forgetAnalysisAfterCommit(SaveContext &ctx, const std::string &stickRoot, const QString &changeId,
                                const std::string &pathKey, const std::string &label);
 

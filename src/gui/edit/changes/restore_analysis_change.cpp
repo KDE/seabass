@@ -183,6 +183,87 @@ struct FileBack
 
 }  // namespace
 
+namespace
+{
+
+// The cue of `cues` (not yet taken) that is where `move` put it.
+std::optional<std::size_t> cueWhereMoved(const infrastructure::local::KeptCueMove &move,
+                                         const std::vector<domain::CuePoint> &cues, const std::vector<bool> &taken,
+                                         double toleranceMs)
+{
+    const double within = std::max(toleranceMs, 1.0);
+    for (std::size_t i = 0; i < cues.size(); ++i) {
+        const domain::CuePoint &cue = cues[i];
+        if (!taken[i] && (cue.kind == domain::CuePoint::Kind::Hot) == move.hot
+            && (!move.hot || cue.hotCueNumber == move.pad) && cue.isLoop == move.loop
+            && std::abs(cue.positionMs - move.newMs) < within
+            && (!move.loop || std::abs(cue.loopEndMs - move.newEndMs) < within)) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+application::CueGridPlan cueMovesBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
+                                      const std::string &library, const std::vector<domain::CuePoint> &cues,
+                                      double toleranceMs)
+{
+    application::CueGridPlan plan;
+    std::vector<bool> taken(cues.size(), false);
+    for (const auto &move : moves) {
+        if (move.library != library) {
+            continue;
+        }
+        std::optional<std::size_t> at;
+        if (!cues.empty()) {
+            at = cueWhereMoved(move, cues, taken, toleranceMs);
+            if (!at) {
+                continue;
+            }
+            taken[*at] = true;
+        }
+        application::CueGridMove back;
+        back.cueIndex = at.value_or(0);
+        back.kind = move.hot ? domain::CuePoint::Kind::Hot : domain::CuePoint::Kind::Memory;
+        back.hotCueNumber = move.pad;
+        back.isLoop = move.loop;
+        back.oldMs = move.newMs;
+        back.newMs = move.oldMs;
+        back.oldEndMs = move.newEndMs;
+        back.newEndMs = move.oldEndMs;
+        plan.moves.push_back(back);
+    }
+    plan.verdict = plan.moves.empty() ? application::CueGridPlan::Verdict::NothingMoves
+                                      : application::CueGridPlan::Verdict::Moves;
+    return plan;
+}
+
+std::optional<std::vector<domain::CuePoint>> cuesMovedBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
+                                                           const std::string &library,
+                                                           const std::vector<domain::CuePoint> &cues,
+                                                           double toleranceMs)
+{
+    std::vector<domain::CuePoint> back = cues;
+    std::vector<bool> taken(cues.size(), false);
+    bool any = false;
+    for (const auto &move : moves) {
+        if (move.library != library) {
+            continue;
+        }
+        if (const auto at = cueWhereMoved(move, cues, taken, toleranceMs)) {
+            taken[*at] = true;
+            back[*at].positionMs = move.oldMs;
+            if (move.loop) {
+                back[*at].loopEndMs = move.oldEndMs;
+            }
+            any = true;
+        }
+    }
+    return any ? std::optional<std::vector<domain::CuePoint>>(std::move(back)) : std::nullopt;
+}
+
 RestoreAnalysisChange::RestoreAnalysisChange(std::string audioFile, std::string stickPath, QString stickRoot,
                                              QString pioneerRoot, QString enginePath,
                                              std::vector<std::string> keptDatPaths, bool engineKept, QString title,
@@ -441,12 +522,6 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                 }
             }
             // The grid there now has to be Seabass's or the kept one.
-            std::string ledgerGrid;
-            if (const auto *ledger = saveAnalysisLedger(ctx, stickRoot)) {
-                if (const auto entry = ledger->find(key); entry != ledger->end()) {
-                    ledgerGrid = entry->second.rekordboxGrid;
-                }
-            }
             for (const auto &set : kept->files) {
                 const std::vector<std::string> paths = anlzFilesOf(set.datPath);
                 const std::optional<std::string> *originals[] = {&set.dat, &set.ext, &set.twoEx};
@@ -466,10 +541,7 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                     return refuse(set.datPath + " names another audio file now than when it was kept");
                 }
                 const std::string gridNow = infrastructure::rekordbox::pqtzGridFingerprint(*dat.current);
-                const bool seabass = !gridNow.empty()
-                                     && (gridNow == ledgerGrid
-                                         || std::find(kept->seabassGrids.begin(), kept->seabassGrids.end(), gridNow)
-                                                != kept->seabassGrids.end());
+                const bool seabass = isSeabassRekordboxGrid(ctx, stickRoot, gridNow, &*kept);
                 if (!seabass && gridNow != kept->originalGrid) {
                     return refuse("its beat grid in " + set.datPath
                                   + " was changed since Seabass analysed it (in rekordbox or on a player), and Seabass "
@@ -527,77 +599,167 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
         std::vector<std::pair<std::string, std::vector<domain::CuePoint>>> deviceLibraryCues;
         std::optional<std::vector<domain::CuePoint>> oneLibraryCues;
         std::vector<std::pair<std::int64_t, std::vector<domain::CuePoint>>> engineCues;
-        if (kept && isOn(cueSwitch) && m_cueReview.plan.verdict == application::CueGridPlan::Verdict::Moves) {
+        if (kept && isOn(cueSwitch) && !kept->cueMoves.empty()) {
+            // Only the cues Analyse again moved (as the kept entry records
+            // them), and only those still where it put them, go back to
+            // where they were: no grid is planned, so a cue Analyse again
+            // left where it was is never moved, and one set or changed
+            // since stays. Each library on its own.
             const double tolerance = domain::cueToleranceMsFor(m_cueReview.oldBpm, m_cueReview.oldBpm);
-            std::string whyNot;
-            const auto no = [&](const std::string &why) {
-                if (whyNot.empty()) {
-                    whyNot = why;
+            std::vector<std::string> notes;
+            bool rekordboxAgrees = true;
+            const auto oneSet = [&](const std::vector<RowCues> &rows) {
+                for (const RowCues &row : rows) {
+                    rekordboxAgrees = rekordboxAgrees && !row.unreadable && sameCueSet(row.cues, rows.front().cues);
                 }
             };
-            const auto planFor = [&](const std::string &library, const RowCues &row)
-                -> std::optional<std::vector<domain::CuePoint>> {
-                if (row.unreadable) {
-                    no(library + "'s cue points could not be read");
-                    return std::nullopt;
+            oneSet(deviceLibraryRows);
+            oneSet(oneLibraryRows);
+            if (!deviceLibraryRows.empty() && !oneLibraryRows.empty()
+                && !sameCueSet(deviceLibraryRows.front().cues, oneLibraryRows.front().cues)) {
+                rekordboxAgrees = false;
+            }
+            if (!rekordboxAgrees) {
+                notes.push_back("rekordbox's libraries hold different cue points (or cannot be read), so none of theirs "
+                                "moves");
+            } else {
+                for (const RowCues &row : deviceLibraryRows) {
+                    if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues, tolerance)) {
+                        deviceLibraryCues.emplace_back(row.sourceId, std::move(*moved));
+                    }
                 }
-                if (row.cues.empty()) {
-                    return std::nullopt;
-                }
-                const auto plan = application::planCueGridMoves(row.cues, m_cueReview.oldBeats, m_cueReview.newBeats);
-                if (!ReanalyseTrackChange::cuesMatchTheReview(m_cueReview.plan, plan, tolerance)) {
-                    no(library + " holds other cue points than the review showed");
-                    return std::nullopt;
-                }
-                if (plan.moves.empty()) {
-                    return std::nullopt;
-                }
-                return application::cuesMovedOntoNewGrid(row.cues, plan);
-            };
-            for (const auto *rows : {&deviceLibraryRows, &oneLibraryRows}) {
-                for (const RowCues &row : *rows) {
-                    if (!sameCueSet(row.cues, rows->front().cues)) {
-                        no("its rows hold different cue points");
+                if (deviceLibraryRows.empty()) {
+                    for (const RowCues &row : oneLibraryRows) {
+                        if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues, tolerance)) {
+                            oneLibraryCues = std::move(*moved);
+                        }
                     }
                 }
             }
-            if (!deviceLibraryRows.empty() && !oneLibraryRows.empty()
-                && !sameCueSet(deviceLibraryRows.front().cues, oneLibraryRows.front().cues)) {
-                no("DeviceLibrary and OneLibrary hold different cue points");
-            }
-            for (const RowCues &row : deviceLibraryRows) {
-                if (auto moved = planFor("DeviceLibrary", row)) {
-                    deviceLibraryCues.emplace_back(row.sourceId, std::move(*moved));
-                }
-            }
-            for (const RowCues &row : oneLibraryRows) {
-                if (auto moved = planFor("OneLibrary", row)) {
-                    oneLibraryCues = std::move(*moved);
-                }
-            }
             for (const EngineCues &row : engineRows) {
-                if (row.cues.empty()) {
-                    continue;
-                }
                 if (std::find(engineRestores.begin(), engineRestores.end(), row.id) == engineRestores.end()) {
-                    no("Engine keeps the grid it has (nothing of the player's analysis is kept for it)");
+                    // Its grid stays Seabass's, and its cues with it.
                     continue;
                 }
-                auto moved = ReanalyseTrackChange::engineCuesOntoNewGrid(m_cueReview.plan, row.cues,
-                                                                         m_cueReview.oldBeats, m_cueReview.newBeats,
-                                                                         tolerance);
-                if (!moved) {
-                    no("Engine holds other cue points than the review showed");
-                } else if (!sameCueSet(*moved, row.cues)) {
+                if (auto moved = cuesMovedBack(kept->cueMoves, "engine", row.cues, tolerance)) {
                     engineCues.emplace_back(row.id, std::move(*moved));
                 }
             }
-            cuesMove = whyNot.empty() && (!deviceLibraryCues.empty() || oneLibraryCues || !engineCues.empty());
-            if (!cuesMove) {
-                const std::string why = whyNot.empty() ? "no library holds the cue points the review showed" : whyNot;
+            cuesMove = !deviceLibraryCues.empty() || oneLibraryCues || !engineCues.empty();
+            if (!cuesMove || !notes.empty()) {
+                const std::string why = !notes.empty() ? notes.front()
+                                                       : "none of the cue points Analyse again moved is where it put "
+                                                         "them any more";
                 ctx.log().record(std::string(Label) + ": " + name
                                  + ": cue points left where they are, though moving them back was asked for: " + why);
                 saveNotesOf(ctx).cuesLeft[id()] = why;
+            }
+        }
+
+        // The rows' tempo and key, planned and asked before the first
+        // write. Every row that names the file now gets the kept values of
+        // its library (the first kept row's, where the kept rows differ),
+        // the key by its name: a kept key id is a number in the key table
+        // as it was then, and a new export can give it to another key. A
+        // library none of whose kept rows is one of its rows now (a new
+        // export renumbered them) keeps its rows' tempo and key as they
+        // are, and the log says so.
+        struct RowsBack
+        {
+            std::vector<std::int64_t> ids;
+            const infrastructure::local::KeptRekordboxRow *values = nullptr;
+            int notKept = 0;
+            std::string why;
+        };
+        const auto rowsBackOf = [&](const std::string &library, const std::vector<std::int64_t> &now) {
+            RowsBack back;
+            std::set<std::int64_t> keptIds;
+            for (const auto &row : kept->rows) {
+                if (row.library == library) {
+                    keptIds.insert(row.rowId);
+                    if (!back.values) {
+                        back.values = &row;
+                    }
+                }
+            }
+            if (!back.values) {
+                if (!now.empty()) {
+                    back.why = "no row of it was kept, so their tempo and key stay as they are";
+                }
+                return back;
+            }
+            bool matched = false;
+            for (const std::int64_t id : now) {
+                matched = matched || keptIds.count(id) > 0;
+                back.notKept += keptIds.count(id) == 0 ? 1 : 0;
+            }
+            if (!matched) {
+                back.values = nullptr;
+                back.notKept = 0;
+                back.why = now.empty() ? "it has no row for the file any more"
+                                       : "none of its rows for the file is one that was kept (a new export "
+                                         "renumbered them), so their tempo and key stay as they are";
+                return back;
+            }
+            back.ids = now;
+            return back;
+        };
+        // The key of a kept row: none, by its name, or left as the row has
+        // it where the kept id named no key (its name is not known).
+        using PdbPutBack = infrastructure::rekordbox::PdbRowWriter::TrackTempoAndKeyPutBack;
+        using OnePutBack = infrastructure::onelibrary::OneLibraryCueWriter::TempoAndKeyPutBack;
+        std::optional<RowsBack> pdbBack;
+        std::optional<RowsBack> oneBack;
+        PdbPutBack pdbValues;
+        OnePutBack oneValues;
+        if (kept) {
+            std::vector<std::int64_t> pdbNow(pdbIds.begin(), pdbIds.end());
+            if (pdbRows) {
+                pdbBack = rowsBackOf("rekordbox", pdbNow);
+            }
+            if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
+                std::vector<std::int64_t> oneNow;
+                for (const RowCues &row : oneLibraryRows) {
+                    oneNow.push_back(std::stoll(row.sourceId));
+                }
+                oneBack = rowsBackOf("onelibrary", oneNow);
+            }
+            try {
+                if (pdbBack && pdbBack->values) {
+                    const auto &v = *pdbBack->values;
+                    if (!v.tempo || *v.tempo < 0 || *v.tempo > 0xffffffffLL) {
+                        return refuse("the tempo kept for its export.pdb rows is not one a row holds");
+                    }
+                    pdbValues.tempo = static_cast<std::uint32_t>(*v.tempo);
+                    pdbValues.key = !v.keyId || *v.keyId == 0 ? PdbPutBack::Key::None
+                                    : v.keyName              ? PdbPutBack::Key::Named
+                                                             : PdbPutBack::Key::Leave;
+                    pdbValues.keyName = v.keyName.value_or(std::string());
+                    if (pdbValues.key == PdbPutBack::Key::Named && pdbValues.keyName.empty()) {
+                        pdbValues.key = PdbPutBack::Key::None;
+                    }
+                    // In memory until the commit after the analysis files:
+                    // a key row that cannot be placed refuses here.
+                    for (const std::int64_t row : pdbBack->ids) {
+                        pdbRows->putBackTrackTempoAndKey(static_cast<std::uint32_t>(row), pdbValues);
+                    }
+                }
+                if (oneBack && oneBack->values) {
+                    const auto &v = *oneBack->values;
+                    oneValues.bpmx100 = v.tempo;
+                    oneValues.key = !v.keyId || *v.keyId == 0 ? OnePutBack::Key::Raw
+                                    : v.keyName              ? OnePutBack::Key::Named
+                                                             : OnePutBack::Key::Leave;
+                    oneValues.rawKeyId = oneValues.key == OnePutBack::Key::Raw ? v.keyId : std::nullopt;
+                    oneValues.keyName = v.keyName.value_or(std::string());
+                    if (oneValues.key == OnePutBack::Key::Named && oneValues.keyName.empty()) {
+                        oneValues.key = OnePutBack::Key::Raw;
+                        oneValues.rawKeyId.reset();
+                    }
+                    sharedOneLibraryWriter(ctx, pioneer).checkTempoAndKeyPutBack(oneValues);
+                }
+            } catch (const std::exception &e) {
+                return refuse(std::string("the tempo and key kept for it cannot be put back (") + e.what() + ")");
             }
         }
 
@@ -644,55 +806,51 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
             done.push_back("rekordbox's analysis files put back");
             rekordboxRestored = true;
 
-            // The rows' tempo and key, as they were kept, on the rows of
-            // the file that are still there.
-            if (pdbRows) {
-                int rows = 0;
-                for (const auto &row : kept->rows) {
-                    if (row.library != "rekordbox" || !row.tempo || !row.keyId
-                        || std::find(pdbIds.begin(), pdbIds.end(), static_cast<std::uint32_t>(row.rowId)) == pdbIds.end()) {
-                        continue;
-                    }
-                    infrastructure::rekordbox::PdbRowWriter::TrackTempoAndKeyId values{
-                        static_cast<std::uint32_t>(*row.tempo), static_cast<std::uint32_t>(*row.keyId)};
-                    rows += pdbRows->setTrackTempoAndKeyId(static_cast<std::uint32_t>(row.rowId), values) ? 1 : 0;
+            // The rows' tempo and key, as planned above.
+            const auto keyWords = [](bool named, bool left, const std::string &name) {
+                return named ? ", key " + name : left ? ", key left as it is (the key kept named no key)" : ", no key";
+            };
+            const auto notKeptWords = [](int n) {
+                return n == 0 ? std::string()
+                              : "; " + std::to_string(n) + " of them not there when the original was kept";
+            };
+            if (pdbBack && pdbBack->values) {
+                if (!pdbRows->commit()) {
+                    return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb for %1.").arg(subject()));
                 }
-                if (rows > 0) {
-                    if (!pdbRows->commit()) {
-                        return ChangeOutcome::failure(QStringLiteral("Could not write export.pdb for %1.").arg(subject()));
+                const infrastructure::rekordbox::PdbRowWriter back(exportPdbUnder(rekordboxSession->writeRoot()));
+                for (const std::int64_t row : pdbBack->ids) {
+                    const auto now = back.trackTempoAndKeyId(static_cast<std::uint32_t>(row));
+                    const bool keyLanded = pdbValues.key == PdbPutBack::Key::Leave
+                                           || (pdbValues.key == PdbPutBack::Key::None ? now && now->keyId == 0
+                                                                                      : now && now->keyName
+                                                                                            && *now->keyName
+                                                                                                   == pdbValues.keyName);
+                    if (!now || now->tempo != pdbValues.tempo || !keyLanded) {
+                        return ChangeOutcome::failure(
+                            QStringLiteral("export.pdb does not read back the tempo and key put back for %1.")
+                                .arg(subject()));
                     }
-                    const infrastructure::rekordbox::PdbRowWriter back(exportPdbUnder(rekordboxSession->writeRoot()));
-                    for (const auto &row : kept->rows) {
-                        if (row.library != "rekordbox" || !row.tempo || !row.keyId
-                            || std::find(pdbIds.begin(), pdbIds.end(), static_cast<std::uint32_t>(row.rowId))
-                                   == pdbIds.end()) {
-                            continue;
-                        }
-                        const auto now = back.trackTempoAndKeyId(static_cast<std::uint32_t>(row.rowId));
-                        if (!now || now->tempo != *row.tempo || now->keyId != *row.keyId) {
-                            return ChangeOutcome::failure(
-                                QStringLiteral("export.pdb does not read back the tempo and key put back for %1.")
-                                    .arg(subject()));
-                        }
-                    }
-                    rekordboxSession->noteItemApplied();
-                    catalogs.invalidate("rekordbox", pioneer);
-                    done.push_back("export.pdb: tempo and key of " + std::to_string(rows) + " row(s) put back");
                 }
+                rekordboxSession->noteItemApplied();
+                catalogs.invalidate("rekordbox", pioneer);
+                done.push_back("export.pdb: tempo and key of " + std::to_string(pdbBack->ids.size()) + " row(s) put back"
+                               + keyWords(pdbValues.key == PdbPutBack::Key::Named,
+                                          pdbValues.key == PdbPutBack::Key::Leave, pdbValues.keyName)
+                               + notKeptWords(pdbBack->notKept));
+            } else if (pdbBack && !pdbBack->why.empty()) {
+                done.push_back("export.pdb: " + pdbBack->why);
             }
-            if (infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
-                std::vector<infrastructure::onelibrary::OneLibraryCueWriter::ContentTempoAndKey> rows;
-                for (const auto &row : kept->rows) {
-                    if (row.library == "onelibrary") {
-                        rows.push_back({row.rowId, row.tempo, row.keyId});
-                    }
-                }
-                if (!rows.empty()) {
-                    ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
-                    const int written = sharedOneLibraryWriter(ctx, pioneer).setTempoAndKeyIds(rows);
-                    catalogs.invalidateWithOneLibraryMirror("onelibrary", pioneer);
-                    done.push_back("exportLibrary.db: tempo and key of " + std::to_string(written) + " row(s) put back");
-                }
+            if (oneBack && oneBack->values) {
+                ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), Label);
+                const int written = sharedOneLibraryWriter(ctx, pioneer).putBackTempoAndKey(oneBack->ids, oneValues);
+                catalogs.invalidateWithOneLibraryMirror("onelibrary", pioneer);
+                done.push_back("exportLibrary.db: tempo and key of " + std::to_string(written) + " row(s) put back"
+                               + keyWords(oneValues.key == OnePutBack::Key::Named,
+                                          oneValues.key == OnePutBack::Key::Leave, oneValues.keyName)
+                               + notKeptWords(oneBack->notKept));
+            } else if (oneBack && !oneBack->why.empty()) {
+                done.push_back("exportLibrary.db: " + oneBack->why);
             }
         }
 
@@ -739,11 +897,11 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                     }
                 }
                 m_written = RekordboxWrite{m_audioFile, deviceLibraryCues.front().second, std::nullopt};
-                done.push_back("rekordbox: cue points moved back onto the original grid");
+                done.push_back("rekordbox: the cue points Analyse again moved put back where they were");
             } else if (oneLibraryCues) {
                 sharedOneLibraryWriter(ctx, pioneer).writeCuesForPath(m_audioFile, *oneLibraryCues);
                 m_written = RekordboxWrite{m_audioFile, *oneLibraryCues, std::nullopt};
-                done.push_back("OneLibrary: cue points moved back onto the original grid");
+                done.push_back("OneLibrary: the cue points Analyse again moved put back where they were");
             }
             catalogs.invalidateWithOneLibraryMirror("rekordbox", pioneer);
             catalogs.invalidateWithOneLibraryMirror("onelibrary", pioneer);
@@ -753,7 +911,7 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
                     writer.writeHotCues(std::to_string(row), moved);
                 }
                 catalogs.invalidate("engine", m_enginePath.toStdString());
-                done.push_back("Engine: cue points moved back onto the player's grid");
+                done.push_back("Engine: the cue points Analyse again moved put back where they were");
             }
         }
 

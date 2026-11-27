@@ -51,13 +51,20 @@ namespace seabass::gui
 // rekordbox's own analysis is kept on the stick before it is first
 // replaced (kept_analysis_save.hpp, local/kept_rekordbox_analysis_file.hpp):
 // the analysis files as they are and the tempo and key of every row that
-// takes the new tempo, written through the save before anything else, so
-// Restore original analysis (RestoreAnalysisChange) can put it back. A
-// grid that is Seabass's (the analysis ledger's fingerprint, or one the
-// kept entry records Seabass wrote) has nothing to keep, and an original
-// kept already stays the original: only rekordbox's own newer analysis
-// (a grid that is none of these) takes its place. What is kept that
-// cannot be read leaves the track alone.
+// takes the new tempo, with each key's name, written through the save
+// before anything else, so Restore original analysis
+// (RestoreAnalysisChange) can put it back. A grid that is Seabass's
+// (isSeabassRekordboxGrid(): any analysis ledger entry's, or one a kept
+// entry on the stick records) has nothing to keep, and an original kept
+// already stays the original, its entry not written again: only a grid
+// that is neither Seabass's nor the kept one (rekordbox's newer analysis,
+// or a grid set by hand) takes its place (keepOriginalDecision()). Left
+// alone, nothing written, with the reason in the log: what is kept cannot
+// be read; the audio file's size cannot be read, or is not the size it
+// was analysed at; the grid is neither the kept one nor known for
+// Seabass's while the analysis ledger is damaged or cannot be read (a
+// missing ledger is an empty one); the stick has no room for what is
+// to be kept (the analysis files' sizes and a megabyte in hand).
 // The grid written is recorded in the beat grid ledger, so the next
 // Analyse again, or a copy, knows it for Seabass's.
 // The analysis written is recorded in the stick's analysis ledger once
@@ -252,6 +259,7 @@ public:
     double gridShiftMs() const;
 
     const std::string &audioFile() const { return m_audioFile; }
+    const std::string &stickPath() const { return m_stickPath; }
     const std::shared_ptr<const ImportAnalysis> &analysis() const { return m_analysis; }
     const std::string &analysedKey() const { return m_analysedKey; }
 

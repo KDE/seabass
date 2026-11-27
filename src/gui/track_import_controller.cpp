@@ -22,6 +22,7 @@
 #include "domain/track_import_plan.hpp"
 #include "gui/edit/changes/import_track_change.hpp"
 #include "gui/edit/changes/playlist_edit_changes.hpp"
+#include "gui/edit/changes/restore_analysis_change.hpp"
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/analysis_settings.hpp"
@@ -855,6 +856,17 @@ void TrackImportController::onReanalysed()
     if (!attachSession(m_reanalysing.rekordboxPath, m_reanalysing.enginePath)) {
         return;
     }
+    // A track whose Restore original analysis waits to be saved keeps
+    // waiting: the two would write over each other in one save, and the
+    // restore's own staging refuses the same the other way round.
+    std::erase_if(prepared.changes, [&](const std::shared_ptr<ReanalyseTrackChange> &change) {
+        if (!m_session->hasChange(RestoreAnalysisChange::idFor(change->stickPath()))) {
+            return false;
+        }
+        prepared.leftAlone.push_back({change->audioFile(), "Restore original analysis of it waits to be saved: save "
+                                                           "it or take it back first"});
+        return true;
+    });
     if (!prepared.changes.empty()) {
         std::vector<std::shared_ptr<PendingChange>> changes(prepared.changes.begin(), prepared.changes.end());
         if (!m_session->stageAll(std::move(changes))) {
@@ -895,10 +907,16 @@ void TrackImportController::onReanalysed()
         }
         tooMuch += plan.verdict == application::CueGridPlan::Verdict::GridChangedTooMuch ? 1 : 0;
     }
+    QVariantList leftAloneTracks;
+    for (const LeftOut &left : prepared.leftAlone) {
+        leftAloneTracks << QVariantMap{{QStringLiteral("name"), pathToQString(pathFromUtf8(left.sourceFile).filename())},
+                                       {QStringLiteral("why"), QString::fromStdString(left.why)}};
+    }
     m_lastReanalysis = QVariantMap{
         {QStringLiteral("playlist"), playlist},
         {QStringLiteral("analysed"), static_cast<int>(prepared.changes.size())},
         {QStringLiteral("leftAlone"), static_cast<int>(prepared.leftAlone.size())},
+        {QStringLiteral("leftAloneTracks"), leftAloneTracks},
         {QStringLiteral("cueTracks"), cueTracks},
         {QStringLiteral("cuesToMove"), cuesToMove},
         {QStringLiteral("autoCueTracks"), autoTracks},

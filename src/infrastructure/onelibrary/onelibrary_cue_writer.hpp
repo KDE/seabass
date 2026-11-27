@@ -328,23 +328,40 @@ public:
                               int *keysWritten = nullptr);
 
     // Every content row listing `filePath`, its tempo (bpmx100) and key
-    // (key_id) exactly as stored, nullopt for NULL: what Analyse again
-    // keeps before it gives the rows a new tempo. Empty when no row lists
-    // the file.
+    // (key_id) exactly as stored, nullopt for NULL, and the name of the
+    // key row its key_id names (nullopt for NULL, 0, or an id the key
+    // table does not hold): what Analyse again keeps before it gives the
+    // rows a new tempo. Empty when no row lists the file.
     struct ContentTempoAndKey
     {
         int64_t contentId = 0;
         std::optional<int64_t> bpmx100;
         std::optional<int64_t> keyId;
+        std::optional<std::string> keyName;
     };
     std::vector<ContentTempoAndKey> tempoAndKeyIdsForPath(const std::string &filePath);
-    // The same columns put back as kept (Restore original analysis), on
-    // the rows named, in one transaction, read back before it is trusted.
-    // A row that is not there any more is left out and not counted; a key
-    // id the key table does not hold (other than NULL or 0) is refused
-    // with std::invalid_argument before anything is written. Returns how
-    // many rows were written.
-    int setTempoAndKeyIds(const std::vector<ContentTempoAndKey> &rows);
+    // A kept tempo and key put back (Restore original analysis): bpmx100
+    // as kept (nullopt for NULL); the key left as the row has it, put back
+    // as no key (`rawKeyId` NULL or 0, nothing else), or put back by its
+    // name, through the key row spelled exactly so, made where there is
+    // none. Never by a kept id: after a new export the same id can name
+    // another key.
+    struct TempoAndKeyPutBack
+    {
+        enum class Key { Leave, Raw, Named };
+        std::optional<int64_t> bpmx100;
+        Key key = Key::Leave;
+        std::optional<int64_t> rawKeyId;
+        std::string keyName;
+    };
+    // Throws what putBackTempoAndKey() would refuse `values` for (a raw id
+    // other than NULL or 0, a name that is empty or not storable text, a
+    // key table this build does not know), writing nothing.
+    void checkTempoAndKeyPutBack(const TempoAndKeyPutBack &values);
+    // The same values on every row of `contentIds`, in one transaction,
+    // read back before it is trusted. A row that is not there any more is
+    // left out and not counted. Returns how many rows were written.
+    int putBackTempoAndKey(const std::vector<int64_t> &contentIds, const TempoAndKeyPutBack &values);
 
     // Points every content row listing `filePath` at `newFilePath`
     // instead (content.path, converted the way every path here is, and

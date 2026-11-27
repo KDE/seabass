@@ -150,10 +150,12 @@ void recordLedgerAfterCommit(SaveContext &ctx, const std::string &stickRoot)
         if (record == nullptr || after.appliedIds.isEmpty()) {
             return;
         }
+        // In the order the changes were applied: where two record the same
+        // track, the one applied later left the row as it is.
         std::map<std::string, std::optional<std::string>> landed;
-        for (const auto &[changeId, entries] : record->byChange) {
-            if (after.appliedIds.contains(changeId)) {
-                for (const auto &[ledgerKey, fingerprint] : entries) {
+        for (const QString &changeId : after.appliedIds) {
+            if (const auto entries = record->byChange.find(changeId); entries != record->byChange.end()) {
+                for (const auto &[ledgerKey, fingerprint] : entries->second) {
                     landed[ledgerKey] = fingerprint;
                 }
             }

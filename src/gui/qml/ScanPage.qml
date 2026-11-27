@@ -875,8 +875,9 @@ Page {
         // kept for the playlist's tracks, also with the feature switched off.
         RestoreOriginalAnalysisMenuItem {
             id: restoreAnalysisItem
-            visible: (root.trackImportEnabled || kept > 0) && !playlistMenu.isNew && !playlistMenu.staged
-            enabled: visible && kept > 0 && controller.busy !== true
+            // Only with something kept, the switch on or off: it is the
+            // way back from Analyse again. Decided when the menu opens.
+            visible: kept > 0 && !playlistMenu.isNew && !playlistMenu.staged
             height: visible ? implicitHeight : 0
             controller: root.originalAnalysisController
             rekordboxPath: root.rekordboxPath

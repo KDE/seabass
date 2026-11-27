@@ -280,6 +280,8 @@ struct ReanalysisNotes
 {
     std::map<QString, std::string> cuesLeft;
     std::map<QString, std::string> librariesLeft;
+    // The tracks left alone for want of room to keep rekordbox's analysis.
+    std::map<QString, bool> noRoom;
 };
 
 ReanalysisNotes &saveNotesOf(SaveContext &ctx)
@@ -309,6 +311,19 @@ ReanalysisNotes &saveNotesOf(SaveContext &ctx)
                            : QStringLiteral("The cue points of %1 tracks analysed again were left where they are: they "
                                             "changed since the review, or the libraries hold different ones.")
                                  .arg(n));
+            }
+            int noRoom = 0;
+            for (const auto &[id, unused] : notes->noRoom) {
+                (void)unused;
+                noRoom += after.skippedIds.contains(id) ? 1 : 0;
+            }
+            if (noRoom > 0) {
+                ctx.addSummaryNote(noRoom == 1
+                                       ? QStringLiteral("One track was not analysed again: the stick has no room to "
+                                                        "keep the analysis rekordbox made of it first.")
+                                       : QStringLiteral("%1 tracks were not analysed again: the stick has no room to "
+                                                        "keep the analysis rekordbox made of them first.")
+                                             .arg(noRoom));
             }
             if (const int n = landed(notes->librariesLeft); n > 0) {
                 ctx.addSummaryNote(n == 1 ? QStringLiteral("On one track analysed again a library was left as it was "
@@ -685,6 +700,26 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
     std::string engineGridLeft;
     bool keyWritten = false;
 
+    // The audio file as it is now: a size that cannot be read leaves the
+    // track alone (nothing could tell the file kept for from another), and
+    // so does a file that is not the size it was analysed at (the
+    // analysis is of another file). Every grid Analyse again writes is
+    // then one the analysis ledger records, which is how a later Analyse
+    // again or a restore knows it for Seabass's.
+    std::error_code sizeEc;
+    const std::uint64_t audioSize = fs::file_size(pathFromUtf8(m_audioFile), sizeEc);
+    if (sizeEc) {
+        leftAlone("left as it is, nothing written: the size of its audio file cannot be read ("
+                  + sizeEc.message() + ")");
+        return ChangeOutcome::skip();
+    }
+    if (m_analysis->provenance && audioSize != m_analysis->provenance->fileSize) {
+        leftAlone("left as it is, nothing written: its audio file changed since it was analysed ("
+                  + std::to_string(audioSize) + " bytes now, " + std::to_string(m_analysis->provenance->fileSize)
+                  + " when analysed): analyse it again");
+        return ChangeOutcome::skip();
+    }
+
     try {
         // Engine's rows, read from the save's own copy of m.db (a scratch
         // copy in a large save), and what the writer would do to each.
@@ -960,6 +995,52 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
             }
         }
 
+        // The cue points this change moves, each as it will write it, for
+        // the kept entry: Restore moves back only these, to where they
+        // were, and only those still where this put them.
+        std::vector<infrastructure::local::KeptCueMove> cueMovesMade;
+        if (cuesMove) {
+            const auto movesBetween = [&](const char *library, const std::vector<domain::CuePoint> &before,
+                                          const std::vector<domain::CuePoint> &after) {
+                for (std::size_t i = 0; i < before.size() && i < after.size(); ++i) {
+                    const domain::CuePoint &was = before[i];
+                    const domain::CuePoint &now = after[i];
+                    if (std::abs(now.positionMs - was.positionMs) < application::CueMoveMinimumMs
+                        && (!was.isLoop || std::abs(now.loopEndMs - was.loopEndMs) < application::CueMoveMinimumMs)) {
+                        continue;
+                    }
+                    infrastructure::local::KeptCueMove move;
+                    move.library = library;
+                    move.hot = was.kind == domain::CuePoint::Kind::Hot;
+                    move.pad = move.hot ? was.hotCueNumber : 0;
+                    move.loop = was.isLoop;
+                    move.oldMs = was.positionMs;
+                    move.newMs = now.positionMs;
+                    move.oldEndMs = was.isLoop ? was.loopEndMs : 0.0;
+                    move.newEndMs = was.isLoop ? now.loopEndMs : 0.0;
+                    cueMovesMade.push_back(move);
+                }
+            };
+            if (!deviceLibraryCues.empty()) {
+                for (const RowCues &row : deviceLibraryRows) {
+                    if (row.sourceId == deviceLibraryCues.front().sourceId) {
+                        movesBetween("rekordbox", row.cues, deviceLibraryCues.front().moved);
+                        break;
+                    }
+                }
+            } else if (oneLibraryCues && !oneLibraryRows.empty()) {
+                movesBetween("rekordbox", oneLibraryRows.front().cues, *oneLibraryCues);
+            }
+            if (!engineCues.empty()) {
+                for (const EngineRow &row : engineRows) {
+                    if (row.id == engineCues.front().first) {
+                        movesBetween("engine", row.track.cues, engineCues.front().second);
+                        break;
+                    }
+                }
+            }
+        }
+
         // rekordbox's own analysis, kept on the stick before anything of
         // it is replaced (kept_analysis_save.hpp, keepOriginalDecision()):
         // the analysis files as they are, and the tempo and key of every
@@ -991,50 +1072,64 @@ ChangeOutcome ReanalyseTrackChange::apply(SaveContext &ctx)
                     AnlzFile::fromBytes(*toWrite.front().before.dat, toWrite.front().datPath));
             }
             const std::string gridNew = infrastructure::rekordbox::pqtzGridFingerprint(*toWrite.front().merged.files.dat);
-            std::string ledgerGrid;
-            if (const auto *ledger = saveAnalysisLedger(ctx, stickRoot)) {
-                if (const auto entry = ledger->find(key); entry != ledger->end()) {
-                    ledgerGrid = entry->second.rekordboxGrid;
-                }
+            const KeepOriginal decision =
+                keepOriginalDecision(gridNow, isSeabassRekordboxGrid(ctx, stickRoot, gridNow, kept),
+                                     ledgerBelieved(ctx, stickRoot), kept);
+            if (decision == KeepOriginal::CannotTell) {
+                leftAlone("left as it is, nothing written: Seabass cannot tell whether its beat grid is Seabass's "
+                          "own or rekordbox's, since the analysis ledger that would tell is damaged or cannot be "
+                          "read and nothing else on the stick knows the grid");
+                return ChangeOutcome::skip();
             }
-            std::error_code sizeEc;
-            const std::uint64_t audioSize = fs::file_size(pathFromUtf8(m_audioFile), sizeEc);
-            const KeepOriginal decision = keepOriginalDecision(gridNow, ledgerGrid, kept, audioSize);
-            const auto withSeabassGrid = [&](infrastructure::local::KeptRekordboxAnalysis entry) {
-                if (!gridNew.empty()
-                    && std::find(entry.seabassGrids.begin(), entry.seabassGrids.end(), gridNew) == entry.seabassGrids.end()) {
-                    entry.seabassGrids.push_back(gridNew);
-                }
-                return entry;
-            };
-            if (decision == KeepOriginal::KeptStays) {
-                const auto next = withSeabassGrid(*kept);
-                if (!(next == *kept)) {
-                    keptStore.keep(next);
-                }
-            } else if (decision == KeepOriginal::KeepNow || decision == KeepOriginal::KeepNewer) {
+            if (decision == KeepOriginal::KeptStays && !cueMovesMade.empty()) {
+                // The kept original stays; what this moves of the cues is
+                // added to it, a cue moved again carried on from its first
+                // place.
+                infrastructure::local::KeptRekordboxAnalysis entry = *kept;
+                entry.cueMoves = withCueMoves(entry.cueMoves, cueMovesMade);
+                keptStore.keep(entry);
+            }
+            if (decision == KeepOriginal::KeepNow || decision == KeepOriginal::KeepNewer) {
                 infrastructure::local::KeptRekordboxAnalysis entry;
+                entry.cueMoves = cueMovesMade;
                 entry.pathKey = key;
                 entry.stickPath = m_stickPath;
                 entry.audioFileSize = audioSize;
                 entry.audioFileMtimeUnix = fileMtimeUnixOf(m_audioFile).value_or(0);
                 entry.originalGrid = gridNow;
+                if (!gridNew.empty()) {
+                    entry.seabassGrids.push_back(gridNew);
+                }
+                std::uint64_t keptBytes = 0;
                 for (const MergedFiles &m : toWrite) {
                     entry.files.push_back(m.before);
+                    for (const auto *bytes : {&m.before.dat, &m.before.ext, &m.before.twoEx}) {
+                        keptBytes += *bytes ? (*bytes)->size() : 0;
+                    }
                 }
                 if (pdbRows) {
                     for (const std::uint32_t row : pdbRows->trackIdsWithFilePath(m_stickPath)) {
                         if (const auto values = pdbRows->trackTempoAndKeyId(row)) {
-                            entry.rows.push_back({"rekordbox", row, values->tempo, values->keyId});
+                            entry.rows.push_back({"rekordbox", row, values->tempo, values->keyId, values->keyName});
                         }
                     }
                 }
                 if (toOneLibrary) {
                     for (const auto &row : sharedOneLibraryWriter(ctx, pioneer).tempoAndKeyIdsForPath(m_audioFile)) {
-                        entry.rows.push_back({"onelibrary", row.contentId, row.bpmx100, row.keyId});
+                        entry.rows.push_back({"onelibrary", row.contentId, row.bpmx100, row.keyId, row.keyName});
                     }
                 }
-                keptStore.keep(withSeabassGrid(entry));
+                // Room for it, asked before the first write: the analysis
+                // files' own sizes, which the deflated entry stays under.
+                const std::uint64_t room = stickBytesAvailable(stickRoot);
+                if (room < keptBytes + KeepReserveBytes) {
+                    leftAlone("left as it is, nothing written: the stick has no room to keep rekordbox's analysis "
+                              "of it first (about " + std::to_string((keptBytes + KeepReserveBytes) / 1024)
+                              + " kB needed, " + std::to_string(room / 1024) + " kB free)");
+                    saveNotesOf(ctx).noRoom[id()] = true;
+                    return ChangeOutcome::skip();
+                }
+                keptStore.keep(entry);
                 done.push_back(decision == KeepOriginal::KeepNow
                                    ? "rekordbox's analysis kept first"
                                    : "rekordbox's newer analysis kept first, in place of the one kept before");

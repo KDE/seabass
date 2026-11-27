@@ -2256,7 +2256,8 @@ std::vector<OneLibraryCueWriter::ContentTempoAndKey> OneLibraryCueWriter::tempoA
     SqlCipherDb &db = writeConnection();
     std::vector<ContentTempoAndKey> rows;
     for (const int64_t contentId : contentIdsAt(db, toContentPath(m_stickRoot, filePath))) {
-        SqlCipherStatement read(db, "SELECT bpmx100, key_id FROM content WHERE content_id = ?");
+        SqlCipherStatement read(db, "SELECT c.bpmx100, c.key_id, k.name FROM content c LEFT JOIN key k ON "
+                                    "k.key_id = c.key_id WHERE c.content_id = ?");
         read.bindInt64(1, contentId);
         if (!read.step()) {
             continue;
@@ -2269,47 +2270,74 @@ std::vector<OneLibraryCueWriter::ContentTempoAndKey> OneLibraryCueWriter::tempoA
         if (!read.columnIsNull(1)) {
             row.keyId = read.columnInt64(1);
         }
+        if (row.keyId && *row.keyId != 0 && !read.columnIsNull(2)) {
+            row.keyName = read.columnText(2);
+        }
         rows.push_back(row);
     }
     return rows;
 }
 
-int OneLibraryCueWriter::setTempoAndKeyIds(const std::vector<ContentTempoAndKey> &rows)
+void OneLibraryCueWriter::checkTempoAndKeyPutBack(const TempoAndKeyPutBack &values)
 {
+    using Key = TempoAndKeyPutBack::Key;
+    if (values.key == Key::Raw && values.rawKeyId && *values.rawKeyId != 0) {
+        throw std::invalid_argument("onelibrary: a key is put back by its name, never by the id "
+                                    + std::to_string(*values.rawKeyId));
+    }
+    if (values.key == Key::Named && (values.keyName.empty() || !domain::isStorableText(values.keyName))) {
+        throw std::invalid_argument("onelibrary: the key \"" + values.keyName + "\" is empty, not UTF-8, or ends in a "
+                                    "blank");
+    }
+    if (values.key == Key::Named) {
+        // As setTempoAndKeyForPath() asks before it makes a key row.
+        requireColumns(writeConnection(), "key", {"key_id", "name"});
+    }
+}
+
+int OneLibraryCueWriter::putBackTempoAndKey(const std::vector<int64_t> &contentIds, const TempoAndKeyPutBack &values)
+{
+    using Key = TempoAndKeyPutBack::Key;
+    checkTempoAndKeyPutBack(values);
     checkNotStale();
     SqlCipherDb &db = writeConnection();
-    for (const ContentTempoAndKey &row : rows) {
-        if (row.keyId && *row.keyId != 0) {
-            SqlCipherStatement known(db, "SELECT 1 FROM key WHERE key_id = ?");
-            known.bindInt64(1, *row.keyId);
-            if (!known.step()) {
-                throw std::invalid_argument("onelibrary: no key row with id " + std::to_string(*row.keyId));
-            }
-        }
-    }
-    std::vector<ContentTempoAndKey> written;
+    std::vector<int64_t> written;
+    std::optional<int64_t> keyId;
     db.exec("BEGIN IMMEDIATE;");
     try {
-        for (const ContentTempoAndKey &row : rows) {
+        std::vector<MadeRow> made;
+        if (values.key == Key::Named) {
+            // The key row of that name, made where there is none: a kept
+            // id names a row of the key table as it was then.
+            keyId = lookupRow(db, "key", "key_id", "name", values.keyName, made);
+        } else if (values.key == Key::Raw) {
+            keyId = values.rawKeyId;
+        }
+        for (const int64_t contentId : contentIds) {
             SqlCipherStatement has(db, "SELECT 1 FROM content WHERE content_id = ?");
-            has.bindInt64(1, row.contentId);
+            has.bindInt64(1, contentId);
             if (!has.step()) {
                 continue;
             }
-            SqlCipherStatement set(db, "UPDATE content SET bpmx100 = ?, key_id = ? WHERE content_id = ?");
-            if (row.bpmx100) {
-                set.bindInt64(1, *row.bpmx100);
+            const bool withKey = values.key != Key::Leave;
+            SqlCipherStatement set(db, withKey ? "UPDATE content SET bpmx100 = ?, key_id = ? WHERE content_id = ?"
+                                               : "UPDATE content SET bpmx100 = ? WHERE content_id = ?");
+            int at = 1;
+            if (values.bpmx100) {
+                set.bindInt64(at++, *values.bpmx100);
             } else {
-                set.bindNull(1);
+                set.bindNull(at++);
             }
-            if (row.keyId) {
-                set.bindInt64(2, *row.keyId);
-            } else {
-                set.bindNull(2);
+            if (withKey) {
+                if (keyId) {
+                    set.bindInt64(at++, *keyId);
+                } else {
+                    set.bindNull(at++);
+                }
             }
-            set.bindInt64(3, row.contentId);
+            set.bindInt64(at, contentId);
             set.run();
-            written.push_back(row);
+            written.push_back(contentId);
         }
         db.exec("COMMIT;");
     } catch (...) {
@@ -2319,16 +2347,23 @@ int OneLibraryCueWriter::setTempoAndKeyIds(const std::vector<ContentTempoAndKey>
         }
         throw;
     }
-    for (const ContentTempoAndKey &row : written) {
-        SqlCipherStatement verify(verifyConnection(), "SELECT bpmx100, key_id FROM content WHERE content_id = ?");
-        verify.bindInt64(1, row.contentId);
+    for (const int64_t contentId : written) {
+        SqlCipherStatement verify(verifyConnection(), "SELECT c.bpmx100, c.key_id, k.name FROM content c LEFT JOIN "
+                                                      "key k ON k.key_id = c.key_id WHERE c.content_id = ?");
+        verify.bindInt64(1, contentId);
         const auto same = [&](int column, const std::optional<int64_t> &wanted) {
             return wanted ? !verify.columnIsNull(column) && verify.columnInt64(column) == *wanted
                           : verify.columnIsNull(column);
         };
-        if (!verify.step() || !same(0, row.bpmx100) || !same(1, row.keyId)) {
+        bool landed = verify.step() && same(0, values.bpmx100);
+        if (landed && values.key == Key::Raw) {
+            landed = same(1, keyId);
+        } else if (landed && values.key == Key::Named) {
+            landed = !verify.columnIsNull(2) && verify.columnText(2) == values.keyName;
+        }
+        if (!landed) {
             throw std::runtime_error("onelibrary: post-write verification failed, the tempo and key put back did not "
-                                     "land for content row " + std::to_string(row.contentId));
+                                     "land for content row " + std::to_string(contentId));
         }
     }
     refreshStalenessBaseline();

@@ -16,6 +16,7 @@
 
 #include "application/use_cases/carry_cues_to_new_grid.hpp"
 #include "gui/edit/pending_change.hpp"
+#include "infrastructure/local/kept_rekordbox_analysis_file.hpp"
 
 namespace seabass::gui
 {
@@ -31,7 +32,14 @@ namespace seabass::gui
 // rekordbox::restoreAnlzAnalysis(): every section the original had, as it
 // had it, with the cue lists of the files as they are now; a .2EX that
 // Analyse again made where the track had none is taken away again. Then
-// every row that was kept gets its tempo and key back as stored. Engine:
+// every row of each rekordbox library that names the file now gets the
+// tempo and key kept for that library (the first kept row's), the key by
+// its name through the library's own "find or make the key row" path,
+// never by the kept id, which a new export can give to another key. A
+// library none of whose kept rows is one of its rows now (a new export
+// renumbered them) keeps its rows' tempo and key, and the log says so,
+// as it says how many rows were not there when the original was kept.
+// Engine:
 // the player's own analysis kept by the analysis writer goes back by
 // LibdjinteropEngineCueWriter::restoreEngineAnalysis(), the beat grid
 // ledger's line for the track taken out after the commit.
@@ -44,26 +52,34 @@ namespace seabass::gui
 // - the kept files do not belong to the track any more: its rows name
 //   other analysis files now, or the .DAT names another audio file than
 //   the kept one did (an export reused the folder);
-// - the grid in the track's .DAT is neither one Seabass wrote (the
-//   analysis ledger's fingerprint, or one the kept entry records) nor the
-//   kept original's: rekordbox or a player changed it since, and that is
+// - the grid in the track's .DAT is neither one Seabass wrote
+//   (isSeabassRekordboxGrid(): any analysis ledger entry's, or one a kept
+//   entry records) nor the kept original's: rekordbox or a player changed
+//   it since, and that is
 //   never written over;
 // - Engine's row changed since Seabass wrote it (the player analysed it
 //   again, or the DJ moved or locked the grid), or what is kept of it is
 //   damaged or of another row;
-// - what is kept cannot be read.
-// Everything that can refuse is asked before the first write.
+// - what is kept cannot be read;
+// - a kept tempo or key cannot be written (a name the library cannot
+//   store, a key row that cannot be placed).
+// Everything that can refuse is asked before the first write: export.pdb's
+// rows are edited in memory before the analysis files are written, and
+// committed after them.
 //
 // Cue points that Analyse again moved with the grid would sit off the
-// grid put back. The same reviewed, all or nothing per track move is
-// offered the other way (setMoveCues(), setMoveCuesByThreshold(), as
-// ReanalyseTrackChange's): old grid Seabass's (the .DAT's now), new grid
-// the kept original's. They move only where every library that holds
-// cues for the track holds the ones the review showed, and every library
-// holding them takes the grid back; otherwise no cue moves anywhere, the
-// analysis still goes back, and the log and the summary say why. A track
-// with no kept rekordbox analysis (Engine alone) offers no cue move: the
-// review has no grid on rekordbox's timeline to plan it with.
+// grid put back. The kept entry records each cue Analyse again moved, and
+// from where to where (KeptCueMove); those, and only those, are offered
+// the move back (setMoveCues(), setMoveCuesByThreshold(), as
+// ReanalyseTrackChange's), and only where they still are where Analyse
+// again put them (within the cue tolerance): each goes back to the place
+// it had, no grid planned. A cue set or changed since stays where it is,
+// and so does every cue where Analyse again moved none (declined or
+// refused): then no move is offered at all. In each library separately:
+// rekordbox's set (DeviceLibrary's, OneLibrary's kept in step) and
+// Engine's rows, Engine's only where its row takes the player's analysis
+// back. Where DeviceLibrary's and OneLibrary's rows hold different cue
+// points, none of rekordbox's moves, and the log and the summary say why.
 //
 // Every file written is read back and compared before it is believed.
 // After the save landed: the analysis ledger's entry for the track is
@@ -72,6 +88,21 @@ namespace seabass::gui
 // entries are taken away in the save itself, backed up first, so Undo
 // Last Save puts them back with the analysis. Restoring twice is safe:
 // the second finds nothing kept and leaves the track alone.
+// The moves back of the cue points `library` ("rekordbox", "engine") of a
+// kept entry records Analyse again moved, as a plan: each from where
+// Analyse again put it to where it was. With `cues`, only those of them
+// still where it put them (the same kind, pad and loop, within
+// `toleranceMs`, each cue matched once); with no cues, every one recorded.
+application::CueGridPlan cueMovesBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
+                                      const std::string &library, const std::vector<domain::CuePoint> &cues,
+                                      double toleranceMs);
+// `cues` with every recorded move of `library` still where Analyse again
+// put it taken back to where it was; nullopt when none is.
+std::optional<std::vector<domain::CuePoint>> cuesMovedBack(const std::vector<infrastructure::local::KeptCueMove> &moves,
+                                                           const std::string &library,
+                                                           const std::vector<domain::CuePoint> &cues,
+                                                           double toleranceMs);
+
 class RestoreAnalysisChange : public PendingChange
 {
 public:

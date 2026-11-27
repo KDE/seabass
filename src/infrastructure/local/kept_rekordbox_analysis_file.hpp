@@ -38,7 +38,9 @@
 //   originalGrid<TAB>64 hex | -
 //   seabassGrids<TAB>64 hex[,64 hex...] | -
 //   anlz<TAB>datPath<TAB>dat<TAB>ext<TAB>2ex             (one line per file set)
-//   row<TAB>library<TAB>id<TAB>tempo<TAB>key             (one line per row)
+//   row<TAB>library<TAB>id<TAB>tempo<TAB>key<TAB>keyName (one line per row)
+//   cue<TAB>library<TAB>kind<TAB>pad<TAB>loop<TAB>oldMs<TAB>newMs<TAB>oldEndMs<TAB>newEndMs
+//                                                        (one line per cue moved)
 //   #sha256<TAB>hex of every byte above
 //
 // - stickPath: the audio file from the stick's root, "/Contents/...", as
@@ -48,16 +50,33 @@
 //   decides whether a file is the one kept for, as the analysis ledger's
 //   classifyAnalysis() decides it; the time is for a person reading it.
 // - originalGrid: the fingerprint (rekordbox::pqtzGridFingerprint()) of
-//   the grid in the first kept .DAT; seabassGrids: every grid Analyse
-//   again wrote into the track's .DAT since, in the same form. A grid that
-//   is one of these is Seabass's or the kept one, whatever the analysis
-//   ledger says or has lost.
+//   the grid in the first kept .DAT; seabassGrids: the grid the Analyse
+//   again that kept the entry wrote into the track's .DAT, in the same
+//   form. Written with the entry and never added to afterwards: the grids
+//   of later Analyse agains are in the analysis ledger, and an entry of
+//   some 235 kB is not written again (and backed up again) to note one.
+//   A grid that is one of these, in any entry on the stick, is Seabass's
+//   (keptRekordboxSeabassGrids()).
 // - anlz: the .DAT path as the rows name it ("/PIONEER/USBANLZ/.../
 //   ANLZ0000.DAT", escaped), then each file as "none" or "b64:" and its
 //   bytes in base64.
 // - row: "rekordbox" (export.pdb) or "onelibrary" (exportLibrary.db), the
 //   row's id, its tempo in hundredths of a BPM and its key's id, each a
-//   decimal or "null" where the row held NULL.
+//   decimal or "null" where the row held NULL, then the name of the key
+//   that id named, "name:" and the name (escaped), or "none" where the id
+//   named no key row (NULL, 0, or a dangling id). The id is for a person
+//   reading the file; a restore writes the key by its name, since after a
+//   new export the same id can name another key.
+//
+// - cue: a cue point Analyse again moved with the grid, as it wrote it:
+//   "rekordbox" (DeviceLibrary's set, which OneLibrary's mirrors, or
+//   OneLibrary's alone) or "engine", the kind ("hot" or "memory"), the pad
+//   (0 for a memory cue), "1" for a loop, its place before and after the
+//   move and a loop's end before and after, in ms (0 for no loop), each
+//   the shortest decimal that reads back as the same double. None where
+//   Analyse again moved no cue: then Restore moves none. A later Analyse
+//   again that moves the cues again carries each line on (its old place
+//   stays the one before the first move).
 //
 // Every line ends with a newline. A reader that meets any other version,
 // a line out of order, a bad field or a checksum that does not match
@@ -85,8 +104,24 @@ struct KeptRekordboxRow
     std::int64_t rowId = 0;
     std::optional<std::int64_t> tempo;
     std::optional<std::int64_t> keyId;
+    std::optional<std::string> keyName;
 
     friend bool operator==(const KeptRekordboxRow &, const KeptRekordboxRow &) = default;
+};
+
+// One cue point Analyse again moved with the grid.
+struct KeptCueMove
+{
+    std::string library;
+    bool hot = false;
+    int pad = 0;
+    bool loop = false;
+    double oldMs = 0.0;
+    double newMs = 0.0;
+    double oldEndMs = 0.0;
+    double newEndMs = 0.0;
+
+    friend bool operator==(const KeptCueMove &, const KeptCueMove &) = default;
 };
 
 struct KeptRekordboxAnalysis
@@ -99,6 +134,7 @@ struct KeptRekordboxAnalysis
     std::vector<std::string> seabassGrids;
     std::vector<KeptAnlzFileSet> files;
     std::vector<KeptRekordboxRow> rows;
+    std::vector<KeptCueMove> cueMoves;
 
     friend bool operator==(const KeptRekordboxAnalysis &, const KeptRekordboxAnalysis &) = default;
 };
@@ -140,6 +176,26 @@ private:
     std::filesystem::path m_stickRoot;
     std::function<void(const std::string &)> m_beforeChange;
 };
+
+// The entry's first five lines, read without the kept bytes after them
+// (and so without its checksum, which covers the whole file): what a
+// listing and the question "is this grid Seabass's" need. nullopt for a
+// file whose head is not this format.
+struct KeptRekordboxAnalysisHead
+{
+    std::string stickPath;
+    std::string pathKey;
+    std::string originalGrid;
+    std::vector<std::string> seabassGrids;
+};
+std::optional<KeptRekordboxAnalysisHead> readKeptRekordboxAnalysisHead(const std::filesystem::path &file);
+
+// Every grid any entry on the stick records as Seabass's (the heads'
+// seabassGrids), for a decision about a track whose own entry and ledger
+// entry say nothing (a track moved with neither carried). An entry whose
+// head cannot be read adds none. `error` says when the folder cannot be
+// read whole (required).
+std::vector<std::string> keptRekordboxSeabassGrids(const std::filesystem::path &stickRoot, std::string *error);
 
 // One kept entry as a listing sees it, without reading the kept bytes:
 // the file, its size on the stick, and the track it is of. For the
