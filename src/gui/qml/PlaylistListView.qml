@@ -23,6 +23,20 @@ ListView {
     property string searchQuery: ""
     property int selectedIndex: 0
     signal playlistPicked(int index, string name)
+    // The rows above the playlists that are no playlist, each with a
+    // kind: "all" ("All tracks", picked as playlistPicked(0, ...)), then
+    // whatever the host adds (Browse: "recordings", Own Recordings, picked
+    // as fixedRowPicked). Always at the top in this order, whatever the
+    // filter; never renamed, deleted or dropped on. A stick playlist of
+    // the same name is a row of its own below them.
+    property var fixedRows: [{kind: "all", name: "All tracks"}]
+    readonly property int fixedRowCount: root.fixedRows.length
+    function fixedKindAt(index) {
+        return index >= 0 && index < root.fixedRowCount ? root.fixedRows[index].kind : "";
+    }
+    // The fixed row shown, by kind; "" while a playlist is.
+    property string shownFixedRow: root.shownPlaylist.length === 0 ? "all" : ""
+    signal fixedRowPicked(string kind)
     // A playlist row's context menu was asked for ("All tracks" never
     // asks). Browse answers it with the playlist's menu.
     signal playlistContextRequested(string name, Item row)
@@ -299,23 +313,30 @@ ListView {
     // they are what is being put together, and at the end of a long
     // list they sat below the window's edge, where a track dragged in
     // from the right could not reach them.
-    property var allNames: ["All tracks"].concat(root.canCreate ? root.newPlaylists : [])
+    property var allNames: root.fixedRows.map(row => row.name).concat(root.canCreate ? root.newPlaylists : [])
         .concat(scanController.playlistNames)
     model: root.searchQuery.length === 0
         ? allNames
-        : allNames.filter((n, i) => i === 0 || n.toLowerCase().includes(root.searchQuery.toLowerCase()))
-    // Unfiltered, the row selectedIndex names, as always. Filtered, the
-    // row of the playlist shown, found by name in the list as it is
-    // narrowed (selectedIndex counts the unfiltered list), or none (-1)
-    // while the filter hides it; clearing the filter changes searchQuery,
-    // so selectedIndex is taken again (#106).
+        : allNames.filter((n, i) => i < root.fixedRowCount || n.toLowerCase().includes(root.searchQuery.toLowerCase()))
+    // A fixed row shown is that row: the filter never hides one.
+    // Unfiltered, the row selectedIndex names, as always (it counts "All
+    // tracks" as the one row before the stick's playlists). Filtered, the
+    // row of the playlist shown, found by name below the fixed rows in
+    // the list as it is narrowed, or none (-1) while the filter hides it;
+    // clearing the filter changes searchQuery, so selectedIndex is taken
+    // again (#106).
     currentIndex: {
-        if (root.searchQuery.length === 0) {
-            return root.selectedIndex;
+        // Taken again whenever the rows change, as the view moves its
+        // current index itself when its model is replaced.
+        const rows = root.model;
+        const fixed = root.fixedRows.findIndex(row => row.kind === root.shownFixedRow);
+        if (fixed >= 0) {
+            return fixed;
         }
-        const wanted = root.shownPlaylist.length > 0 ? root.shownPlaylist
-            : root.selectedIndex === 0 ? "All tracks" : "";
-        return wanted.length > 0 ? root.model.indexOf(wanted) : -1;
+        if (root.searchQuery.length === 0) {
+            return root.selectedIndex > 0 ? root.selectedIndex + root.fixedRowCount - 1 : root.selectedIndex;
+        }
+        return root.shownPlaylist.length > 0 ? rows.indexOf(root.shownPlaylist, root.fixedRowCount) : -1;
     }
 
     delegate: PlaylistRowDelegate {
@@ -329,34 +350,43 @@ ListView {
         // delegate the same broken way).
         required property string modelData
         name: modelData
+        // A fixed row's kind ("all", "recordings"), "" for a playlist: by
+        // its place, as a stick playlist may have a fixed row's name.
+        readonly property string fixedKind: root.fixedKindAt(index)
+        readonly property bool isFixed: fixedKind.length > 0
+        readonly property bool isAll: fixedKind === "all"
+        readonly property bool isRecordings: fixedKind === "recordings"
         // Staged to be created: not on the stick yet, so no count, no
         // summary, nothing to delete or rename; its menu takes it back.
-        readonly property bool isNew: root.canCreate && root.newPlaylists.indexOf(modelData) >= 0
+        readonly property bool isNew: !isFixed && root.canCreate && root.newPlaylists.indexOf(modelData) >= 0
         pendingNew: isNew
         // "All tracks" counts what it lists: the rows a save wrote too,
         // until the stick has been read again.
-        count: index === 0 ? root.scanController.totalTrackCount + (root.scanController.importAwaitingReadCount ?? 0)
+        count: isAll ? root.scanController.totalTrackCount + (root.scanController.importAwaitingReadCount ?? 0)
+            : isRecordings ? (root.scanController.recordingCount ?? 0)
             : isNew ? 0 : (root.scanController.playlistTrackCounts[modelData] ?? 0)
-        // By the playlist shown, not ListView.isCurrentItem: a scan
-        // rebuilds the model, and the view then puts its current index
-        // back at the first row while the page keeps showing the playlist
-        // it opened on.
-        isCurrent: index === 0 ? root.shownPlaylist.length === 0 : modelData === root.shownPlaylist
+        // By the row shown, not ListView.isCurrentItem: a scan rebuilds
+        // the model, and the view then puts its current index back at the
+        // first row while the page keeps showing the playlist it opened on.
+        isCurrent: isFixed ? root.shownFixedRow === fixedKind
+            : root.shownFixedRow.length === 0 && modelData === root.shownPlaylist
         onDropTargetChanged: root.noteDropTarget(modelData, dropTarget)
-        pendingDelete: index > 0 && !isNew && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
+        pendingDelete: !isFixed && !isNew && root.pendingRevision >= 0 && root.isPendingDelete(modelData)
         // "All tracks" changes by the tracks an import brings.
-        edited: index > 0 ? !isNew && root.pendingRevision >= 0 && root.isEdited(modelData) : countChange !== 0
-        pendingRename: index > 0 && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
-        countChange: root.pendingRevision >= 0 ? root.trackCountChange(index === 0 ? "" : modelData) : 0
+        edited: !isFixed ? !isNew && root.pendingRevision >= 0 && root.isEdited(modelData)
+            : isAll && countChange !== 0
+        pendingRename: !isFixed && !isNew && root.pendingRevision >= 0 && root.isRenamed(modelData)
+        countChange: root.pendingRevision >= 0 && !isRecordings ? root.trackCountChange(isAll ? "" : modelData) : 0
         showsThumbnail: true
+        iconName: isRecordings ? "media-record" : ""
         checkable: root.checkable
-        checkState: root.checkable && root.checkRevision >= 0 ? root.checkStateOf(index === 0 ? "" : modelData) : Qt.Unchecked
-        checkEnabled: root.checkable && root.checksEnabled && root.checkRevision >= 0 && root.checkEnabledFor(index === 0 ? "" : modelData)
+        checkState: root.checkable && root.checkRevision >= 0 ? root.checkStateOf(isAll ? "" : modelData) : Qt.Unchecked
+        checkEnabled: root.checkable && root.checksEnabled && root.checkRevision >= 0 && root.checkEnabledFor(isAll ? "" : modelData)
         // What the box shows, in words, and what a click does next: the
         // half-filled box of a playlist with some of its tracks ticked was
         // not clear by itself.
         checkTooltip: {
-            const what = index === 0 ? "tracks" : "tracks of this playlist";
+            const what = isAll ? "tracks" : "tracks of this playlist";
             if (checkState === Qt.Checked) {
                 return "All " + what + " are ticked. Click to untick them all.";
             }
@@ -365,29 +395,33 @@ ListView {
             }
             return "No " + what + " are ticked. Click to tick them all.";
         }
-        onCheckToggled: checked => root.playlistCheckToggled(index === 0 ? "" : modelData, checked)
-        thumbnailSource: isNew ? "" : ((root.scanController.playlistThumbnails || {})[index === 0 ? "" : modelData] ?? "")
+        onCheckToggled: checked => root.playlistCheckToggled(isAll ? "" : modelData, checked)
+        thumbnailSource: isNew || isRecordings ? "" : ((root.scanController.playlistThumbnails || {})[isAll ? "" : modelData] ?? "")
         // The summary's part: the pointer on a row that has one, a
-        // press or the wheel there, and what to show for it.
+        // press or the wheel there, and what to show for it. The
+        // recordings have none yet.
         function summaryFor() {
-            return root.scanController.playlistSummary(index === 0 ? "" : modelData);
+            return root.scanController.playlistSummary(isAll ? "" : modelData);
         }
-        onRowHoveredChanged: root.noteSummaryHover(this, rowHovered && !isNew)
+        onRowHoveredChanged: root.noteSummaryHover(this, rowHovered && !isNew && !isRecordings)
         onSummaryDismissed: root.dismissSummary(this)
         Component.onDestruction: root.noteSummaryHover(this, false)
         // The index the page gets is the playlist's place among the
         // stick's (plus one for "All tracks"), whatever rows the list has
         // before it or has filtered out.
         onPicked: isNew ? root.newPlaylistPicked(modelData)
-            : root.playlistPicked(index === 0 ? 0 : root.scanController.playlistNames.indexOf(modelData) + 1, modelData)
-        acceptsTrackDrop: root.trackDropsEnabled && index > 0 && !pendingDelete
+            : isFixed && !isAll ? root.fixedRowPicked(fixedKind)
+            : root.playlistPicked(isAll ? 0 : root.scanController.playlistNames.indexOf(modelData) + 1, modelData)
+        acceptsTrackDrop: root.trackDropsEnabled && !isFixed && !pendingDelete
             && (modelData !== root.shownPlaylist || root.droppedTrackPlaylists.indexOf(modelData) < 0)
-        heldDropTarget: root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
+        heldDropTarget: !isFixed && root.heldDropTarget.length > 0 && root.heldDropTarget === modelData
         onTrackDropped: root.trackDropped(modelData)
-        acceptsFileDrop: root.fileDropsEnabled && !pendingDelete
-        onFilesDropped: urls => root.filesDropped(index === 0 ? "" : modelData, urls)
+        // Files go into a playlist, or into none ("All tracks"); Own
+        // Recordings is neither.
+        acceptsFileDrop: root.fileDropsEnabled && !pendingDelete && !isRecordings
+        onFilesDropped: urls => root.filesDropped(isAll ? "" : modelData, urls)
         onContextRequested: {
-            if (index > 0) {
+            if (!isFixed) {
                 root.playlistContextRequested(modelData, this);
             }
         }

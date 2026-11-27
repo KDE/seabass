@@ -238,6 +238,8 @@ set(SEABASS_GUI_SOURCES
     cleanup_controller.cpp
     recordings_controller.hpp
     recordings_controller.cpp
+    recordings_changes.hpp
+    recordings_changes.cpp
     keep_recording_controller.hpp
     keep_recording_controller.cpp
     add_cue_controller.hpp

@@ -59,6 +59,8 @@ Page {
     ScanController {
         id: scanController
         objectName: "scanController"
+        // Off, the stick's recordings are not even listed.
+        recordingsEnabled: root.ownRecordingsEnabled
         // playlistNames only becomes available once the (async) scan
         // finishes, so restoring the last-selected playlist has to wait
         // for this rather than happening at Component.onCompleted
@@ -106,6 +108,28 @@ Page {
     // is made, since the row number is the FILTERED list's when the
     // playlist filter is in use.
     property string shownPlaylist: ""
+
+    // Own Recordings (Experimental, as the rest of Own Recordings): a
+    // fixed row under "All tracks" while the stick holds a recording the
+    // players left on it, listing those (ScanController.showRecordings()).
+    // Off, the sidebar and the list are as they were without it.
+    readonly property bool ownRecordingsEnabled: root.appSettingsController.experimentalFeaturesEnabled === true
+    readonly property bool ownRecordingsListed: root.ownRecordingsEnabled && scanController.recordingCount > 0
+    // The row shown is Own Recordings: shownPlaylist is "" then, as for
+    // "All tracks". Kept across a new read of the stick while the row is
+    // there (restoreSelectedPlaylist()); gone with it.
+    property bool showingRecordings: false
+    onOwnRecordingsListedChanged: {
+        if (!root.ownRecordingsListed && root.showingRecordings) {
+            root.restoreSelectedPlaylist();
+        }
+    }
+    readonly property var sidebarFixedRows: [{kind: "all", name: "All tracks"}]
+        .concat(root.ownRecordingsListed ? [{kind: "recordings", name: "Own Recordings"}] : [])
+    // What a recording's row is, and why it offers none of a track's edits.
+    readonly property string recordingRowText: qsTr("A recording a player left on the stick. It is not in the "
+                                                    + "library, so it has no cues, tags or analysis, and it goes "
+                                                    + "into no playlist.")
     property var playlistEditController: PlaylistEditController {}
     Connections {
         target: ("objectName" in root.playlistEditController) ? root.playlistEditController : null
@@ -1599,7 +1623,7 @@ Page {
     // read: none for a row of the import's (a track not on the stick
     // yet, or one the save wrote before the stick was read again).
     function openDetails(row) {
-        if (row.unreadable === true) {
+        if (row.unreadable === true || row.recording === true) {
             return false;
         }
         trackDetailPanel.showFor(row);
@@ -1620,8 +1644,9 @@ Page {
     // The row's menu, at `at` (the row's menu button, or the row itself
     // for a right click).
     function openTrackMenu(row, at) {
-        // A row the save wrote has nothing to offer until it is read.
-        if (row.awaitingRead === true) {
+        // A row the save wrote has nothing to offer until it is read, and
+        // a recording none of a track's actions (recordingRowText).
+        if (row.awaitingRead === true || row.recording === true) {
             return;
         }
         trackMenu.row = row;
@@ -1736,6 +1761,8 @@ Page {
     // remember is false only for the fallback below, which must not
     // forget a playlist because this library happens not to have it.
     function selectPlaylist(index, name, remember) {
+        const fromRecordings = root.showingRecordings;
+        root.showingRecordings = false;
         root.selectedPlaylistIndex = index;
         // -1: a playlist staged to be created, listed below the others.
         root.shownPlaylist = index === 0 ? "" : name;
@@ -1743,6 +1770,21 @@ Page {
         if (remember !== false) {
             root.appSettingsController.lastPlaylistName = index === 0 ? "" : name;
         }
+        // The library's rows are the queue again.
+        if (fromRecordings && !scanController.busy) {
+            root.offerQueue();
+        }
+    }
+
+    // Own Recordings shown. Matching keeps the whole library as its
+    // target, and the playlist remembered for the next visit stays the
+    // one picked last.
+    function showOwnRecordings() {
+        root.selectedPlaylistIndex = 0;
+        root.shownPlaylist = "";
+        root.showingRecordings = true;
+        scanController.showRecordings();
+        root.offerQueue();
     }
 
     // Called once scanController.playlistNames is populated (see
@@ -1753,6 +1795,10 @@ Page {
     // A staged rename lists it under its new name, and a take-back under
     // its old one again: currentPlaylistName follows it there.
     function restoreSelectedPlaylist() {
+        if (root.showingRecordings && root.ownRecordingsListed) {
+            root.showOwnRecordings();
+            return;
+        }
         const wanted = scanController.currentPlaylistName(root.appSettingsController.lastPlaylistName);
         const idx = wanted.length > 0 ? scanController.playlistNames.indexOf(wanted) : -1;
         root.selectPlaylist(idx >= 0 ? idx + 1 : 0, wanted, false);
@@ -1783,6 +1829,12 @@ Page {
     // and filtered now. Offered whenever a scan has filled the list, so a
     // track played from the details pane has a queue too.
     function offerQueue() {
+        // Not the recordings: they are no library's rows, and the player
+        // would read the next one as a track of the library.
+        if (root.showingRecordings) {
+            root.playbackController.setQueue(null, "", "");
+            return;
+        }
         root.playbackController.setQueue(scanController.tracks, root.format, root.currentPath());
     }
 
@@ -1839,10 +1891,33 @@ Page {
         if (row.unreadable === true) {
             return;
         }
+        if (row.recording === true) {
+            root.playRecording(row);
+            return;
+        }
         root.offerQueue();
         root.playbackController.load(root.format, root.currentPath(), row.sourceId, row.filePath, row.title,
             row.artist, row.artworkPath, row.cues);
         root.openDetails(row);
+    }
+    // A recording plays as the Recordings page plays one: a file no catalog
+    // lists, with no queue (offerQueue()) and no details pane.
+    function playRecording(row) {
+        root.playbackController.loadFile(root.format, root.currentPath(), row.filePath, row.title,
+            qsTr("Own Recordings"));
+    }
+    // A recording row's second line: when it was recorded, its size, and
+    // whether the player finished its WAV.
+    function recordingDetails(row) {
+        const parts = [];
+        if (row.recordedAt && !isNaN(row.recordedAt.getTime())) {
+            parts.push(row.recordedAt.toLocaleString(Qt.locale(), Locale.ShortFormat));
+        }
+        parts.push(Theme.humanBytes(row.recordingSizeBytes));
+        if (row.recordingUnfinished) {
+            parts.push(qsTr("not finished by the player"));
+        }
+        return parts.join(" · ");
     }
     // Starts open, like the playlist column it replaced -- the header pill
     // collapses and expands it, unlike matchingPanelOpen above, which starts
@@ -1851,7 +1926,8 @@ Page {
     // The playlist shown, by the name it is listed under: a new one staged
     // to be created (picked at index -1, not among the scan's names) and a
     // renamed one's new name included.
-    readonly property string currentPlaylistLabel: root.shownPlaylist.length > 0 ? root.shownPlaylist : "All tracks"
+    readonly property string currentPlaylistLabel: root.shownPlaylist.length > 0 ? root.shownPlaylist
+        : root.showingRecordings ? "Own Recordings" : "All tracks"
 
     // How much of Browse's own row content fits once the panel above has
     // taken its share of the window: 2 (comfortable) shows every column,
@@ -1915,7 +1991,8 @@ Page {
     // What Playlist Order is for the list shown, as the headers' tooltips
     // name it.
     readonly property string unsortedOrderName: root.shownPlaylist.length > 0
-        ? "the playlist's own order" : "the library's own order"
+        ? "the playlist's own order" : root.showingRecordings ? "the newest recording first"
+        : "the library's own order"
     readonly property bool sortedByColumn: root.columnSortKeys.indexOf(root.sortField) >= 0
 
     function applySort() {
@@ -2562,6 +2639,13 @@ Page {
                     searchQuery: playlistFilterField.text
                     selectedIndex: root.selectedPlaylistIndex
                     onPlaylistPicked: (index, name) => root.selectPlaylist(index, name)
+                    fixedRows: root.sidebarFixedRows
+                    shownFixedRow: root.showingRecordings ? "recordings" : root.shownPlaylist.length === 0 ? "all" : ""
+                    onFixedRowPicked: kind => {
+                        if (kind === "recordings") {
+                            root.showOwnRecordings();
+                        }
+                    }
                     isPendingDelete: name => root.playlistEditController.isPlaylistStaged(name)
                     isRenamed: name => ("isRenameStaged" in root.playlistEditController)
                         && root.playlistEditController.isRenameStaged(name)
@@ -2599,14 +2683,15 @@ Page {
                     // them, or while the card asks what the drop should do.
                     summariesEnabled: !root.dragging && !trackDrag.confirming
 
-                    // "All tracks" stays at the top whatever the filter, so
-                    // one row left means no playlist's name matched.
+                    // The fixed rows stay at the top whatever the filter, so
+                    // only they left means no playlist's name matched.
                     EmptyState {
                         objectName: "playlistFilterEmptyState"
                         // Over the list, not in its content, which is only as
                         // tall as its few rows.
                         parent: playlistSidebarList
-                        visible: playlistFilterField.text.length > 0 && playlistSidebarList.count <= 1
+                        visible: playlistFilterField.text.length > 0
+                            && playlistSidebarList.count <= playlistSidebarList.fixedRowCount
                         iconName: "edit-find"
                         text: "No playlists match."
                     }
@@ -2763,6 +2848,12 @@ Page {
                     // has read yet, nothing to play, open or edit.
                     required property bool awaitingRead
                     required property bool unreadable
+                    // A recording the player left on the stick (Own
+                    // Recordings): it plays, and that is all it does here.
+                    required property bool recording
+                    required property var recordedAt
+                    required property double recordingSizeBytes
+                    required property bool recordingUnfinished
 
                     readonly property bool isPlaying: playbackController.hasTrack
                         && playbackController.currentFormat === root.format
@@ -2792,8 +2883,9 @@ Page {
                     HoverHandler { id: rowHover }
                     // What a row not on the stick yet cannot do, and when it can.
                     readonly property bool waitTipShown: ToolTip.visible
-                    ToolTip.visible: trackDelegate.unreadable && rowHover.hovered
-                    ToolTip.text: trackDelegate.awaitingRead ? root.awaitingReadText : root.afterSaveText
+                    ToolTip.visible: (trackDelegate.unreadable || trackDelegate.recording) && rowHover.hovered
+                    ToolTip.text: trackDelegate.recording ? root.recordingRowText
+                        : trackDelegate.awaitingRead ? root.awaitingReadText : root.afterSaveText
                     ToolTip.delay: 500
 
                     // Now-playing highlight, an accent-colored stripe,
@@ -3023,6 +3115,23 @@ Page {
                                     }
                                 }
                                 Rectangle {
+                                    objectName: "notInLibraryBadge"
+                                    visible: trackDelegate.recording
+                                    radius: 3
+                                    color: Theme.groupBackground
+                                    border.color: Theme.borderSubtle
+                                    implicitWidth: notInLibraryLabel.implicitWidth + 8
+                                    implicitHeight: notInLibraryLabel.implicitHeight + 4
+                                    Label {
+                                        id: notInLibraryLabel
+                                        anchors.centerIn: parent
+                                        text: qsTr("Not in the library")
+                                        font.pointSize: Theme.fontTiny
+                                        font.bold: true
+                                        color: Theme.textMuted
+                                    }
+                                }
+                                Rectangle {
                                     visible: trackDelegate.streamingSource.length > 0
                                     radius: 3
                                     color: Theme.groupBackground
@@ -3039,8 +3148,12 @@ Page {
                                     }
                                 }
                             }
+                            // A recording has no artist: when it was
+                            // recorded, its size, and whether the player
+                            // finished it, in its place.
                             Label {
-                                text: artist
+                                objectName: "rowSubtitle"
+                                text: trackDelegate.recording ? root.recordingDetails(trackDelegate) : artist
                                 color: Theme.textMuted
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
@@ -3071,13 +3184,13 @@ Page {
                         Label {
                             objectName: "cueCountLabel"
                             visible: root.browseTier >= 2
-                            text: scanController.cuesPending ? "" : cueCount
+                            text: scanController.cuesPending || trackDelegate.recording ? "" : cueCount
                             Layout.preferredWidth: root.cuesColumnWidth
                         }
                         Label {
                             objectName: "rowCell_plays"
                             visible: root.browseTier >= 2 && root.showPlayCount
-                            text: playCount >= 0 ? playCount : "--"
+                            text: trackDelegate.recording ? "" : playCount >= 0 ? playCount : "--"
                             Layout.preferredWidth: root.playsColumnWidth
                         }
                         // The header row's spacer, for the same tier.
@@ -3095,7 +3208,7 @@ Page {
                             text: "Track actions"
                             iconName: "application-menu"
                             Layout.preferredWidth: root.actionsColumnWidth
-                            enabled: !trackDelegate.awaitingRead
+                            enabled: !trackDelegate.awaitingRead && !trackDelegate.recording
                             ToolTip.visible: hovered
                             ToolTip.text: trackDelegate.importChangeId.length > 0 ? root.dontImportText(trackDelegate)
                                 : "Merge, find matching tracks" + (root.shownPlaylist.length > 0
@@ -3111,8 +3224,9 @@ Page {
                     objectName: "trackListEmptyState"
                     visible: trackListView.count === 0 && !scanController.busy
                     iconName: "edit-find"
-                    text: searchField.text.length === 0 ? "No tracks found."
+                    text: searchField.text.length === 0 ? (root.showingRecordings ? "No recordings found." : "No tracks found.")
                         : root.shownPlaylist.length > 0 ? "No tracks in this playlist match."
+                        : root.showingRecordings ? "No recordings match."
                         : "No tracks match."
                 }
 
@@ -3143,7 +3257,9 @@ Page {
                     objectName: "trackFileDropArea"
                     parent: trackListView
                     anchors.fill: parent
-                    enabled: root.trackImportEnabled
+                    // Files go into a playlist or into the library; the
+                    // recordings are neither.
+                    enabled: root.trackImportEnabled && !root.showingRecordings
                     keys: ["text/uri-list"]
                     // The place counts only where a row's place is its
                     // place in the playlist, and nothing staged moves it.

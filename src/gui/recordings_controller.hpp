@@ -116,6 +116,12 @@ struct RecordingsListResult
     QString error;
 };
 
+// The recordings on the stick at `stickRoot`, each with its length, and
+// with readHeaders what each WAV's header says (the HeaderState). On the
+// calling thread: the listing the Recordings page shows, and Browse's Own
+// Recordings row too, so that both say the same of a file.
+RecordingsListResult listRecordingsOnStick(const QString &stickRoot, bool readHeaders);
+
 struct RecordingsRunResult
 {
     application::RecordingsReport report;

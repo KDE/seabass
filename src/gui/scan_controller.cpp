@@ -8,6 +8,7 @@
 #include "gui/future_result.hpp"
 #include "gui/main_thread_shared.hpp"
 
+#include <QDateTime>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
@@ -33,6 +34,8 @@
 #include "gui/playlist_thumbnail_provider.hpp"
 #include "application/phased_progress.hpp"
 #include "gui/qt_progress_reporter.hpp"
+#include "gui/recordings_changes.hpp"
+#include "gui/stick_path.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/read_access.hpp"
 
@@ -156,6 +159,21 @@ QVariant TrackListModel::data(const QModelIndex &index, int role) const
         return QString::fromStdString(track.comment);
     case AlbumRole:
         return QString::fromStdString(track.album);
+    case RecordingRole:
+        return m_recordingRows.count(track.sourceId) > 0;
+    case RecordedAtRole: {
+        const auto it = m_recordingRows.find(track.sourceId);
+        return it == m_recordingRows.end() || it->second.modifiedUnix <= 0
+            ? QDateTime() : QDateTime::fromSecsSinceEpoch(it->second.modifiedUnix);
+    }
+    case RecordingSizeBytesRole: {
+        const auto it = m_recordingRows.find(track.sourceId);
+        return it == m_recordingRows.end() ? qlonglong(0) : static_cast<qlonglong>(it->second.sizeBytes);
+    }
+    case RecordingUnfinishedRole: {
+        const auto it = m_recordingRows.find(track.sourceId);
+        return it != m_recordingRows.end() && it->second.unfinished;
+    }
     default:
         return {};
     }
@@ -188,6 +206,10 @@ QHash<int, QByteArray> TrackListModel::roleNames() const
         {ImportChangeIdRole, "importChangeId"},
         {AwaitingReadRole, "awaitingRead"},
         {UnreadableRole, "unreadable"},
+        {RecordingRole, "recording"},
+        {RecordedAtRole, "recordedAt"},
+        {RecordingSizeBytesRole, "recordingSizeBytes"},
+        {RecordingUnfinishedRole, "recordingUnfinished"},
     };
 }
 
@@ -487,6 +509,13 @@ void ScanController::setCatalogCacheForTesting(LibraryCatalogCache *cache)
 ScanController::ScanController(QObject *parent) : QObject(parent)
 {
     connect(&m_watcher, &QFutureWatcher<ScanTaskResult>::finished, this, &ScanController::onScanFinished);
+    connect(&m_recordingsWatcher, &QFutureWatcher<RecordingsListResult>::finished, this,
+            &ScanController::onRecordingsListed);
+    connect(&RecordingsChanges::instance(), &RecordingsChanges::changed, this, [this](const QString &stickRoot) {
+        if (RecordingsChanges::sameStick(stickRoot, m_recordingsRoot)) {
+            refreshRecordings();
+        }
+    });
 }
 
 ScanController::~ScanController()
@@ -523,6 +552,7 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
     auto relay = makeMainThreadShared<ScanPhaseRelay>();
     connect(relay.get(), &ScanPhaseRelay::tracksRead, this, &ScanController::onTracksRead);
 
+    m_recordingsRoot = stickRootOf(path);
     LibraryCatalogCache *cache =
         s_catalogCacheForTesting != nullptr ? s_catalogCacheForTesting : &LibraryCatalogCache::instance();
     m_scanCancel = application::CancellationToken();
@@ -683,11 +713,14 @@ void ScanController::publishTracks(ScanTaskResult &result)
     // it threw that pick away, so the list showed every track under a
     // sidebar that said otherwise.
     m_currentPlaylistFilter.clear();
+    setShowRecordings(false);
     emit playlistNamesChanged();
     applyFilters();
 
     setBusy(false);
     emit tracksPublished(false);
+    // The recordings are no library's: listed beside it, once it is up.
+    refreshRecordings();
 }
 
 void ScanController::publishCues(ScanTaskResult &result)
@@ -793,8 +826,94 @@ QString ScanController::currentPlaylistName(const QString &name) const
     return aliasedPlaylistName(m_playlistAliases, scannedPlaylistName(m_previousPlaylistAliases, name));
 }
 
+void ScanController::setShowRecordings(bool show)
+{
+    if (m_showRecordings != show) {
+        m_showRecordings = show;
+        emit showingRecordingsChanged();
+    }
+}
+
+void ScanController::showRecordings()
+{
+    m_currentPlaylistFilter.clear();
+    setShowRecordings(true);
+    applyFilters();
+}
+
+void ScanController::setRecordingsEnabled(bool enabled)
+{
+    if (m_recordingsEnabled == enabled) {
+        return;
+    }
+    m_recordingsEnabled = enabled;
+    emit recordingsEnabledChanged();
+    if (enabled) {
+        refreshRecordings();
+        return;
+    }
+    // A listing under way lands nowhere (onRecordingsListed()).
+    if (!m_recordings.empty()) {
+        m_recordings.clear();
+        m_recordingStates.clear();
+        emit recordingsChanged();
+        if (m_showRecordings) {
+            applyFilters(true);
+        }
+    }
+}
+
+void ScanController::refreshRecordings()
+{
+    if (!m_recordingsEnabled || m_recordingsRoot.isEmpty()) {
+        return;
+    }
+    // A listing asked for while one runs replaces it: the watcher hears
+    // only the newest, and the older one, which holds nothing of this
+    // controller, ends on its own. The header states give an unfinished
+    // WAV's length and say that it is one.
+    m_recordingsWatcher.setFuture(
+        runRead([root = m_recordingsRoot]() { return listRecordingsOnStick(root, true); }));
+}
+
+void ScanController::onRecordingsListed()
+{
+    if (!m_recordingsEnabled) {
+        return;
+    }
+    QString thrown;
+    RecordingsListResult result = takeResult(m_recordingsWatcher, &thrown);
+    // A listing that failed changes nothing: the rows listed before stay.
+    if (!thrown.isEmpty() || !result.error.isEmpty()) {
+        return;
+    }
+    std::vector<application::Recording> recordings = std::move(result.listing.recordings);
+    std::vector<RecordingListModel::HeaderState> states = std::move(result.states);
+    states.resize(recordings.size());
+    // Newest first, then by name, as a list of what was recorded reads.
+    std::vector<std::size_t> order(recordings.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::stable_sort(order.begin(), order.end(), [&recordings](std::size_t a, std::size_t b) {
+        if (recordings[a].modifiedUnix != recordings[b].modifiedUnix) {
+            return recordings[a].modifiedUnix > recordings[b].modifiedUnix;
+        }
+        return recordings[a].fileName < recordings[b].fileName;
+    });
+    m_recordings.clear();
+    m_recordingStates.clear();
+    for (const std::size_t i : order) {
+        m_recordings.push_back(std::move(recordings[i]));
+        m_recordingStates.push_back(states[i]);
+    }
+    emit recordingsChanged();
+    if (m_showRecordings) {
+        applyFilters(true);
+    }
+}
+
 void ScanController::filterByPlaylist(const QString &playlistName)
 {
+    setShowRecordings(false);
     m_currentPlaylistFilter = playlistName;
     applyFilters();
 }
@@ -1033,7 +1152,31 @@ std::optional<int> playlistPosition(const domain::Track &track, const std::strin
 
 void ScanController::applyFilters(bool inPlace)
 {
-    std::vector<domain::Track> result = m_allTracks;
+    // Own Recordings: the recordings, as rows of their own, instead of the
+    // library; nothing staged in a library is theirs.
+    std::unordered_map<std::string, TrackListModel::RecordingInfo> recordingRows;
+    std::vector<domain::Track> result;
+    if (m_showRecordings) {
+        for (std::size_t i = 0; i < m_recordings.size(); ++i) {
+            const application::Recording &recording = m_recordings[i];
+            const RecordingListModel::HeaderState &state = m_recordingStates[i];
+            domain::Track track;
+            // The path as the player is handed it, so the row is the one
+            // playing (PlaybackController::loadFile()).
+            track.filePath = qtPathFromUtf8(recording.path).toStdString();
+            track.sourceId = "recording:" + track.filePath;
+            track.title = recording.fileName;
+            track.fileSizeBytes = recording.sizeBytes;
+            // An unfinished WAV's header says no length, or a wrong one:
+            // the audio the file holds is its length.
+            track.durationSeconds = state.unfinished ? std::max(state.heldSeconds, 0.0)
+                                                     : recording.durationSeconds.value_or(0.0);
+            recordingRows[track.sourceId] = {recording.modifiedUnix, recording.sizeBytes, state.unfinished};
+            result.push_back(std::move(track));
+        }
+    } else {
+        result = m_allTracks;
+    }
     // The playlist shown by its scanned path: a staged rename lists it
     // under the new one.
     const QString scannedFilter = scannedPlaylistName(m_currentPlaylistFilter);
@@ -1087,7 +1230,7 @@ void ScanController::applyFilters(bool inPlace)
         emit importRowsChanged();
     }
 
-    if (m_currentPlaylistFilter.isEmpty()) {
+    if (m_currentPlaylistFilter.isEmpty() && !m_showRecordings) {
         // "All tracks": the new tracks at the end, as the library will
         // list them, and those the save wrote until the stick is read.
         for (const Listed &listed : importListed) {
@@ -1319,6 +1462,7 @@ void ScanController::applyFilters(bool inPlace)
     m_model.setPendingAdditions(std::move(pendingAdditions));
     m_model.setPendingMoves(std::move(pendingMoves));
     m_model.setImportRows(std::move(importChangeIds), std::move(importNewTracks), std::move(importAwaiting));
+    m_model.setRecordingRows(std::move(recordingRows));
     if (inPlace) {
         m_model.updateTracks(std::move(result));
     } else {

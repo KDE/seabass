@@ -16,6 +16,7 @@
 #include "gui/future_result.hpp"
 #include "gui/main_thread_shared.hpp"
 #include "gui/qt_path.hpp"
+#include "gui/recordings_changes.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "gui/stick_path.hpp"
 #include "infrastructure/audio/duration_fill.hpp"
@@ -381,31 +382,35 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
     }
     m_listing = true;
     emit busyChanged();
-    m_listWatcher.setFuture(QtConcurrent::run([root, readHeaders = m_keepEnabled]() {
-        RecordingsListResult result;
-        try {
-            const fs::path stick = pathFromQString(root);
-            // TagLib reads a WAV's header only: measured at well under a
-            // millisecond for a 2.2 GB file, so every row gets a length.
-            result.listing = infrastructure::audio::withDurationProbe(
-                [&stick](application::TrackDurationProbe &probe) { return application::listRecordings(stick, probe); });
-            // The header states are Keep's (experimental): without it the
-            // listing reads no more than TagLib's length.
-            if (readHeaders) {
-                result.states = headerStates(result.listing.recordings);
-            }
-            // As CleanupController's stickSpace(): 0/0 when it cannot tell.
-            std::error_code ec;
-            const fs::space_info space = fs::space(stick, ec);
-            if (!ec && space.capacity != 0 && space.capacity != static_cast<std::uintmax_t>(-1)) {
-                result.stickTotalBytes = static_cast<qlonglong>(space.capacity);
-                result.stickFreeBytes = static_cast<qlonglong>(space.available);
-            }
-        } catch (const std::exception &e) {
-            result.error = QString::fromUtf8(e.what());
+    // The header states are Keep's (experimental): without it the listing
+    // reads no more than TagLib's length.
+    m_listWatcher.setFuture(
+        QtConcurrent::run([root, readHeaders = m_keepEnabled]() { return listRecordingsOnStick(root, readHeaders); }));
+}
+
+RecordingsListResult listRecordingsOnStick(const QString &stickRoot, bool readHeaders)
+{
+    RecordingsListResult result;
+    try {
+        const fs::path stick = pathFromQString(stickRoot);
+        // TagLib reads a WAV's header only: measured at well under a
+        // millisecond for a 2.2 GB file, so every row gets a length.
+        result.listing = infrastructure::audio::withDurationProbe(
+            [&stick](application::TrackDurationProbe &probe) { return application::listRecordings(stick, probe); });
+        if (readHeaders) {
+            result.states = headerStates(result.listing.recordings);
         }
-        return result;
-    }));
+        // As CleanupController's stickSpace(): 0/0 when it cannot tell.
+        std::error_code ec;
+        const fs::space_info space = fs::space(stick, ec);
+        if (!ec && space.capacity != 0 && space.capacity != static_cast<std::uintmax_t>(-1)) {
+            result.stickTotalBytes = static_cast<qlonglong>(space.capacity);
+            result.stickFreeBytes = static_cast<qlonglong>(space.available);
+        }
+    } catch (const std::exception &e) {
+        result.error = QString::fromUtf8(e.what());
+    }
+    return result;
 }
 
 void RecordingsController::onListed()
@@ -577,8 +582,10 @@ void RecordingsController::onRunFinished()
         {"error", result.error},
         {"warning", warning},
     });
-    // What is on the stick now, read again rather than inferred.
+    // What is on the stick now, read again rather than inferred, here and
+    // wherever else the stick's recordings are listed.
     load(m_stickLabel, m_rekordboxPath, m_enginePath);
+    RecordingsChanges::instance().announce(m_deleteRoot);
 }
 
 void RecordingsController::setError(const QString &message)

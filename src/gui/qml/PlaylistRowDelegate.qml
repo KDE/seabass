@@ -53,6 +53,9 @@ Rectangle {
     // the neutral tile, a playlist with no covers.
     property bool showsThumbnail: false
     property string thumbnailSource: ""
+    // An icon in the cover's place, for a row that is no playlist and has
+    // no covers to show (Browse's Own Recordings).
+    property string iconName: ""
     signal picked()
     // A tick box before the name, where the host picks playlists to act
     // on (Beat Grids & Waveforms): checkState is the host's (Qt.Unchecked,
@@ -138,12 +141,27 @@ Rectangle {
             }
         }
         PlaylistThumbnail {
+            id: thumbnailTile
             objectName: "playlistThumbnailTile"
-            visible: root.showsThumbnail
+            visible: root.showsThumbnail && root.iconName.length === 0
             Layout.preferredWidth: implicitWidth
             Layout.preferredHeight: implicitHeight
             Layout.alignment: Qt.AlignVCenter
             source: root.showsThumbnail ? root.thumbnailSource : ""
+        }
+        // As wide as the tile it stands for, so the names stay on one line.
+        Item {
+            objectName: "playlistRowIcon"
+            visible: root.showsThumbnail && root.iconName.length > 0
+            Layout.preferredWidth: thumbnailTile.implicitWidth
+            Layout.preferredHeight: thumbnailTile.implicitHeight
+            Layout.alignment: Qt.AlignVCenter
+            SeabassIcon {
+                anchors.centerIn: parent
+                iconName: root.iconName.length > 0 ? root.iconName : "media-record"
+                size: Math.min(parent.width, parent.height) * 0.75
+                color: Theme.textMuted
+            }
         }
         Label {
             objectName: "playlistRowName"

@@ -84,9 +84,10 @@ Rectangle {
     function canDrag(track) {
         // A row of the import's that no library has read yet (a track
         // not on the stick until Save, or one the save wrote before the
-        // stick is read again) goes nowhere.
+        // stick is read again) goes nowhere, and neither does a recording
+        // no library lists (Own Recordings).
         return track !== null && track !== undefined && (track.filePath || "").length > 0
-            && (track.streamingSource || "").length === 0 && track.unreadable !== true;
+            && (track.streamingSource || "").length === 0 && track.unreadable !== true && track.recording !== true;
     }
 
     // The track as one map, the contract's fields only: what the page's

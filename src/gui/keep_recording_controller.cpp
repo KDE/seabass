@@ -25,6 +25,7 @@
 #include "gui/future_result.hpp"
 #include "gui/main_thread_shared.hpp"
 #include "gui/qt_path.hpp"
+#include "gui/recordings_changes.hpp"
 #include "gui/seabass_settings.hpp"
 #include "gui/sleep_inhibitor.hpp"
 #include "infrastructure/audio/recording_temp_names.hpp"
@@ -872,6 +873,8 @@ void KeepRecordingController::onJobFinished()
     emit finishedJobsChanged();
     bumpRevision();
     emit finished(outcome);
+    // A list of the stick's recordings elsewhere reads them again.
+    RecordingsChanges::instance().announce(job.stickRoot);
     startNext();
 }
 

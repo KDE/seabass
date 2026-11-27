@@ -1829,9 +1829,10 @@ public:
     // artwork: the cover every rekordbox track names, presentArtwork()
     // when empty, none at all for "none", a cover of its own for each
     // track for "distinct" (distinctArtwork(i)); another one is a stick
-    // whose covers changed.
+    // whose covers changed. extraPlaylist: one more playlist of that
+    // name, holding every track in scan order.
     Q_INVOKABLE void holdCues(int trackCount, bool reversedPlaylist = false, bool withFiles = false,
-                              const QString &artwork = QString())
+                              const QString &artwork = QString(), const QString &extraPlaylist = QString())
     {
         restore();
         auto gate = std::make_shared<Gate>();
@@ -1844,7 +1845,8 @@ public:
                 distinct.push_back(distinctArtwork(i).toStdString());
             }
         }
-        auto stage = [gate, trackCount, reversedPlaylist, withFiles, present, missing, distinct](seabass::gui::LibraryCatalogCache::Detail detail,
+        const std::string extra = extraPlaylist.toStdString();
+        auto stage = [gate, trackCount, reversedPlaylist, withFiles, present, missing, distinct, extra](seabass::gui::LibraryCatalogCache::Detail detail,
                                                           const std::string &format, const std::string &,
                                                           std::vector<seabass::domain::Track> &tracks,
                                                           seabass::gui::LibraryCatalogCache::StageNotes &,
@@ -1869,6 +1871,9 @@ public:
                     track.playlists.push_back({"Held Playlist", i});
                     if (reversedPlaylist) {
                         track.playlists.push_back({"Held Reversed", trackCount - 1 - i});
+                    }
+                    if (!extra.empty()) {
+                        track.playlists.push_back({extra, i});
                     }
                     // Engine names art that is not on the stick; the
                     // rekordbox copy of the same song has a real one.
@@ -1914,6 +1919,52 @@ public:
         m_caches.push_back(std::make_unique<seabass::gui::LibraryCatalogCache>(stage, mtime));
         m_gate = gate;
         seabass::gui::ScanController::setCatalogCacheForTesting(m_caches.back().get());
+    }
+
+    // A recording as a player leaves it: a 16-bit mono WAV at 44100 Hz (a rate the players record at) of
+    // `seconds` of silence, dated `modifiedUnix`. Unfinished, its header
+    // declares no size, as a recording the player never closed.
+    Q_INVOKABLE bool writeRecording(const QString &file, double seconds, bool unfinished, qint64 modifiedUnix)
+    {
+        const auto frames = static_cast<std::uint32_t>(seconds * 44100);
+        std::vector<char> out;
+        auto put = [&out](std::uint32_t value, int bytes) {
+            for (int i = 0; i < bytes; ++i) {
+                out.push_back(static_cast<char>((value >> (8 * i)) & 0xFF));
+            }
+        };
+        out.insert(out.end(), {'R', 'I', 'F', 'F'});
+        put(unfinished ? 0 : 36 + frames * 2, 4);
+        out.insert(out.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+        put(16, 4);
+        put(1, 2);
+        put(1, 2);
+        put(44100, 4);
+        put(88200, 4);
+        put(2, 2);
+        put(16, 2);
+        out.insert(out.end(), {'d', 'a', 't', 'a'});
+        put(unfinished ? 0 : frames * 2, 4);
+        out.resize(out.size() + static_cast<std::size_t>(frames) * 2, 0);
+        const std::filesystem::path path = seabass::gui::pathFromQString(file);
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        {
+            std::ofstream stream(path, std::ios::binary);
+            stream.write(out.data(), static_cast<std::streamsize>(out.size()));
+            if (!stream) {
+                return false;
+            }
+        }
+        QFile written(file);
+        return written.open(QIODevice::ReadWrite)
+            && written.setFileTime(QDateTime::fromSecsSinceEpoch(modifiedUnix), QFileDevice::FileModificationTime);
+    }
+
+    Q_INVOKABLE bool removeFile(const QString &file)
+    {
+        std::error_code ec;
+        return std::filesystem::remove(seabass::gui::pathFromQString(file), ec) && !ec;
     }
 
     Q_INVOKABLE void releaseCues()

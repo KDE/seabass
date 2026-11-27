@@ -3927,6 +3927,7 @@ if(TARGET seabass_edit)
     # real delete run on the worker, against a planted stick.
     add_executable(recordings_controller_test
         src/gui/recordings_controller.cpp
+        src/gui/recordings_changes.cpp
         src/gui/keep_recording_controller.cpp
         src/gui/sleep_inhibitor.cpp
         tests/recordings_controller_test.cpp
@@ -5912,6 +5913,7 @@ if(TARGET seabass_recording_qt)
     if(SEABASS_TESTS)
         add_executable(keep_recording_controller_test
             src/gui/keep_recording_controller.cpp
+            src/gui/recordings_changes.cpp
             src/gui/sleep_inhibitor.cpp
             tests/keep_recording_controller_test.cpp)
         target_include_directories(keep_recording_controller_test PRIVATE src tests)

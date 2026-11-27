@@ -21,6 +21,7 @@
 
 #include "application/ports/cancellation_token.hpp"
 #include "domain/track.hpp"
+#include "gui/recordings_controller.hpp"
 
 namespace seabass::gui
 {
@@ -64,6 +65,14 @@ public:
         ImportChangeIdRole,
         AwaitingReadRole,
         UnreadableRole,
+        // A recording the player left on the stick (Own Recordings): a
+        // file no library lists, with when it was recorded, its size, and
+        // whether the player finished its WAV header. False, invalid, 0
+        // and false for every track a library lists.
+        RecordingRole,
+        RecordedAtRole,
+        RecordingSizeBytesRole,
+        RecordingUnfinishedRole,
     };
 
     explicit TrackListModel(QObject *parent = nullptr);
@@ -107,6 +116,14 @@ public:
         m_importNewTracks = std::move(newTracks);
         m_importAwaitingRead = std::move(awaitingRead);
     }
+    // The recording rows (by sourceId) among the tracks. Set before them.
+    struct RecordingInfo
+    {
+        std::int64_t modifiedUnix = 0;
+        std::uint64_t sizeBytes = 0;
+        bool unfinished = false;
+    };
+    void setRecordingRows(std::unordered_map<std::string, RecordingInfo> rows) { m_recordingRows = std::move(rows); }
     // Staged renames, {scanned path: new path}: playlistNames serves the
     // new names.
     void setPlaylistAliases(QVariantMap aliases) { m_playlistAliases = std::move(aliases); }
@@ -142,6 +159,7 @@ private:
     std::map<std::string, QString> m_importChangeIds;
     std::set<std::string> m_importNewTracks;
     std::set<std::string> m_importAwaitingRead;
+    std::unordered_map<std::string, RecordingInfo> m_recordingRows;
     QVariantMap m_playlistAliases;
 };
 
@@ -239,6 +257,17 @@ class ScanController : public QObject
     // that the scan does not list yet. Counted as they are listed.
     Q_PROPERTY(int importNewTrackCount READ importNewTrackCount NOTIFY importRowsChanged)
     Q_PROPERTY(int importAwaitingReadCount READ importAwaitingReadCount NOTIFY importRowsChanged)
+    // Own Recordings (Experimental): the recordings the players left on
+    // the stick, listed as Clean Up Recordings lists them, off the GUI
+    // thread, after each scan and again whenever a delete or a keep of
+    // the stick's recordings ends (RecordingsChanges). Off, nothing is
+    // listed and recordingCount stays 0; switched off, what was listed
+    // goes.
+    Q_PROPERTY(bool recordingsEnabled READ recordingsEnabled WRITE setRecordingsEnabled NOTIFY
+                   recordingsEnabledChanged)
+    Q_PROPERTY(int recordingCount READ recordingCount NOTIFY recordingsChanged)
+    // The list shows the recordings (showRecordings()), not the library.
+    Q_PROPERTY(bool showingRecordings READ showingRecordings NOTIFY showingRecordingsChanged)
 
 public:
     explicit ScanController(QObject *parent = nullptr);
@@ -264,6 +293,10 @@ public:
     bool cuesPending() const { return m_cuesPending; }
     int importNewTrackCount() const { return m_importNewShown; }
     int importAwaitingReadCount() const { return m_importAwaitingShown; }
+    bool recordingsEnabled() const { return m_recordingsEnabled; }
+    void setRecordingsEnabled(bool enabled);
+    int recordingCount() const { return static_cast<int>(m_recordings.size()); }
+    bool showingRecordings() const { return m_showRecordings; }
     // For tests: how many paths the track import's rows have had made
     // into a key (application::normalizedPathKey) so far. Nothing while
     // no import is staged or awaiting the read; with one, each row and
@@ -290,6 +323,16 @@ public:
 
     // playlistName empty shows every scanned track again.
     Q_INVOKABLE void filterByPlaylist(const QString &playlistName);
+    // The list shows the stick's recordings instead of its library, a row
+    // each, newest first: the file's name as the title, its length as the
+    // duration ("recording" true, see TrackListModel). Their sourceId is
+    // "recording:" and the path, as PlaybackController::loadFile() names
+    // what it plays. filterByPlaylist() goes back to the library, and so
+    // does a new scan, as it does to "All tracks".
+    Q_INVOKABLE void showRecordings();
+    // Lists the stick's recordings again, when they are enabled and the
+    // stick is known (a scan has been asked for).
+    Q_INVOKABLE void refreshRecordings();
     // The playlist edits staged, as PlaylistEditController has them,
     // shown in the playlist they are for until Save: the tracks to be
     // added ({playlist: [file paths]}) at its end, flagged pendingAddition,
@@ -464,6 +507,9 @@ signals:
     // rows update where they stand; nothing else about the page changes.
     void detailsPublished();
     void importRowsChanged();
+    void recordingsEnabledChanged();
+    void recordingsChanged();
+    void showingRecordingsChanged();
 
 private:
     void setBusy(bool busy);
@@ -537,6 +583,16 @@ private:
     // The landed rows are the stick's as read now, or gone with a read
     // that failed: no longer listed.
     void supersedeLandedRows();
+    // Own Recordings: the stick the last scan was of, and what was listed
+    // there last, newest first.
+    QString m_recordingsRoot;
+    std::vector<application::Recording> m_recordings;
+    std::vector<RecordingListModel::HeaderState> m_recordingStates;
+    bool m_recordingsEnabled = false;
+    bool m_showRecordings = false;
+    QFutureWatcher<RecordingsListResult> m_recordingsWatcher;
+    void onRecordingsListed();
+    void setShowRecordings(bool show);
     QString m_currentSearchQuery;
     QString m_sortField = "playlist";
     bool m_sortAscending = true;
