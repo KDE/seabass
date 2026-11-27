@@ -7,6 +7,7 @@ import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import SeabassGui
+import "RecordingSave.js" as RecordingSave
 
 // Clean Up Recordings: the sets DJ hardware recorded onto this stick
 // (Engine OS into Sessions/, Pioneer and AlphaTheta decks into their REC
@@ -15,23 +16,24 @@ import SeabassGui
 // to these files; see RecordingsController for why no full stick backup
 // is taken first.
 //
-// Keep this recording (experimental): a recording becomes a FLAC with
-// tags and a cover in a folder on this computer, through the form below
-// and a KeepRecordingController, beside the page in the passive progress
-// strip. The recording on the stick stays as it is. The controller lives
-// with the window: the work goes on when the page is left, and the strip
-// shows it again when the page is opened again. The controller is the
-// app's one, for every stick: the page asks it about this stick only (its
-// root, controller.stickRoot), and says in one line when a recording of
-// another stick is being kept, so that a job asked for here is seen to
-// wait. The strip stays while a job of this stick runs or waits, even when
+// Save as FLAC (experimental): a recording becomes a FLAC with tags and a
+// cover in a folder on this computer, through KeepRecordingForm and a
+// KeepRecordingController, beside the page in KeepRecordingProgress (Browse
+// opens the same form and shows the same strip for its Own Recordings).
+// The recording on the stick stays as it is. The controller lives with the
+// window: the work goes on when the page is left, and the strip shows it
+// again when the page is opened again. The controller is the app's one,
+// for every stick: the page asks it about this stick only (its root,
+// controller.stickRoot), and says in one line when a recording of another
+// stick is being saved, so that a job asked for here is seen to wait. The
+// strip stays while a job of this stick runs or waits, even when
 // Experimental is switched off meanwhile, and lists what ended until it is
-// closed. The delete confirmation names every
-// ticked recording a keep was asked for and did not end kept.
+// closed. The delete confirmation names every ticked recording a save was
+// asked for and did not end saved.
 //
-// With Experimental off the page is the released one: no Keep button, and
-// the rows say nothing of a WAV's header (the controller does not read
-// it) and give the length rounded to the second.
+// With Experimental off the page is the released one: no Save as FLAC
+// button, and the rows say nothing of a WAV's header (the controller does
+// not read it) and give the length rounded to the second.
 Page {
     id: root
     required property string stickLabel
@@ -44,26 +46,22 @@ Page {
     // A KeepRecordingController; a QtObject with the same shape in the
     // tests. Null: nothing is offered to be kept.
     property var keepController: null
-    // Keep this recording is experimental (docs/experimental-features.md).
+    // Save as FLAC is experimental (docs/experimental-features.md).
     property bool keepEnabled: false
+    // A recording to show: scrolled to and marked once listed (Browse's
+    // "Show on the Recordings page"); "" for none.
+    property string markedPath: ""
 
-    readonly property bool keepOffered: root.keepEnabled && root.keepController !== null
-        && root.keepController.available === true
+    readonly property bool keepOffered: root.keepEnabled && keepForm.available
     readonly property int keepRevision: root.keepController !== null ? root.keepController.revision : 0
     // The stick's root, as the keep controller is asked about it.
     readonly property string stickRoot: root.controller.stickRoot ?? ""
-    // A recording of this stick is being kept or waits to be: nothing is
+    // A recording of this stick is being saved or waits to be: nothing is
     // deleted meanwhile, so no recording goes from under its job.
-    readonly property bool keepWorking: root.keepController !== null
-        && (root.keepRevision, root.keepController.hasWorkFor(root.stickRoot)) === true
-    // The job in hand is this stick's; is another stick's.
-    readonly property bool keepRunsHere: root.keepController !== null
-        && (root.keepRevision, root.keepController.runsFor(root.stickRoot)) === true
+    readonly property bool keepWorking: keepProgress.keepWorking
+    // The job in hand is another stick's.
     readonly property bool keepRunsElsewhere: root.keepController !== null
         && (root.keepRevision, root.keepController.runsElsewhere(root.stickRoot)) === true
-    // This stick's jobs that wait.
-    readonly property var keepQueued: root.keepController !== null
-        ? ((root.keepRevision, root.keepController.queuedFor(root.stickRoot)) ?? []) : []
 
     readonly property bool working: root.controller.working === true
     readonly property int recordingCount: root.controller.recordingCount
@@ -77,28 +75,6 @@ Page {
     }
     function plural(n, one, many) {
         return n + " " + (n === 1 ? one : many);
-    }
-    // "1:07:13" or "7:13"; "" when unknown. Cut to whole seconds as a
-    // clock shows them, never rounded up: the C++ texts (the notes of a
-    // kept job, the reasons) count the same way. `rounded`: to the
-    // nearest second instead, as the released page gives a row's length.
-    function duration(seconds, rounded) {
-        if (seconds === undefined || seconds < 0) return "";
-        const total = rounded === true ? Math.round(seconds) : Math.floor(seconds);
-        const h = Math.floor(total / 3600);
-        const m = Math.floor((total % 3600) / 60);
-        const s = total % 60;
-        const two = (v) => (v < 10 ? "0" : "") + v;
-        return h > 0 ? h + ":" + two(m) + ":" + two(s) : m + ":" + two(s);
-    }
-    // For a header that declares more than the file holds, when both
-    // lengths print the same: how much is missing, in words. "" otherwise.
-    function missingNote(declaredSeconds, heldSeconds, missingBytes) {
-        if (missingBytes === undefined || missingBytes < 0 || declaredSeconds < 0
-            || root.duration(declaredSeconds) !== root.duration(heldSeconds)) {
-            return "";
-        }
-        return qsTr("%n byte(s) less than the header declares", "", missingBytes);
     }
     // Sessions/ is Engine OS's, the REC folders a Pioneer or AlphaTheta
     // deck's: the play key takes that deck's form.
@@ -143,54 +119,25 @@ Page {
 
     Component.onCompleted: root.controller.load(root.stickLabel, root.rekordboxPath, root.enginePath)
 
-    // Opens the form for a row of the list.
-    function openKeepForm(row) {
-        keepDialog.openFor(row.path, row.fileName, row.modified, row.unfinished, row.heldSeconds,
-                           row.declaredSeconds, row.declaredUnusable, row.missingBytes);
+    // The recording Browse asked to show, scrolled to once listed.
+    function showMarked() {
+        if (root.markedPath.length === 0 || !root.controller.listed) {
+            return;
+        }
+        const index = root.controller.rowOf(root.markedPath);
+        if (index >= 0) {
+            list.positionViewAtIndex(index, ListView.Center);
+        }
+    }
+    Connections {
+        target: root.controller
+        function onListingChanged() { Qt.callLater(root.showMarked); }
     }
 
-    // What the strip says, for the job in hand or the ones that ended.
-    readonly property var keepSteps: [
-        {key: "encoding", label: qsTr("Encoding")},
-        {key: "checking", label: qsTr("Checking")},
-        {key: "tags", label: qsTr("Tags and cover")},
-        {key: "placing", label: qsTr("Saving")},
-    ]
-    readonly property var keepFinishedJobs: root.keepController !== null
-        ? ((root.keepRevision, root.keepController.finishedJobsFor(root.stickRoot)) ?? []) : []
-    readonly property var keepFinished: root.keepFinishedJobs.length > 0
-        ? root.keepFinishedJobs[root.keepFinishedJobs.length - 1] : ({})
-    readonly property int keepNotKeptCount: root.keepFinishedJobs.filter(job => job.state !== "kept").length
-    readonly property bool keepShowsFinished: !root.keepWorking && root.keepFinishedJobs.length > 0
-    // A line of the strip's panel for a job that ended, other than one
-    // dropped (those are named together).
-    function keepEndedLine(job) {
-        if (job.state === "kept") {
-            return qsTr("Kept: %1 as %2 in %3").arg(job.recording).arg(job.fileName).arg(job.folder);
-        }
-        if (job.state === "cancelled") {
-            return (job.message ?? "").length > 0 ? qsTr("Stopped: %1: %2").arg(job.recording).arg(job.message)
-                : qsTr("Stopped: %1, nothing of it was kept").arg(job.recording);
-        }
-        return qsTr("Not kept: %1: %2").arg(job.recording).arg(job.message ?? "");
-    }
-    function keepEndedLines() {
-        const lines = root.keepFinishedJobs.filter(job => job.state !== "dropped").map(job => root.keepEndedLine(job));
-        const dropped = root.keepFinishedJobs.filter(job => job.state === "dropped").map(job => job.recording);
-        if (dropped.length > 0) {
-            lines.push(qsTr("Not kept, stopped before it started: %n recording(s): %1", "", dropped.length)
-                .arg(dropped.join(", ")));
-        }
-        return lines;
-    }
-    function keepStepIndex(step) {
-        // The free space check is over before the encoder starts: it is
-        // part of the first step.
-        if (step === "space") return 0;
-        return root.keepSteps.findIndex(s => s.key === step);
-    }
-    function percent(fraction) {
-        return Math.floor(Math.max(0, Math.min(1, fraction)) * 100);
+    // Opens the form for a row of the list.
+    function openKeepForm(row) {
+        keepForm.openFor(row.path, row.fileName, row.modified, row.unfinished, row.heldSeconds,
+                           row.declaredSeconds, row.declaredUnusable, row.missingBytes);
     }
 
     header: ToolBar {
@@ -228,7 +175,7 @@ Page {
             + root.stickLabel + " and frees " + Theme.humanBytes(root.controller.selectedBytes) + "."
         detailText: "They will be gone for good."
         acceptText: "Delete"
-        // What Keep made of the ticked recordings in this session, read
+        // What Save as FLAC made of the ticked recordings in this session, read
         // as the dialog opens: {notKept: [names], kept: [{recording,
         // fileName, folder}]}.
         property var keepNotes: ({notKept: [], kept: [], keptGone: []})
@@ -251,7 +198,7 @@ Page {
             color: Theme.danger
             font.bold: true
             text: confirmDeleteDialog.keepNotes.notKept.length === 0 ? ""
-                : qsTr("Not kept on this computer, though you asked for it: %1.")
+                : qsTr("Not saved as FLAC, though you asked for it: %1.")
                     .arg(confirmDeleteDialog.keepNotes.notKept.join(", "))
         }
         Label {
@@ -262,7 +209,7 @@ Page {
             color: Theme.danger
             font.bold: true
             text: (confirmDeleteDialog.keepNotes.keptGone ?? []).length === 0 ? ""
-                : qsTr("Kept earlier, but that file is no longer there as it was kept: %1.")
+                : qsTr("Saved as FLAC earlier, but that file is no longer there as it was saved: %1.")
                     .arg(confirmDeleteDialog.keepNotes.keptGone
                         .map(k => qsTr("%1 as %2 in %3").arg(k.recording).arg(k.fileName).arg(k.folder)).join("; "))
         }
@@ -273,325 +220,15 @@ Page {
             wrapMode: Text.WordWrap
             color: Theme.textMuted
             text: confirmDeleteDialog.keepNotes.kept.length === 0 ? ""
-                : qsTr("Kept on this computer: %1.").arg(confirmDeleteDialog.keepNotes.kept
+                : qsTr("Saved as FLAC on this computer: %1.").arg(confirmDeleteDialog.keepNotes.kept
                     .map(k => qsTr("%1 as %2 in %3").arg(k.recording).arg(k.fileName).arg(k.folder)).join("; "))
         }
     }
 
-    // ---- Keep this recording: the form ----
-    SeabassDialog {
-        id: keepDialog
-        objectName: "keepDialog"
-        severity: SeabassDialog.Question
-        showBadge: false
-        width: Math.min(root.width - 2 * Theme.pageMargin, Theme.scaled(640))
-        title: qsTr("Keep This Recording")
-        headline: qsTr("%1 becomes a FLAC file with tags and a cover on this computer.").arg(keepDialog.recording)
-        detailText: qsTr("The recording on the stick stays as it is.")
-
-        property string wavPath: ""
-        property string recording: ""
-        // The recording's header was not completed: the audio the file
-        // holds is kept only when the person ticks the box for it. The
-        // header's own length is -1 when it declares none.
-        property bool unfinished: false
-        property double heldSeconds: -1
-        property double declaredSeconds: -1
-        // The header declares a length no recording has; how many bytes
-        // less the file holds than the header declares (-1 when not cut
-        // short).
-        property bool declaredUnusable: false
-        property double missingBytes: -1
-        // Shown once the person has tried to start, or has typed.
-        property bool tried: false
-        readonly property var keep: root.keepController
-        readonly property string fileName: keep ? keep.fileNameFor(artistField.text, titleField.text, folderField.text) : ""
-        readonly property string titleProblem: titleField.text.trim().length === 0 ? qsTr("The track name is needed.") : ""
-        readonly property var textProblems: keep
-            ? [keep.textProblem("artist", artistField.text), keep.textProblem("title", titleField.text),
-               keep.textProblem("album", albumField.text), keep.textProblem("genre", genreField.text)] : []
-        readonly property string yearProblem: keep ? keep.yearProblem(yearField.text) : ""
-        readonly property string folderProblem: keep ? keep.folderProblem(folderField.text) : ""
-        readonly property string targetProblem: keep && titleProblem.length === 0 && folderProblem.length === 0
-            ? (root.keepRevision, keep.targetProblem(folderField.text, artistField.text, titleField.text)) : ""
-        readonly property string coverProblem: keep && keep.coverError.length > 0 ? keep.coverError : ""
-        readonly property var problems: [titleProblem].concat(textProblems)
-            .concat([yearProblem, folderProblem, targetProblem, coverProblem])
-            .filter(p => p.length > 0)
-        readonly property bool ready: problems.length === 0 && keep !== null && keep.coverPreparing !== true
-            && (!keepDialog.unfinished || keepUnfinishedBox.checked)
-
-        function openFor(path, name, recorded, unfinished, heldSeconds, declaredSeconds, declaredUnusable,
-                         missingBytes) {
-            const suggested = root.keepController.suggestionsFor(name, recorded);
-            keepDialog.wavPath = path;
-            keepDialog.recording = name;
-            keepDialog.unfinished = unfinished === true;
-            keepDialog.heldSeconds = heldSeconds ?? -1;
-            keepDialog.declaredSeconds = declaredSeconds ?? -1;
-            keepDialog.declaredUnusable = declaredUnusable === true;
-            keepDialog.missingBytes = missingBytes ?? -1;
-            keepUnfinishedBox.checked = false;
-            keepDialog.tried = false;
-            artistField.text = suggested.artist;
-            titleField.text = suggested.title;
-            albumField.text = suggested.album;
-            genreField.text = suggested.genre;
-            yearField.text = suggested.year > 0 ? String(suggested.year) : "";
-            folderField.text = suggested.folder;
-            root.keepController.pickCover("");
-            keepDialog.open();
-        }
-        function start() {
-            keepDialog.tried = true;
-            if (!keepDialog.ready) {
-                return;
-            }
-            const taken = root.keepController.keep({
-                wavPath: keepDialog.wavPath,
-                recording: keepDialog.recording,
-                artist: artistField.text,
-                title: titleField.text,
-                album: albumField.text,
-                genre: genreField.text,
-                year: yearField.text,
-                folder: folderField.text,
-                keepUnfinished: keepDialog.unfinished && keepUnfinishedBox.checked,
-            });
-            if (taken) {
-                keepDialog.close();
-            }
-        }
-
-        // Later than SeabassDialog's own onOpened, which hands focus to a
-        // footer button: the form is what is being asked for.
-        onOpened: Qt.callLater(() => {
-            keepDialog.markFooterDefault(keepStartButton);
-            artistField.forceActiveFocus();
-        })
-
-        footer: DialogButtonBox {
-            Button {
-                id: keepStartButton
-                objectName: "keepStartButton"
-                text: qsTr("Keep Recording")
-                enabled: keepDialog.ready
-                // Not AcceptRole, which would close the form whatever
-                // keep() answers: start() closes it once the job is taken.
-                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
-                onClicked: keepDialog.start()
-            }
-            Button {
-                objectName: "keepCancelButton"
-                text: qsTr("Cancel")
-                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
-            }
-        }
-        ExperimentalBadge {}
-
-        // A recording whose header was not completed: said first, both
-        // lengths where there are two, and kept only with the box ticked.
-        // The cause is given as what usually leads there, not as fact.
-        ColumnLayout {
-            objectName: "keepUnfinishedNotice"
-            Layout.fillWidth: true
-            visible: keepDialog.unfinished
-            spacing: Theme.tightSpacing
-            Label {
-                objectName: "keepUnfinishedLabel"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.danger
-                readonly property string missing: root.missingNote(keepDialog.declaredSeconds, keepDialog.heldSeconds,
-                                                                   keepDialog.missingBytes)
-                text: keepDialog.declaredUnusable
-                    ? qsTr("The header of this recording was not completed: the header's length is not usable, and "
-                        + "the file holds %1 of audio. This happens when a player is switched off or a stick is "
-                        + "pulled while recording. The recording on the stick is not changed.")
-                        .arg(root.duration(keepDialog.heldSeconds))
-                    : keepDialog.declaredSeconds >= 0 && missing.length > 0
-                    ? qsTr("The header of this recording was not completed: the header declares %1 of audio, the "
-                        + "file holds %2 (%3). This happens when a player is switched off or a stick is pulled "
-                        + "while recording. The recording on the stick is not changed.")
-                        .arg(root.duration(keepDialog.declaredSeconds)).arg(root.duration(keepDialog.heldSeconds))
-                        .arg(missing)
-                    : keepDialog.declaredSeconds >= 0
-                    ? qsTr("The header of this recording was not completed: the header declares %1 of audio, the "
-                        + "file holds %2. This happens when a player is switched off or a stick is pulled while "
-                        + "recording. The recording on the stick is not changed.")
-                        .arg(root.duration(keepDialog.declaredSeconds)).arg(root.duration(keepDialog.heldSeconds))
-                    : qsTr("The header of this recording was not completed: it does not say how long the audio "
-                        + "is. The file holds %1 of audio. This happens when a player is switched off or a stick "
-                        + "is pulled while recording. The recording on the stick is not changed.")
-                        .arg(root.duration(keepDialog.heldSeconds))
-            }
-            SeabassCheckBox {
-                id: keepUnfinishedBox
-                objectName: "keepUnfinishedBox"
-                text: qsTr("Keep the audio the file holds")
-            }
-        }
-
-        GridLayout {
-            Layout.fillWidth: true
-            columns: 2
-            columnSpacing: Theme.rowSpacing
-            rowSpacing: Theme.tightSpacing
-
-            Label { text: qsTr("Artist") }
-            TextField {
-                id: artistField
-                objectName: "keepArtistField"
-                Layout.fillWidth: true
-                onAccepted: keepDialog.start()
-            }
-            Label { text: qsTr("Track name") }
-            TextField {
-                id: titleField
-                objectName: "keepTitleField"
-                Layout.fillWidth: true
-                onAccepted: keepDialog.start()
-            }
-            Label { text: qsTr("Album") }
-            TextField {
-                id: albumField
-                objectName: "keepAlbumField"
-                Layout.fillWidth: true
-                onAccepted: keepDialog.start()
-            }
-            Label { text: qsTr("Genre") }
-            TextField {
-                id: genreField
-                objectName: "keepGenreField"
-                Layout.fillWidth: true
-                onAccepted: keepDialog.start()
-            }
-            Label { text: qsTr("Year") }
-            TextField {
-                id: yearField
-                objectName: "keepYearField"
-                Layout.preferredWidth: Theme.scaled(90)
-                maximumLength: 4
-                inputMethodHints: Qt.ImhDigitsOnly
-                onAccepted: keepDialog.start()
-            }
-            Label {
-                Layout.alignment: Qt.AlignTop
-                text: qsTr("Cover")
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.rowSpacing
-                Rectangle {
-                    objectName: "keepCoverFrame"
-                    Layout.preferredWidth: Theme.scaled(72)
-                    Layout.preferredHeight: Theme.scaled(72)
-                    color: Theme.surface
-                    border.color: Theme.borderSubtle
-                    border.width: 1
-                    radius: Theme.cornerRadius
-                    Image {
-                        objectName: "keepCoverPreview"
-                        anchors.fill: parent
-                        anchors.margins: 1
-                        fillMode: Image.PreserveAspectFit
-                        asynchronous: true
-                        source: keepDialog.keep ? keepDialog.keep.coverPreview : ""
-                        visible: source.toString().length > 0
-                    }
-                    SeabassIcon {
-                        anchors.centerIn: parent
-                        visible: !keepDialog.keep || keepDialog.keep.coverPreview.length === 0
-                        iconName: "media-record"
-                        size: Theme.iconSizeSmall
-                        color: Theme.textMuted
-                    }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.tightSpacing
-                    Label {
-                        objectName: "keepCoverLabel"
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: keepDialog.coverProblem.length > 0 ? Theme.danger : Theme.textMuted
-                        font.pointSize: Theme.fontSmall
-                        text: {
-                            const keep = keepDialog.keep;
-                            if (!keep || keep.coverPath.length === 0) return qsTr("No cover");
-                            if (keep.coverPreparing) return qsTr("Preparing the cover...");
-                            if (keep.coverError.length > 0) return keep.coverError;
-                            return qsTr("Embedded as %1 × %2 pixels").arg(keep.coverWidth).arg(keep.coverHeight);
-                        }
-                    }
-                    RowLayout {
-                        spacing: Theme.rowSpacing
-                        Button {
-                            objectName: "keepCoverButton"
-                            text: qsTr("Choose Picture…")
-                            icon.source: Theme.iconUrl("folder-open")
-                            onClicked: coverFileDialog.open()
-                        }
-                        Button {
-                            objectName: "keepNoCoverButton"
-                            text: qsTr("No Cover")
-                            enabled: keepDialog.keep !== null && keepDialog.keep.coverPath.length > 0
-                            onClicked: keepDialog.keep.pickCover("")
-                        }
-                    }
-                }
-            }
-            Label { text: qsTr("Folder") }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.rowSpacing
-                TextField {
-                    id: folderField
-                    objectName: "keepFolderField"
-                    Layout.fillWidth: true
-                    onAccepted: keepDialog.start()
-                }
-                Button {
-                    objectName: "keepFolderButton"
-                    text: qsTr("Choose…")
-                    onClicked: keepFolderDialog.open()
-                }
-            }
-        }
-        Label {
-            objectName: "keepFileNameLabel"
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            color: Theme.textMuted
-            text: qsTr("Saved as %1").arg(keepDialog.fileName)
-        }
-        Label {
-            objectName: "keepProblemsLabel"
-            Layout.fillWidth: true
-            visible: text.length > 0
-            wrapMode: Text.WordWrap
-            color: Theme.danger
-            text: {
-                const lines = keepDialog.problems.slice();
-                const refused = keepDialog.keep ? keepDialog.keep.errorMessage : "";
-                if (keepDialog.tried && refused.length > 0 && lines.indexOf(refused) < 0) {
-                    lines.push(refused);
-                }
-                return lines.join("\n");
-            }
-        }
-    }
-    FileDialog {
-        id: coverFileDialog
-        title: qsTr("Choose a picture for the cover")
-        nameFilters: [qsTr("Pictures (*.jpg *.jpeg *.png *.webp *.bmp *.gif *.tif *.tiff)")]
-        onAccepted: root.keepController.pickCover(selectedFile.toString())
-    }
-    FolderDialog {
-        id: keepFolderDialog
-        title: qsTr("Choose the folder for the FLAC file")
-        currentFolder: root.keepController ? root.keepController.folderUrl(folderField.text) : ""
-        onAccepted: folderField.text = root.keepController.localPath(selectedFolder.toString())
+    // ---- Save as FLAC: the form, Browse's too ----
+    KeepRecordingForm {
+        id: keepForm
+        keepController: root.keepController
     }
 
     LockedLibraryDialog {
@@ -740,21 +377,16 @@ Page {
                 required property double missingBytes
                 required property bool holdsNoAudio
 
-                readonly property var kept: root.keepController !== null
-                    ? (root.keepRevision, root.keepController.outcomeFor(root.stickRoot, row.path)) : ({})
-                readonly property string keptState: row.kept.state ?? ""
-                readonly property string keptLine: {
-                    switch (row.keptState) {
-                    case "queued": return qsTr("Waits to be kept as %1").arg(row.kept.fileName);
-                    case "running": return qsTr("Being kept as %1").arg(row.kept.fileName);
-                    case "kept": return qsTr("Kept as %1 in %2").arg(row.kept.fileName).arg(row.kept.folder);
-                    case "failed": return qsTr("Not kept: %1").arg(row.kept.message);
-                    case "cancelled": return (row.kept.message ?? "").length > 0
-                        ? qsTr("Not kept, stopped: %1").arg(row.kept.message)
-                        : qsTr("Not kept: stopped while it was being kept");
-                    case "dropped": return qsTr("Not kept: stopped before it started");
-                    default: return "";
-                    }
+                // Browse's "Show on the Recordings page" came for this one.
+                readonly property bool marked: root.markedPath.length > 0 && row.path === root.markedPath
+                Rectangle {
+                    objectName: "markedFrame"
+                    anchors.fill: parent
+                    visible: row.marked
+                    color: "transparent"
+                    radius: Theme.cornerRadius
+                    border.width: 2
+                    border.color: Theme.accent
                 }
 
                 readonly property string details: {
@@ -762,29 +394,29 @@ Page {
                     if (row.modified && !isNaN(row.modified.getTime())) {
                         parts.push(row.modified.toLocaleString(Qt.locale(), Locale.ShortFormat));
                     }
-                    // What the header says is Keep's (experimental): the
-                    // released page says nothing of it.
+                    // What the header says is Save as FLAC's
+                    // (experimental): the released page says nothing of it.
                     if (root.keepEnabled && row.holdsNoAudio) {
                         parts.push(qsTr("holds no audio"));
                         return parts.join(" · ");
                     }
                     if (root.keepEnabled && row.unfinished) {
-                        const missing = root.missingNote(row.declaredSeconds, row.heldSeconds, row.missingBytes);
+                        const missing = RecordingSave.missingNote(row.declaredSeconds, row.heldSeconds, row.missingBytes);
                         parts.push(row.declaredUnusable
                             ? qsTr("header not completed: its length is not usable, the file holds %1")
-                                .arg(root.duration(row.heldSeconds))
+                                .arg(RecordingSave.duration(row.heldSeconds))
                             : row.declaredSeconds >= 0 && missing.length > 0
                             ? qsTr("header not completed: it declares %1, the file holds %2 (%3)")
-                                .arg(root.duration(row.declaredSeconds)).arg(root.duration(row.heldSeconds))
+                                .arg(RecordingSave.duration(row.declaredSeconds)).arg(RecordingSave.duration(row.heldSeconds))
                                 .arg(missing)
                             : row.declaredSeconds >= 0
                             ? qsTr("header not completed: it declares %1, the file holds %2")
-                                .arg(root.duration(row.declaredSeconds)).arg(root.duration(row.heldSeconds))
+                                .arg(RecordingSave.duration(row.declaredSeconds)).arg(RecordingSave.duration(row.heldSeconds))
                             : qsTr("header not completed, the file holds %1 of audio")
-                                .arg(root.duration(row.heldSeconds)));
+                                .arg(RecordingSave.duration(row.heldSeconds)));
                         return parts.join(" · ");
                     }
-                    const length = root.duration(row.durationSeconds, !root.keepEnabled);
+                    const length = RecordingSave.duration(row.durationSeconds, !root.keepEnabled);
                     if (length.length > 0) {
                         parts.push(length);
                     }
@@ -817,25 +449,21 @@ Page {
                             color: Theme.textMuted
                             font.pointSize: Theme.fontSmall
                         }
-                        Label {
-                            objectName: "keptLabel"
+                        RecordingSaveState {
+                            id: saveState
                             Layout.fillWidth: true
-                            visible: text.length > 0
-                            text: row.keptLine
-                            elide: Text.ElideMiddle
-                            color: row.keptState === "failed" || row.keptState === "cancelled"
-                                || row.keptState === "dropped" ? Theme.danger
-                                : row.keptState === "kept" ? Theme.good : Theme.textMuted
-                            font.pointSize: Theme.fontSmall
+                            keepController: root.keepController
+                            stickRoot: root.stickRoot
+                            path: row.path
                         }
                     }
                     Button {
                         objectName: "showKeptButton"
-                        visible: row.keptState === "kept"
+                        visible: saveState.keptState === "kept"
                         text: qsTr("Show in Folder")
                         icon.source: Theme.iconUrl("folder-open")
                         icon.color: Theme.text
-                        onClicked: root.keepController.showInFolder(row.kept.flacPath)
+                        onClicked: root.keepController.showInFolder(saveState.kept.flacPath)
                     }
                     Label {
                         objectName: "sizeLabel"
@@ -857,13 +485,13 @@ Page {
                     }
                     Button {
                         objectName: "keepButton"
-                        visible: root.keepOffered && root.keepController.canKeep(row.path) && !row.holdsNoAudio
-                        text: qsTr("Keep…")
+                        visible: root.keepEnabled && keepForm.offers(row.path, row.holdsNoAudio)
+                        text: qsTr("Save as FLAC...")
                         icon.source: Theme.iconUrl("document-save")
                         icon.color: enabled ? Theme.text : Theme.textMuted
-                        enabled: !root.controller.working && row.keptState !== "queued" && row.keptState !== "running"
+                        enabled: !root.controller.working && !saveState.inProgress
                         ToolTip.visible: hovered
-                        ToolTip.text: qsTr("Keep this recording on this computer, as a FLAC file with tags and a cover")
+                        ToolTip.text: qsTr("Save this recording on this computer as a FLAC file with tags and a cover")
                         onClicked: root.openKeepForm(row)
                     }
                 }
@@ -886,7 +514,7 @@ Page {
             text: root.leftAloneLine
         }
 
-        // Another stick's recording is being kept: this stick's jobs wait
+        // Another stick's recording is being saved: this stick's jobs wait
         // for it, one job at a time.
         Label {
             objectName: "otherStickKeepLabel"
@@ -894,109 +522,18 @@ Page {
             visible: root.keepRunsElsewhere && (root.keepOffered || root.keepWorking)
             wrapMode: Text.WordWrap
             color: Theme.textMuted
-            text: qsTr("A recording from another stick is being kept. What you keep from this stick waits until "
-                + "that has ended.")
+            text: qsTr("A recording from another stick is being saved as FLAC. What you save from this stick "
+                + "waits until that has ended.")
         }
 
-        // Keep this recording, beside the page: this stick's job in hand,
-        // its ones that wait, and the end of the last one.
-        PassiveProgress {
+        // Save as FLAC, beside the page: this stick's job in hand, its
+        // ones that wait, and the end of the last one.
+        KeepRecordingProgress {
             id: keepProgress
             objectName: "keepProgress"
             Layout.fillWidth: true
-            readonly property var keep: root.keepController
-            readonly property bool finishedShown: root.keepShowsFinished
-            readonly property var last: root.keepFinished
-            readonly property string state: last.state ?? ""
-            readonly property bool runsHere: root.keepRunsHere
-            readonly property int stepIndex: runsHere ? root.keepStepIndex(keep.progressStep) : -1
-            readonly property int waiting: root.keepQueued.length
-            // Not tied to Experimental: work under way is shown, and can be
-            // cancelled, until it has ended, and what ended until closed.
-            running: keep !== null && (root.keepWorking || finishedShown)
-            done: finishedShown ? (root.keepNotKeptCount === 0 ? 1000 : 0)
-                : runsHere ? Math.round((keep?.progress ?? 0) * 1000) : 0
-            total: 1000
-            // Stops this stick's job in hand and drops its ones that wait.
-            cancellable: root.keepWorking && !(runsHere && keep.cancelRequested === true)
-            summary: {
-                if (!keep) return "";
-                if (finishedShown) {
-                    const jobs = root.keepFinishedJobs;
-                    if (jobs.length > 1) {
-                        return root.keepNotKeptCount === 0 ? qsTr("Kept %n recording(s)", "", jobs.length)
-                            : qsTr("%1 of %n recording(s) not kept", "", jobs.length).arg(root.keepNotKeptCount);
-                    }
-                    const left = (last.leftBehind ?? "").length > 0;
-                    if (state === "kept") {
-                        return left ? qsTr("Kept %1 as %2, and a second file was left in %3").arg(last.recording)
-                                          .arg(last.fileName).arg(last.folder)
-                            : qsTr("Kept %1 as %2").arg(last.recording).arg(last.fileName);
-                    }
-                    if (state === "cancelled") {
-                        return left ? qsTr("Stopped: %1 was not kept, and a file was left in %2").arg(last.recording)
-                                          .arg(last.folder)
-                            : qsTr("Stopped: nothing of %1 was kept").arg(last.recording);
-                    }
-                    if (state === "dropped") {
-                        return qsTr("%1 was not kept: stopped before it started").arg(last.recording);
-                    }
-                    return left ? qsTr("%1 was not kept, and a file was left in %2").arg(last.recording).arg(last.folder)
-                        : qsTr("%1 was not kept").arg(last.recording);
-                }
-                if (!runsHere) {
-                    return qsTr("%n recording(s) waiting to be kept", "", waiting);
-                }
-                if (keep.cancelRequested) {
-                    return qsTr("Stopping: keeping %1").arg(keep.currentRecording);
-                }
-                const step = root.keepSteps[Math.max(0, stepIndex)].label;
-                let line = qsTr("Keeping %1: %2, %3%").arg(keep.currentRecording).arg(step.toLowerCase())
-                    .arg(root.percent(keep.progress));
-                const extras = [];
-                if (waiting > 0) {
-                    extras.push(qsTr("%n more waiting", "", waiting));
-                }
-                if (root.keepNotKeptCount > 0) {
-                    extras.push(qsTr("%n not kept", "", root.keepNotKeptCount));
-                }
-                if (extras.length > 0) {
-                    line += " (" + extras.join(", ") + ")";
-                }
-                return line;
-            }
-            steps: finishedShown ? [] : root.keepSteps.map((s, index) => ({
-                label: s.label,
-                count: index === keepProgress.stepIndex ? qsTr("%1%").arg(root.percent(keep.progress)) : "",
-                state: index < keepProgress.stepIndex ? "done" : index === keepProgress.stepIndex ? "now" : "later",
-            }))
-            activity: {
-                if (!keep) return [];
-                if (finishedShown) {
-                    return root.keepEndedLines();
-                }
-                const lines = runsHere ? [qsTr("Writing %1 in %2").arg(keep.currentFileName).arg(keep.currentFolder)] : [];
-                for (const job of root.keepQueued) {
-                    lines.push(qsTr("Waiting: %1, as %2").arg(job.recording).arg(job.fileName));
-                }
-                return lines.concat(root.keepEndedLines());
-            }
-            // A kept job's notes (an unfinished recording and how much was
-            // kept, leftovers swept); a failure's message before them.
-            note: finishedShown ? [state === "kept" ? "" : (last.message ?? "")].concat(last.notes ?? [])
-                    .filter(line => line.length > 0).join("\n")
-                : qsTr("The recording on the stick is only read. The work goes on when you leave this page.")
-            actions: !finishedShown ? []
-                : state === "kept" ? [{key: "show", text: qsTr("Show in Folder")}, {key: "close", text: qsTr("Close")}]
-                : [{key: "close", text: qsTr("Close")}]
-            onCancelRequested: keep.cancelFor(root.stickRoot)
-            onActionTriggered: (key) => {
-                if (key === "show") {
-                    keep.showInFolder(last.flacPath);
-                } else {
-                    keep.dismissFinishedFor(root.stickRoot);
-                }
-            }
+            keepController: root.keepController
+            stickRoot: root.stickRoot
         }
     }
 

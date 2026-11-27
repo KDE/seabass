@@ -234,12 +234,18 @@ from day one.
   besides: a WAV's file type measured from a rekordbox export (11 is the
   published number), and cues moved by Analyse again checked on a player.
 
-- **Keep this recording** (added 2026-11-26, #147, Own Recordings step
-  3) — on Clean Up Recordings, a WAV the DJ hardware recorded onto the
-  stick becomes a FLAC with artist, track name, album, genre, year and a
-  front cover in a folder on this computer ("Keep…" on the row, a form,
-  then the passive progress strip: encoding, checking, tags and cover,
-  saving, with Cancel and a queue). `KeepRecordingController` runs
+- **Save as FLAC** (added 2026-11-26 as "Keep this recording", #147, Own
+  Recordings step 3) — on Clean Up Recordings, a WAV the DJ hardware
+  recorded onto the stick becomes a FLAC with artist, track name, album,
+  genre, year and a front cover in a folder on this computer ("Save as
+  FLAC..." on the row, a form, then the passive progress strip: encoding,
+  checking, tags and cover, saving, with Cancel and a queue). Browse's
+  Own Recordings row (2026-11-27) offers it on a recording's menu too,
+  with the same form (`KeepRecordingForm.qml`), the same strip
+  (`KeepRecordingProgress.qml`, in the sidebar) and the same controller,
+  and the row says how its save fares as the Recordings page's does; the
+  menu's other entry, "Show on the Recordings page", opens Clean Up
+  Recordings at that recording, where deleting stays. `KeepRecordingController` runs
   `application::keepRecording` on a worker with the Qt Multimedia encoder
   (the FLAC decoded again and compared with the WAV sample for sample),
   the QImage cover preparer and the TagLib tag writer. The FLAC is encoded
@@ -251,7 +257,7 @@ from day one.
   on the stick is only read and never deleted here. A recording whose WAV header was not completed (a data size of 0
   or 0xFFFFFFFF in a plain RIFF, or more than the file holds) is marked
   on its row with the length the file holds, and the length the header
-  declares where it declares one, and kept only when "Keep the audio the
+  declares where it declares one, and saved only when "Keep the audio the
   file holds" is ticked: every whole frame the file holds, the WAV never
   repaired. A plain RIFF over 4 GB without a size is such a recording; a
   declared length over 100 hours (or an RF64 one over a thousand times
@@ -264,7 +270,7 @@ from day one.
   header states, and lengths are cut to whole seconds as the texts of a
   kept job count them. With Experimental off the page is the released one:
   no header is read, the rows say nothing of one, the length is rounded to
-  the nearest second, and nothing is offered to keep. The keep controller
+  the nearest second, and nothing is offered to save. The keep controller
   lives with the window, not the page: the work goes on when the page is
   left and its strip is there again when the page is opened again; taking
   out the stick a recording being kept (or waiting) is on cancels the work.

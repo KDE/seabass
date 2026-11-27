@@ -688,6 +688,14 @@ ApplicationWindow {
             id: scanPage
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
+            // Save as FLAC on Own Recordings: the Recordings page's.
+            keepController: recordingsKeepCtrl
+            onRecordingsPageRequested: path => stackView.push(recordingsPageComponent, {
+                stickLabel: scanPage.stickLabel,
+                rekordboxPath: scanPage.rekordboxPath,
+                enginePath: scanPage.enginePath,
+                markedPath: path,
+            })
             // The dialog about a track Engine does not have yet: Sync after
             // Rekordbox Export for this stick, as Home opens it.
             onOpenRekordboxExportSyncRequested: stackView.push(rekordboxExportSyncPageComponent, {

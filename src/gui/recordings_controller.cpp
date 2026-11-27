@@ -470,6 +470,16 @@ QStringList RecordingsController::selectedPaths() const
     return out;
 }
 
+int RecordingsController::rowOf(const QString &path) const
+{
+    for (int row = 0; row < m_model.rowCount(); ++row) {
+        if (m_model.data(m_model.index(row), RecordingListModel::PathRole).toString() == path) {
+            return row;
+        }
+    }
+    return -1;
+}
+
 void RecordingsController::deleteSelected()
 {
     if (busy() || !m_listed) {

@@ -236,6 +236,9 @@ public:
 
     // The ticked recordings' paths, as deleteSelected() would take them.
     Q_INVOKABLE QStringList selectedPaths() const;
+    // The row of the recording at `path` (as PathRole gives it), -1 when
+    // none is listed there.
+    Q_INVOKABLE int rowOf(const QString &path) const;
 
     // Deletes the ticked recordings on a worker. Refused, with
     // errorMessage, while the keep controller has work for this stick.

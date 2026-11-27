@@ -561,6 +561,7 @@ void ScanController::scan(const QString &format, const QString &path, const QStr
     if (const QString root = stickRootOf(path); !RecordingsChanges::sameStick(root, m_recordingsRoot)) {
         m_recordingsRoot = root;
         setRecordingsListed(false);
+        emit recordingsListingChanged();
         if (!m_recordings.empty()) {
             m_recordings.clear();
             m_recordingStates.clear();
@@ -897,6 +898,29 @@ void ScanController::refreshRecordings()
         return listRecordingsOnStick(root, experimental);
     }));
     setRecordingsListing(true);
+}
+
+QVariantMap ScanController::recordingAt(const QString &filePath) const
+{
+    for (std::size_t i = 0; i < m_recordings.size(); ++i) {
+        const application::Recording &recording = m_recordings[i];
+        if (qtPathFromUtf8(recording.path) != filePath) {
+            continue;
+        }
+        const RecordingListModel::HeaderState &state = m_recordingStates[i];
+        return {
+            {"path", filePath},
+            {"fileName", QString::fromUtf8(recording.fileName)},
+            {"modified", recording.modifiedUnix > 0 ? QDateTime::fromSecsSinceEpoch(recording.modifiedUnix) : QDateTime()},
+            {"unfinished", state.unfinished},
+            {"heldSeconds", state.heldSeconds},
+            {"declaredSeconds", state.declaredSeconds},
+            {"declaredUnusable", state.declaredUnusable},
+            {"missingBytes", state.missingBytes},
+            {"holdsNoAudio", state.holdsNoAudio},
+        };
+    }
+    return {};
 }
 
 void ScanController::setRecordingsListing(bool listing)

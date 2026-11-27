@@ -155,6 +155,10 @@ set(SEABASS_GUI_QML_FILES
     qml/CoverArtPage.qml
     qml/PendingDeletionsPage.qml
     qml/RecordingsPage.qml
+    qml/KeepRecordingForm.qml
+    qml/KeepRecordingProgress.qml
+    qml/RecordingSaveState.qml
+    qml/RecordingSave.js
     qml/JunkCuePage.qml
     qml/AlignCuePointsPage.qml
     qml/LibraryConsistencyPage.qml

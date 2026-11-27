@@ -54,14 +54,15 @@ TestCase {
         return root;
     }
 
-    function makePage(root, experimental, extraPlaylist) {
+    function makePage(root, experimental, extraPlaylist, keep) {
         realAppSettings.experimentalFeaturesEnabled = experimental;
         browseFixture.holdCues(3, false, true, "", extraPlaylist || "");
         browseFixture.releaseCues();
         const page = createTemporaryObject(pageComponent, testCase, {
             width: 1100, height: 660, stickLabel: "TESTSTICK",
             rekordboxPath: root + "/PIONEER", enginePath: root + "/Engine Library",
-            playbackController: realPlayback, appSettingsController: realAppSettings});
+            playbackController: realPlayback, appSettingsController: realAppSettings,
+            keepController: keep === undefined ? null : keep});
         verify(page !== null);
         const scan = findChild(page, "scanController");
         tryVerify(() => scan.playlistNames.indexOf("Held Playlist") >= 0 && !scan.busy && !scan.cuesPending, 10000);
@@ -154,6 +155,7 @@ TestCase {
         compare(scan.recordingsEnabled, false);
         compare(scan.recordingCount, 0, "nothing listed");
         compare(sidebarNames(page), "All tracks(all)|Held Playlist");
+        compare(findChild(page, "keepProgress").visible, false, "no Save as FLAC strip");
 
         realAppSettings.experimentalFeaturesEnabled = true;
         tryCompare(scan, "recordingCount", 3);
@@ -317,6 +319,7 @@ TestCase {
 
         browseFixture.releaseRecordingDeletes();
         tryCompare(scan, "recordingCount", 2, 10000);
+        tryCompare(scan, "recordingCount", 2, 10000);
         compare(scan.tracks.trackCount(), 3, "the library's rows are as they were");
     }
 
@@ -471,8 +474,11 @@ TestCase {
         page.openTrackMenu(row, row);
         const menu = findChild(page, "trackMenu");
         wait(50);
-        compare(menu.opened, false, "no row menu");
-        compare(findChild(row, "trackRowMenuButton").enabled, false);
+        compare(menu.opened, false, "no track menu");
+        const own = findChild(page, "recordingMenu");
+        tryCompare(own, "opened", true);
+        own.close();
+        tryCompare(own, "visible", false);
         compare(page.trackDragCard.canDrag(row), false, "not dragged into a playlist");
         compare(findChild(page, "trackFileDropArea").enabled, false, "no files dropped on the recordings");
         compare(row.ToolTip.text, page.recordingRowText);
@@ -675,5 +681,271 @@ TestCase {
                 compare(icon.item, null, row.name + " makes none");
             }
         }
+    }
+
+    // ---- Save as FLAC and the Recordings page, from Browse ----
+
+    Component {
+        id: realKeepComponent
+        KeepRecordingController {}
+    }
+
+    function menuTexts(menu) {
+        const texts = [];
+        for (let i = 0; i < menu.count; ++i) {
+            texts.push(menu.itemAt(i).text);
+        }
+        return texts;
+    }
+
+    function openRecordingMenu(page, title) {
+        waitForRendering(page);
+        const row = trackRows(page).find(r => r.title === title);
+        verify(row !== undefined, title);
+        const button = findChild(row, "trackRowMenuButton");
+        verify(button.enabled, "a recording's menu button is enabled");
+        // As a right click does: the button's column may be squeezed out
+        // at this width under another style.
+        page.openTrackMenu(row, row);
+        const menu = findChild(page, "recordingMenu");
+        tryCompare(menu, "opened", true);
+        return menu;
+    }
+
+    // A recording's menu offers exactly saving it as FLAC and showing it
+    // on the Recordings page; no delete. Saving is not offered for a WAV
+    // without audio, as the Recordings page does not offer it.
+    function test_aRecordingsMenu() {
+        const keep = createTemporaryObject(realKeepComponent, testCase);
+        verify(keep.available, "this build saves FLAC");
+        const root = makeStick([
+            {folder: "Sessions", name: "Session-0005.wav", seconds: 2, at: testCase.base + testCase.day},
+            {folder: "Sessions", name: "Session-0004.wav", seconds: 0, at: testCase.base},
+        ]);
+        const page = makePage(root, true, "", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 2);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 2);
+
+        let menu = openRecordingMenu(page, "Session-0005.wav");
+        compare(JSON.stringify(menuTexts(menu)), JSON.stringify(["Save as FLAC...", "Show on the Recordings page"]));
+        verify(findChild(menu, "saveAsFlacItem").enabled);
+        const asked = signalSpy.createObject(testCase, {target: page, signalName: "recordingsPageRequested"});
+        findChild(menu, "showOnRecordingsPageItem").triggered();
+        compare(asked.count, 1);
+        compare(asked.signalArguments[0][0], scan.tracks.trackAt(0).filePath);
+        verify(asked.signalArguments[0][0].endsWith("/Sessions/Session-0005.wav"));
+        asked.destroy();
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        menu = openRecordingMenu(page, "Session-0004.wav");
+        compare(findChild(menu, "saveAsFlacItem").enabled, false, "nothing to save in a WAV without audio");
+        menu.close();
+        tryCompare(menu, "visible", false);
+    }
+
+    // "Save as FLAC..." opens the Recordings page's form, on this stick:
+    // the controller is told which stick it is for, so its rules hold
+    // (a folder on the stick is refused), and an unfinished recording is
+    // saved only with its box ticked.
+    function test_saveAsFlacOpensTheRecordingsPagesForm() {
+        const keep = createTemporaryObject(realKeepComponent, testCase);
+        const root = makeStick([
+            {folder: "Sessions", name: "Late_Set.wav", seconds: 2, at: testCase.base + testCase.day},
+            {folder: "Sessions", name: "Cut.wav", seconds: 3, unfinished: true, at: testCase.base},
+        ]);
+        const page = makePage(root, true, "", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 2);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 2);
+
+        let menu = openRecordingMenu(page, "Late_Set.wav");
+        findChild(menu, "saveAsFlacItem").triggered();
+        const dialog = findChild(page, "keepDialog");
+        tryCompare(dialog, "opened", true);
+        compare(dialog.title, "Save Recording as FLAC");
+        compare(dialog.headline, "Late_Set.wav becomes a FLAC file with tags and a cover on this computer.");
+        compare(findChild(dialog, "keepStartButton").text, "Save as FLAC");
+        compare(keep.stickRoot, scan.recordingsRoot, "the form is for this stick");
+        verify(findChild(dialog, "keepTitleField").text.indexOf("Late") >= 0, findChild(dialog, "keepTitleField").text);
+        compare(findChild(dialog, "keepUnfinishedNotice").visible, false);
+
+        const folder = findChild(dialog, "keepFolderField");
+        folder.text = root + "/Kept";
+        const problems = findChild(dialog, "keepProblemsLabel");
+        tryCompare(problems, "visible", true);
+        compare(problems.text, "This folder is on the stick. The FLAC file goes onto this computer; the stick keeps "
+                + "the recording.");
+        compare(findChild(dialog, "keepStartButton").enabled, false, "nothing is saved onto the stick");
+        folder.text = stickFixture.scratchDirectory() + "/Kept";
+        tryCompare(problems, "visible", false);
+        verify(findChild(dialog, "keepStartButton").enabled);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+
+        menu = openRecordingMenu(page, "Cut.wav");
+        findChild(menu, "saveAsFlacItem").triggered();
+        tryCompare(dialog, "opened", true);
+        verify(findChild(dialog, "keepUnfinishedNotice").visible, "an unfinished recording says so");
+        findChild(dialog, "keepFolderField").text = stickFixture.scratchDirectory() + "/Kept";
+        compare(findChild(dialog, "keepStartButton").enabled, false, "only with the box ticked");
+        findChild(dialog, "keepUnfinishedBox").checked = true;
+        verify(findChild(dialog, "keepStartButton").enabled);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+    }
+
+    // The window's KeepRecordingController's shape, as far as Browse asks
+    // it: what a save of a recording is or came to, and the stick's work.
+    Component {
+        id: fakeKeepComponent
+        QtObject {
+            id: fakeKeep
+            property bool available: true
+            property string stickRoot: ""
+            property int revision: 0
+            property bool busy: false
+            property bool cancelRequested: false
+            property string currentStickRoot: ""
+            property string currentRecording: ""
+            property string currentFileName: ""
+            property string currentFolder: ""
+            property string progressStep: ""
+            property double progress: 0
+            // path -> outcome
+            property var outcomes: ({})
+            property var finished: []
+            // What outcomeFor() was asked, without a change signal (a
+            // binding asks it).
+            property var asked: []
+            function localPath(path) { return path; }
+            function folderUrl(folder) { return "file://" + folder; }
+            property string errorMessage: ""
+            property string coverPath: ""
+            property string coverPreview: ""
+            property string coverError: ""
+            property bool coverPreparing: false
+            property int coverWidth: 0
+            property int coverHeight: 0
+            function fileNameFor(artist, title, folder) { return title + ".flac"; }
+            function textProblem(field, text) { return ""; }
+            function yearProblem(year) { return ""; }
+            function folderProblem(folder) { return ""; }
+            function targetProblem(folder, artist, title) { return ""; }
+            function canKeep(path) { return path.toLowerCase().endsWith(".wav"); }
+            function outcomeFor(stick, path) {
+                fakeKeep.asked.push(stick + "|" + path);
+                return fakeKeep.outcomes[path] ?? ({});
+            }
+            function runsFor(stick) { return fakeKeep.busy && fakeKeep.currentStickRoot === stick; }
+            function runsElsewhere(stick) { return fakeKeep.busy && fakeKeep.currentStickRoot !== stick; }
+            function queuedFor(stick) { return []; }
+            function finishedJobsFor(stick) { return fakeKeep.finished; }
+            function hasWorkFor(stick) { return fakeKeep.runsFor(stick); }
+            function cancelFor(stick) {}
+            function dismissFinishedFor(stick) { fakeKeep.finished = []; fakeKeep.revision++; }
+            function showInFolder(path) {}
+        }
+    }
+
+    // A recording's row says what its save is or came to, as its row on
+    // the Recordings page does, from the controller's own outcome; the
+    // strip of the stick's work is the Recordings page's. Nothing of it
+    // is made on a library track's row.
+    function test_theRowAndTheStripShowTheSave() {
+        const keep = createTemporaryObject(fakeKeepComponent, testCase);
+        const page = makePage(makeStick(testCase.threeRecordings), true, "", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        // A library track asks nothing of the controller.
+        waitForRendering(page);
+        compare(findChild(trackRows(page)[0], "recordingSaveStateLoader").item, null);
+        compare(keep.asked.length, 0, "no library row asks after a save");
+
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        const path = scan.tracks.trackAt(0).filePath;
+        const state = () => {
+            waitForRendering(page);
+            const item = findChild(trackRows(page)[0], "recordingSaveStateLoader").item;
+            return item === null ? "" : item.text;
+        };
+        compare(state(), "");
+        verify(keep.asked.indexOf(scan.recordingsRoot + "|" + path) >= 0, "asked of this stick and this file");
+
+        keep.outcomes = {[path]: {state: "queued", fileName: "DJ Kelp - Late Set.flac"}};
+        keep.revision++;
+        compare(state(), "Waits to be saved as DJ Kelp - Late Set.flac");
+        const menu = openRecordingMenu(page, "Session-0002.wav");
+        compare(findChild(menu, "saveAsFlacItem").enabled, false, "a save waiting is not asked for again");
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        keep.outcomes = {[path]: {state: "running", fileName: "DJ Kelp - Late Set.flac"}};
+        keep.busy = true;
+        keep.currentStickRoot = scan.recordingsRoot;
+        keep.currentRecording = "Session-0002.wav";
+        keep.progressStep = "encoding";
+        keep.progress = 0.4;
+        keep.revision++;
+        compare(state(), "Being saved as DJ Kelp - Late Set.flac: encoding");
+        const strip = findChild(page, "keepProgress");
+        tryCompare(strip, "visible", true);
+        compare(findChild(strip, "passiveProgressSummary").text, "Saving Session-0002.wav as FLAC: encoding, 40%");
+
+        keep.busy = false;
+        keep.outcomes = {[path]: {state: "kept", fileName: "DJ Kelp - Late Set.flac", folder: "/home/dj/Kept"}};
+        keep.finished = [{state: "kept", recording: "Session-0002.wav", fileName: "DJ Kelp - Late Set.flac",
+                          folder: "/home/dj/Kept", flacPath: "/home/dj/Kept/DJ Kelp - Late Set.flac", leftBehind: ""}];
+        keep.revision++;
+        compare(state(), "Saved as DJ Kelp - Late Set.flac in /home/dj/Kept");
+        compare(findChild(strip, "passiveProgressSummary").text, "Saved Session-0002.wav as DJ Kelp - Late Set.flac");
+
+        keep.outcomes = {[path]: {state: "failed", fileName: "x.flac", message: "There is not enough room in /f."}};
+        keep.finished = [];
+        keep.revision++;
+        compare(state(), "Not saved: There is not enough room in /f.");
+        tryCompare(strip, "visible", false);
+    }
+
+    // "Show on the Recordings page" opens Clean Up Recordings at that
+    // recording: scrolled to and marked, the others not.
+    Component {
+        id: recordingsPageComponent
+        RecordingsPage {}
+    }
+    Component {
+        id: stackComponent
+        StackView {}
+    }
+    function test_theRecordingsPageMarksTheRecordingAsked() {
+        const recordings = [];
+        for (let i = 0; i < 30; ++i) {
+            recordings.push({folder: "Sessions", name: "Session-" + (1000 + i) + ".wav", seconds: 0.1,
+                             at: testCase.base + i * 60});
+        }
+        const root = makeStick(recordings);
+        const marked = root + "/Sessions/Session-1027.wav";
+        const stack = createTemporaryObject(stackComponent, testCase, {width: 900, height: 500});
+        const page = stack.push(recordingsPageComponent, {
+            stickLabel: "TESTSTICK", rekordboxPath: root + "/PIONEER", enginePath: root + "/Engine Library",
+            controller: recordingsControllerComponent.createObject(stack), playbackController: realPlayback,
+            markedPath: marked}, StackView.Immediate);
+        tryVerify(() => page.controller.listed && !page.controller.busy, 10000);
+        const list = findChild(page, "recordingsList");
+        const index = page.controller.rowOf(marked);
+        verify(index >= 20, "far enough down to need scrolling: " + index);
+        tryVerify(() => {
+            const item = list.itemAtIndex(index);
+            return item !== null && item.y + item.height > list.contentY && item.y < list.contentY + list.height;
+        }, 3000, "the recording asked for is in view");
+        const item = list.itemAtIndex(index);
+        verify(findChild(item, "markedFrame").visible, "and marked");
+        compare(item.marked, true);
+        const first = list.itemAtIndex(index - 1);
+        compare(first.marked, false);
     }
 }

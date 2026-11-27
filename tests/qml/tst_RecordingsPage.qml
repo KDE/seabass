@@ -625,9 +625,9 @@ TestCase {
             verify(findChild(row(page, i), "keepButton").visible, "row " + i + " is a WAV and can be kept");
         }
         compare(findChild(row(page, 3), "keepButton").visible, false, "an MP3 is not offered: the encoder reads WAVs");
-        compare(findChild(row(page, 0), "keepButton").text, "Keep…");
+        compare(findChild(row(page, 0), "keepButton").text, "Save as FLAC...");
         compare(findChild(row(page, 0), "keepButton").ToolTip.text,
-                "Keep this recording on this computer, as a FLAC file with tags and a cover");
+                "Save this recording on this computer as a FLAC file with tags and a cover");
 
         page = makePage(addRecordings, null, false);
         compare(findChild(row(page, 0), "keepButton").visible, false, "Experimental off: nothing to keep");
@@ -637,10 +637,27 @@ TestCase {
         compare(findChild(row(page, 0), "keepButton").visible, false, "a build that cannot encode offers nothing");
     }
 
+    // Experimental off, the page is the released one: nothing on it
+    // speaks of saving as FLAC, the action's name included.
+    function test_experimentalOffSaysNothingOfSavingAsFlac() {
+        const page = makePage(addRecordings, null, false);
+        const said = [];
+        const walk = function(node) {
+            if (node.visible === false) return;
+            if (typeof node.text === "string" && /FLAC|Save as|[Kk]eep/.test(node.text)) said.push(node.text);
+            for (let i = 0; i < node.children.length; ++i) walk(node.children[i]);
+        };
+        walk(page);
+        compare(JSON.stringify(said), "[]");
+        // On, the action is there under its name.
+        const on = makePage(addRecordings);
+        compare(findChild(row(on, 0), "keepButton").text, "Save as FLAC...");
+    }
+
     function test_theFormSuggests() {
         const page = makePage(addRecordings);
         const dialog = openForm(page, 1);
-        compare(dialog.title, "Keep This Recording");
+        compare(dialog.title, "Save Recording as FLAC");
         compare(dialog.headline, "Session-0002.wav becomes a FLAC file with tags and a cover on this computer.");
         compare(dialog.detailText, "The recording on the stick stays as it is.");
         verify(page.keepController.calls.indexOf("suggest:Session-0002.wav") >= 0);
@@ -786,10 +803,10 @@ TestCase {
         verify(waitForPolish(page.Window.window));
         verify(strip.visible && strip.height > 0, "the strip shows while a recording is kept");
         compare(findChild(strip, "passiveProgressSummary").text,
-                "Keeping Milkshaken.wav: checking, 70% (1 more waiting)");
+                "Saving Milkshaken.wav as FLAC: checking, 70% (1 more waiting)");
         compare(findChild(strip, "passiveProgressBar").value, 0.7, "one bar for the whole job");
-        compare(findChild(row(page, 0), "keptLabel").text, "Being kept as DJ Kelp - Late Set.flac");
-        compare(findChild(row(page, 1), "keptLabel").text, "Waits to be kept as DJ Kelp - Early Set.flac");
+        compare(findChild(row(page, 0), "keptLabel").text, "Being saved as DJ Kelp - Late Set.flac: checking");
+        compare(findChild(row(page, 1), "keptLabel").text, "Waits to be saved as DJ Kelp - Early Set.flac");
         compare(findChild(row(page, 0), "keepButton").enabled, false, "a recording in hand is not asked for again");
         compare(findChild(row(page, 1), "keepButton").enabled, false, "nor one that waits");
         verify(findChild(row(page, 2), "keepButton").enabled, "another one can join the queue");
@@ -845,18 +862,18 @@ TestCase {
         verify(waitForPolish(page.Window.window));
         const other = findChild(page, "otherStickKeepLabel");
         verify(other.visible && other.height > 0, "the line about another stick's work shows");
-        compare(other.text, "A recording from another stick is being kept. What you keep from this stick waits until "
-                + "that has ended.");
+        compare(other.text, "A recording from another stick is being saved as FLAC. What you save from this stick "
+                + "waits until that has ended.");
         const strip = findChild(page, "keepProgress");
         verify(strip.visible, "the strip shows this stick's job that waits");
-        compare(findChild(strip, "passiveProgressSummary").text, "1 recording(s) waiting to be kept");
+        compare(findChild(strip, "passiveProgressSummary").text, "1 recording(s) waiting to be saved as FLAC");
         compare(findChild(strip, "passiveProgressBar").value, 0, "nothing of this stick's is under way yet");
         mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
         verify(waitForPolish(page.Window.window));
         compare(findAll(strip, "passiveProgressActivityLine").map(l => l.text),
                 ["Waiting: Session-0002.wav, as DJ Kelp - Early Set.flac"],
                 "this stick's job only, nothing of the other stick's");
-        compare(findChild(row(page, 1), "keptLabel").text, "Waits to be kept as DJ Kelp - Early Set.flac");
+        compare(findChild(row(page, 1), "keptLabel").text, "Waits to be saved as DJ Kelp - Early Set.flac");
         mouseClick(findChild(page, "selectAllButton"));
         compare(findChild(page, "deleteButton").enabled, false, "a job of this stick waits: nothing is deleted");
         verify(strip.cancellable, "this stick's waiting job can be dropped");
@@ -895,7 +912,7 @@ TestCase {
         const page = makePage(addRecordings, keep => { busyKeep(keep); keep.queued = []; keep.progressStep = data.step; });
         const strip = findChild(page, "keepProgress");
         compare(strip.steps.map(s => s.state), data.states);
-        compare(findChild(strip, "passiveProgressSummary").text, "Keeping Milkshaken.wav: " + data.word + ", 70%");
+        compare(findChild(strip, "passiveProgressSummary").text, "Saving Milkshaken.wav as FLAC: " + data.word + ", 70%");
     }
 
     function test_cancelByKeyboard() {
@@ -933,12 +950,12 @@ TestCase {
         const page = makePage(addRecordings, keptKeep);
         const strip = findChild(page, "keepProgress");
         verify(strip.visible, "the strip says it is done");
-        compare(findChild(strip, "passiveProgressSummary").text, "Kept Milkshaken.wav as DJ Kelp - Late Set.flac");
+        compare(findChild(strip, "passiveProgressSummary").text, "Saved Milkshaken.wav as DJ Kelp - Late Set.flac");
         compare(findChild(strip, "passiveProgressBar").value, 1, "the bar is full");
         compare(strip.cancellable, false, "nothing to cancel");
         const kept = findChild(row(page, 0), "keptLabel");
         verify(kept.visible);
-        compare(kept.text, "Kept as DJ Kelp - Late Set.flac in /home/dj/Music/Own Recordings");
+        compare(kept.text, "Saved as DJ Kelp - Late Set.flac in /home/dj/Music/Own Recordings");
         const show = findChild(row(page, 0), "showKeptButton");
         verify(show.visible);
         compare(show.text, "Show in Folder");
@@ -1010,10 +1027,10 @@ TestCase {
         tryVerify(() => dialog.opened);
         const notKept = findChild(dialog, "notKeptLabel");
         verify(notKept.visible, "the recordings not kept are named");
-        compare(notKept.text, "Not kept on this computer, though you asked for it: Milkshaken.wav, Session-0002.wav.");
+        compare(notKept.text, "Not saved as FLAC, though you asked for it: Milkshaken.wav, Session-0002.wav.");
         compare(dialog.detailText, "They will be gone for good.", "apart from the sentence about deleting");
         compare(findChild(dialog, "keptNotesLabel").text,
-                "Kept on this computer: REC001.WAV as C.flac in /home/dj/Music/Own Recordings.");
+                "Saved as FLAC on this computer: REC001.WAV as C.flac in /home/dj/Music/Own Recordings.");
         saveScreenshot(page, "recordings-confirm-delete-not-kept");
         dialog.reject();
         tryVerify(() => !dialog.visible && !dialog.opened, 2000);
@@ -1046,17 +1063,17 @@ TestCase {
             keep.outcomes[stopped.wavPath] = stopped;
             keep.revision++;
         });
-        compare(findChild(row(page, 1), "keptLabel").text, "Not kept: stopped before it started");
-        compare(findChild(row(page, 2), "keptLabel").text, "Not kept: stopped before it started");
-        compare(findChild(row(page, 0), "keptLabel").text, "Not kept: stopped while it was being kept");
+        compare(findChild(row(page, 1), "keptLabel").text, "Not saved: stopped before it started");
+        compare(findChild(row(page, 2), "keptLabel").text, "Not saved: stopped before it started");
+        compare(findChild(row(page, 0), "keptLabel").text, "Not saved: stopped while it was being saved");
         const strip = findChild(page, "keepProgress");
         verify(strip.visible);
-        compare(findChild(strip, "passiveProgressSummary").text, "3 of 3 recording(s) not kept");
+        compare(findChild(strip, "passiveProgressSummary").text, "3 of 3 recording(s) not saved");
         mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
         verify(waitForPolish(page.Window.window));
         compare(findAll(strip, "passiveProgressActivityLine").map(l => l.text),
-                ["Stopped: Milkshaken.wav, nothing of it was kept",
-                 "Not kept, stopped before it started: 2 recording(s): Session-0002.wav, REC001.WAV"]);
+                ["Stopped: Milkshaken.wav, nothing of it was saved",
+                 "Not saved, stopped before it started: 2 recording(s): Session-0002.wav, REC001.WAV"]);
         saveScreenshot(page, "recordings-keep-dropped");
     }
 
@@ -1070,11 +1087,11 @@ TestCase {
         });
         const strip = findChild(page, "keepProgress");
         compare(findChild(strip, "passiveProgressSummary").text,
-                "Keeping Milkshaken.wav: checking, 70% (1 more waiting, 1 not kept)");
+                "Saving Milkshaken.wav as FLAC: checking, 70% (1 more waiting, 1 not saved)");
         mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
         verify(waitForPolish(page.Window.window));
         const lines = findAll(strip, "passiveProgressActivityLine").map(l => l.text);
-        compare(lines[lines.length - 1], "Not kept: REC001.WAV: There is not enough room in /f.");
+        compare(lines[lines.length - 1], "Not saved: REC001.WAV: There is not enough room in /f.");
     }
 
     // A cancel that could not take its file away says what was left.
@@ -1090,9 +1107,9 @@ TestCase {
         });
         const strip = findChild(page, "keepProgress");
         compare(findChild(strip, "passiveProgressSummary").text,
-                "Stopped: Milkshaken.wav was not kept, and a file was left in /home/dj/Kept");
+                "Stopped: Milkshaken.wav was not saved, and a file was left in /home/dj/Kept");
         compare(findChild(row(page, 0), "keptLabel").text,
-                "Not kept, stopped: The unfinished M.flac could not be removed from /home/dj/Kept (busy).");
+                "Not saved, stopped: The unfinished M.flac could not be removed from /home/dj/Kept (busy).");
     }
 
     // Experimental switched off while a job runs: the strip and its
@@ -1119,12 +1136,12 @@ TestCase {
             keep.revision++;
         });
         const strip = findChild(page, "keepProgress");
-        compare(findChild(strip, "passiveProgressSummary").text, "Milkshaken.wav was not kept");
+        compare(findChild(strip, "passiveProgressSummary").text, "Milkshaken.wav was not saved");
         compare(findChild(strip, "passiveProgressAction_show"), null, "nothing to show");
         mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
         compare(findChild(strip, "passiveProgressNote").text, "There is not enough room in /home/dj/Music/Own Recordings.");
         compare(findChild(row(page, 0), "keptLabel").text,
-                "Not kept: There is not enough room in /home/dj/Music/Own Recordings.");
+                "Not saved: There is not enough room in /home/dj/Music/Own Recordings.");
         compare(findChild(row(page, 0), "showKeptButton").visible, false);
     }
 
@@ -1153,10 +1170,10 @@ TestCase {
         const dialog = findChild(page, "confirmDeleteDialog");
         tryVerify(() => dialog.opened);
         compare(findChild(dialog, "notKeptLabel").visible, false, "kept once and then failed: not named as not kept");
-        compare(findChild(dialog, "keptNotesLabel").text, "Kept on this computer: Milkshaken.wav as A.flac in /f.");
+        compare(findChild(dialog, "keptNotesLabel").text, "Saved as FLAC on this computer: Milkshaken.wav as A.flac in /f.");
         const gone = findChild(dialog, "keptGoneLabel");
         verify(gone.visible, "a kept copy that is gone is said");
-        compare(gone.text, "Kept earlier, but that file is no longer there as it was kept: Session-0002.wav as B.flac in /f.");
+        compare(gone.text, "Saved as FLAC earlier, but that file is no longer there as it was saved: Session-0002.wav as B.flac in /f.");
         compare(gone.color, Theme.danger, "in the warning's colour");
         verify(gone.font.bold, "and weight");
         saveScreenshot(page, "recordings-confirm-delete-kept-gone");
@@ -1366,7 +1383,7 @@ TestCase {
              message: "no room"},
         ];
         compare(findChild(findChild(page, "keepProgress"), "passiveProgressSummary").text,
-                "1 of 2 recording(s) not kept");
+                "1 of 2 recording(s) not saved");
     }
 
     // The keep controller outlives the page (it lives with the window): a
@@ -1395,9 +1412,9 @@ TestCase {
         opened = open();
         const strip = findChild(opened.page, "keepProgress");
         verify(strip.visible, "opened again: the strip is there");
-        verify(findChild(strip, "passiveProgressSummary").text.indexOf("Keeping Milkshaken.wav") === 0,
+        verify(findChild(strip, "passiveProgressSummary").text.indexOf("Saving Milkshaken.wav as FLAC") === 0,
                findChild(strip, "passiveProgressSummary").text);
-        compare(findChild(row(opened.page, 0), "keptLabel").text, "Being kept as DJ Kelp - Late Set.flac");
+        compare(findChild(row(opened.page, 0), "keptLabel").text, "Being saved as DJ Kelp - Late Set.flac: checking");
     }
 
     // A second name of a kept FLAC that could not be removed: the strip
@@ -1412,7 +1429,7 @@ TestCase {
             keep.revision++;
         });
         compare(findChild(findChild(page, "keepProgress"), "passiveProgressSummary").text,
-                "Kept Milkshaken.wav as DJ Kelp - Late Set.flac, and a second file was left in "
+                "Saved Milkshaken.wav as DJ Kelp - Late Set.flac, and a second file was left in "
                 + "/home/dj/Music/Own Recordings");
     }
 }

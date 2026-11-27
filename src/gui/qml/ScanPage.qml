@@ -29,6 +29,14 @@ Page {
     // "Open Sync" in the dialog about a track Engine does not have yet:
     // Sync after Rekordbox Export brings it there.
     signal openRekordboxExportSyncRequested()
+    // "Show on the Recordings page" on a recording of Own Recordings: Clean
+    // Up Recordings of this stick, at the recording at `path`.
+    signal recordingsPageRequested(string path)
+
+    // The window's KeepRecordingController, which Save as FLAC on a
+    // recording of Own Recordings runs through, as the Recordings page's
+    // does; null: nothing is offered to save.
+    property var keepController: null
 
     readonly property bool hasRekordbox: rekordboxPath.length > 0
     readonly property bool hasEngine: enginePath.length > 0
@@ -1644,13 +1652,66 @@ Page {
     // The row's menu, at `at` (the row's menu button, or the row itself
     // for a right click).
     function openTrackMenu(row, at) {
-        // A row the save wrote has nothing to offer until it is read, and
-        // a recording none of a track's actions (recordingRowText).
-        if (row.awaitingRead === true || row.recording === true) {
+        // A row the save wrote has nothing to offer until it is read.
+        if (row.awaitingRead === true) {
+            return;
+        }
+        // A recording none of a track's actions (recordingRowText): its own.
+        if (row.recording === true) {
+            recordingMenu.row = row;
+            recordingMenu.popup(at);
             return;
         }
         trackMenu.row = row;
         trackMenu.popup(at);
+    }
+
+    // A recording of Own Recordings: saved as FLAC with the Recordings
+    // page's form, or shown there, where it is deleted. Nothing else.
+    Menu {
+        id: recordingMenu
+        objectName: "recordingMenu"
+        property var row: null
+        onClosed: row = null
+        readonly property string filePath: row ? row.filePath : ""
+        MenuItem {
+            objectName: "saveAsFlacItem"
+            text: qsTr("Save as FLAC...")
+            enabled: recordingMenu.row !== null
+                && keepForm.offers(recordingMenu.filePath, recordingMenu.row.recordingHoldsNoAudio)
+                && !root.recordingSaveInProgress(recordingMenu.filePath)
+            onTriggered: root.openSaveAsFlac(recordingMenu.filePath)
+        }
+        MenuItem {
+            objectName: "showOnRecordingsPageItem"
+            text: qsTr("Show on the Recordings page")
+            onTriggered: root.recordingsPageRequested(recordingMenu.filePath)
+        }
+    }
+    KeepRecordingForm {
+        id: keepForm
+        keepController: root.keepController
+        // The stick the form is for, which no page of Browse's hands on.
+        stickRoot: scanController.recordingsRoot
+    }
+    // A save of the recording at `path` is asked for and not ended: not
+    // asked for again (the Recordings page's rule).
+    function recordingSaveInProgress(path) {
+        if (root.keepController === null) {
+            return false;
+        }
+        const state = (root.keepController.revision,
+                       root.keepController.outcomeFor(scanController.recordingsRoot, path)).state ?? "";
+        return state === "queued" || state === "running";
+    }
+    function openSaveAsFlac(path) {
+        const recording = scanController.recordingAt(path);
+        if (recording.path === undefined) {
+            return;
+        }
+        keepForm.openFor(recording.path, recording.fileName, recording.modified, recording.unfinished,
+                         recording.heldSeconds, recording.declaredSeconds, recording.declaredUnusable,
+                         recording.missingBytes);
     }
 
     // ---- Dragging a track to a playlist ----
@@ -2532,7 +2593,21 @@ Page {
             padding: 0
             // The open import panel is wider than this pane, over the
             // tracks beside it.
-            z: importProgress.expanded ? 1 : 0
+            z: importProgress.expanded || keepProgress.expanded ? 1 : 0
+
+            // Save as FLAC of this stick's recordings, as the Recordings
+            // page shows it: above the import's strip when both run.
+            KeepRecordingProgress {
+                id: keepProgress
+                objectName: "keepProgress"
+                anchors.left: parent.left
+                anchors.bottom: importProgress.visible ? importProgress.top : parent.bottom
+                width: expanded ? Math.max(parent.width, Math.min(Theme.scaled(460), root.width - 2 * Theme.pageMargin))
+                                : parent.width
+                keepController: root.keepController
+                stickRoot: scanController.recordingsRoot
+                focusFallback: root
+            }
 
             // The import being prepared, out of the way under the list.
             PassiveProgress {
@@ -2615,7 +2690,8 @@ Page {
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.bottom: importProgress.visible ? importProgress.top : parent.bottom
+                anchors.bottom: keepProgress.visible ? keepProgress.top
+                    : importProgress.visible ? importProgress.top : parent.bottom
                 spacing: 0
 
                 // Narrows the playlists below by name, and nothing else: the
@@ -3155,12 +3231,31 @@ Page {
                             // A recording has no artist: when it was
                             // recorded, its size, and whether the player
                             // finished it, in its place.
-                            Label {
-                                objectName: "rowSubtitle"
-                                text: trackDelegate.recording ? root.recordingDetails(trackDelegate) : artist
-                                color: Theme.textMuted
-                                elide: Text.ElideRight
+                            RowLayout {
                                 Layout.fillWidth: true
+                                spacing: Theme.rowSpacing
+                                Label {
+                                    objectName: "rowSubtitle"
+                                    text: trackDelegate.recording ? root.recordingDetails(trackDelegate) : artist
+                                    color: Theme.textMuted
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                // A recording's Save as FLAC, as its row on
+                                // the Recordings page says it; made only on
+                                // a recording's row.
+                                Loader {
+                                    objectName: "recordingSaveStateLoader"
+                                    active: trackDelegate.recording
+                                    visible: active && item !== null && item.text.length > 0
+                                    Layout.maximumWidth: implicitWidth
+                                    Layout.fillWidth: true
+                                    sourceComponent: RecordingSaveState {
+                                        keepController: root.keepController
+                                        stickRoot: scanController.recordingsRoot
+                                        path: trackDelegate.filePath
+                                    }
+                                }
                             }
                         }
 
@@ -3212,9 +3307,10 @@ Page {
                             text: "Track actions"
                             iconName: "application-menu"
                             Layout.preferredWidth: root.actionsColumnWidth
-                            enabled: !trackDelegate.awaitingRead && !trackDelegate.recording
+                            enabled: !trackDelegate.awaitingRead
                             ToolTip.visible: hovered
-                            ToolTip.text: trackDelegate.importChangeId.length > 0 ? root.dontImportText(trackDelegate)
+                            ToolTip.text: trackDelegate.recording ? qsTr("Save as FLAC, show on the Recordings page")
+                                : trackDelegate.importChangeId.length > 0 ? root.dontImportText(trackDelegate)
                                 : "Merge, find matching tracks" + (root.shownPlaylist.length > 0
                                 ? ", remove from this playlist" : "")
                             onClicked: root.openTrackMenu(trackDelegate, rowMenuButton)

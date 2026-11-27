@@ -278,6 +278,9 @@ class ScanController : public QObject
     // changes nothing.
     Q_PROPERTY(bool recordingsListing READ recordingsListing NOTIFY recordingsListingChanged)
     Q_PROPERTY(bool recordingsListed READ recordingsListed NOTIFY recordingsListingChanged)
+    // The root of the stick the last scan was of, as its recordings are
+    // listed and kept (KeepRecordingController's stickRoot).
+    Q_PROPERTY(QString recordingsRoot READ recordingsRoot NOTIFY recordingsListingChanged)
 
 public:
     explicit ScanController(QObject *parent = nullptr);
@@ -309,6 +312,7 @@ public:
     bool showingRecordings() const { return m_showRecordings; }
     bool recordingsListing() const { return m_recordingsListing; }
     bool recordingsListed() const { return m_recordingsListed; }
+    QString recordingsRoot() const { return m_recordingsRoot; }
     // For tests: how many paths the track import's rows have had made
     // into a key (application::normalizedPathKey) so far. Nothing while
     // no import is staged or awaiting the read; with one, each row and
@@ -345,6 +349,11 @@ public:
     // Lists the stick's recordings again, when they are enabled and the
     // stick is known (a scan has been asked for).
     Q_INVOKABLE void refreshRecordings();
+    // The listed recording at `filePath` (a row's filePath), as the
+    // Recordings page's rows have it, for the Save as FLAC form: {path,
+    // fileName, modified, unfinished, heldSeconds, declaredSeconds,
+    // declaredUnusable, missingBytes, holdsNoAudio}; {} for none.
+    Q_INVOKABLE QVariantMap recordingAt(const QString &filePath) const;
     // The playlist edits staged, as PlaylistEditController has them,
     // shown in the playlist they are for until Save: the tracks to be
     // added ({playlist: [file paths]}) at its end, flagged pendingAddition,

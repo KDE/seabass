@@ -585,7 +585,7 @@ void KeepRecordingController::onCoverPrepared()
 QString KeepRecordingController::formProblem(const QVariantMap &form) const
 {
     if (m_deletingSticks.contains(stickKey(m_stickRoot))) {
-        return tr("Recordings are being deleted from this stick right now. Keep this one once that has ended.");
+        return tr("Recordings are being deleted from this stick right now. Save this one as FLAC once that has ended.");
     }
     const QString wavPath = localPath(form.value("wavPath").toString());
     const QString title = form.value("title").toString().trimmed();
