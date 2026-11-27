@@ -24,6 +24,11 @@
 #include <system_error>
 
 #if defined(_WIN32)
+// windows.h defines min and max as macros unless told not to; the list of
+// written analysis files below uses std::min.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <fcntl.h>
