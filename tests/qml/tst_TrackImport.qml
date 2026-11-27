@@ -522,6 +522,31 @@ TestCase {
         compare(findChild(page, "importTakeBackButton").visible, false);
         compare(findChild(page, "importDuplicatesButton").visible, false);
         dialog.close();
+        tryCompare(dialog, "visible", false);
+
+        // The same folder offered again: every file is on the stick, which
+        // is not "cannot be imported", and no warning.
+        fake.lastResult = {staged: 0, megabytes: 0, playlist: "Peak", playlistIsNew: false, note: "",
+                           notImported: [{name: "a.wav", why: "it is in \"Peak\" already", onStick: true},
+                                         {name: "b.wav", why: "it is in \"Peak\" already", onStick: true}],
+                           possibleDuplicates: 0};
+        fake.resultReady();
+        tryCompare(dialog, "opened", true);
+        compare(dialog.headline, "Nothing to import: 2 file(s) on the stick already.");
+        compare(dialog.severity, SeabassDialog.Info);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+
+        // The folder also held something that is no track.
+        fake.lastResult = {staged: 0, megabytes: 0, playlist: "Peak", playlistIsNew: false, note: "",
+                           notImported: [{name: "a.wav", why: "it is in \"Peak\" already", onStick: true},
+                                         {name: "notes.txt", why: "is not a format every library on this stick lists"}],
+                           possibleDuplicates: 0};
+        fake.resultReady();
+        tryCompare(dialog, "opened", true);
+        compare(dialog.headline, "Nothing to import: 1 on the stick already, 1 cannot be imported.");
+        compare(dialog.severity, SeabassDialog.Info);
+        dialog.close();
     }
 
     // A refusal from the controller is shown.

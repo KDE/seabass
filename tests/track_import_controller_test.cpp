@@ -424,10 +424,16 @@ int main(int argc, char **argv)
         assert(result.value("staged").toInt() == 0 && session->pendingCount() == 0);
         assert(result.value("notImported").toList().size() == 4);
         int already = 0;
+        int onStick = 0;
         for (const QVariant &line : result.value("notImported").toList()) {
-            already += line.toMap().value("why").toString().contains(QLatin1String("is in \"Dropped\" already")) ? 1 : 0;
+            const bool inIt = line.toMap().value("why").toString().contains(QLatin1String("is in \"Dropped\" already"));
+            already += inIt ? 1 : 0;
+            onStick += line.toMap().value("onStick").toBool() ? 1 : 0;
+            // Marked as on the stick exactly when it is: the page says
+            // "on the stick already" of those, not "cannot be imported".
+            assert(line.toMap().value("onStick").toBool() == inIt);
         }
-        assert(already == 3 && result.value("addedToPlaylist").toInt() == 0);
+        assert(already == 3 && onStick == 3 && result.value("addedToPlaylist").toInt() == 0);
         std::cout << "case 4 (the same folder again on its playlist: nothing staged, each file named as in it already) OK\n";
 
         // 5.

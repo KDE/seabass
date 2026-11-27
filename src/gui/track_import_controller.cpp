@@ -693,7 +693,8 @@ void TrackImportController::onPrepared()
     QVariantList notImported;
     for (const LeftOut &left : prepared.notImported) {
         notImported << QVariantMap{{QStringLiteral("name"), QFileInfo(QString::fromStdString(left.sourceFile)).fileName()},
-                                   {QStringLiteral("why"), QString::fromStdString(left.why)}};
+                                   {QStringLiteral("why"), QString::fromStdString(left.why)},
+                                   {QStringLiteral("onStick"), left.onStick}};
     }
     const QString playlist = m_request.playlist ? QString::fromStdString(m_request.playlist->path) : QString();
     const bool isNew = m_request.playlist && m_request.playlist->create;

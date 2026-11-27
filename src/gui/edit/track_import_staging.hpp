@@ -58,6 +58,9 @@ struct LeftOut
 {
     std::string sourceFile;
     std::string why;
+    // The file is on the stick already: left out because there was
+    // nothing to bring, not because it cannot be imported.
+    bool onStick = false;
 };
 
 // What the stick's libraries say about an audio file that is on it.

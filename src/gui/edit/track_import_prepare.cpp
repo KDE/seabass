@@ -539,10 +539,11 @@ PreparedImport prepareTrackImportOn(const ImportRequest &request, const applicat
             // Staged into the playlist, or left out of it with a reason
             // of its own.
             if (left != leftOut.end()) {
-                prepared.notImported.push_back({source, left->second});
+                prepared.notImported.push_back({source, left->second, true});
             }
         } else if (entry.verdict != domain::ImportVerdict::Import) {
-            prepared.notImported.push_back({source, whyNot(entry, rootText)});
+            prepared.notImported.push_back(
+                {source, whyNot(entry, rootText), entry.verdict == domain::ImportVerdict::AlreadyOnStick});
             if (entry.verdict == domain::ImportVerdict::PossibleDuplicate) {
                 prepared.possibleDuplicates.push_back(source);
             }
