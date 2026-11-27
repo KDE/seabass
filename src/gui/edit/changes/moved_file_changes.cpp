@@ -374,8 +374,8 @@ std::vector<BackupTarget> RelinkMovedFileChange::filesToBackup(SaveContext &ctx)
                 }
             }
         }
-        if (const BackupTarget ledger = analysisLedgerBackupTarget(root, RelinkLabel); existsAt(ledger.file)) {
-            targets.push_back(ledger);
+        if (const auto ledger = analysisLedgerBackupTarget(root, RelinkLabel); ledger && existsAt(ledger->file)) {
+            targets.push_back(*ledger);
         }
         if (const std::string grids = beatGridLedgerFileOf(root); existsAt(grids)) {
             targets.push_back({grids, RelinkLabel, true});

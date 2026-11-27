@@ -740,7 +740,14 @@ int main(int argc, char **argv)
             {
                 const auto kept = w.trackTempoAndKeyId(ids[5]);
                 assert(kept);
-                check("tempo and key id put back: " + std::to_string(w.setTrackTempoAndKeyId(ids[19], *kept)));
+                PdbRowWriter::TrackTempoAndKeyPutBack back;
+                back.tempo = kept->tempo;
+                // Without a name here: a key by its name goes through the
+                // index and has no walk to be compared with (below).
+                back.key = PdbRowWriter::TrackTempoAndKeyPutBack::Key::Leave;
+                check("tempo put back, key left: " + std::to_string(w.putBackTrackTempoAndKey(ids[19], back)));
+                back.key = PdbRowWriter::TrackTempoAndKeyPutBack::Key::None;
+                check("tempo put back, no key: " + std::to_string(w.putBackTrackTempoAndKey(ids[20], back)));
             }
             check("artist renamed in place: " + std::to_string(w.overwriteArtistName(1, "Someone Else")));
             check("playlist renamed in place: " + std::to_string(w.overwritePlaylistName(playlist, "Held In Place")));
@@ -780,6 +787,29 @@ int main(int argc, char **argv)
         const auto before = everyEdit(copyOfBase("every-edit-before.pdb"), false);
         assert(now.second == before.second && "every call answered alike");
         assert(now.first == before.first);
+        // A key put back by its name, which only the index can do: a name
+        // the keys table lacks makes a keys row, one it has is found, and
+        // the index is the buffer's after each.
+        {
+            PdbRowWriter w(pathToUtf8(copyOfBase("put-back-by-name.pdb")));
+            w.buildIndexForTesting();
+            const uint32_t first = w.addTrack(trackNumber(1));
+            const uint32_t second = w.addTrack(trackNumber(2));
+            assert(w.indexMismatchForTesting().empty());
+            PdbRowWriter::TrackTempoAndKeyPutBack back;
+            back.tempo = 12800;
+            back.key = PdbRowWriter::TrackTempoAndKeyPutBack::Key::Named;
+            back.keyName = "Put Back Key";
+            assert(w.putBackTrackTempoAndKey(first, back));
+            assert(w.indexMismatchForTesting().empty() && "a keys row made for a put-back is in the index");
+            assert(w.putBackTrackTempoAndKey(second, back));
+            assert(w.indexMismatchForTesting().empty());
+            const auto one = w.trackTempoAndKeyId(first);
+            const auto two = w.trackTempoAndKeyId(second);
+            assert(one && two && one->tempo == 12800 && one->keyName == std::optional<std::string>("Put Back Key"));
+            assert(one->keyId == two->keyId && one->keyId != 0 && "the second finds the keys row the first made");
+            assert(w.commit());
+        }
         std::cout << "case 3 (every kind of edit between tracks: the index the buffer's after each, and the same "
                      "bytes as without it) OK\n";
     }

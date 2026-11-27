@@ -316,8 +316,11 @@ public:
     QStringList formatsTouched() const override { return {}; }
     std::vector<BackupTarget> filesToBackup(SaveContext &) const override
     {
-        return {{beatGridLedgerFileOf(m_stickRoot), "ledger-order", true},
-                analysisLedgerBackupTarget(m_stickRoot, "ledger-order")};
+        std::vector<BackupTarget> targets{{beatGridLedgerFileOf(m_stickRoot), "ledger-order", true}};
+        if (const auto ledger = analysisLedgerBackupTarget(m_stickRoot, "ledger-order")) {
+            targets.push_back(*ledger);
+        }
+        return targets;
     }
     ChangeOutcome apply(SaveContext &ctx) override
     {
