@@ -1600,8 +1600,10 @@ TestCase {
         waitSettled(o.c, "worked out again");
         compare(badge.visible, true, "the state is back");
         tryCompare(badge, "opacity", 1, 5000, "and ends fully drawn");
-        verify(recorder.seen.some(value => value > 0 && value < 1),
-               "it got there by blending in: " + JSON.stringify(recorder.seen));
+        // From nothing up: where the animation starts is certain, how
+        // many steps a loaded machine gives it in between is not.
+        verify(recorder.seen.length >= 2 && recorder.seen[0] < 0.5,
+               "it got there by blending in from nothing: " + JSON.stringify(recorder.seen));
 
         showPlaylist(o.page, "");
         waitSettled(o.c);

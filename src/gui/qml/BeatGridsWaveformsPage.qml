@@ -1005,15 +1005,24 @@ Page {
                         // Blended in when its check comes back, as the
                         // row's waveform is: a page of rows whose states
                         // arrive together does not switch them all on at
-                        // once. A row built with its state worked out
-                        // shows it at once (trackRow.built).
-                        opacity: stateBadge.shown ? 1 : 0
-                        Behavior on opacity {
-                            enabled: trackRow.built
-                            NumberAnimation {
-                                duration: Theme.arrivalTransitionDuration
-                                easing.type: Easing.OutCubic
+                        // once. Always from nothing, by an animation
+                        // started on its arrival (a binding with a
+                        // Behavior left a fade out cut short to start the
+                        // next one part way). A row built with its state
+                        // worked out shows it at once (trackRow.built).
+                        onShownChanged: {
+                            if (stateBadge.shown && trackRow.built) {
+                                stateArrival.restart();
                             }
+                        }
+                        NumberAnimation {
+                            id: stateArrival
+                            target: stateBadge
+                            property: "opacity"
+                            from: 0
+                            to: 1
+                            duration: Theme.arrivalTransitionDuration
+                            easing.type: Easing.OutCubic
                         }
                         label: trackRow.model.state
                         badgeColor: root.toneColor(trackRow.model.stateTone)

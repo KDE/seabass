@@ -6253,6 +6253,14 @@ add_test(NAME rekordbox_cue_writer_malformed_lists_test COMMAND rekordbox_cue_wr
     ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
 set_tests_properties(rekordbox_cue_writer_malformed_lists_test PROPERTIES LABELS "integration")
 
+# A cue the writer is told has moved keeps its comment (Align Cue Points).
+add_executable(rekordbox_moved_cue_test tests/rekordbox_moved_cue_test.cpp)
+target_include_directories(rekordbox_moved_cue_test PRIVATE src tests)
+target_link_libraries(rekordbox_moved_cue_test PRIVATE seabass_core rekordbox_format kaitai_cpp_stl_runtime)
+add_test(NAME rekordbox_moved_cue_test COMMAND rekordbox_moved_cue_test
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/cue-offsets/stick)
+set_tests_properties(rekordbox_moved_cue_test PROPERTIES LABELS "integration")
+
 # The writer reads back each file it wrote and puts both back when one
 # is not what it meant.
 add_executable(rekordbox_cue_writer_read_back_test tests/rekordbox_cue_writer_read_back_test.cpp)
