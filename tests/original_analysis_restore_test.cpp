@@ -67,6 +67,7 @@
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/edit/track_import_prepare.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "gui/media_controller.hpp"
 #include "gui/original_analysis_controller.hpp"
 #include "gui/track_import_controller.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
@@ -849,6 +850,31 @@ int main(int argc, char **argv)
                   << " bytes" << std::endl;
         require(kept > 0 && kept < files, "10: the kept entry is smaller than the files, deflated");
         std::cout << "case 10 (what is kept of a five-minute track) OK\n";
+    }
+
+    // 11. A stick that goes takes its counts along, told by the
+    // registry's MediaController of the moment, never by one it replaced.
+    // Last, since it leaves the stick marked gone.
+    {
+        const QString libraryId = registry->libraryIdForPath(pioneer);
+        const auto known = [&] { return restorer.cachedKeptCount(pioneer, engine, QStringLiteral("Kept")) >= 0; };
+        seabass::gui::MediaController first;
+        seabass::gui::MediaController second;
+        registry->setMediaController(&first);
+        keptCount(QStringLiteral("Kept"));
+        require(known(), "11: the count is cached");
+        emit first.stickRemoved(libraryId, QStringLiteral("STICK"));
+        require(!known(), "11: the stick's removal forgets its count");
+
+        registry->setMediaController(&second);
+        keptCount(QStringLiteral("Kept"));
+        require(known(), "11: counted again");
+        emit first.stickRemoved(libraryId, QStringLiteral("STICK"));
+        require(known(), "11: the replaced controller is no longer followed");
+        emit second.stickRemoved(libraryId, QStringLiteral("STICK"));
+        require(!known(), "11: the new controller is followed");
+        registry->setMediaController(nullptr);
+        std::cout << "case 11 (a removed stick takes its counts along) OK\n";
     }
 
     std::cout << "original_analysis_restore_test: all cases passed\n";

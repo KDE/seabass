@@ -86,14 +86,16 @@ OriginalAnalysisController::OriginalAnalysisController(QObject *parent) : QObjec
             warmKeptCounts(paths->second.first, paths->second.second);
         }
     });
-    // A stick that goes takes its names along.
+    // A stick that goes takes its names along. Only the registry's current
+    // MediaController is followed: the one it replaced is let go, so a
+    // stick is never forgotten twice nor by a controller nobody reads.
+    // (Qt::UniqueConnection cannot do this: Qt refuses it for a lambda and
+    // connects nothing.)
     const auto followMedia = [this, registry]() {
+        disconnect(m_followedMedia);
         if (auto *media = qobject_cast<MediaController *>(registry->mediaController())) {
-            connect(media, &MediaController::stickRemoved, this, [this](const QString &libraryId) {
-                forgetKeptAnalysisNames(libraryId.toStdString());
-                m_warmPaths.erase(libraryId);
-                std::erase_if(m_stickIds, [&](const auto &known) { return known.second == libraryId; });
-            }, Qt::UniqueConnection);
+            m_followedMedia = connect(media, &MediaController::stickRemoved, this,
+                                      &OriginalAnalysisController::onStickRemoved);
         }
     };
     followMedia();
@@ -113,6 +115,13 @@ OriginalAnalysisController::~OriginalAnalysisController()
     }
     disconnect(&m_prepareWatcher, nullptr, this, nullptr);
     disconnect(&m_countWatcher, nullptr, this, nullptr);
+}
+
+void OriginalAnalysisController::onStickRemoved(const QString &libraryId)
+{
+    forgetKeptAnalysisNames(libraryId.toStdString());
+    m_warmPaths.erase(libraryId);
+    std::erase_if(m_stickIds, [&](const auto &known) { return known.second == libraryId; });
 }
 
 void OriginalAnalysisController::setBusy(bool busy)

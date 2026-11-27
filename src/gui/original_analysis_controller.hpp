@@ -120,6 +120,7 @@ private:
     bool attachSession(const QString &rekordboxPath, const QString &enginePath);
     void onPrepared();
     void onCounted();
+    void onStickRemoved(const QString &libraryId);
     void setBusy(bool busy);
     void setErrorMessage(const QString &message);
     void prune();
@@ -140,6 +141,8 @@ private:
     mutable std::map<QString, QString> m_stickIds;
     std::map<QString, std::pair<QString, QString>> m_warmPaths;
     std::vector<QFuture<bool>> m_warmFutures;
+    // stickRemoved of the MediaController followed now, if any.
+    QMetaObject::Connection m_followedMedia;
     // Never replaced, so the destructor stops every warm still running.
     application::CancellationToken m_warmCancel;
     QString m_keptCountPlaylist;
