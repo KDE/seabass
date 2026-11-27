@@ -25,6 +25,7 @@ TestCase {
             property bool writing: false
             property bool canUndo: false
             property bool stickReadOnly: false
+            property string deletingPlaylist: ""
             property bool playlistsChecked: true
             property string playlistsError: ""
             property int playlistDifferenceCount: playlistDifferences.length
@@ -206,6 +207,28 @@ TestCase {
         controller.setStaged("Skywalk", "");
         waitForRendering(page);
         verify(!inSkywalk("deletePlaylistButton").enabled && !inSkywalk("match_engine").enabled, "not while writing");
+    }
+
+    // While a Delete Playlist reads the stick, its row says so and no
+    // row's Delete Playlist can be pressed.
+    function test_aDeleteBeingLookedUpShowsAndBlocksTheOthers() {
+        const controller = createTemporaryObject(controllerComponent, testCase);
+        const page = createTemporaryObject(pageComponent, testCase, {sharedController: controller});
+        verify(page !== null);
+        waitForRendering(page);
+        const rows = findChild(page, "playlistDifferences");
+        compare(rows.count, 2);
+        const button = (row) => findChild(rows.itemAt(row), "deletePlaylistButton");
+        verify(button(0).enabled && button(1).enabled);
+        controller.deletingPlaylist = "Skywalk";
+        waitForRendering(page);
+        compare(button(1).text, "Reading the stick", "the row being read says so");
+        compare(button(0).text, "Delete Playlist");
+        verify(!button(0).enabled && !button(1).enabled, "no second delete while it reads");
+        controller.deletingPlaylist = "";
+        waitForRendering(page);
+        verify(button(0).enabled && button(1).enabled);
+        compare(button(1).text, "Delete Playlist");
     }
 
     // Entries the player cannot see: said with their playlists, and the

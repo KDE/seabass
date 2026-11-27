@@ -173,6 +173,11 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
         if (m_session) {
             disconnect(m_session, nullptr, this, nullptr);
         }
+        // An ask waiting for the page was about the other stick.
+        if (!m_waitingAdds.empty()) {
+            m_waitingAdds.clear();
+            emit waitingAdditionsDropped();
+        }
         m_session = session;
         if (m_session) {
             connect(m_session, &LibraryEditSession::changeApplied, this, [this](const QString &changeId) {
@@ -217,6 +222,12 @@ bool PlaylistEditController::attachSession(const QString &rekordboxPath, const Q
                 }
             });
             connect(m_session, &LibraryEditSession::changesDiscarded, this, [this]() {
+                // Discarded with everything else: an ask still out would
+                // stage an add (and its create) into the emptied session.
+                if (!m_waitingAdds.empty()) {
+                    m_waitingAdds.clear();
+                    emit waitingAdditionsDropped();
+                }
                 if (!m_staged.empty()) {
                     m_staged.clear();
                     m_additions.clear();
@@ -507,8 +518,7 @@ bool PlaylistEditController::requestAddWhereMissing(const QString &rekordboxPath
                 (where.withFile.contains(library) ? reached : missing) << displayNames({library});
             }
             if (!missing.isEmpty() && !anyway) {
-                m_waitingAdds[playlist + QLatin1Char('|') + filePath] = add;
-                emit additionNeedsLibraries(playlist, filePath, title, missing, toIndex, reached, {});
+                askAbout(add, missing, reached, {});
                 return;
             }
             stageAdd(add);
@@ -608,8 +618,7 @@ bool PlaylistEditController::requestAdd(const QString &rekordboxPath, const QStr
                 folderNames << displayNames({library});
             }
             if ((!missing.isEmpty() || !folderNames.isEmpty()) && !anyway) {
-                m_waitingAdds[playlist + QLatin1Char('|') + filePath] = add;
-                emit additionNeedsLibraries(playlist, filePath, title, missing, toIndex, reached, folderNames);
+                askAbout(add, missing, reached, folderNames);
                 return;
             }
             stageAdd(add);
@@ -677,6 +686,38 @@ void PlaylistEditController::stageAdd(const PendingAdd &add)
     if (!add.moveFrom.isEmpty()) {
         removeFromPlaylist(add.rekordboxPath, add.enginePath, add.moveFrom, add.filePath, add.title);
     }
+}
+
+void PlaylistEditController::askAbout(const PendingAdd &add, const QStringList &missing, const QStringList &reached,
+                                      const QStringList &folders)
+{
+    // One ask, one answer: the same track asked into the same playlist
+    // again while the page still has the first ask is not asked twice.
+    const QString key = add.playlist + QLatin1Char('|') + add.filePath;
+    if (m_waitingAdds.count(key) > 0) {
+        m_replayNothingNeeded = true;  // a kept add whose ask is already out
+        return;
+    }
+    m_waitingAdds[key] = add;
+    emit additionNeedsLibraries(add.playlist, add.filePath, add.title, missing, add.toIndex, reached, folders);
+}
+
+void PlaylistEditController::dropWaitingAdditions()
+{
+    if (m_waitingAdds.empty()) {
+        return;
+    }
+    std::vector<QString> playlists;
+    for (const auto &[key, add] : m_waitingAdds) {
+        playlists.push_back(add.playlist);
+    }
+    m_waitingAdds.clear();
+    // A create kept over a restart, staged only for an add that is now
+    // not made, goes with it (dropAddition's rule).
+    for (const QString &playlist : playlists) {
+        takeBackUnneededCreate(playlist);
+    }
+    emit waitingAdditionsDropped();
 }
 
 void PlaylistEditController::addAnyway(const QString &playlist, const QString &filePath)
@@ -1289,11 +1330,14 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
                        holding << library;
                    }
                }
+               // Refused whether or not the folder holds playlists itself:
+               // an empty folder left under the old name beside Engine's
+               // renamed one is the same split, only less visible.
                if (!where.folders.isEmpty() && !holding.isEmpty()) {
                    setErrorMessage(QStringLiteral("\"%1\" is not renamed. In %2 it is a folder, and in %3 a playlist "
-                                                  "holding other playlists: renamed in %3 only, the playlists inside "
-                                                  "it would be under \"%4\" there and under \"%1\" in %2. Rename "
-                                                  "the folder in rekordbox and the playlist in Engine DJ instead.")
+                                                  "holding other playlists: renamed in %3 only, it would be "
+                                                  "\"%4\" there and still \"%1\" in %2. Rename the folder in "
+                                                  "rekordbox and the playlist in Engine DJ instead.")
                                        .arg(playlist, spokenNames(where.folders), spokenNames(holding), renamed));
                    return;
                }
@@ -1540,8 +1584,20 @@ void PlaylistEditController::onLookupFinished()
     // thread (see future_result.hpp).
     QString thrown;
     const auto [where, also] = takeResult(m_lookupWatcher, &thrown);
+    QStringList unreadable = where.unreadable;
+    for (const QString &library : also.unreadable) {
+        if (!unreadable.contains(library)) {
+            unreadable << library;
+        }
+    }
     if (!thrown.isEmpty()) {
         setErrorMessage(QStringLiteral("Could not read the stick's playlists: %1").arg(thrown));
+    } else if (!unreadable.isEmpty()) {
+        // Not known to lack the playlist: left out, or given it a second
+        // time, that library would no longer agree with the others.
+        setErrorMessage(QStringLiteral("Seabass could not read the playlists of %1 on this stick, so nothing is "
+                                       "staged. Check the stick (Library Health), then try again.")
+                            .arg(spokenNames(unreadable)));
     } else if (attachSession(done.rekordboxPath, done.enginePath)) {
         // The stick may have started a save meanwhile; nothing is staged
         // into a save that is writing.

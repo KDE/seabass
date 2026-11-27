@@ -1277,7 +1277,11 @@ Page {
                 text: qsTr("Open Sync")
                 DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
                 onClicked: {
+                    // The page is left: this ask and every one waiting
+                    // behind it are answered "Don't add", none opens later.
+                    missingLibrariesDialog.waitingAsks = [];
                     missingLibrariesDialog.drop();
+                    root.playlistEditController.dropWaitingAdditions();
                     root.openRekordboxExportSyncRequested();
                 }
             }
@@ -1317,6 +1321,10 @@ Page {
             if (visible || waitingAsks.length === 0) {
                 return;
             }
+            // Not over a page being left, or one under another.
+            if (root.StackView.view !== null && root.StackView.status !== StackView.Active) {
+                return;
+            }
             const next = waitingAsks[0];
             waitingAsks = waitingAsks.slice(1);
             playlist = next.playlist;
@@ -1328,7 +1336,21 @@ Page {
             open();
         }
         onClosed: Qt.callLater(askNext)
+        // The asks are void (the session discarded, another stick or
+        // controller): none waits, and the open one closes unanswered.
+        function forgetAsks() {
+            waitingAsks = [];
+            if (visible) {
+                answered = true;
+                close();
+            }
+        }
     }
+    onPlaylistEditControllerChanged: missingLibrariesDialog.forgetAsks()
+    onRekordboxPathChanged: missingLibrariesDialog.forgetAsks()
+    onEnginePathChanged: missingLibrariesDialog.forgetAsks()
+    // Back on top: an ask that came while another page was over this one.
+    StackView.onActivated: missingLibrariesDialog.askNext()
     Connections {
         target: root.playlistEditController
         ignoreUnknownSignals: true
@@ -1346,6 +1368,9 @@ Page {
             deleteWithTracksDialog.withoutFile = plan.withoutFile ?? 0;
             deleteWithTracksDialog.megabytes = plan.megabytes ?? 0;
             deleteWithTracksDialog.open();
+        }
+        function onWaitingAdditionsDropped() {
+            missingLibrariesDialog.forgetAsks();
         }
     }
 

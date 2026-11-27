@@ -977,6 +977,8 @@ LibraryConsistencyController::LibraryConsistencyController(QObject *parent) : QO
                 }
                 emit importStateChanged();
             });
+    connect(&m_deleteLookupWatcher, &QFutureWatcher<PlaylistWhereabouts>::finished, this,
+            &LibraryConsistencyController::onDeleteLookupFinished);
     // Where this computer keeps full stick backups: read once, the same
     // way and from the same key AppSettingsController writes it, so a
     // cover lost from the stick can be looked for in them.
@@ -1013,6 +1015,7 @@ LibraryConsistencyController::~LibraryConsistencyController()
     m_pendingScanFormats.clear();
     awaitQuietly(m_repairWatcher);
     awaitQuietly(m_importStateWatcher);
+    awaitQuietly(m_deleteLookupWatcher);
 }
 
 int LibraryConsistencyController::runningScanTasksForTesting()
@@ -1150,6 +1153,7 @@ void LibraryConsistencyController::startScanChain(const QString &rekordboxPath, 
     m_sampleRates = {};
     m_analysisState = {};
     m_playlistFindings.clear();
+    ++m_playlistGeneration;
     m_danglingPlaylistEntries.clear();
     m_unresolvedPlaylistEntries.clear();
     m_playlistsChecked = false;
@@ -1374,6 +1378,7 @@ void LibraryConsistencyController::onScanFinished(LibraryConsistencyScanResult &
         }
         if (result.playlistsChecked || !result.playlistsError.empty()) {
             m_playlistFindings = std::move(result.playlistFindings);
+            ++m_playlistGeneration;
             m_danglingPlaylistEntries = std::move(result.danglingPlaylistEntries);
             m_unresolvedPlaylistEntries = std::move(result.unresolvedPlaylistEntries);
             m_playlistsChecked = result.playlistsChecked;
@@ -2206,18 +2211,6 @@ QString spokenList(const QStringList &items)
     return items.mid(0, items.size() - 1).join(QStringLiteral(", ")) + QStringLiteral(" and ") + items.last();
 }
 
-// The libraries holding the playlist, by name, in the stick's order.
-QStringList librariesHaving(const domain::PlaylistDifference &difference)
-{
-    QStringList names;
-    for (const auto &side : difference.sides) {
-        if (side.hasPlaylist) {
-            names << libraryNameOf(side.format);
-        }
-    }
-    return names;
-}
-
 QStringList titlesOf(const std::vector<domain::Track> &tracks)
 {
     QStringList titles;
@@ -2401,7 +2394,9 @@ void LibraryConsistencyController::alignPlaylist(const QString &playlist, const 
 // own DeletePlaylistChange, owned by this page's session.
 void LibraryConsistencyController::deletePlaylistEverywhere(const QString &playlist)
 {
-    if (busy()) {
+    // One lookup at a time: a second click while one reads is not a
+    // second read.
+    if (busy() || m_deleteLookupWatcher.isRunning() || !m_deletingPlaylist.isEmpty()) {
         return;
     }
     const std::string name = playlist.toStdString();
@@ -2423,21 +2418,40 @@ void LibraryConsistencyController::deletePlaylistEverywhere(const QString &playl
     if (formats.isEmpty()) {
         return;
     }
-    // Save leaves a library alone where the node at that path is a folder,
-    // or a playlist holding others (DeletePlaylistChange): not named as
-    // deleted from, and said to stay.
-    const PlaylistWhereabouts where = playlistWhereabouts(m_rekordboxPath, m_enginePath, name);
-    QStringList deletedFrom;
-    QStringList folders;
-    QStringList holding;
-    for (const QString &format : formats) {
-        if (where.folders.contains(format)) {
-            folders << format;
-        } else if (where.holdingOthers.contains(format)) {
-            holding << format;
-        } else {
-            deletedFrom << format;
-        }
+    setErrorMessage({});
+    setStatusMessage({});
+    // Where the node at that path is a folder, or a playlist holding
+    // others, is read from the stick: export.pdb whole, OneLibrary's
+    // database, Engine's twice. Not on this thread.
+    m_deleteLookup = {playlist, formats, m_rekordboxPath, m_enginePath, m_playlistGeneration};
+    m_deletingPlaylist = playlist;
+    emit playlistsChanged();
+    m_deleteLookupWatcher.setFuture(
+        QtConcurrent::run([rekordboxPath = m_rekordboxPath, enginePath = m_enginePath, name]() {
+            return playlistWhereabouts(rekordboxPath, enginePath, name);
+        }));
+}
+
+void LibraryConsistencyController::onDeleteLookupFinished()
+{
+    const DeleteLookup asked = m_deleteLookup;
+    m_deleteLookup = {};
+    m_deletingPlaylist.clear();
+    QString thrown;
+    const PlaylistWhereabouts where = gui::takeResult(m_deleteLookupWatcher, &thrown);
+    emit playlistsChanged();
+    // Asked of findings a scan has since cleared or replaced, or of
+    // another stick: what it read is no longer about what the page lists.
+    if (asked.generation != m_playlistGeneration || asked.rekordboxPath != m_rekordboxPath
+        || asked.enginePath != m_enginePath) {
+        return;
+    }
+    const QString &playlist = asked.playlist;
+    const std::string name = playlist.toStdString();
+    if (!thrown.isEmpty()) {
+        setErrorMessage(QStringLiteral("\"%1\" is not deleted: the stick's playlists could not be read (%2).")
+                            .arg(playlist, thrown));
+        return;
     }
     const auto spoken = [](const QStringList &list) {
         QStringList names;
@@ -2446,6 +2460,29 @@ void LibraryConsistencyController::deletePlaylistEverywhere(const QString &playl
         }
         return spokenList(names);
     };
+    // Not known whether it is a folder there: deleting from the others
+    // would be a guess about that one.
+    if (!where.unreadable.isEmpty()) {
+        setErrorMessage(QStringLiteral("\"%1\" is not deleted: Seabass could not read the playlists of %2 on this "
+                                       "stick. Check the stick, then try again.")
+                            .arg(playlist, spoken(where.unreadable)));
+        return;
+    }
+    // Save leaves a library alone where the node at that path is a folder,
+    // or a playlist holding others (DeletePlaylistChange): not named as
+    // deleted from, and said to stay.
+    QStringList deletedFrom;
+    QStringList folders;
+    QStringList holding;
+    for (const QString &format : asked.formats) {
+        if (where.folders.contains(format)) {
+            folders << format;
+        } else if (where.holdingOthers.contains(format)) {
+            holding << format;
+        } else {
+            deletedFrom << format;
+        }
+    }
     QStringList stays;
     if (!folders.isEmpty()) {
         stays << QStringLiteral("In %1 it is a folder, not a playlist, and it stays with everything in it.")
@@ -2455,8 +2492,6 @@ void LibraryConsistencyController::deletePlaylistEverywhere(const QString &playl
         stays << QStringLiteral("In %1 it holds other playlists, and it stays with them: delete or move those first.")
                      .arg(spoken(holding));
     }
-    setErrorMessage({});
-    setStatusMessage({});
     if (deletedFrom.isEmpty()) {
         setErrorMessage(QStringLiteral("\"%1\" is not deleted. %2").arg(playlist, stays.join(QLatin1Char(' '))));
         return;

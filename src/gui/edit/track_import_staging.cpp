@@ -68,6 +68,12 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
         const QString name = QString::fromStdString(playlist->path);
         const PlaylistWhereabouts where = playlistWhereabouts(target.pioneerRoot, target.enginePath, playlist->path);
         const auto asSet = [](const QStringList &list) { return QSet<QString>(list.begin(), list.end()); };
+        if (!where.unreadable.isEmpty()) {
+            staged.refusal = "The playlists of " + where.unreadable.join(QStringLiteral(", ")).toStdString()
+                             + " on the stick could not be read, so the tracks cannot be put into \"" + playlist->path
+                             + "\" in every library. Check the stick, then try again.";
+            return staged;
+        }
         if (asSet(where.onStick) != asSet(target.libraries)) {
             staged.refusal = "The libraries on the stick (" + where.onStick.join(QStringLiteral(", ")).toStdString()
                              + ") are not the ones this import was planned for ("

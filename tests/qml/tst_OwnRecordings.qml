@@ -2469,6 +2469,95 @@ TestCase {
         edits.discardLeftOverEdits(t.pioneer, t.engine);
     }
 
+    // One ask, one answer: the same track asked into the same playlist
+    // again while the first ask waits is not asked a second time, on
+    // either way in.
+    function test_theSameAddIsAskedOnce() {
+        const t = ownStick(["rekordbox", "onelibrary", "engine"]);
+        const edits = createTemporaryObject(askingEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        const asked = signalSpy.createObject(testCase, {target: edits, signalName: "additionNeedsLibraries"});
+        compare(edited(edits, edits.addToPlaylist(t.pioneer, t.engine, "Own Recordings", t.file, "Picked")), "");
+        compare(asked.count, 1, "Engine has no row for it: asked");
+        compare(edited(edits, edits.addToPlaylist(t.pioneer, t.engine, "Own Recordings", t.file, "Picked")), "");
+        compare(asked.count, 1, "asked again while the first waits: not a second ask");
+        edits.dropAddition("Own Recordings", t.file);
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(asked.count, 2, "answered, it may be asked again");
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(asked.count, 2, "the row's way in asks once too");
+        edits.addAnyway("Own Recordings", t.file);
+        compare(t.session.pendingCount, 1, "the one add");
+        edits.addAnyway("Own Recordings", t.file);
+        compare(t.session.pendingCount, 1, "a second answer finds nothing waiting");
+        asked.destroy();
+        t.session.discard();
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+    }
+
+    // An ask still out is void once the session is discarded (Discard
+    // all), or the controller is used for another stick: the page hears
+    // so, and an answer coming after stages nothing.
+    function test_anAskOutlivesNoDiscardAndNoOtherStick() {
+        const t = ownStick(["rekordbox", "onelibrary"]);
+        const edits = createTemporaryObject(askingEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        const asked = signalSpy.createObject(testCase, {target: edits, signalName: "additionNeedsLibraries"});
+        const dropped = signalSpy.createObject(testCase, {target: edits, signalName: "waitingAdditionsDropped"});
+        compare(edited(edits, edits.createPlaylist(t.pioneer, t.engine, "Spare")), "");
+        compare(t.session.pendingCount, 1, "something staged, for the discard to discard");
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(asked.count, 1);
+        EditSessionRegistry.discardAll();
+        compare(t.session.pendingCount, 0);
+        compare(dropped.count, 1, "the page is told the ask is void");
+        edits.addAnyway("Own Recordings", t.file);
+        compare(t.session.pendingCount, 0, "an answer after the discard stages nothing");
+        compare(edits.isNewPlaylistStaged("Own Recordings"), false);
+
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(asked.count, 2);
+        const other = ownStick([]);
+        compare(edited(edits, edits.createPlaylist(other.pioneer, other.engine, "Elsewhere")), "");
+        compare(dropped.count, 2, "another stick: the first stick's ask is void");
+        edits.addAnyway("Own Recordings", t.file);
+        compare(t.session.pendingCount, 0, "nothing staged into the first stick");
+        compare(other.session.pendingCount, 1, "the other stick has its own create only");
+        asked.destroy();
+        dropped.destroy();
+        other.session.discard();
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        edits.discardLeftOverEdits(other.pioneer, other.engine);
+    }
+
+    // "Open Sync" answers every ask waiting: dropped, the create kept for
+    // them goes too, and an answer after stages nothing.
+    function test_dropWaitingAdditionsLeavesNothing() {
+        const t = ownStick(["rekordbox", "onelibrary"]);
+        const files = stickFixture.plantPlaylist(t.stick, "Picked Two", ["rekordbox", "onelibrary"], 2);
+        compare(files.length, 2);
+        const edits = createTemporaryObject(askingEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        const asked = signalSpy.createObject(testCase, {target: edits, signalName: "additionNeedsLibraries"});
+        for (const file of files) {
+            compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", file,
+                                                                           "Picked")), "");
+        }
+        compare(asked.count, 2);
+        edits.dropWaitingAdditions();
+        for (const file of files) {
+            edits.addAnyway("Own Recordings", file);
+        }
+        compare(t.session.pendingCount, 0, "nothing staged: " + JSON.stringify(t.session.pendingDescriptions));
+        compare(edits.isNewPlaylistStaged("Own Recordings"), false);
+        asked.destroy();
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+    }
+
     // A plain add into the playlist after it is staged to be made where it
     // is missing goes by the row's rule, kept over a restart by it too: on
     // a stick that has a folder of that name by then, it is refused with

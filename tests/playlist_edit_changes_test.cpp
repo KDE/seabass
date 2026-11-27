@@ -1050,6 +1050,47 @@ int main(int argc, char **argv)
     }
     std::cout << "case 14 (a root playlist named with a \"/\" is no child of the one its name starts with) OK\n";
 
+    // 15. A library on the stick that cannot be read is not one without
+    // the playlist: it is named unreadable, and nothing throws, whether
+    // the reader fails on it (a folder where the file should be) or even
+    // asking whether the file is there fails (a link to itself).
+    {
+        const fs::path broken = testing::scratchRoot() / "seabass_playlist_edit_changes_test_unreadable";
+        fs::remove_all(broken);
+        fs::copy(stick, broken, fs::copy_options::recursive);
+        const fs::path pdb = broken / "PIONEER" / "rekordbox" / "export.pdb";
+        const fs::path oneLibrary = broken / "PIONEER" / "rekordbox" / "exportLibrary.db";
+        const fs::path engineDb = broken / "Engine Library" / "Database2" / "m.db";
+        assert(fs::exists(engineDb) && "precondition: Engine's database where the lookup reads it");
+        const QString brokenPioneer = pathToQString(broken / "PIONEER");
+        const QString brokenLibrary = pathToQString(broken / "Engine Library");
+        assert(playlistWhereabouts(brokenPioneer, brokenLibrary, "Q1").unreadable.isEmpty() && "precondition");
+
+        fs::remove(pdb);
+        fs::create_directory(pdb);
+        fs::remove(oneLibrary);
+        fs::create_directory(oneLibrary);
+        fs::remove(engineDb);
+        fs::create_symlink(engineDb.filename(), engineDb);  // a link to itself: asking about it fails
+        std::error_code ec;
+        (void)fs::exists(engineDb, ec);
+        assert(ec && "precondition: whether m.db is there cannot even be asked");
+        PlaylistWhereabouts where;
+        try {
+            where = playlistWhereabouts(brokenPioneer, brokenLibrary, "Q1", file(A01));
+        } catch (const std::exception &e) {
+            std::cerr << "case 15: the lookup threw: " << e.what() << "\n";
+            assert(false && "the lookup throws nothing");
+        }
+        std::cerr << "case 15: unreadable " << where.unreadable.join(QStringLiteral(", ")).toStdString() << "\n";
+        assert(where.unreadable == all && "each one that cannot be read is named");
+        assert(where.onStick == all && "and counted as on the stick");
+        assert(where.having.isEmpty() && where.folders.isEmpty() && where.holdingOthers.isEmpty()
+               && where.withFile.isEmpty());
+        fs::remove_all(broken);
+    }
+    std::cout << "case 15 (a library that cannot be read is said to be, not taken for one without it) OK\n";
+
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";
     return 0;

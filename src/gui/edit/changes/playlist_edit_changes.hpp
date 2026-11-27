@@ -77,6 +77,12 @@ struct PlaylistWhereabouts
     // Set by the asker that read them (see PlaylistTracksRead); null from
     // playlistWhereabouts() itself.
     std::shared_ptr<const PlaylistTracksRead> tracks;
+    // The ones on the stick whose file is there but could not be read
+    // (or not even looked at): counted in `onStick` and nowhere else. Not
+    // having the playlist is not known of them, so every caller refuses
+    // the edit while any is here, saying so, rather than leave such a
+    // library out or make the playlist there a second time.
+    QStringList unreadable;
 };
 PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QString &enginePath, const std::string &playlist,
                                         const std::string &filePath = {});

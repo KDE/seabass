@@ -491,6 +491,18 @@ int main(int argc, char **argv)
         assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(spread.pioneer)), "Two Have") == w);
         assert(playlistOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(spread.pioneer)), "Two Have") == w);
         assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(spread.engineUtf8()), "Two Have") == w);
+        // A library that cannot be read (a folder where Engine's database
+        // should be) is not one that lacks the playlist: refused, saying
+        // so, rather than made there a second time.
+        const fs::path engineDb = spread.engine / "Database2" / "m.db";
+        const fs::path aside = engineDb.parent_path() / "m.db.aside";
+        fs::rename(engineDb, aside);
+        fs::create_directory(engineDb);
+        const StagedImport unread = stage(whereMissing("Nowhere"));
+        assert(unread.changes.empty() && unread.createdIn.isEmpty()
+               && unread.refusal.find("The playlists of engine on the stick could not be read") != std::string::npos);
+        fs::remove(engineDb);
+        fs::rename(aside, engineDb);
     }
     std::cout << "case 4i (made where missing: only in the libraries that lack it, nowhere when none does; a folder "
                  "or a name held twice refused; the set without it unchanged) OK\n";

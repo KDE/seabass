@@ -884,7 +884,7 @@ TestCase {
         };
 
         // One resolution per playlist: following replaces a staged delete.
-        controller.deletePlaylistEverywhere("Planted Follow");
+        deleteEverywhere(controller, "Planted Follow");
         compare(find("Planted Follow").staged, "delete");
         controller.alignPlaylist("Planted Follow", "rekordbox");
         compare(find("Planted Follow").staged, "rekordbox");
@@ -905,7 +905,7 @@ TestCase {
                "nothing left to do: " + JSON.stringify(after.references));
 
         verify(find("Planted Delete") !== undefined, "the other planted playlist is listed");
-        controller.deletePlaylistEverywhere("Planted Delete");
+        deleteEverywhere(controller, "Planted Delete");
         compare(find("Planted Delete").staged, "delete", "staged as a delete");
         verify(controller.statusMessage.indexOf("Staged deleting \"Planted Delete\" from rekordbox and OneLibrary.") === 0,
                controller.statusMessage);
@@ -916,6 +916,84 @@ TestCase {
             verify(stickFixture.playlistsIn(stick, library).indexOf("Planted Delete") < 0, "not in " + library);
         }
         verify(stickFixture.playlistsIn(stick, "rekordbox").indexOf("Planted Follow") >= 0, "the other stays");
+    }
+
+    // Delete Playlist reads the stick off the GUI thread: the controller
+    // names the playlist it reads for until it is done, and stages nothing
+    // before.
+    function deleteEverywhere(controller, name) {
+        controller.deletePlaylistEverywhere(name);
+        compare(controller.deletingPlaylist, name, "read off the GUI thread");
+        tryCompare(controller, "deletingPlaylist", "", 60000, "the lookup finishes");
+    }
+
+    // One lookup at a time, and only about what the page lists: a second
+    // Delete Playlist while the first reads starts nothing, and a lookup
+    // that a rescan has overtaken stages nothing.
+    function test_deleteEverywhereReadsOnceAndOnlyForTheFindingsItWasAskedOf() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        compare(stickFixture.plantPlaylist(stick, "Planted One", ["rekordbox"], 1).length, 1);
+        compare(stickFixture.plantPlaylist(stick, "Planted Two", ["rekordbox"], 1).length, 1);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        // Clean before the page reads: the fixture's copies share a library id.
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer), "TESTSTICK");
+        verify(session !== null);
+        session.discard();
+        const page = createTemporaryObject(stickPageComponent, testCase, {rekordboxPath: pioneer, enginePath: engine});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        compare(controller.playlistsError, "");
+        const find = (name) => controller.playlistDifferences.find((d) => d.name === name);
+        verify(find("Planted One") !== undefined && find("Planted Two") !== undefined, "both listed");
+
+        controller.deletePlaylistEverywhere("Planted One");
+        compare(controller.deletingPlaylist, "Planted One");
+        controller.deletePlaylistEverywhere("Planted Two");
+        compare(controller.deletingPlaylist, "Planted One", "the second click starts no second read");
+        tryCompare(controller, "deletingPlaylist", "", 60000);
+        compare(find("Planted One").staged, "delete");
+        compare(find("Planted Two").staged, "", "the second click staged nothing");
+        compare(session.pendingCount, 1);
+
+        // A rescan comes before the lookup's answer: the findings it was
+        // asked of are gone, so nothing is staged from it.
+        controller.deletePlaylistEverywhere("Planted Two");
+        compare(controller.deletingPlaylist, "Planted Two");
+        controller.scan(pioneer, engine, "");
+        tryCompare(controller, "deletingPlaylist", "", 60000);
+        compare(session.pendingCount, 1, "nothing staged from the overtaken lookup");
+        tryVerify(() => !controller.busy, 300000, "the rescan finishes");
+        compare(session.pendingCount, 1, "still nothing");
+        verify(find("Planted Two") === undefined || find("Planted Two").staged === "", "Two is not staged");
+        session.discard();
+    }
+
+    // A library that cannot be read by the time Delete Playlist looks
+    // (export.pdb gone, a folder in its place): not deleted anywhere, and
+    // said why, rather than deleted from the libraries that still read.
+    function test_deleteEverywhereRefusesWhileALibraryCannotBeRead() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        compare(stickFixture.plantPlaylist(stick, "Planted Gone", ["rekordbox", "onelibrary"], 1).length, 1);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer), "TESTSTICK");
+        verify(session !== null);
+        session.discard();
+        const page = createTemporaryObject(stickPageComponent, testCase, {rekordboxPath: pioneer, enginePath: engine});
+        const controller = page.consistencyController;
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        const find = (name) => controller.playlistDifferences.find((d) => d.name === name);
+        verify(find("Planted Gone") !== undefined, "listed: Engine lacks it");
+        verify(browseFixture.removeFile(pioneer + "/rekordbox/export.pdb"));
+        verify(stickFixture.makeDirectory(pioneer + "/rekordbox/export.pdb"));
+        deleteEverywhere(controller, "Planted Gone");
+        compare(controller.errorMessage, "\"Planted Gone\" is not deleted: Seabass could not read the playlists of "
+                + "rekordbox on this stick. Check the stick, then try again.");
+        compare(find("Planted Gone").staged, "", "nothing staged");
+        compare(session.pendingCount, 0);
     }
 
     // "Delete everywhere" of a name that in Engine is a playlist holding
@@ -945,12 +1023,12 @@ TestCase {
         verify(session !== null);
 
         verify(find("Box") !== undefined, "listed: only Engine has it");
-        controller.deletePlaylistEverywhere("Box");
+        deleteEverywhere(controller, "Box");
         compare(controller.errorMessage, "\"Box\" is not deleted. In Engine it holds other playlists, and it "
                 + "stays with them: delete or move those first.");
         verify(find("Box").staged !== "delete", "nothing staged for Box");
 
-        controller.deletePlaylistEverywhere("Holder");
+        deleteEverywhere(controller, "Holder");
         compare(controller.errorMessage, "");
         compare(find("Holder").staged, "delete");
         compare(controller.statusMessage, "Staged deleting \"Holder\" from rekordbox. Press Save to write it. In "

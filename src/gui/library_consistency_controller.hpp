@@ -12,6 +12,7 @@
 #include <QStringList>
 #include <QVariantMap>
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -22,6 +23,7 @@
 #include "gui/async_request.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
 #include "domain/playlist_sync.hpp"
+#include "gui/edit/changes/playlist_edit_changes.hpp"
 #include "domain/tracks_in_no_playlist.hpp"
 #include "domain/onelibrary_cue_table.hpp"
 #include "domain/junk_cue.hpp"
@@ -443,6 +445,10 @@ private:
     // reference format followed, "delete", or ""}. `adds` counts the rows
     // a created copy gets too.
     Q_PROPERTY(QVariantList playlistDifferences READ playlistDifferences NOTIFY playlistsChanged)
+    // The playlist whose "Delete Playlist" is being looked up on the stick
+    // (deletePlaylistEverywhere, off the GUI thread), or "": the page shows
+    // it busy, and no other delete starts meanwhile.
+    Q_PROPERTY(QString deletingPlaylist READ deletingPlaylist NOTIFY playlistsChanged)
     Q_PROPERTY(int danglingPlaylistEntryCount READ danglingPlaylistEntryCount NOTIFY playlistsChanged)
     // Each {playlist, entries}.
     Q_PROPERTY(QVariantList danglingPlaylists READ danglingPlaylists NOTIFY playlistsChanged)
@@ -703,8 +709,13 @@ public:
     Q_INVOKABLE void alignPlaylist(const QString &playlist, const QString &reference);
     // Stages deleting `playlist` from every library on the stick that has
     // it; the tracks stay. One resolution per playlist: this replaces a
-    // staged alignPlaylist() of it, and that replaces this.
+    // staged alignPlaylist() of it, and that replaces this. Where it is a
+    // folder or a playlist holding others is read from the stick first,
+    // off the GUI thread (deletingPlaylist meanwhile); a call while one is
+    // read is ignored, and what is read is dropped when a scan or another
+    // stick has come since.
     Q_INVOKABLE void deletePlaylistEverywhere(const QString &playlist);
+    QString deletingPlaylist() const { return m_deletingPlaylist; }
     // Takes back whichever of the two is staged for `playlist`.
     Q_INVOKABLE void unstagePlaylist(const QString &playlist);
     // Stages deleting these files (by filePath, from noPlaylistTracks) the
@@ -852,6 +863,23 @@ private:
     std::set<QString> m_stagedSampleRates;
     bool m_sampleRateFillStaged = false;
     std::vector<PlaylistFinding> m_playlistFindings;
+    // Bumped whenever m_playlistFindings is cleared or replaced: a delete's
+    // lookup started under another count is of findings that are gone.
+    std::uint64_t m_playlistGeneration = 0;
+    // deletePlaylistEverywhere's lookup: the playlist, the libraries that
+    // had it when asked, and the stick and findings it was asked of.
+    struct DeleteLookup
+    {
+        QString playlist;
+        QStringList formats;
+        QString rekordboxPath;
+        QString enginePath;
+        std::uint64_t generation = 0;
+    };
+    DeleteLookup m_deleteLookup;
+    QString m_deletingPlaylist;
+    QFutureWatcher<PlaylistWhereabouts> m_deleteLookupWatcher;
+    void onDeleteLookupFinished();
     std::vector<infrastructure::engine::DanglingPlaylistEntries> m_danglingPlaylistEntries;
     std::vector<infrastructure::engine::UnresolvedPlaylistEntries> m_unresolvedPlaylistEntries;
     bool m_playlistsChecked = false;

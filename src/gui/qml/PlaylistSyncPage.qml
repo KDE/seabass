@@ -232,9 +232,12 @@ HealthCheckPage {
                         Button {
                             objectName: "deletePlaylistButton"
                             visible: playlistRow.modelData.staged.length === 0
-                            text: "Delete Playlist"
+                            // Its folders are read from the stick first:
+                            // this row says so, and no delete starts meanwhile.
+                            readonly property string deleting: consistencyController?.deletingPlaylist ?? ""
+                            text: deleting === playlistRow.modelData.name ? "Reading the stick" : "Delete Playlist"
                             enabled: !consistencyController?.busy && !consistencyController?.writing
-                                && !consistencyController?.stickReadOnly
+                                && !consistencyController?.stickReadOnly && deleting === ""
                             readonly property string tip: "Deletes \"" + playlistRow.modelData.name + "\" from "
                                 + root.spokenList(root.librariesHaving(playlistRow.modelData)) + ". Tracks stay."
                             ToolTip.visible: hovered

@@ -105,6 +105,8 @@ TestCase {
                                           int toIndex, var addedLibraries, var folderLibraries)
             function addAnyway(playlist, filePath) { calls.push(["addAnyway", playlist, filePath]); }
             function dropAddition(playlist, filePath) { calls.push(["dropAddition", playlist, filePath]); }
+            function dropWaitingAdditions() { calls.push(["dropWaiting"]); }
+            signal waitingAdditionsDropped()
             function addToPlaylist(rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom) {
                 if (missingForNextAdd.length > 0 || foldersForNextAdd.length > 0) {
                     const missing = missingForNextAdd;
@@ -707,6 +709,49 @@ TestCase {
                 "each answer to its own add");
         cleanupExperimental();
     }
+    // "Open Sync" leaves the page: the asks queued behind the open one are
+    // dropped with it, and none opens after.
+    function test_openSyncDropsTheAsksWaiting() {
+        const page = makeEditingPage();
+        const fake = page.playlistEditController;
+        const dialog = findChild(page, "missingLibrariesDialog");
+        const spy = createTemporaryObject(openSyncSpyComponent, testCase, {target: page});
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/a.mp3", "A Track", -1);
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/b.mp3", "B Track", -1);
+        tryCompare(dialog, "opened", true);
+        findChild(page, "openSyncButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(spy.count, 1);
+        wait(100);
+        compare(dialog.visible, false, "the second ask does not open over the page being left");
+        compare(dialog.waitingAsks.length, 0);
+        compare(JSON.stringify(fake.calls.filter(c => c[0] === "addAnyway" || c[0] === "dropAddition"
+                                                    || c[0] === "dropWaiting")),
+                JSON.stringify([["dropAddition", "Peak", "/nonexistent/a.mp3"], ["dropWaiting"]]),
+                "the open one dropped, and the controller told to drop the rest");
+        cleanupExperimental();
+    }
+    // The controller calls the asks void (a discard, another stick): the
+    // open one closes unanswered and the queued ones never open.
+    function test_asksTheControllerDropsCloseUnanswered() {
+        const page = makeEditingPage();
+        const fake = page.playlistEditController;
+        const dialog = findChild(page, "missingLibrariesDialog");
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/a.mp3", "A Track", -1);
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/b.mp3", "B Track", -1);
+        tryCompare(dialog, "opened", true);
+        fake.waitingAdditionsDropped();
+        tryCompare(dialog, "visible", false);
+        wait(100);
+        compare(dialog.visible, false, "nothing more opens");
+        compare(fake.calls.filter(c => c[0] === "addAnyway" || c[0] === "dropAddition").length, 0,
+                "no answer sent for a void ask");
+        cleanupExperimental();
+    }
     function test_anAddTheControllerAsksAboutOpensTheDialog() {
         const page = makeEditingPage();
         const fake = page.playlistEditController;
@@ -750,8 +795,9 @@ TestCase {
         findChild(page, "openSyncButton").clicked();
         tryCompare(dialog, "visible", false);
         compare(spy.count, 1, "Sync after Rekordbox Export asked for");
-        compare(JSON.stringify(fake.calls.slice(-1)), JSON.stringify([["dropAddition", "Peak", "/nonexistent/d.mp3"]]),
-                "and the add dropped");
+        compare(JSON.stringify(fake.calls.slice(-2)),
+                JSON.stringify([["dropAddition", "Peak", "/nonexistent/d.mp3"], ["dropWaiting"]]),
+                "and the add dropped, with any still waiting");
         const before = fake.calls.length;
 
         // Two left out, of both makers: both named, both players, and no

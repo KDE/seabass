@@ -1188,10 +1188,69 @@ TestCase {
         const browse = createTemporaryObject(playlistEditComponent, testCase);
         verify(!edited(browse, browse.renamePlaylist(pioneer, engine, "Crate", "Box")));
         compare(browse.errorMessage, "\"Crate\" is not renamed. In rekordbox and OneLibrary it is a folder, and in "
-                + "Engine a playlist holding other playlists: renamed in Engine only, the playlists inside it would be "
-                + "under \"Box\" there and under \"Crate\" in rekordbox and OneLibrary. Rename the folder in "
-                + "rekordbox and the playlist in Engine DJ instead.");
+                + "Engine a playlist holding other playlists: renamed in Engine only, it would be \"Box\" there and "
+                + "still \"Crate\" in rekordbox and OneLibrary. Rename the folder in rekordbox and the playlist in "
+                + "Engine DJ instead.");
         compare(session.pendingCount, 0, "nothing staged");
+    }
+
+    // A library on the stick that cannot be read (a folder where
+    // export.pdb should be) is not one without the playlist: the edit is
+    // refused, naming it, instead of left out of it or making the
+    // playlist there.
+    function test_anUnreadableLibraryRefusesTheEdit() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        compare(stickFixture.plantPlaylist(stick, "Mixed", ["rekordbox", "onelibrary"], 0).length, 0);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        verify(session !== null);
+        verify(browseFixture.removeFile(pioneer + "/rekordbox/export.pdb"));
+        verify(stickFixture.makeDirectory(pioneer + "/rekordbox/export.pdb"));
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        browse.discardLeftOverEdits(pioneer, engine);
+        const words = "Seabass could not read the playlists of rekordbox on this stick, so nothing is staged. Check "
+            + "the stick (Library Health), then try again.";
+        verify(!edited(browse, browse.deletePlaylist(pioneer, engine, "Mixed")));
+        compare(browse.errorMessage, words);
+        verify(!edited(browse, browse.createPlaylistWhereMissing(pioneer, engine, "Mixed")));
+        compare(browse.errorMessage, words);
+        compare(session.pendingCount, 0, "nothing staged: " + JSON.stringify(session.pendingDescriptions));
+    }
+
+    // The same refusal for a rename kept over a restart: staged while
+    // Engine's "Crate" held nothing (renamed there, the empty rekordbox
+    // folder keeps its name), it is refused when kept on a stick where
+    // Engine's holds a playlist by then, and nothing is staged.
+    function test_aKeptRenameOfAFolderInTwoFormatsIsRefused() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        verify(stickFixture.plantFolder(stick, "Crate", "rekordbox"));
+        compare(stickFixture.plantPlaylist(stick, "Crate", ["engine"], 0).length, 0);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        let browse = createTemporaryObject(playlistEditComponent, testCase);
+        browse.discardLeftOverEdits(pioneer, engine);
+        verify(edited(browse, browse.renamePlaylist(pioneer, engine, "Crate", "Box")), browse.errorMessage);
+        compare(session.pendingCount, 1, "staged: Engine's Crate holds nothing yet");
+        browse.destroy();
+        wait(50);
+        EditSessionRegistry.discardAll();
+        verify(stickFixture.plantFolder(stick, "Crate", "engine"), "Engine's Crate holds Crate/Inside now");
+        browse = createTemporaryObject(playlistEditComponent, testCase);
+        const kept = createTemporaryObject(keptSpyComponent, testCase, {target: browse});
+        verify(browse.keepLeftOverEdits(pioneer, engine), browse.errorMessage);
+        tryCompare(kept, "count", 1, 60000);
+        const [keptCount, keptTotal, refusals] = kept.signalArguments[0];
+        compare(JSON.stringify([keptCount, keptTotal]), JSON.stringify([0, 1]), JSON.stringify(refusals));
+        compare(JSON.stringify(refusals), JSON.stringify([
+            "\"Crate\" is not renamed. In rekordbox it is a folder, and in Engine a playlist holding other playlists: "
+            + "renamed in Engine only, it would be \"Box\" there and still \"Crate\" in rekordbox. Rename the folder "
+            + "in rekordbox and the playlist in Engine DJ instead."]));
+        compare(session.pendingCount, 0, "nothing staged");
+        browse.discardLeftOverEdits(pioneer, engine);
     }
 
     // An add by a name that is a playlist in OneLibrary and a folder in

@@ -306,45 +306,64 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
             where.holdingOthers << QString::fromLatin1(library);
         }
     };
+    const auto unreadable = [&](const char *library) {
+        where.onStick << QString::fromLatin1(library);
+        where.unreadable << QString::fromLatin1(library);
+    };
+    // Whether a library's file is there: false when it is not, nothing
+    // when even that cannot be told (the error_code overload: the other
+    // throws, and this runs on a worker whose caller only counts libraries).
+    const auto present = [](const std::string &file) -> std::optional<bool> {
+        std::error_code ec;
+        const bool there = std::filesystem::exists(pathFromUtf8(file), ec);
+        if (ec) {
+            return std::nullopt;
+        }
+        return there;
+    };
     const std::string pioneer = pioneerRoot.toStdString();
-    if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))) {
-        int count = 0;
-        bool folder = false;
-        bool holding = false;
-        try {
-            const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(pioneer));
-            count = static_cast<int>(pdbPlaylistIds(rows, playlist).size());
-            folder = count > 0 && folderAt(rows.playlistTree(), playlist);
-            holding = count > 0 && nodesBelow(rows.playlistTree(), playlist);
-        } catch (const std::exception &) {
+    if (!pioneer.empty()) {
+        if (const auto there = present(exportPdbOf(pioneer)); !there) {
+            unreadable("rekordbox");
+        } else if (*there) {
+            try {
+                const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(pioneer));
+                const int count = static_cast<int>(pdbPlaylistIds(rows, playlist).size());
+                note("rekordbox", count, count > 0 && folderAt(rows.playlistTree(), playlist),
+                     count > 0 && nodesBelow(rows.playlistTree(), playlist));
+            } catch (const std::exception &) {
+                unreadable("rekordbox");
+            }
         }
-        note("rekordbox", count, folder, holding);
     }
-    if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
-        int count = 0;
-        bool folder = false;
-        bool holding = false;
-        try {
-            infrastructure::onelibrary::OneLibraryCueWriter writer(pioneer);
-            count = writer.playlistCountAtPath(playlist);
-            folder = count > 0 && folderAt(writer.playlistTree(), playlist);
-            holding = count > 0 && nodesBelow(writer.playlistTree(), playlist);
-        } catch (const std::exception &) {
+    if (!pioneer.empty()) {
+        if (const auto there = present(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer)); !there) {
+            unreadable("onelibrary");
+        } else if (*there) {
+            try {
+                infrastructure::onelibrary::OneLibraryCueWriter writer(pioneer);
+                const int count = writer.playlistCountAtPath(playlist);
+                note("onelibrary", count, count > 0 && folderAt(writer.playlistTree(), playlist),
+                     count > 0 && nodesBelow(writer.playlistTree(), playlist));
+            } catch (const std::exception &) {
+                unreadable("onelibrary");
+            }
         }
-        note("onelibrary", count, folder, holding);
     }
     const std::string engine = enginePath.toStdString();
-    if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))) {
-        int count = 0;
-        bool holding = false;
-        try {
-            // Only a look at the stick, not a save's: its read copy (#110).
-            count = infrastructure::engine::enginePlaylistCountAtPath(engine, playlist,
-                                                                      infrastructure::ReadFor::Reading);
-            holding = count > 0 && enginePlaylistsBelow(engine, playlist);
-        } catch (const std::exception &) {
+    if (!engine.empty()) {
+        if (const auto there = present(engineDbOf(engine)); !there) {
+            unreadable("engine");
+        } else if (*there) {
+            try {
+                // Only a look at the stick, not a save's: its read copy (#110).
+                const int count = infrastructure::engine::enginePlaylistCountAtPath(engine, playlist,
+                                                                                    infrastructure::ReadFor::Reading);
+                note("engine", count, false, count > 0 && enginePlaylistsBelow(engine, playlist));
+            } catch (const std::exception &) {
+                unreadable("engine");
+            }
         }
-        note("engine", count, false, holding);
     }
     if (!filePath.empty()) {
         for (const QString &library : where.onStick) {

@@ -182,6 +182,9 @@ public:
     // file it named.
     Q_INVOKABLE void addAnyway(const QString &playlist, const QString &filePath);
     Q_INVOKABLE void dropAddition(const QString &playlist, const QString &filePath);
+    // Every ask still waiting answered "Don't add" at once: the page is
+    // being left (its "Open Sync"). waitingAdditionsDropped follows.
+    Q_INVOKABLE void dropWaitingAdditions();
     Q_INVOKABLE void keepOutOfPlaylist(const QString &playlist, const QString &filePath);
     Q_INVOKABLE bool isAdditionStaged(const QString &playlist, const QString &filePath) const;
     // The file to `toIndex` (from 0) in `playlist`'s order as Browse shows
@@ -283,6 +286,10 @@ signals:
     // person may have expected it to reach (a folder of the playlist's
     // name): `message` says which, and why, for the page to show.
     void stagedWithNote(const QString &message);
+    // The asks additionNeedsLibraries made are void: the session was
+    // discarded, the stick changed, or dropWaitingAdditions. The page
+    // drops what it still has queued, and an answer to one does nothing.
+    void waitingAdditionsDropped();
     // keepLeftOverEdits is done: `kept` of `total` edits are staged again,
     // and `refusals` say why the others are not.
     void leftOverEditsKept(int kept, int total, const QStringList &refusals);
@@ -360,6 +367,10 @@ private:
         bool madeAtLookup = false;
     };
     void stageAdd(const PendingAdd &add);
+    // Keeps `add` waiting and asks the page, unless the same playlist and
+    // file are waiting already.
+    void askAbout(const PendingAdd &add, const QStringList &missing, const QStringList &reached,
+                  const QStringList &folders);
     // addToPlaylist, with the page's answer to additionNeedsLibraries
     // given in advance when `anyway` (a kept add, see keepLeftOverEdits).
     bool requestAdd(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
