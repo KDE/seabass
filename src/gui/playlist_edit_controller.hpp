@@ -355,6 +355,9 @@ private:
         // The libraries left out because the playlist's path is a folder
         // there, said by the save's summary.
         QStringList folders;
+        // Its create was staged when it was looked up: the libraries are
+        // every one on the stick.
+        bool madeAtLookup = false;
     };
     void stageAdd(const PendingAdd &add);
     // addToPlaylist, with the page's answer to additionNeedsLibraries

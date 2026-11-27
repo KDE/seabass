@@ -587,6 +587,7 @@ bool PlaylistEditController::requestAdd(const QString &rekordboxPath, const QStr
             }
             PendingAdd add{rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, libraries, anyway};
             add.folders = folders;
+            add.madeAtLookup = made;
             add.partial = std::any_of(where.onStick.begin(), where.onStick.end(),
                                       [&](const QString &library) { return !libraries.contains(library); });
             // Made by this Save where a library lacked it: the add goes by
@@ -629,6 +630,22 @@ void PlaylistEditController::stageAdd(const PendingAdd &add)
         // Made first, unless another add has staged it meanwhile.
         if (!add.createIn.isEmpty() && !isNewPlaylistStaged(add.playlist)
             && !stageCreateWhereMissing(add.rekordboxPath, add.enginePath, add.playlist, add.createIn, add.having)) {
+            return;
+        }
+    } else {
+        // Asked again now as well: the libraries were looked up before
+        // the page's answer, and the import's create or a create where
+        // missing staged since would leave the others without the track.
+        if (importMakes(add.playlist)) {
+            setErrorMessage(QStringLiteral("\"%1\" is made by the import waiting for Save. Save first, then add "
+                                           "tracks to it.")
+                                .arg(add.playlist));
+            return;
+        }
+        if (!add.madeAtLookup && isMadeWhereMissing(add.playlist)) {
+            setErrorMessage(QStringLiteral("\"%1\" waits to be made by Save in the libraries that lack it now. Add "
+                                           "\"%2\" to it again.")
+                                .arg(add.playlist, add.title));
             return;
         }
     }

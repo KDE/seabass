@@ -661,8 +661,8 @@ TestCase {
         fake.foldersForNextAdd = ["rekordbox"];
         fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/a.mp3", "A Track", -1);
         tryCompare(dialog, "opened", true);
-        compare(text.text, "In rekordbox, \"Peak\" is a folder, not a playlist, so \"A Track\" would be added to it "
-                + "in OneLibrary and Engine only, and a Pioneer player would not see it there.");
+        compare(text.text, "In rekordbox, \"Peak\" is a folder, not a playlist, so \"A Track\" would be added to the "
+                + "playlist \"Peak\" in OneLibrary and Engine only, and a Pioneer player would not see it there.");
         compare(findChild(page, "openSyncButton").visible, false, "nothing to sync");
         findChild(page, "addAnywayButton").clicked();
         tryCompare(dialog, "visible", false);
@@ -679,6 +679,32 @@ TestCase {
         verify(text.text.indexOf("\u2014") < 0 && text.text.indexOf("--") < 0, "no dashes on screen");
         findChild(page, "dontAddButton").clicked();
         tryCompare(dialog, "visible", false);
+        cleanupExperimental();
+    }
+    // Two asks in a row (two kept adds replayed after a restart): the
+    // second waits for the first's answer, and each answer goes to its own
+    // add.
+    function test_asksComingTogetherAreAnsweredInTurn() {
+        const page = makeEditingPage();
+        const fake = page.playlistEditController;
+        const dialog = findChild(page, "missingLibrariesDialog");
+        const text = findChild(page, "missingLibrariesText");
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/a.mp3", "A Track", -1);
+        fake.missingForNextAdd = ["Engine"];
+        fake.addToPlaylist(page.rekordboxPath, page.enginePath, "Peak", "/nonexistent/b.mp3", "B Track", -1);
+        tryCompare(dialog, "opened", true);
+        verify(text.text.indexOf("\"A Track\"") === 0, "the first ask first: " + text.text);
+        findChild(page, "addAnywayButton").clicked();
+        tryVerify(() => text.text.indexOf("\"B Track\"") === 0, 5000, "then the second: " + text.text);
+        tryCompare(dialog, "opened", true, 5000, "the second ask follows");
+        findChild(page, "dontAddButton").clicked();
+        tryCompare(dialog, "visible", false);
+        wait(50);
+        compare(dialog.visible, false, "nothing more to ask");
+        compare(JSON.stringify(fake.calls.filter(c => c[0] === "addAnyway" || c[0] === "dropAddition")),
+                JSON.stringify([["addAnyway", "Peak", "/nonexistent/a.mp3"], ["dropAddition", "Peak", "/nonexistent/b.mp3"]]),
+                "each answer to its own add");
         cleanupExperimental();
     }
     function test_anAddTheControllerAsksAboutOpensTheDialog() {

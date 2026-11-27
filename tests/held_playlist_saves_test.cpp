@@ -574,6 +574,34 @@ int main(int argc, char **argv)
     if (wanted("2a")) {
         const ThreeStick held = threeStick(pdbFixtures, olFixture, "held_saves_browse_all");
         const ThreeStick each = threeStick(pdbFixtures, olFixture, "held_saves_browse_each");
+        // A second playlist in folder F1, F1B with a02, in all three: the
+        // delete of F1/F1A takes neither it nor F1 along.
+        for (const ThreeStick *s : {&held, &each}) {
+            {
+                PdbRowWriter rows(pathToUtf8(s->pioneer / "rekordbox" / "export.pdb"));
+                std::uint32_t f1 = 0;
+                for (const auto &n : rows.playlistTree()) {
+                    f1 = n.parentId == 0 && n.name == "F1" ? n.id : f1;
+                }
+                assert(f1 != 0);
+                const std::uint32_t f1b = rows.createPlaylist(f1, "F1B", false);
+                const auto a02 = rows.trackIdsWithFilePath(std::string("/Contents/") + A02.relative);
+                assert(a02.size() == 1);
+                rows.appendPlaylistEntries(f1b, {a02.front()});
+                assert(rows.commit());
+            }
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(s->pioneer));
+            w.createPlaylist("F1", "F1B", false);
+            w.addToPlaylist("F1/F1B", s->file(A02));
+            auto db = djinterop::engine::load_database(pathToUtf8(s->library));
+            auto f1 = db.root_playlist_by_name("F1");
+            assert(f1);
+            auto a02 = db.track_by_id(s->engineId.at(A02.relative));
+            assert(a02);
+            f1->create_sub_playlist("F1B").add_track_back(*a02);
+        }
+        const InThree f1b{{"a02.mp3"}, {"a02.mp3"}, {"a02.mp3"}};
+        assert(playlistInThree(held, "F1/F1B") == f1b && "precondition: F1B with a02 in all three");
         bool ranHeld = false;
         bool ranEach = false;
         const auto changesFor = [&](const ThreeStick &s, bool *ran) {
@@ -633,6 +661,14 @@ int main(int argc, char **argv)
         }
         assert(got == expected && "Q One alike in all three libraries");
         assert(playlistInThree(held, "F1/F1A") == (InThree{{"<none>"}, {"<none>"}, {"<none>"}}) && "F1A gone from all three");
+        assert(playlistInThree(held, "F1/F1B") == f1b && "F1's other playlist stays, with its track, in all three");
+        {
+            const auto f1 = playlistWhereabouts(held.pioneerQ(), held.libraryQ(), "F1");
+            assert(f1.having == All && "F1 stays in all three");
+            assert((f1.folders == QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")})
+                   && "a folder still in rekordbox and OneLibrary");
+            assert(f1.holdingOthers == All && "holding F1B in each");
+        }
         assert(playlistInThree(held, "Q1") == (InThree{{"<none>"}, {"<none>"}, {"<none>"}}) && "Q1 renamed in all three");
         assert(playlistInThree(each, "Q One") == expected);
         assert(exportPdbOf(held.pioneer) == exportPdbOf(each.pioneer) && "export.pdb the bytes of the changes saved one by one");

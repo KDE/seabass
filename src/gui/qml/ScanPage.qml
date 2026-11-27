@@ -1256,8 +1256,8 @@ Page {
                 lines.push(missing.length > 0
                     ? qsTr("In %1, \"%2\" is a folder, not a playlist, so it is not added there either.")
                           .arg(names(folders)).arg(playlist)
-                    : qsTr("In %1, \"%2\" is a folder, not a playlist, so \"%3\" would be added to it in %4 only, "
-                           + "and %5 would not see it there.")
+                    : qsTr("In %1, \"%2\" is a folder, not a playlist, so \"%3\" would be added to the playlist "
+                           + "\"%2\" in %4 only, and %5 would not see it there.")
                           .arg(names(folders)).arg(playlist).arg(trackTitle).arg(names(added)).arg(players));
             }
             if (engineMissing) {
@@ -1309,18 +1309,34 @@ Page {
             }
         }
         onRejected: drop()
+        // Asks that come while one is open (two kept adds replayed after a
+        // restart may both ask) wait their turn: each is answered, none is
+        // lost.
+        property var waitingAsks: []
+        function askNext() {
+            if (visible || waitingAsks.length === 0) {
+                return;
+            }
+            const next = waitingAsks[0];
+            waitingAsks = waitingAsks.slice(1);
+            playlist = next.playlist;
+            filePath = next.filePath;
+            trackTitle = next.title;
+            missing = next.missing;
+            added = next.added;
+            folders = next.folders;
+            open();
+        }
+        onClosed: Qt.callLater(askNext)
     }
     Connections {
         target: root.playlistEditController
         ignoreUnknownSignals: true
         function onAdditionNeedsLibraries(playlist, filePath, title, missing, toIndex, added, folders) {
-            missingLibrariesDialog.playlist = playlist;
-            missingLibrariesDialog.filePath = filePath;
-            missingLibrariesDialog.trackTitle = title;
-            missingLibrariesDialog.missing = missing;
-            missingLibrariesDialog.added = added ?? [];
-            missingLibrariesDialog.folders = folders ?? [];
-            missingLibrariesDialog.open();
+            missingLibrariesDialog.waitingAsks = missingLibrariesDialog.waitingAsks.concat([{
+                playlist: playlist, filePath: filePath, title: title, missing: missing, added: added ?? [],
+                folders: folders ?? []}]);
+            missingLibrariesDialog.askNext();
         }
         function onDeleteWithTracksPlanned(plan) {
             deleteWithTracksDialog.playlist = plan.playlist;

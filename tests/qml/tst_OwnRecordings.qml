@@ -2303,14 +2303,38 @@ TestCase {
     // The page heeds it on every way into the row: a track dragged onto
     // it, files dropped, Add to the library.
     function test_anEarlierAddKeepsTheRowsWaysShut() {
-        const page = makePage(makeStick(testCase.threeRecordings), true, "Own Recordings");
-        tryCompare(findChild(page, "scanController"), "recordingCount", 3);
+        const keep = createTemporaryObject(fakeKeepComponent, testCase);
+        const page = makePage(makeStick(testCase.threeRecordings), true, "Own Recordings", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
         const edits = createTemporaryObject(fakePlaylistEditComponent, testCase);
         page.playlistEditController = edits;
         const importer = createTemporaryObject(fakeImportComponent, testCase);
         page.trackImportController = importer;
         edits.partialWhy = "Tracks wait to be added to \"Own Recordings\" in the libraries that have it now only. "
             + "Save them first, then add to it.";
+        // A recording saved as FLAC, for Add to the library.
+        page.showOwnRecordings();
+        tryVerify(() => findChild(page, "trackListView").count >= 3);
+        let path = "";
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            const track = scan.tracks.trackAt(i);
+            if (track.recording && track.filePath.endsWith("/Session-0002.wav")) {
+                path = track.filePath;
+            }
+        }
+        verify(path.length > 0, "the recording is listed");
+        keep.outcomes = {[path]: {state: "kept", fileName: "Late Set.flac", folder: "/home/dj/Kept"}};
+        keep.flacs = {[path]: "/home/dj/Kept/Late Set.flac"};
+        keep.revision++;
+        const menu = openRecordingMenu(page, "Session-0002.wav");
+        const addItem = findChild(menu, "addToLibraryItem");
+        compare(addItem.text, "Add to the library");
+        addItem.triggered();
+        menu.close();
+        tryCompare(menu, "visible", false);
+        compare(importer.calls.length, 0, "Add to the library imports nothing into it");
+        compare(closeMessage(page), edits.partialWhy);
         const drag = findChild(page, "trackDragItem");
         drag.filePath = "/nonexistent/HELD/Contents/held-1001.mp3";
         drag.title = "Held Track 1001";
@@ -2323,6 +2347,126 @@ TestCase {
         edits.partialWhy = "";
         drag.addChosen("Own Recordings");
         compare(edits.calls.length, 1, "nothing waits: the row takes it");
+    }
+
+    // "Keep the name" in the row's menu, on the real controller: the
+    // staged rename from or to the row's playlist is taken back, nothing
+    // of it stays staged, and the menu has nothing left to offer.
+    function test_keepTheNameTakesTheRenameBack_data() {
+        return [
+            {tag: "from the row's name", planted: "Own Recordings", from: "Own Recordings", to: "Old Sets"},
+            {tag: "to the row's name", planted: "Sets", from: "Sets", to: "Own Recordings"},
+        ];
+    }
+    function test_keepTheNameTakesTheRenameBack(data) {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        compare(stickFixture.plantPlaylist(stick, data.planted, ["rekordbox", "onelibrary", "engine"], 0).length, 0);
+        verify(browseFixture.writeRecording(stick + "/Sessions/Session-0017.wav", 1, false, testCase.base));
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 660, stickLabel: "TESTSTICK", rekordboxPath: pioneer, enginePath: engine,
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        const scan = findChild(page, "scanController");
+        tryVerify(() => !scan.busy && scan.playlistNames.indexOf(data.planted) >= 0, 60000, "the stick is read");
+        tryCompare(scan, "recordingCount", 1, 10000);
+        const edits = page.playlistEditController;
+        edits.discardLeftOverEdits(pioneer, engine);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        compare(edited(edits, edits.renamePlaylist(pioneer, engine, data.from, data.to)), "");
+        compare(session.pendingCount, 1, "the rename is staged");
+        verify(edits.isRenameStaged("Own Recordings"));
+        compare(JSON.stringify(ownRecordingsMenuTexts(page)), JSON.stringify(["Keep the name \"" + data.from + "\""]));
+        findChild(page, "ownRecordingsKeepNameItem").triggered();
+        closeOwnRecordingsMenu(page);
+        compare(edits.isRenameStaged("Own Recordings"), false, "the rename is taken back");
+        compare(JSON.stringify(edits.pendingRenames), "{}");
+        compare(session.pendingCount, 0, "nothing of it stays staged: " + JSON.stringify(session.pendingDescriptions));
+        compare(JSON.stringify(ownRecordingsMenuTexts(page)), "[]", "nothing waits: no menu");
+        edits.discardLeftOverEdits(pioneer, engine);
+    }
+
+    // A plain add asked about ("Not in every library") and answered after
+    // the playlist was staged to be made where it is missing is looked at
+    // again: it would go into the libraries it was looked up in only. It
+    // is refused, saying to add it again, which then goes into every one.
+    Component {
+        id: askingEditsComponent
+        PlaylistEditController {}
+    }
+    function test_aPlainAddAnsweredAfterACreateIsCheckedAgain() {
+        const t = ownStick(["onelibrary", "engine"]);
+        const files = stickFixture.plantPlaylist(t.stick, "Picked Two", ["rekordbox", "onelibrary"], 2);
+        compare(files.length, 2);
+        const edits = createTemporaryObject(askingEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        const asked = signalSpy.createObject(testCase, {target: edits, signalName: "additionNeedsLibraries"});
+        compare(edited(edits, edits.addToPlaylist(t.pioneer, t.engine, "Own Recordings", files[0], "First")), "");
+        compare(asked.count, 1, "Engine has no row for it: asked");
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", files[1],
+                                                                       "Second")), "");
+        compare(asked.count, 2);
+        compare(t.session.pendingCount, 0, "nothing staged while both ask");
+        edits.addAnyway("Own Recordings", files[1]);
+        compare(t.session.pendingCount, 2, "made in rekordbox, with the second add");
+        verify(edits.isMadeWhereMissing("Own Recordings"));
+        edits.addAnyway("Own Recordings", files[0]);
+        compare(edits.errorMessage, "\"Own Recordings\" waits to be made by Save in the libraries that lack it now. "
+                + "Add \"First\" to it again.");
+        compare(t.session.pendingCount, 2, "the first add is not staged into OneLibrary and Engine alone");
+        compare(edited(edits, edits.addToPlaylist(t.pioneer, t.engine, "Own Recordings", files[0], "First")), "");
+        compare(asked.count, 3);
+        edits.addAnyway("Own Recordings", files[0]);
+        compare(edits.errorMessage, "");
+        compare(t.session.pendingCount, 3, "added again: into every library");
+        const summary = saveStick(t.stick);
+        compare(summary.error, "", JSON.stringify(summary));
+        for (const format of ["rekordbox", "onelibrary"]) {
+            compare(JSON.stringify(playlistFiles(t.stick, format, "Own Recordings").sort()),
+                    JSON.stringify(files.slice().sort()), format + " has both");
+        }
+        asked.destroy();
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+    }
+
+    // The same for the import's create of the playlist staged while a
+    // plain add asks: the answer is refused, as the add would be now.
+    function test_aPlainAddAnsweredAfterTheImportsCreateIsRefused() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const t = ownStick(["onelibrary", "engine"]);
+        verify(browseFixture.writeRecording(t.stick + "/Sessions/Session-0018.wav", 1, false, testCase.base));
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 660, stickLabel: "TESTSTICK", rekordboxPath: t.pioneer, enginePath: t.engine,
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        const scan = findChild(page, "scanController");
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 60000, "the stick is read");
+        const edits = page.playlistEditController;
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        compare(edited(edits, edits.addToPlaylist(t.pioneer, t.engine, "Own Recordings", t.file, "Picked")), "");
+        const dialog = findChild(page, "missingLibrariesDialog");
+        tryCompare(dialog, "opened", true, 30000);
+        compare(t.session.pendingCount, 0, "nothing staged while it asks");
+
+        const computer = stickFixture.scratchDirectory();
+        verify(artworkFixture.writeNoiseWav(computer + "/late set.wav", 3, 0, 22));
+        page.importFiles(["file://" + computer + "/late set.wav"], "Own Recordings", false, -1);
+        const importer = page.trackImportController;
+        tryCompare(importer, "busy", false, 120000);
+        compare(importer.errorMessage, "");
+        compare(importer.stagedPlaylistIsNew, true, "made in rekordbox by the import");
+        const waiting = t.session.pendingCount;
+        verify(waiting > 0, "the import is staged");
+
+        findChild(page, "addAnywayButton").clicked();
+        tryCompare(dialog, "visible", false);
+        compare(edits.errorMessage, "\"Own Recordings\" is made by the import waiting for Save. Save first, then add "
+                + "tracks to it.");
+        compare(t.session.pendingCount, waiting, "the add is not staged beside the import's create");
+        compare(edits.isAdditionStaged("Own Recordings", t.file), false);
+        importer.dropStaged();
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
     }
 
     // A plain add into the playlist after it is staged to be made where it
