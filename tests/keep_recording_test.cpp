@@ -273,7 +273,7 @@ public:
         if (placeLeavesTarget) {
             m_files.sizes[flacPath] = file.size + 77;
             result.error = "the FLAC was not given its name: DJ Kelp - Late Set.flac does not have the size of the "
-                           "checked file after it was given its name; it was left as it is and does not count as kept";
+                           "checked file after it was given its name; it was left as it is and does not count as saved";
             result.leftUnderTargetName = true;
             return result;
         }
@@ -377,6 +377,13 @@ struct Run
                 onProgress(p);
             }
         });
+        // A failure is a reason, which the pages frame as "Not saved: ...":
+        // it says neither "kept" (the action is Save as FLAC) nor that it
+        // was not saved a second time.
+        const std::string &said = result.message;
+        check(said.find("kept") == std::string::npos && said.find("not saved") == std::string::npos
+                  && said.find("Not saved") == std::string::npos,
+              "a reason in the words of Save as FLAC: " + said);
         return result;
     }
 
@@ -760,7 +767,7 @@ void testAFileLeftInPlaceIsSaid()
         check(run.result.status == KeepRecordingResult::Status::Failed, "another size after the rename: failed");
         check(run.result.leftBehind == Flac, "another size after the rename: the file is named as left behind");
         check(run.result.message.find(Flac) != std::string::npos
-                  && run.result.message.find("does not count as kept") != std::string::npos,
+                  && run.result.message.find("does not count as saved") != std::string::npos,
               "another size after the rename: the message gives its path: " + run.result.message);
         check(!run.called("write remove") && run.files.present.count(Flac) == 1,
               "another size after the rename: never removed");
@@ -869,10 +876,10 @@ void testOneJobPerRecordingAndFlac()
     run.go();
     check(run.result.status == KeepRecordingResult::Status::Kept, "the first job is kept");
     check(sameWav.status == KeepRecordingResult::Status::Failed
-              && sameWav.message.find("another job is keeping it") != std::string::npos,
+              && sameWav.message.find("Another job is saving it as FLAC") != std::string::npos,
           "a second job for the same recording is refused: " + sameWav.message);
     check(sameFlac.status == KeepRecordingResult::Status::Failed
-              && sameFlac.message.find("another job is writing") != std::string::npos,
+              && sameFlac.message.find("Another job is writing") != std::string::npos,
           "a second job for the same FLAC is refused: " + sameFlac.message);
     check(secondJournal.empty(), "the refused jobs touched nothing");
     Run after;
@@ -923,9 +930,9 @@ void testAnUnfinishedRecording()
         check(run.result.status == KeepRecordingResult::Status::Failed && !run.encoder.keepUnfinishedGiven,
               "unfinished, no choice: refused, and the encoder was not told to keep it");
         check(run.result.message
-                  == "The recording was not kept. Its header was not completed: it does not say how long the audio "
+                  == "Its header was not completed: it does not say how long the audio "
                      "is, and the file holds 1:02:03 of audio. " + why
-                      + " Choose \"Keep the audio the file holds\" to keep that.",
+                      + " Choose \"Keep the audio the file holds\" to save that.",
               "unfinished, no size, no choice: the message says what the file holds and how to keep it: "
                   + run.result.message);
         check(run.result.unfinished && run.nothingLeft(), "unfinished, no choice: nothing left");
@@ -937,8 +944,8 @@ void testAnUnfinishedRecording()
         run.encoder.declaredFrames = 48000ULL * 3600;
         run.go();
         check(run.result.message
-                  == "The recording was not kept. Its header was not completed: it declares 1:00:00 of audio, and "
-                     "the file holds 42:10. " + why + " Choose \"Keep the audio the file holds\" to keep that.",
+                  == "Its header was not completed: it declares 1:00:00 of audio, and "
+                     "the file holds 42:10. " + why + " Choose \"Keep the audio the file holds\" to save that.",
               "cut short, no choice: both lengths: " + run.result.message);
     }
     {
@@ -1066,7 +1073,7 @@ void testAnUnfinishedRecording()
 void testTheSweep()
 {
     Run run;
-    run.files.sweepNotes = {"A temporary file an earlier keep left behind, more than a day old, was removed: x"};
+    run.files.sweepNotes = {"A temporary file an earlier save as FLAC left behind, more than a day old, was removed: x"};
     run.files.leftoverNames = {FileName, "Other.flac"};
     run.go();
     check(run.result.status == KeepRecordingResult::Status::Kept, "with leftovers: kept");

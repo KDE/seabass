@@ -305,11 +305,21 @@ void KeepRecordingController::setStickRoot(const QString &root)
 
 void KeepRecordingController::setDeleteRunning(const QString &stickRoot, bool running)
 {
-    if (running) {
-        m_deletingSticks.insert(stickKey(stickRoot));
-    } else {
-        m_deletingSticks.remove(stickKey(stickRoot));
+    const QString key = stickKey(stickRoot);
+    if (m_deletingSticks.contains(key) == running) {
+        return;
     }
+    if (running) {
+        m_deletingSticks.insert(key);
+    } else {
+        m_deletingSticks.remove(key);
+    }
+    bumpRevision();
+}
+
+bool KeepRecordingController::deletingOn(const QString &stickRoot) const
+{
+    return m_deletingSticks.contains(stickKey(stickRoot));
 }
 
 bool KeepRecordingController::available() const
@@ -496,7 +506,7 @@ QString KeepRecordingController::targetProblem(const QString &folderText, const 
     const QString key = comparablePath(target);
     const auto sameTarget = [&key](const Job &job) { return comparablePath(targetOf(job.request)) == key; };
     if ((m_running && sameTarget(*m_running)) || std::any_of(m_queue.begin(), m_queue.end(), sameTarget)) {
-        return tr("Another recording is being kept as %1 in this folder. Change the artist or the track name.")
+        return tr("Another recording is being saved as %1 in this folder. Change the artist or the track name.")
             .arg(fileName);
     }
     if (QFileInfo::exists(target) || QFileInfo(target).isSymLink()) {
@@ -616,10 +626,10 @@ QString KeepRecordingController::formProblem(const QVariantMap &form) const
     const QString wavKey = comparablePath(wavPath);
     const auto sameWav = [&wavKey](const Job &job) { return comparablePath(job.wavPath) == wavKey; };
     if (m_running && sameWav(*m_running)) {
-        return tr("This recording is being kept right now.");
+        return tr("This recording is being saved as FLAC right now.");
     }
     if (std::any_of(m_queue.begin(), m_queue.end(), sameWav)) {
-        return tr("This recording is waiting to be kept already.");
+        return tr("This recording is waiting to be saved as FLAC already.");
     }
     return {};
 }

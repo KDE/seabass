@@ -307,9 +307,9 @@ std::vector<std::string> LocalKeepRecordingFiles::sweepLeftovers(const std::stri
         const std::string path = pathToUtf8(folder / entry.filename());
         std::string failure;
         if (removeEntry(file, failure)) {
-            notes.push_back("A temporary file an earlier keep left behind, more than a day old, was removed: " + path);
+            notes.push_back("A temporary file an earlier save as FLAC left behind, more than a day old, was removed: " + path);
         } else {
-            notes.push_back("A temporary file an earlier keep left behind could not be removed (" + failure + "): " + path);
+            notes.push_back("A temporary file an earlier save as FLAC left behind could not be removed (" + failure + "): " + path);
         }
     }
     return notes;

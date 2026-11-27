@@ -119,14 +119,18 @@ Page {
 
     Component.onCompleted: root.controller.load(root.stickLabel, root.rekordboxPath, root.enginePath)
 
-    // The recording Browse asked to show, scrolled to once listed.
+    // The recording Browse asked to show, scrolled to once listed, and
+    // only once: a listing again (after a delete, a save) leaves the view
+    // where the person has it. The mark stays on its row.
+    property bool markedShown: false
     function showMarked() {
-        if (root.markedPath.length === 0 || !root.controller.listed) {
+        if (root.markedShown || root.markedPath.length === 0 || !root.controller.listed) {
             return;
         }
         const index = root.controller.rowOf(root.markedPath);
         if (index >= 0) {
             list.positionViewAtIndex(index, ListView.Center);
+            root.markedShown = true;
         }
     }
     Connections {

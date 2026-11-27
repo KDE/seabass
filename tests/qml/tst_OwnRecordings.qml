@@ -320,7 +320,6 @@ TestCase {
 
         browseFixture.releaseRecordingDeletes();
         tryCompare(scan, "recordingCount", 2, 10000);
-        tryCompare(scan, "recordingCount", 2, 10000);
         compare(scan.tracks.trackCount(), 3, "the library's rows are as they were");
     }
 
@@ -361,8 +360,13 @@ TestCase {
         Instantiator {
             delegate: QtObject {
                 required property string path
+                required property string fileName
                 required property bool unfinished
                 required property bool holdsNoAudio
+                required property double heldSeconds
+                required property double declaredSeconds
+                required property bool declaredUnusable
+                required property double missingBytes
             }
         }
     }
@@ -390,7 +394,7 @@ TestCase {
         const said = {};
         for (let i = 0; i < rows.count; ++i) {
             const row = rows.objectAt(i);
-            said[row.path] = {unfinished: row.unfinished, holdsNoAudio: row.holdsNoAudio};
+            said[row.path] = {unfinished: row.unfinished, holdsNoAudio: row.holdsNoAudio, row: row};
         }
         let unfinished = 0;
         let noAudio = 0;
@@ -400,6 +404,12 @@ TestCase {
             verify(there !== undefined, row.filePath);
             compare(row.recordingUnfinished, there.unfinished, row.title + " unfinished");
             compare(row.recordingHoldsNoAudio, there.holdsNoAudio, row.title + " holds no audio");
+            // What the form is opened with is the page's row, field for field.
+            const asked = scan.recordingAt(row.filePath);
+            for (const field of ["path", "fileName", "unfinished", "holdsNoAudio", "heldSeconds", "declaredSeconds",
+                                 "declaredUnusable", "missingBytes"]) {
+                compare(asked[field], there.row[field], row.title + " " + field);
+            }
             unfinished += row.recordingUnfinished ? 1 : 0;
             noAudio += row.recordingHoldsNoAudio ? 1 : 0;
         }
@@ -808,6 +818,9 @@ TestCase {
         compare(dialog.title, "Save Recording as FLAC");
         compare(dialog.headline, "Late_Set.wav becomes a FLAC file with tags and a cover on this computer.");
         compare(findChild(dialog, "keepStartButton").text, "Save as FLAC");
+        // One ellipsis spelling, Browse's and the Recordings page's: "...".
+        compare(findChild(dialog, "keepCoverButton").text, "Choose Picture...");
+        compare(findChild(dialog, "keepFolderButton").text, "Choose...");
         compare(keep.stickRoot, scan.recordingsRoot, "the form is for this stick");
         verify(findChild(dialog, "keepTitleField").text.indexOf("Late") >= 0, findChild(dialog, "keepTitleField").text);
         compare(findChild(dialog, "keepUnfinishedNotice").visible, false);
@@ -870,6 +883,10 @@ TestCase {
             property int coverWidth: 0
             property int coverHeight: 0
             function fileNameFor(artist, title, folder) { return title + ".flac"; }
+            function suggestionsFor(name, recorded) {
+                return {artist: "", title: name, album: "", genre: "", year: 0, folder: "/home/dj/Kept"};
+            }
+            function pickCover(path) {}
             function textProblem(field, text) { return ""; }
             function yearProblem(year) { return ""; }
             function folderProblem(folder) { return ""; }
@@ -989,6 +1006,19 @@ TestCase {
         compare(item.marked, true);
         const first = list.itemAtIndex(index - 1);
         compare(first.marked, false);
+
+        // Listed again (as after a delete): the view stays where it is put.
+        list.positionViewAtBeginning();
+        // From the list's start: a style with a header moves its origin
+        // when the rows are made again.
+        const top = list.contentY - list.originY;
+        const listedAgain = signalSpy.createObject(testCase, {target: page.controller, signalName: "listingChanged"});
+        page.controller.load("TESTSTICK", root + "/PIONEER", root + "/Engine Library");
+        tryVerify(() => listedAgain.count > 0 && page.controller.listed && !page.controller.busy, 10000);
+        wait(100);
+        listedAgain.destroy();
+        compare(list.contentY - list.originY, top, "no jump back to the marked row");
+        compare(list.itemAtIndex(index) === null || list.itemAtIndex(index).marked, true, "the mark stays");
     }
 
     // ---- The stick playlist "Own Recordings" ----
@@ -1387,5 +1417,92 @@ TestCase {
             verify(playlistFiles(stick, format, "").indexOf(removed) >= 0, format + " still lists the track");
         }
         verify(stickFixture.playlistsIn(stick, "engine").indexOf("Own Recordings") >= 0, "Engine keeps the playlist");
+    }
+
+    // Browse follows the Recordings page's rule: no Save as FLAC while
+    // recordings are deleted from the stick, said on the item, from the
+    // window's controller, which the delete tells.
+    function test_noSaveAsFlacWhileADeleteRuns() {
+        const keep = createTemporaryObject(realKeepComponent, testCase);
+        const root = makeStick(testCase.threeRecordings);
+        const page = makePage(root, true, "", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        let menu = openRecordingMenu(page, "Session-0002.wav");
+        verify(findChild(menu, "saveAsFlacItem").enabled);
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        browseFixture.holdRecordingDeletes();
+        const recordings = createTemporaryObject(recordingsControllerComponent, testCase, {keepController: keep});
+        recordings.load("TESTSTICK", root + "/PIONEER", root + "/Engine Library");
+        tryVerify(() => recordings.listed && !recordings.busy, 10000);
+        recordings.setIncluded(recordings.rowOf(root + "/Sessions/Session-0001.wav"), true);
+        recordings.deleteSelected();
+        tryVerify(() => browseFixture.recordingDeletesWaiting() === 1, 10000, "the delete waits at its file");
+        menu = openRecordingMenu(page, "Session-0002.wav");
+        const item = findChild(menu, "saveAsFlacItem");
+        compare(item.enabled, false, "not while the delete runs");
+        compare(item.text, "Save as FLAC... (once the recordings being deleted are gone)");
+        menu.close();
+        tryCompare(menu, "visible", false);
+
+        browseFixture.releaseRecordingDeletes();
+        tryCompare(scan, "recordingCount", 2, 10000);
+        menu = openRecordingMenu(page, "Session-0002.wav");
+        tryCompare(findChild(menu, "saveAsFlacItem"), "enabled", true);
+        compare(findChild(menu, "saveAsFlacItem").text, "Save as FLAC...");
+        menu.close();
+        tryCompare(menu, "visible", false);
+    }
+
+    // A save under way stays in view with Experimental off, as on the
+    // Recordings page, so it can still be cancelled: the strip shows, and
+    // nothing new is offered (no row, no recording, no menu).
+    function test_aSaveUnderWayShowsWithExperimentalOff() {
+        const keep = createTemporaryObject(fakeKeepComponent, testCase);
+        const page = makePage(makeStick(testCase.threeRecordings), false, "", keep);
+        settle(page);
+        const scan = findChild(page, "scanController");
+        verify(scan.recordingsRoot.length > 0);
+        const strip = findChild(page, "keepProgress");
+        compare(strip.visible, false, "nothing runs");
+        keep.busy = true;
+        keep.currentStickRoot = scan.recordingsRoot;
+        keep.currentRecording = "Session-0002.wav";
+        keep.progressStep = "encoding";
+        keep.progress = 0.2;
+        keep.revision++;
+        tryCompare(strip, "visible", true);
+        compare(findChild(strip, "passiveProgressSummary").text, "Saving Session-0002.wav as FLAC: encoding, 20%");
+        compare(sidebarNames(page), "All tracks(all)|Held Playlist", "no row");
+        compare(scan.recordingCount, 0, "no recording listed");
+        compare(titles(page), "Held Track 1000|Held Track 1001|Held Track 1002");
+        keep.busy = false;
+        keep.revision++;
+        tryCompare(strip, "visible", false);
+    }
+
+    // Browse hands the form its stick, always: with none it does not open,
+    // and the controller keeps the stick it was told of last rather than
+    // saving from that one.
+    function test_theFormNeedsBrowsesStick() {
+        const keep = createTemporaryObject(fakeKeepComponent, testCase);
+        const page = makePage(makeStick(testCase.threeRecordings), true, "", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        keep.stickRoot = "/elsewhere";
+        findChild(page, "keepForm").stickRoot = "";
+        const menu = openRecordingMenu(page, "Session-0002.wav");
+        findChild(menu, "saveAsFlacItem").triggered();
+        menu.close();
+        wait(50);
+        compare(findChild(page, "keepDialog").opened, false, "not opened");
+        compare(keep.stickRoot, "/elsewhere", "nothing handed on");
+        tryCompare(findChild(page, "playlistEditMessage"), "visible", true);
     }
 }

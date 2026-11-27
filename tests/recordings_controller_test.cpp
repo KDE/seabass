@@ -373,7 +373,7 @@ int main(int argc, char **argv)
         QSignalSpy finished(&wired, &RecordingsController::finished);
         wired.deleteSelected();
         assert(!wired.working());
-        assert(wired.errorMessage().contains(QStringLiteral("being kept")));
+        assert(wired.errorMessage().contains(QStringLiteral("being saved as FLAC")));
         assert(fs::exists(stick / "Sessions" / "K1.wav") && fs::exists(stick / "Sessions" / "K2.wav"));
         std::cout << "ok: nothing is deleted while a recording of this stick is being kept, and the page is told why\n";
 
@@ -545,7 +545,7 @@ int main(int argc, char **argv)
         // Stick A's page, the same: refused while A's keep runs.
         pageA.setAllIncluded(true);
         pageA.deleteSelected();
-        assert(!pageA.working() && pageA.errorMessage().contains(QStringLiteral("being kept")));
+        assert(!pageA.working() && pageA.errorMessage().contains(QStringLiteral("being saved as FLAC")));
         assert(fs::exists(stick / "Sessions" / "A2.wav"));
         std::cout << "ok: and still holds off a delete on stick A\n";
 

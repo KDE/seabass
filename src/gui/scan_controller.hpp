@@ -371,9 +371,10 @@ public:
     // stick is known (a scan has been asked for).
     Q_INVOKABLE void refreshRecordings();
     // The listed recording at `filePath` (a row's filePath), as the
-    // Recordings page's rows have it, for the Save as FLAC form: {path,
-    // fileName, modified, unfinished, heldSeconds, declaredSeconds,
-    // declaredUnusable, missingBytes, holdsNoAudio}; {} for none.
+    // Recordings page's rows have it (RecordingListModel::rowOf(), by its
+    // role names: path, fileName, modified, unfinished, heldSeconds,
+    // declaredSeconds, declaredUnusable, missingBytes, holdsNoAudio and
+    // the rest), for the Save as FLAC form; {} for none.
     Q_INVOKABLE QVariantMap recordingAt(const QString &filePath) const;
     // The playlist edits staged, as PlaylistEditController has them,
     // shown in the playlist they are for until Save: the tracks to be

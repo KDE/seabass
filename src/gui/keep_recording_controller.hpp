@@ -179,6 +179,10 @@ public:
     // RecordingsController says when its delete on the stick at
     // `stickRoot` starts and ends.
     void setDeleteRunning(const QString &stickRoot, bool running);
+    // Recordings are being deleted from the stick at `stickRoot` (by any
+    // page): nothing of it is saved meanwhile (keep() refuses), so a page
+    // offers no Save as FLAC. Told by `revision`.
+    Q_INVOKABLE bool deletingOn(const QString &stickRoot) const;
     bool cancelRequested() const { return busy() && m_cancel.cancelled(); }
     QString currentStickRoot() const;
     QString currentWavPath() const;

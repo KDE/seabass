@@ -221,7 +221,7 @@ application::RecordingPlaceResult placeProven(const fs::path &temp, const fs::pa
     if (fileSizeOf(target) != std::optional<std::uint64_t>(checkedSize)) {
         result.leftUnderTargetName = true;
         return fail(targetName + " does not have the size of the checked file after it was given its name; "
-                                 "it was left as it is and does not count as kept");
+                                 "it was left as it is and does not count as saved");
     }
     result.placed = true;
     return result;

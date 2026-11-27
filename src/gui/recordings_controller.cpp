@@ -47,7 +47,14 @@ QVariant RecordingListModel::data(const QModelIndex &index, int role) const
     if (!index.isValid() || index.row() < 0 || index.row() >= rowCount()) {
         return {};
     }
-    const auto &row = m_rows[static_cast<std::size_t>(index.row())];
+    if (role == IncludedRole) {
+        return static_cast<bool>(m_included[static_cast<std::size_t>(index.row())]);
+    }
+    return valueOf(m_rows[static_cast<std::size_t>(index.row())], m_states[static_cast<std::size_t>(index.row())], role);
+}
+
+QVariant RecordingListModel::valueOf(const application::Recording &row, const HeaderState &state, int role)
+{
     switch (role) {
         case PathRole:
             return qtPathFromUtf8(row.path);
@@ -63,23 +70,33 @@ QVariant RecordingListModel::data(const QModelIndex &index, int role) const
             return row.modifiedUnix > 0 ? QDateTime::fromSecsSinceEpoch(row.modifiedUnix) : QDateTime();
         case DurationSecondsRole:
             return row.durationSeconds ? *row.durationSeconds : -1.0;
-        case IncludedRole:
-            return static_cast<bool>(m_included[static_cast<std::size_t>(index.row())]);
         case UnfinishedRole:
-            return m_states[static_cast<std::size_t>(index.row())].unfinished;
+            return state.unfinished;
         case HeldSecondsRole:
-            return m_states[static_cast<std::size_t>(index.row())].heldSeconds;
+            return state.heldSeconds;
         case DeclaredSecondsRole:
-            return m_states[static_cast<std::size_t>(index.row())].declaredSeconds;
+            return state.declaredSeconds;
         case DeclaredUnusableRole:
-            return m_states[static_cast<std::size_t>(index.row())].declaredUnusable;
+            return state.declaredUnusable;
         case MissingBytesRole:
-            return m_states[static_cast<std::size_t>(index.row())].missingBytes;
+            return state.missingBytes;
         case HoldsNoAudioRole:
-            return m_states[static_cast<std::size_t>(index.row())].holdsNoAudio;
+            return state.holdsNoAudio;
         default:
             return {};
     }
+}
+
+QVariantMap RecordingListModel::rowOf(const application::Recording &row, const HeaderState &state)
+{
+    QVariantMap out;
+    const QHash<int, QByteArray> names = RecordingListModel().roleNames();
+    for (auto it = names.constBegin(); it != names.constEnd(); ++it) {
+        if (it.key() != IncludedRole) {
+            out.insert(QString::fromLatin1(it.value()), valueOf(row, state, it.key()));
+        }
+    }
+    return out;
 }
 
 bool RecordingListModel::setData(const QModelIndex &index, const QVariant &value, int role)
@@ -494,8 +511,8 @@ void RecordingsController::deleteSelected()
     // stick, so that what the page says was kept or not stays true until
     // it has ended. Another stick's work leaves this one free.
     if (m_keep && m_keep->hasWorkFor(stickRoot())) {
-        setError(tr("Nothing is deleted from this stick while one of its recordings is being kept or waits to be "
-                    "kept. Delete once that has ended."));
+        setError(tr("Nothing is deleted from this stick while one of its recordings is being saved as FLAC or "
+                    "waits to be. Delete once that has ended."));
         return;
     }
     // A write on the stick, so the same lock the library's other writers

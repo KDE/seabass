@@ -78,6 +78,12 @@ public:
         bool holdsNoAudio = false;
     };
     void setRecordings(std::vector<application::Recording> recordings, std::vector<HeaderState> states = {});
+    // A recording's value for `role` as a row of this model gives it (every
+    // role but IncludedRole, which is the model's own), and the whole row
+    // so, by the role names: the one mapping Browse's Own Recordings uses
+    // for the Save as FLAC form too.
+    static QVariant valueOf(const application::Recording &row, const HeaderState &state, int role);
+    static QVariantMap rowOf(const application::Recording &row, const HeaderState &state);
     void setAllIncluded(bool included);
     std::vector<std::string> includedPaths() const;
     int includedCount() const;

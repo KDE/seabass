@@ -1701,8 +1701,11 @@ Page {
         readonly property string filePath: row ? row.filePath : ""
         MenuItem {
             objectName: "saveAsFlacItem"
-            text: qsTr("Save as FLAC...")
-            enabled: recordingMenu.row !== null
+            // The Recordings page's rule: nothing is saved from a stick
+            // while recordings are deleted from it.
+            readonly property bool deleting: root.recordingsBeingDeleted()
+            text: deleting ? qsTr("Save as FLAC... (once the recordings being deleted are gone)") : qsTr("Save as FLAC...")
+            enabled: recordingMenu.row !== null && !deleting
                 && keepForm.offers(recordingMenu.filePath, recordingMenu.row.recordingHoldsNoAudio)
                 && !root.recordingSaveInProgress(recordingMenu.filePath)
             onTriggered: root.openSaveAsFlac(recordingMenu.filePath)
@@ -1735,9 +1738,16 @@ Page {
     }
     KeepRecordingForm {
         id: keepForm
+        objectName: "keepForm"
         keepController: root.keepController
         // The stick the form is for, which no page of Browse's hands on.
         stickRoot: scanController.recordingsRoot
+        handsStickRoot: true
+    }
+    // Recordings are being deleted from this stick (the Recordings page).
+    function recordingsBeingDeleted() {
+        return root.keepController !== null && ("deletingOn" in root.keepController)
+            && (root.keepController.revision, root.keepController.deletingOn(scanController.recordingsRoot)) === true;
     }
     // A save of the recording at `path` is asked for and not ended: not
     // asked for again (the Recordings page's rule).
@@ -1768,9 +1778,12 @@ Page {
         if (recording.path === undefined) {
             return;
         }
-        keepForm.openFor(recording.path, recording.fileName, recording.modified, recording.unfinished,
-                         recording.heldSeconds, recording.declaredSeconds, recording.declaredUnusable,
-                         recording.missingBytes);
+        if (!keepForm.openFor(recording.path, recording.fileName, recording.modified, recording.unfinished,
+                              recording.heldSeconds, recording.declaredSeconds, recording.declaredUnusable,
+                              recording.missingBytes)) {
+            playlistEditMessage.show(qsTr("It is not known which stick this recording is on. Read the stick again, "
+                                          + "then save it as FLAC."), true, qsTr("Not saved"));
+        }
     }
 
     // ---- Dragging a track to a playlist ----
@@ -2657,7 +2670,10 @@ Page {
             z: importProgress.expanded || keepProgress.expanded ? 1 : 0
 
             // Save as FLAC of this stick's recordings, as the Recordings
-            // page shows it: above the import's strip when both run.
+            // page shows it: above the import's strip when both run. With
+            // Experimental off too, on purpose and as that page does: a
+            // save under way can still be followed and cancelled, and what
+            // ended closed; nothing new is offered (no row, no menu).
             KeepRecordingProgress {
                 id: keepProgress
                 objectName: "keepProgress"

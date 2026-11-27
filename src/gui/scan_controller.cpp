@@ -988,18 +988,8 @@ QVariantMap ScanController::recordingAt(const QString &filePath) const
         if (qtPathFromUtf8(recording.path) != filePath) {
             continue;
         }
-        const RecordingListModel::HeaderState &state = m_recordingStates[i];
-        return {
-            {"path", filePath},
-            {"fileName", QString::fromUtf8(recording.fileName)},
-            {"modified", recording.modifiedUnix > 0 ? QDateTime::fromSecsSinceEpoch(recording.modifiedUnix) : QDateTime()},
-            {"unfinished", state.unfinished},
-            {"heldSeconds", state.heldSeconds},
-            {"declaredSeconds", state.declaredSeconds},
-            {"declaredUnusable", state.declaredUnusable},
-            {"missingBytes", state.missingBytes},
-            {"holdsNoAudio", state.holdsNoAudio},
-        };
+        // As the Recordings page's row of it, by one mapping.
+        return RecordingListModel::rowOf(recording, m_recordingStates[i]);
     }
     return {};
 }

@@ -26,6 +26,10 @@ Item {
     // controller as the form opens; "" for a host whose own controller
     // hands it on (the Recordings page's RecordingsController).
     property string stickRoot: ""
+    // The host hands stickRoot itself (Browse): with none the form does
+    // not open, rather than save from whichever stick the controller was
+    // told of last.
+    property bool handsStickRoot: false
     readonly property int keepRevision: root.keepController !== null ? root.keepController.revision : 0
 
     // This build can save at all, and this recording: a WAV (the encoder
@@ -38,10 +42,15 @@ Item {
     // Opens the form for a recording: its path, file name, when it was
     // recorded, and what its WAV header says (unfinished, the seconds it
     // holds and declares, whether that is usable, the bytes missing).
+    // False, nothing opened, for a host that hands the stick and has none.
     function openFor(path, name, recorded, unfinished, heldSeconds, declaredSeconds, declaredUnusable,
                      missingBytes) {
+        if (root.handsStickRoot && root.stickRoot.length === 0) {
+            return false;
+        }
         keepDialog.openFor(path, name, recorded, unfinished, heldSeconds, declaredSeconds, declaredUnusable,
                            missingBytes);
+        return true;
     }
 
     SeabassDialog {
@@ -298,7 +307,7 @@ Item {
                         spacing: Theme.rowSpacing
                         Button {
                             objectName: "keepCoverButton"
-                            text: qsTr("Choose Picture…")
+                            text: qsTr("Choose Picture...")
                             icon.source: Theme.iconUrl("folder-open")
                             onClicked: coverFileDialog.open()
                         }
@@ -323,7 +332,7 @@ Item {
                 }
                 Button {
                     objectName: "keepFolderButton"
-                    text: qsTr("Choose…")
+                    text: qsTr("Choose...")
                     onClicked: keepFolderDialog.open()
                 }
             }

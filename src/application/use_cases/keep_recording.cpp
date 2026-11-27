@@ -30,6 +30,16 @@ constexpr std::string_view FlacExtension = ".flac";
 // character boundary, by keptRecordingFileName().
 constexpr size_t Uncut = static_cast<size_t>(-1);
 
+// A reason the parts give in lower case, as a sentence of its own: the
+// pages frame a failure ("Not saved: ...") themselves.
+std::string asSentence(std::string why)
+{
+    if (!why.empty() && why[0] >= 'a' && why[0] <= 'z') {
+        why[0] = static_cast<char>(why[0] - 'a' + 'A');
+    }
+    return why;
+}
+
 std::string joinPath(const std::string &folder, const std::string &name)
 {
     if (folder.empty()) {
@@ -145,11 +155,11 @@ public:
         }
         const InHand inHand(m_request.wavPath, m_flacPath);
         if (inHand.refusal() == InHand::Refusal::Wav) {
-            fail("The recording was not kept: another job is keeping it right now.");
+            fail("Another job is saving it as FLAC right now.");
             return m_result;
         }
         if (inHand.refusal() == InHand::Refusal::Flac) {
-            fail("The recording was not kept: another job is writing " + m_request.fileName + " in "
+            fail("Another job is writing " + m_request.fileName + " in "
                  + m_request.folder + " right now.");
             return m_result;
         }
@@ -242,16 +252,16 @@ private:
     bool checkRequest()
     {
         if (m_request.tags.title.empty()) {
-            return fail("The recording was not kept: it has no track name.");
+            return fail("It has no track name.");
         }
         if (m_request.folder.empty()) {
-            return fail("The recording was not kept: no folder was chosen for it.");
+            return fail("No folder was chosen for it.");
         }
         if (m_request.fileName.empty() || m_request.fileName.find_first_of("/\\") != std::string::npos) {
-            return fail("The recording was not kept: \"" + m_request.fileName + "\" is not a file name.");
+            return fail("\"" + m_request.fileName + "\" is not a file name.");
         }
         if (m_request.stickRoot.empty()) {
-            return fail("The recording was not kept: it is not known which stick it is on.");
+            return fail("It is not known which stick it is on.");
         }
         const std::pair<const char *, const std::string *> fields[] = {
             {"artist", &m_request.tags.artist},
@@ -261,7 +271,7 @@ private:
         };
         for (const auto &[name, text] : fields) {
             if (hasControlCharacter(*text)) {
-                return fail(std::string("The recording was not kept: the ") + name
+                return fail(std::string("The ") + name
                             + " holds a line break, a tab or another control character.");
             }
         }
@@ -274,25 +284,25 @@ private:
     {
         const std::optional<bool> onStick = m_files.isWithin(m_request.folder, m_request.stickRoot);
         if (!onStick) {
-            return fail("The recording was not kept: it could not be told whether " + m_request.folder
+            return fail("It could not be told whether " + m_request.folder
                         + " is on the stick, and the FLAC file goes onto this computer only.");
         }
         if (*onStick) {
-            return fail("The recording was not kept: " + m_request.folder
+            return fail(m_request.folder
                         + " is on the stick. The FLAC file goes onto this computer; the stick keeps the recording.");
         }
         // The stick named is the recording's: otherwise the check above
         // would compare the folder with some other place.
         const std::optional<bool> wavOnStick = m_files.isWithin(m_request.wavPath, m_request.stickRoot);
         if (wavOnStick != std::optional<bool>(true)) {
-            return fail("The recording was not kept: it is not on the stick " + m_request.stickRoot
+            return fail("It is not on the stick " + m_request.stickRoot
                         + ", or that could not be told.");
         }
         const std::uint64_t longest =
             std::min<std::uint64_t>(MaxFileNameBytes, m_files.maxNameBytes(m_request.folder).value_or(MaxFileNameBytes));
         const std::uint64_t needed = m_request.fileName.size() + m_request.tempNameExtraBytes;
         if (needed > longest) {
-            return fail("The recording was not kept: the name " + m_request.fileName + " is too long for the drive of "
+            return fail("The name " + m_request.fileName + " is too long for the drive of "
                         + m_request.folder + ". Make the artist or the track name shorter.");
         }
         return true;
@@ -303,7 +313,7 @@ private:
     {
         const std::optional<std::uint64_t> wavBytes = m_files.fileSize(m_request.wavPath);
         if (!wavBytes) {
-            return fail("The recording was not kept: it could not be read on the stick.");
+            return fail("It could not be read on the stick.");
         }
         const std::string made = m_files.makeFolder(m_request.folder);
         if (!made.empty()) {
@@ -330,7 +340,7 @@ private:
         if (const std::optional<std::uint64_t> free = m_files.freeBytes(m_request.folder)) {
             const std::uint64_t needed = keepRecordingSpaceNeeded(*wavBytes);
             if (*free < needed) {
-                return fail("There is not enough room in " + m_request.folder + ": keeping this recording needs up to "
+                return fail("There is not enough room in " + m_request.folder + ": saving this recording as FLAC needs up to "
                             + megabytes(needed) + ", and " + megabytes(*free) + " are free.");
             }
         }
@@ -368,10 +378,10 @@ private:
             m_leftByEncoder = encoded.leftBehind;
         }
         if (encoded.unfinished && !m_request.keepUnfinished && !encoded.encoded && !encoded.cancelled) {
-            return failLeavingEncoderFile("The recording was not kept. Its header was not completed: "
+            return failLeavingEncoderFile("Its header was not completed: "
                                           + domain::unfinishedHeaderText(m_lengths, domain::RecordingTense::Present)
                                           + ". This happens when a player is switched off or a stick is pulled while "
-                                            "recording. Choose \"Keep the audio the file holds\" to keep that.");
+                                            "recording. Choose \"Keep the audio the file holds\" to save that.");
         }
         if (encoded.cancelled) {
             m_result.status = KeepRecordingResult::Status::Cancelled;
@@ -384,7 +394,7 @@ private:
                                                                 : encoded.error);
         }
         if (m_temp.path.empty()) {
-            return fail("The recording was not kept: the encoder did not say where it wrote the FLAC.");
+            return fail("The encoder did not say where it wrote the FLAC.");
         }
         return true;
     }
@@ -402,11 +412,11 @@ private:
             const std::optional<std::string> picture =
                 m_files.readFile(m_request.coverPicturePath, MaxCoverPictureBytes);
             if (!picture) {
-                return fail("The cover " + m_request.coverPicturePath + " could not be read, so the recording was not kept.");
+                return fail("The cover " + m_request.coverPicturePath + " could not be read.");
             }
             const CoverArtResult cover = m_covers.prepare(*picture);
             if (!cover.cover) {
-                return fail("The cover could not be used, so the recording was not kept: " + cover.error);
+                return fail("The cover could not be used: " + cover.error);
             }
             tags.cover = *cover.cover;
         }
@@ -415,7 +425,7 @@ private:
         }
         const RecordingTagWriteResult written = m_tags.tagInPlace(m_temp, tags);
         if (!written.written) {
-            return fail("The tags could not be written, so the recording was not kept: " + written.error);
+            return fail("The tags could not be written: " + written.error);
         }
         m_temp = written.tagged;
         return true;
@@ -443,7 +453,7 @@ private:
             m_secondName = placed.leftBehind;
             return true;
         }
-        fail("The recording was not kept: " + placed.error);
+        fail(asSentence(placed.error));
         if (placed.leftUnderTargetName) {
             // Renamed, and then something else of another size was under
             // the name: left where it is, it may be another program's.
@@ -480,7 +490,7 @@ private:
     {
         m_result.leftBehind = m_flacPath;
         addToMessage("A file named " + m_request.fileName + " is in " + m_request.folder
-                     + " now. It does not count as kept, and it was left as it is: " + m_flacPath);
+                     + " now. It does not count as saved, and it was left as it is: " + m_flacPath);
     }
 
     // A failure, and the encoder's temporary file that it could not take
@@ -499,7 +509,7 @@ private:
         }
         m_result.leftBehind = m_leftByEncoder;
         addToMessage("Its temporary file could not be removed from " + m_request.folder
-                     + ". It does not count as kept and can be deleted: " + m_leftByEncoder);
+                     + ". It does not count as saved and can be deleted: " + m_leftByEncoder);
     }
 
     // Takes the job's temporary file away again; said when it cannot be.
@@ -516,7 +526,7 @@ private:
         }
         m_result.leftBehind = temp;
         addToMessage("Its temporary file could not be removed from " + m_request.folder + " (" + why
-                     + "). It does not count as kept and can be deleted: " + temp);
+                     + "). It does not count as saved and can be deleted: " + temp);
     }
 
     const KeepRecordingRequest &m_request;
@@ -645,9 +655,9 @@ KeepRecordingResult keepRecording(const KeepRecordingRequest &request, KeepRecor
         try {
             return job.run();
         } catch (const std::exception &e) {
-            why = std::string("The recording was not kept: ") + e.what();
+            why = std::string("It stopped on an error: ") + e.what();
         } catch (...) {
-            why = "The recording was not kept.";
+            why = "It stopped on an unknown error.";
         }
         job.result().status = KeepRecordingResult::Status::Failed;
         const std::string before = job.result().message;
@@ -657,7 +667,7 @@ KeepRecordingResult keepRecording(const KeepRecordingRequest &request, KeepRecor
         return job.result();
     } catch (...) {
         KeepRecordingResult result;
-        result.message = why.empty() ? std::string("The recording was not kept.") : why;
+        result.message = why.empty() ? std::string("It stopped on an unknown error.") : why;
         return result;
     }
 }
