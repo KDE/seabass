@@ -117,11 +117,13 @@ bool sameCueSet(const std::vector<domain::CuePoint> &a, const std::vector<domain
 struct RestoreNotes
 {
     std::map<QString, std::string> refused;
-    std::map<QString, std::string> cuesLeft;
-    // The restored tracks whose Engine row keeps the grid it has while
-    // rekordbox's goes back: what went back, what stayed and why, and
-    // where the cue points are, one line per track.
-    std::map<QString, QString> libraries;
+    // The tracks refused because their cue points were to move back and
+    // cannot: the reason, in words that fit one track and many.
+    std::map<QString, std::string> cuesRefused;
+    // What a restored track's libraries came to, where the summary has
+    // something to say about it: the sentences after "On one restored
+    // track, ", the same words for each track with the same outcome.
+    std::map<QString, QString> restored;
 };
 
 RestoreNotes &saveNotesOf(SaveContext &ctx)
@@ -150,24 +152,38 @@ RestoreNotes &saveNotesOf(SaveContext &ctx)
                                          "them, or what was kept no longer belongs to them (the log says why).")
                               .arg(refused));
             }
-            int left = 0;
-            for (const auto &[id, why] : notes->cuesLeft) {
-                left += after.appliedIds.contains(id) && !after.skippedIds.contains(id) ? 1 : 0;
+            // One note per reason, with the number of tracks.
+            std::map<std::string, int> cuesRefused;
+            for (const auto &[id, why] : notes->cuesRefused) {
+                cuesRefused[why] += after.skippedIds.contains(id) ? 1 : 0;
             }
-            for (const auto &[id, text] : notes->libraries) {
-                if (after.appliedIds.contains(id) && !after.skippedIds.contains(id)) {
-                    ctx.addSummaryNote(text);
+            for (const auto &[why, n] : cuesRefused) {
+                if (n == 1) {
+                    ctx.addSummaryNote(
+                        QStringLiteral("One track kept the analysis it has: its cue points were to move back with the "
+                                       "grid, and they cannot, as %1. To give it its original analysis back without "
+                                       "moving its cue points, restore it again and leave its cue point switch off.")
+                            .arg(QString::fromStdString(why)));
+                } else if (n > 1) {
+                    ctx.addSummaryNote(
+                        QStringLiteral("%1 tracks kept the analysis they have: their cue points were to move back "
+                                       "with the grid, and they cannot, as %2. To give them their original analysis "
+                                       "back without moving their cue points, restore them again and leave their cue "
+                                       "point switches off.")
+                            .arg(n)
+                            .arg(QString::fromStdString(why)));
                 }
             }
-            if (left > 0) {
-                ctx.addSummaryNote(left == 1
-                                       ? QStringLiteral("The cue points of one restored track were left where they "
-                                                        "are: they changed since the review, or the libraries hold "
-                                                        "different ones.")
-                                       : QStringLiteral("The cue points of %1 restored tracks were left where they "
-                                                        "are: they changed since the review, or the libraries hold "
-                                                        "different ones.")
-                                             .arg(left));
+            std::map<QString, int> restored;
+            for (const auto &[id, text] : notes->restored) {
+                restored[text] += after.appliedIds.contains(id) && !after.skippedIds.contains(id) ? 1 : 0;
+            }
+            for (const auto &[text, n] : restored) {
+                if (n == 1) {
+                    ctx.addSummaryNote(QStringLiteral("On one restored track, ") + text);
+                } else if (n > 1) {
+                    ctx.addSummaryNote(QStringLiteral("On %1 restored tracks, ").arg(n) + text);
+                }
             }
         });
     }
@@ -330,6 +346,28 @@ std::optional<std::vector<domain::CuePoint>> cuesMovedBack(const std::vector<inf
     return pairs.empty() ? std::nullopt : std::optional<std::vector<domain::CuePoint>>(std::move(back));
 }
 
+std::string rekordboxCuesCannotGoBack(const std::vector<std::vector<domain::CuePoint>> &deviceLibrary,
+                                      const std::vector<std::vector<domain::CuePoint>> &oneLibrary, bool unreadable)
+{
+    if (unreadable) {
+        return "an analysis file a row of rekordbox's libraries names cannot be read";
+    }
+    for (const auto &row : deviceLibrary) {
+        if (!sameCueSet(row, deviceLibrary.front())) {
+            return "two export.pdb rows of the same file hold different cue points";
+        }
+    }
+    for (const auto &row : oneLibrary) {
+        if (!sameCueSet(row, oneLibrary.front())) {
+            return "two Device Library Plus rows of the same file hold different cue points";
+        }
+    }
+    if (!deviceLibrary.empty() && !oneLibrary.empty() && !sameCueSet(deviceLibrary.front(), oneLibrary.front())) {
+        return "DeviceLibrary and Device Library Plus hold different cue points";
+    }
+    return {};
+}
+
 RestoreAnalysisChange::RestoreAnalysisChange(std::string audioFile, std::string stickPath, QString stickRoot,
                                              QString pioneerRoot, QString enginePath,
                                              std::vector<std::string> keptDatPaths, bool engineKept, QString title,
@@ -486,6 +524,14 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
         ctx.log().record(std::string(Label) + ": " + name + ": the original analysis not restored, nothing written: "
                          + why);
         saveNotesOf(ctx).refused[id()] = why;
+        return ChangeOutcome::skip();
+    };
+    const auto refuseCues = [&](const std::string &why) {
+        ctx.log().record(std::string(Label) + ": " + name
+                         + ": the original analysis not restored, nothing written: its cue points were to move back "
+                           "with the grid, and they cannot, as "
+                         + why);
+        saveNotesOf(ctx).cuesRefused[id()] = why;
         return ChangeOutcome::skip();
     };
     if (key.empty()) {
@@ -727,84 +773,106 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
             return refuse("nothing is kept for it any more");
         }
 
-        // The cues, planned before anything is written: all or nothing.
+        // The cues, planned before anything is written. Only the cues
+        // Analyse again moved (as the kept entry records them), and only
+        // those still where it put them, go back to where they were: no
+        // grid is planned, so a cue Analyse again left where it was is
+        // never moved, and one set or changed since stays. Each library on
+        // its own, and what became of each library's is noted for the
+        // summary.
         const int cueSwitch = m_cueSwitch.load();
+        const bool switchOn = isOn(cueSwitch);
         bool cuesMove = false;
         std::vector<std::pair<std::string, std::vector<domain::CuePoint>>> deviceLibraryCues;
         std::optional<std::vector<domain::CuePoint>> oneLibraryCues;
         std::vector<std::pair<std::int64_t, std::vector<domain::CuePoint>>> engineCues;
-        bool engineCuesStay = false;
-        bool cuesBlocked = false;
-        if (kept && isOn(cueSwitch) && !kept->cueMoves.empty()) {
-            // Only the cues Analyse again moved (as the kept entry records
-            // them), and only those still where it put them, go back to
-            // where they were: no grid is planned, so a cue Analyse again
-            // left where it was is never moved, and one set or changed
-            // since stays. Each library on its own.
-            std::vector<std::string> notes;
-            bool rekordboxAgrees = true;
-            const auto oneSet = [&](const std::vector<RowCues> &rows) {
-                for (const RowCues &row : rows) {
-                    rekordboxAgrees = rekordboxAgrees && !row.unreadable && sameCueSet(row.cues, rows.front().cues);
-                }
-            };
-            oneSet(deviceLibraryRows);
-            oneSet(oneLibraryRows);
-            if (!deviceLibraryRows.empty() && !oneLibraryRows.empty()
-                && !sameCueSet(deviceLibraryRows.front().cues, oneLibraryRows.front().cues)) {
-                rekordboxAgrees = false;
-            }
-            const bool rekordboxMoved = std::any_of(kept->cueMoves.begin(), kept->cueMoves.end(),
-                                                    [](const auto &move) { return move.library == "rekordbox"; });
-            if (!rekordboxAgrees && rekordboxMoved) {
-                notes.push_back("rekordbox's libraries hold different cue points (or cannot be read)");
-            } else {
+        // None: no move of the library's recorded. Back: some went back.
+        // NotAsked: some still where Analyse again put them, not moved back.
+        // Gone: none still where it put them, none moved. OnKeptGrid
+        // (Engine): still where it put them, on the grid Engine keeps.
+        enum class CueFate { None, Back, NotAsked, Gone, OnKeptGrid };
+        CueFate rekordboxCues = CueFate::None;
+        CueFate engineCueFate = CueFate::None;
+        const auto movedIn = [&](const char *library) {
+            return kept && std::any_of(kept->cueMoves.begin(), kept->cueMoves.end(),
+                                       [&](const auto &move) { return move.library == library; });
+        };
+        const bool engineMovesRecorded = movedIn("engine");
+        if (movedIn("rekordbox") && !(deviceLibraryRows.empty() && oneLibraryRows.empty())) {
+            // Asked to move back and cannot: refused whole, so the grid
+            // never goes back with the cue points left off it.
+            if (switchOn) {
+                std::vector<std::vector<domain::CuePoint>> deviceLibrary;
+                std::vector<std::vector<domain::CuePoint>> oneLibrary;
+                bool unreadable = false;
                 for (const RowCues &row : deviceLibraryRows) {
-                    if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues)) {
-                        deviceLibraryCues.emplace_back(row.sourceId, std::move(*moved));
-                    }
+                    deviceLibrary.push_back(row.cues);
+                    unreadable = unreadable || row.unreadable;
                 }
-                if (deviceLibraryRows.empty()) {
-                    for (const RowCues &row : oneLibraryRows) {
-                        if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues)) {
-                            oneLibraryCues = std::move(*moved);
-                        }
+                for (const RowCues &row : oneLibraryRows) {
+                    oneLibrary.push_back(row.cues);
+                    unreadable = unreadable || row.unreadable;
+                }
+                if (const std::string why = rekordboxCuesCannotGoBack(deviceLibrary, oneLibrary, unreadable);
+                    !why.empty()) {
+                    return refuseCues(why);
+                }
+            }
+            bool still = false;
+            for (const RowCues &row : deviceLibraryRows) {
+                if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues)) {
+                    still = true;
+                    deviceLibraryCues.emplace_back(row.sourceId, std::move(*moved));
+                }
+            }
+            for (const RowCues &row : oneLibraryRows) {
+                if (auto moved = cuesMovedBack(kept->cueMoves, "rekordbox", row.cues)) {
+                    still = true;
+                    if (deviceLibraryRows.empty()) {
+                        oneLibraryCues = std::move(*moved);
                     }
                 }
             }
+            if (!switchOn) {
+                deviceLibraryCues.clear();
+                oneLibraryCues.reset();
+            }
+            rekordboxCues = !still ? CueFate::Gone : switchOn ? CueFate::Back : CueFate::NotAsked;
+        }
+        if (engineMovesRecorded && !engineRows.empty()) {
             // Cue points follow the grid of their own library: an Engine
             // row whose grid goes back gets its moved cues back with it;
             // one that keeps the grid it has keeps the cues Analyse again
             // moved onto that grid.
+            bool onKeptGrid = false;
+            bool notAsked = false;
             for (const EngineCues &row : engineRows) {
                 auto moved = cuesMovedBack(kept->cueMoves, "engine", row.cues);
                 if (!moved) {
                     continue;
                 }
                 if (std::find(engineRestores.begin(), engineRestores.end(), row.id) == engineRestores.end()) {
-                    engineCuesStay = true;
-                    continue;
+                    onKeptGrid = true;
+                } else if (switchOn) {
+                    engineCues.emplace_back(row.id, std::move(*moved));
+                } else {
+                    notAsked = true;
                 }
-                engineCues.emplace_back(row.id, std::move(*moved));
             }
-            // All or nothing across the libraries whose grid goes back:
-            // one that cannot take its cues back keeps every library's
-            // where they are.
-            if (!notes.empty()) {
-                cuesBlocked = true;
-                deviceLibraryCues.clear();
-                oneLibraryCues.reset();
-                engineCues.clear();
-            }
-            cuesMove = !deviceLibraryCues.empty() || oneLibraryCues || !engineCues.empty();
-            if (!notes.empty() || (!cuesMove && !engineCuesStay)) {
-                const std::string why = !notes.empty() ? notes.front() + ", so no cue point moves in any library"
-                                                       : "none of the cue points Analyse again moved is where it put "
-                                                         "them any more";
-                ctx.log().record(std::string(Label) + ": " + name
-                                 + ": cue points left where they are, though moving them back was asked for: " + why);
-                saveNotesOf(ctx).cuesLeft[id()] = why;
-            }
+            engineCueFate = !engineCues.empty() ? CueFate::Back
+                            : onKeptGrid        ? CueFate::OnKeptGrid
+                            : notAsked          ? CueFate::NotAsked
+                                                : CueFate::Gone;
+        }
+        cuesMove = !deviceLibraryCues.empty() || oneLibraryCues || !engineCues.empty();
+        if (switchOn && (rekordboxCues == CueFate::Gone || engineCueFate == CueFate::Gone)) {
+            ctx.log().record(std::string(Label) + ": " + name
+                             + ": cue points left where they are, though moving them back was asked for: none of "
+                               "those Analyse again moved in "
+                             + (rekordboxCues == CueFate::Gone && engineCueFate == CueFate::Gone ? "any library"
+                                : rekordboxCues == CueFate::Gone                                ? "rekordbox's libraries"
+                                                                                                : "Engine")
+                             + " is where it put them any more");
         }
 
         // The rows' tempo and key, planned and asked before the first
@@ -1084,33 +1152,69 @@ ChangeOutcome RestoreAnalysisChange::apply(SaveContext &ctx)
         } else if (rekordboxRestored) {
             saveKeptRekordboxStore(ctx, stickRoot).drop(key);
         }
-        if (rekordboxRestored && engineStays != EngineStays::No) {
-            QString text = QStringLiteral("\"%1\": rekordbox's libraries have the kept analysis back; Engine keeps "
-                                          "the grid it has")
-                               .arg(subject());
-            switch (engineStays) {
+        // The summary's words for the track, made of what this save did:
+        // where Engine keeps the grid it has, or where a library's moved
+        // cue points did not all go back. The same words for every track
+        // with the same outcome, so the summary has one note for them.
+        const bool cuesStayed = rekordboxCues == CueFate::NotAsked || rekordboxCues == CueFate::Gone
+                                || engineCueFate == CueFate::NotAsked || engineCueFate == CueFate::Gone;
+        if ((rekordboxRestored && engineStays != EngineStays::No) || ((rekordboxRestored || engineRestored) && cuesStayed)) {
+            const QString backAndEngineStays =
+                QStringLiteral("rekordbox's libraries have the kept analysis back and Engine keeps the grid it has");
+            QString text;
+            switch (rekordboxRestored ? engineStays : EngineStays::No) {
+            case EngineStays::No:
+                text = QStringLiteral("the original analysis is back.");
+                break;
             case EngineStays::CopiedElsewhere:
-                text += QStringLiteral(", and the player's analysis that Copy Beat Grids kept goes back on the Beat "
-                                       "Grids & Waveforms page, with Restore Engine's Analysis.");
+                text = backAndEngineStays
+                       + QStringLiteral(": the player's analysis that Copy Beat Grids kept goes back on the Beat "
+                                        "Grids & Waveforms page, with Restore Engine's Analysis.");
+                if (engineMovesRecorded) {
+                    text += QStringLiteral(" The cue points Analyse again moved in Engine do not follow that "
+                                           "restore: the record of their moves is not kept for it.");
+                }
                 break;
             case EngineStays::NothingKept:
-                text += QStringLiteral(", as nothing of the player's analysis was kept.");
+                text = backAndEngineStays + QStringLiteral(", as nothing of the player's analysis was kept.");
                 break;
             case EngineStays::NotAnalyseAgains:
-                text += QStringLiteral(", as the player's analysis kept for it is not the one Analyse again kept.");
+                text = backAndEngineStays
+                       + QStringLiteral(", as the player's analysis kept is not the one Analyse again kept.");
                 break;
             case EngineStays::CannotGoBack:
-                text += QStringLiteral(", as the player's analysis that Analyse again kept cannot go back to its row; "
-                                       "it stays kept.");
-                break;
-            case EngineStays::No:
+                text = backAndEngineStays
+                       + QStringLiteral(", as the player's analysis that Analyse again kept cannot go back to the "
+                                        "Engine row; it stays kept.");
                 break;
             }
-            if (isOn(cueSwitch) && !kept->cueMoves.empty() && !cuesBlocked) {
-                text += QStringLiteral(" The cue points of each library follow its own grid: those Analyse again "
-                                       "moved went back in rekordbox and stay where they are in Engine.");
-            }
-            saveNotesOf(ctx).libraries[id()] = text;
+            const auto cueWords = [](CueFate fate, const QString &in) {
+                switch (fate) {
+                case CueFate::Back:
+                    return QStringLiteral(" In %1, the cue points Analyse again moved that were still where it put "
+                                          "them went back with the grid.")
+                        .arg(in);
+                case CueFate::NotAsked:
+                    return QStringLiteral(" In %1, the cue points Analyse again moved were not moved back: they stay "
+                                          "where they are and no longer sit on the restored grid.")
+                        .arg(in);
+                case CueFate::Gone:
+                    return QStringLiteral(" In %1, none of the cue points Analyse again moved is where it put them "
+                                          "any more, so none went back.")
+                        .arg(in);
+                case CueFate::OnKeptGrid:
+                    return QStringLiteral(" In %1, the cue points Analyse again moved stay where they are, on the "
+                                          "grid Engine keeps.")
+                        .arg(in);
+                case CueFate::None:
+                    break;
+                }
+                return QString();
+            };
+            text += cueWords(rekordboxCues, QStringLiteral("rekordbox's libraries"));
+            text += cueWords(engineCueFate, QStringLiteral("Engine"));
+            saveNotesOf(ctx).restored[id()] = text;
+            ctx.log().record(std::string(Label) + ": " + name + ": for the summary: " + text.toStdString());
         }
         // The analysis ledger after the commit: no entry when no library
         // keeps Seabass's analysis of the track, else the entry without

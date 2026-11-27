@@ -42,6 +42,11 @@ struct PlaylistFile
     std::vector<std::string> engineIds;
     std::optional<std::vector<domain::CuePoint>> cues;
     double bpm = 0.0;
+    // The cue points of each of its rows in DeviceLibrary and OneLibrary,
+    // and the analysis files those rows name (at full detail only).
+    std::vector<std::vector<domain::CuePoint>> deviceLibraryCues;
+    std::vector<std::vector<domain::CuePoint>> oneLibraryCues;
+    std::vector<std::string> analysisFiles;
 };
 
 struct StickPlaylist
@@ -115,7 +120,7 @@ StickPlaylist readPlaylist(const AnalysisRestoreRequest &request, bool full, con
         }
         for (const auto &[position, row] : listed) {
             const std::string key = application::normalizedPathKey(row->filePath);
-            if (files.emplace(key, PlaylistFile{row->filePath, row->title, row->artist, {}, std::nullopt, 0.0}).second) {
+            if (files.emplace(key, PlaylistFile{row->filePath, row->title, row->artist, {}, std::nullopt, 0.0, {}, {}, {}}).second) {
                 order.push_back(key);
             }
         }
@@ -131,6 +136,12 @@ StickPlaylist readPlaylist(const AnalysisRestoreRequest &request, bool full, con
             }
             if (std::string(library) == "engine") {
                 file->second.engineIds.push_back(row.sourceId);
+            } else {
+                (std::string(library) == "rekordbox" ? file->second.deviceLibraryCues : file->second.oneLibraryCues)
+                    .push_back(row.cues);
+                if (!row.analysisFile.empty()) {
+                    file->second.analysisFiles.push_back(row.analysisFile);
+                }
             }
             if (!file->second.cues) {
                 file->second.cues = row.cues;
@@ -248,6 +259,23 @@ std::string changedOutsideIn(const infrastructure::local::KeptRekordboxAnalysis 
     return {};
 }
 
+// The first analysis file a row of the file names that is none the
+// original was kept from, or empty.
+std::string otherAnalysisFileOf(const PlaylistFile &file, const infrastructure::local::KeptRekordboxAnalysis &kept)
+{
+    std::set<std::string> keptDats;
+    for (const auto &set : kept.files) {
+        keptDats.insert(application::normalizedPathKey(set.datPath));
+    }
+    for (const std::string &dat : file.analysisFiles) {
+        const std::string extension = pathToUtf8(pathFromUtf8(dat).extension());
+        if ((extension == ".DAT" || extension == ".dat") && keptDats.count(application::normalizedPathKey(dat)) == 0) {
+            return dat;
+        }
+    }
+    return {};
+}
+
 }  // namespace
 
 PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &request,
@@ -303,6 +331,16 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
             prepared.leftAlone.push_back({file.filePath, changed});
             continue;
         }
+        // Rows that name other analysis files than the ones the original
+        // was kept from: the kept original has no way back to them (as
+        // RestoreAnalysisChange refuses it at the save).
+        if (const std::string other = otherAnalysisFileOf(file, found.entry); !other.empty()) {
+            prepared.leftAlone.push_back(
+                {file.filePath, "its rows name other analysis files (" + other
+                                    + ") than the ones its original was kept from, so the kept original cannot be "
+                                      "put back; it can only be removed in Free Up Space"});
+            continue;
+        }
         std::string engineDamaged;
         const bool engineKept = engineKeptFor(file, stick.root, key, recorded.record.engineKept, &engineDamaged);
         std::vector<std::string> datPaths;
@@ -322,6 +360,12 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
             review.oldBpm = file.bpm;
             review.originUnknown = !recorded.record.originKnown;
             review.plan = cueMovesBack(found.entry.cueMoves, "rekordbox", review.cues, &review.blocked);
+            // rekordbox's libraries holding different cue points: the
+            // moves cannot be made, the switch stays off and says why.
+            // An analysis file that cannot be read is known at the save.
+            if (!review.plan.moves.empty()) {
+                review.cuesCannotMove = rekordboxCuesCannotGoBack(file.deviceLibraryCues, file.oneLibraryCues, false);
+            }
             if (review.plan.moves.empty()) {
                 // Only Engine's cues moved (rekordbox's libraries held none).
                 bool engineMoved = false;
@@ -334,7 +378,8 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
                     review.plan = cueMovesBack(found.entry.cueMoves, "engine", {});
                 }
             }
-            const bool onTheirOwn = application::cuesFollowOnTheirOwn(review.plan, request.cueFollowThresholdMs);
+            const bool onTheirOwn = review.cuesCannotMove.empty()
+                                    && application::cuesFollowOnTheirOwn(review.plan, request.cueFollowThresholdMs);
             change->setCueReview(std::move(review));
             change->setMoveCuesByThreshold(onTheirOwn, request.cueFollowThresholdMs);
         }
@@ -439,7 +484,7 @@ void warmKeptCounts(const AnalysisRestoreRequest &request, const application::Ca
             for (const auto &membership : row.playlists) {
                 if (!row.filePath.empty()
                     && seen[membership.name].insert(application::normalizedPathKey(row.filePath)).second) {
-                    byPlaylist[membership.name].push_back(PlaylistFile{row.filePath, {}, {}, {}, std::nullopt, 0.0});
+                    byPlaylist[membership.name].push_back(PlaylistFile{row.filePath, {}, {}, {}, std::nullopt, 0.0, {}, {}, {}});
                 }
             }
         }

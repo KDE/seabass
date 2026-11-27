@@ -12,8 +12,10 @@ import SeabassGui
 // analysis back, which were left as they are and why, and for each track
 // whose cue points Analyse again moved, a switch that moves them back with
 // the grid. A switch starts on only where every move is under the
-// threshold set in Preferences, as for Analyse again. Nothing is written
-// until the save.
+// threshold set in Preferences, as for Analyse again. A track whose cue
+// points cannot go back (rekordbox's libraries hold different ones) has
+// its switch off and disabled, with the reason under it. Nothing is
+// written until the save.
 SeabassDialog {
     id: dialog
     objectName: "restoreOriginalAnalysisDialog"
@@ -30,6 +32,7 @@ SeabassDialog {
     readonly property int thresholdMs: outcome.cueFollowThresholdMs ?? 0
     readonly property int blockedCueTracks: outcome.blockedCueTracks ?? 0
     readonly property int unknownOriginTracks: outcome.unknownOriginTracks ?? 0
+    readonly property int cuesCannotMoveTracks: outcome.cuesCannotMoveTracks ?? 0
     readonly property var tracks: controller.cueReview ?? []
 
     Connections {
@@ -57,6 +60,11 @@ SeabassDialog {
             ? "\n\n" + qsTr("On %n track(s) what goes back is the analysis that was on the stick before Seabass "
                             + "analysed them again: Seabass had lost its record of its own analyses, so it may not be "
                             + "rekordbox's.", "", unknownOriginTracks)
+            : "")
+        + (cuesCannotMoveTracks > 0
+            ? "\n\n" + qsTr("On %n track(s) the cue points Analyse again moved cannot go back with the grid, for the "
+                            + "reason given below. Saved, the grid goes back and those cue points stay where they "
+                            + "are, so they no longer sit on it.", "", cuesCannotMoveTracks)
             : "")
         + (blockedCueTracks > 0
             ? "\n\n" + qsTr("On %n track(s) a cue point stays where it is: another cue point is already at the "
@@ -103,24 +111,38 @@ SeabassDialog {
         clip: true
         interactive: contentHeight > height
         model: dialog.tracks
-        delegate: RowLayout {
+        delegate: ColumnLayout {
             id: track
             required property var modelData
+            readonly property string cannotMove: modelData.cannotMove ?? ""
             width: ListView.view.width
-            spacing: Theme.rowSpacing
-            SeabassCheckBox {
-                objectName: "restoreCueSwitch"
-                checked: track.modelData.moveCues
-                onToggled: dialog.controller.setMoveCuesBack(track.modelData.changeId, checked)
-            }
-            Label {
+            spacing: 0
+            RowLayout {
                 Layout.fillWidth: true
-                elide: Text.ElideRight
-                text: track.modelData.subject
+                spacing: Theme.rowSpacing
+                SeabassCheckBox {
+                    objectName: "restoreCueSwitch"
+                    enabled: track.cannotMove.length === 0
+                    checked: track.modelData.moveCues
+                    onToggled: dialog.controller.setMoveCuesBack(track.modelData.changeId, checked)
+                }
+                Label {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    text: track.modelData.subject
+                }
+                Label {
+                    color: Theme.textMuted
+                    text: qsTr("%n cue point(s), up to %1 ms", "", track.modelData.moves).arg(track.modelData.largestMoveMs)
+                }
             }
             Label {
+                objectName: "restoreCueCannotMove"
+                visible: track.cannotMove.length > 0
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
                 color: Theme.textMuted
-                text: qsTr("%n cue point(s), up to %1 ms", "", track.modelData.moves).arg(track.modelData.largestMoveMs)
+                text: qsTr("Its cue points cannot go back: %1.").arg(track.cannotMove)
             }
         }
     }

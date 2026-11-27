@@ -379,12 +379,14 @@ ReanalysisNotes &saveNotesOf(SaveContext &ctx)
                                             "grid is its own, as its record of the tracks it analysed cannot be read. "
                                             "Check the stick for errors on a computer. Seabass's command line tool, "
                                             "seabass-cli, can move that record aside, deleting nothing, and the next "
-                                            "Analyse again keeps what is there.")
+                                            "Analyse again keeps what is there: the command to run is in Seabass's "
+                                            "documentation on experimental features.")
                            : QStringLiteral("%1 tracks were not analysed again: Seabass cannot tell whether their beat "
                                             "grids are its own, as its record of the tracks it analysed cannot be "
                                             "read. Check the stick for errors on a computer. Seabass's command line "
                                             "tool, seabass-cli, can move that record aside, deleting nothing, and "
-                                            "the next Analyse again keeps what is there.")
+                                            "the next Analyse again keeps what is there: the command to run is in "
+                                            "Seabass's documentation on experimental features.")
                                  .arg(n));
             }
             if (noRoom > 0) {

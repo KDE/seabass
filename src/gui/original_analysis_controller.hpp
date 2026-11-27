@@ -60,10 +60,14 @@ class OriginalAnalysisController : public QObject
     Q_PROPERTY(QString keptCountPlaylist READ keptCountPlaylist NOTIFY keptCountChanged)
     Q_PROPERTY(int keptCount READ keptCount NOTIFY keptCountChanged)
     // {playlist, staged, tracks, leftAlone: [{name, why}], cueTracks,
-    // cuesToMove, autoCueTracks, askedCueTracks, cueFollowThresholdMs}.
+    // cuesToMove, autoCueTracks, askedCueTracks, cueFollowThresholdMs,
+    // blockedCueTracks, unknownOriginTracks, cuesCannotMoveTracks}; a
+    // track whose cue points cannot go back is counted only in the last.
     Q_PROPERTY(QVariantMap lastRestore READ lastRestore NOTIFY restoreReady)
     // The staged restores whose review moves cue points:
-    // [{changeId, subject, moves, largestMoveMs, moveCues, chosen}].
+    // [{changeId, subject, moves, largestMoveMs, moveCues, chosen,
+    // cannotMove}]; `cannotMove` says why the cue points cannot go back
+    // (empty when they can), and such a track's switch stays off.
     Q_PROPERTY(QVariantList cueReview READ cueReview NOTIFY cueReviewChanged)
     Q_PROPERTY(int stagedCount READ stagedCount NOTIFY stagedChanged)
 
@@ -96,8 +100,9 @@ public:
     // errorMessage set, when it cannot start. restoreReady() when staged.
     Q_INVOKABLE bool restoreOriginalAnalysis(const QString &rekordboxPath, const QString &enginePath,
                                              const QString &playlist);
-    // The person's choice for one track's cue points, or every track's.
-    // False while a save writes.
+    // The person's choice for one track's cue points, or every track's;
+    // a track whose cue points cannot go back keeps its switch off. False
+    // while a save writes.
     Q_INVOKABLE bool setMoveCuesBack(const QString &changeId, bool move);
     Q_INVOKABLE bool setMoveCuesBackForAll(bool move);
     // Takes the staged restores back.

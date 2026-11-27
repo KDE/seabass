@@ -336,13 +336,18 @@ void OriginalAnalysisController::onPrepared()
     int autoTracks = 0;
     int blockedTracks = 0;
     int unknownOrigin = 0;
+    int cannotMove = 0;
     for (const auto &change : changes) {
+        unknownOrigin += change->cueReview().originUnknown ? 1 : 0;
+        if (!change->cueReview().cuesCannotMove.empty()) {
+            ++cannotMove;
+            continue;
+        }
         const int moves = static_cast<int>(change->cueReview().plan.moves.size());
         cueTracks += moves > 0 ? 1 : 0;
         cuesToMove += moves;
         autoTracks += moves > 0 && change->movesOnTheirOwnUnderMs() > 0 ? 1 : 0;
         blockedTracks += change->cueReview().blocked > 0 ? 1 : 0;
-        unknownOrigin += change->cueReview().originUnknown ? 1 : 0;
     }
     QVariantList leftAlone;
     for (const LeftOut &left : prepared.leftAlone) {
@@ -361,6 +366,7 @@ void OriginalAnalysisController::onPrepared()
         {QStringLiteral("cueFollowThresholdMs"), m_request.cueFollowThresholdMs},
         {QStringLiteral("blockedCueTracks"), blockedTracks},
         {QStringLiteral("unknownOriginTracks"), unknownOrigin},
+        {QStringLiteral("cuesCannotMoveTracks"), cannotMove},
     };
     emit cueReviewChanged();
     emit restoreReady();
@@ -379,7 +385,8 @@ QVariantList OriginalAnalysisController::cueReview() const
                             {QStringLiteral("moves"), static_cast<int>(plan.moves.size())},
                             {QStringLiteral("largestMoveMs"), static_cast<int>(application::largestCueMoveMs(plan))},
                             {QStringLiteral("moveCues"), change->moveCues()},
-                            {QStringLiteral("chosen"), change->moveCuesChosen()}};
+                            {QStringLiteral("chosen"), change->moveCuesChosen()},
+                            {QStringLiteral("cannotMove"), QString::fromStdString(change->cueReview().cuesCannotMove)}};
     }
     return rows;
 }
@@ -390,7 +397,8 @@ bool OriginalAnalysisController::setMoveCuesBack(const QString &changeId, bool m
         return false;
     }
     for (const auto &change : m_staged) {
-        if (change->id() == changeId) {
+        // A track whose cue points cannot go back keeps its switch off.
+        if (change->id() == changeId && change->cueReview().cuesCannotMove.empty()) {
             change->setMoveCues(move);
         }
     }
@@ -404,7 +412,7 @@ bool OriginalAnalysisController::setMoveCuesBackForAll(bool move)
         return false;
     }
     for (const auto &change : m_staged) {
-        if (!change->cueReview().plan.moves.empty()) {
+        if (!change->cueReview().plan.moves.empty() && change->cueReview().cuesCannotMove.empty()) {
             change->setMoveCues(move);
         }
     }

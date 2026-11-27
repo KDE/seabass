@@ -61,8 +61,12 @@ struct PreparedAnalysisRestore
 // the request's threshold. A track whose kept entry cannot be read is
 // left out with the reason. Refused (`refusal`) when no track of the
 // playlist has anything of Analyse again's kept. A track whose grid was
-// changed outside Seabass since its original was kept is left out, with
-// that reason, and never staged. Reads the stick and writes nothing: not for
+// changed outside Seabass since its original was kept, or whose rows name
+// other analysis files than the ones its original was kept from, is left
+// out, with that reason, and never staged. Where rekordbox's libraries
+// hold different cue points for a track, its review says why its cue
+// points cannot go back (CueReview::cuesCannotMove) and its switch stays
+// off. Reads the stick and writes nothing: not for
 // the GUI thread. Throws application::OperationCancelled on a cancel.
 PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &request,
                                                const application::CancellationToken &cancel);
@@ -71,7 +75,10 @@ PreparedAnalysisRestore prepareAnalysisRestore(const AnalysisRestoreRequest &req
 // kept by Analyse again, for the playlist menu: a track counts when a kept
 // file of its name is in the rekordbox kept-analysis folder
 // (keptAnalysisNamesOf()), nothing parsed, so it can count a kept entry
-// prepareAnalysisRestore() then finds damaged or of another row. The
+// prepareAnalysisRestore() then finds damaged or of another row, or
+// leaves out because its rows name other analysis files now (knowing that
+// would take parsing every kept entry and reading the rows' analysis
+// paths, which the count is made to avoid). The
 // playlist's names are kept for keptCountFromCache(). -1 when the stick
 // cannot be read. Reads the stick: not for the GUI thread.
 int countKeptOriginals(const AnalysisRestoreRequest &request, const application::CancellationToken &cancel);

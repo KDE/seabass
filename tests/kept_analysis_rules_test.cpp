@@ -68,7 +68,8 @@
 //     record, Free Up Space and Restore say so.
 // 17. A damaged ledger moved aside and no new one written: true words, and
 //     the stick's ledger is incomplete from then; a track Seabass cannot
-//     tell about is named in the summary.
+//     tell about is named in the summary, which says where the command to
+//     move the record aside is, as an unreadable ledger's warning does.
 // 18. A kept original with no record: left alone and refused.
 // 19. The player's analysis Copy Beat Grids kept is not Restore's: Engine,
 //     on Seabass's grid, keeps it and its cues; rekordbox's go back.
@@ -81,10 +82,15 @@
 // 23. Analyse again decides on every analysis file it writes: a grid
 //     changed outside Seabass in OneLibrary's own analysis file leaves the
 //     track alone, and so do rows that name other files than the ones the
-//     original was kept from; Restore leaves the first out.
+//     original was kept from; Restore leaves both out, each with its
+//     reason.
 // 24. A relink whose record cannot be written under the new name takes
 //     the half-carried entry away again; a relink with a damaged analysis
 //     ledger and an unreadable beat grid ledger leaves both as they are.
+// 25. The summary's words on the cue points are what the save did, one
+//     note per outcome with the number of tracks; a track whose cue
+//     points were to go back and cannot is refused whole, and the review
+//     shows it when it can know.
 //
 // KEPT_RULES_CASE=<n>[,<n>...] runs those cases alone, after the import of
 // their playlists only. ctest runs the cases in several entries
@@ -530,7 +536,8 @@ int main(int argc, char **argv)
         {"Broken", {"b one.wav", "b two.wav"}}, {"NoRecord", {"n one.wav"}}, {"CueNudge", {"u four.wav"}},
         {"CueMem", {"u five.wav"}}, {"CueHit", {"u six.wav"}}, {"EngineCopied", {"e two.wav"}},
         {"Relink", {"k one.wav"}}, {"RelinkRb", {"k two.wav"}}, {"Menu", {"w one.wav"}},
-        {"RelinkSave", {"k three.wav"}}, {"TwoFiles", {"t one.wav"}}, {"RelinkHalf", {"k four.wav"}}};
+        {"RelinkSave", {"k three.wav"}}, {"TwoFiles", {"t one.wav"}}, {"RelinkHalf", {"k four.wav"}},
+        {"CueMoved", {"u seven.wav", "u eight.wav", "u nine.wav"}}, {"CueSplit", {"v one.wav"}}};
     // The playlists each case works on: only those of the cases run are
     // imported (the import is most of a case's time).
     const std::map<std::string, std::vector<int>> casesOf{
@@ -539,7 +546,7 @@ int main(int argc, char **argv)
         {"Size", {7}}, {"Cue", {8}}, {"Room", {9}}, {"Staged", {10}}, {"CueNo", {13}}, {"CueYes", {13}},
         {"CueEdit", {13}}, {"CueNudge", {13}}, {"CueMem", {13}}, {"CueHit", {13}}, {"EngineAlone", {14}},
         {"Relink", {15}}, {"Lost", {16}}, {"Broken", {17}}, {"NoRecord", {18}}, {"EngineCopied", {19}},
-        {"Menu", {20}}, {"RelinkRb", {21}}, {"RelinkSave", {22}}, {"TwoFiles", {23}}, {"RelinkHalf", {24}}};
+        {"Menu", {20}}, {"RelinkRb", {21}}, {"RelinkSave", {22}}, {"TwoFiles", {23}}, {"RelinkHalf", {24}}, {"CueMoved", {25}}, {"CueSplit", {25}}};
     const auto wanted = [&](const std::string &playlist) {
         const auto of = casesOf.find(playlist);
         require(of != casesOf.end(), playlist + " belongs to a case");
@@ -1211,6 +1218,35 @@ int main(int argc, char **argv)
         std::cout << "case 11 (two changes of one save on the same ledger line: the one applied later wins) OK\n";
     }
 
+    // A copy of a track's analysis files in a folder of their own, as an
+    // export that gives OneLibrary's row its own files makes it: the .DAT
+    // path as a row names it, and the .DAT on the stick.
+    const auto copyAnalysisOf = [&](const std::string &name, const std::string &folder) {
+        const std::string dat = "/PIONEER/USBANLZ/P0TW/" + folder + "/ANLZ0000.DAT";
+        const fs::path to = stick.root / pathFromUtf8(dat.substr(1));
+        fs::create_directories(to.parent_path());
+        for (const char *extension : {"DAT", "EXT", "2EX"}) {
+            const fs::path from = anlzOf(name, extension);
+            if (fs::exists(from)) {
+                fs::copy_file(from, to.parent_path() / ("ANLZ0000." + std::string(extension)),
+                              fs::copy_options::overwrite_existing);
+            }
+        }
+        return std::pair{dat, to};
+    };
+    // OneLibrary's row of the track naming the analysis file `dat`.
+    const auto pointOneLibraryOf = [&](const std::string &name, const std::string &dat) {
+        const std::int64_t content = oneLibraryRows(name).at(0).contentId;
+        {
+            OneLibrarySql sql(stick.pioneer);
+            sql.db.exec("UPDATE content SET analysisDataFilePath = '" + dat + "' WHERE content_id = "
+                        + std::to_string(content));
+        }
+        invalidate();
+        require(rowOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)), name).analysisFile == dat,
+                "OneLibrary's row of " + name + " names " + dat);
+    };
+
     // A hot cue's place in each library (-1: none), the cue lists of a
     // track's analysis files, a hot cue set in rekordbox's libraries or
     // Engine, and a track made ready for case 13 and 19: rekordbox's grid
@@ -1346,9 +1382,10 @@ int main(int argc, char **argv)
                         && ledger().at(keyOf("u two.wav")).rekordboxGrid.empty(),
                     "13: the ledger knows Engine keeps Seabass's grid, rekordbox's libraries their own");
             require(summary.value("notes").toString().contains(QStringLiteral(
-                        "rekordbox's libraries have the kept analysis back; Engine keeps the grid it has, as nothing of "
-                        "the player's analysis was kept. The cue points of each library follow its own grid: those "
-                        "Analyse again moved went back in rekordbox and stay where they are in Engine.")),
+                        "On one restored track, rekordbox's libraries have the kept analysis back and Engine keeps the "
+                        "grid it has, as nothing of the player's analysis was kept. In rekordbox's libraries, the cue "
+                        "points Analyse again moved that were still where it put them went back with the grid. In "
+                        "Engine, the cue points Analyse again moved stay where they are, on the grid Engine keeps.")),
                     "13: the summary says which library went back, which stayed, and where the cue points are: "
                         + summary.value("notes").toString().toStdString());
             require(!fs::exists(keptFile(keyOf("u two.wav"))), "13: rekordbox's kept original has done its work");
@@ -1739,7 +1776,9 @@ int main(int argc, char **argv)
                     + warning.toStdString());
         require(summary.value("notes").toString().contains(
                     QStringLiteral("Seabass cannot tell whether its beat grid is its own, as its record of the tracks it "
-                                   "analysed cannot be read")),
+                                   "analysed cannot be read"))
+                    && summary.value("notes").toString().contains(
+                        QStringLiteral("the command to run is in Seabass's documentation on experimental features.")),
                 "17: the summary names the track left alone and what to do: "
                     + summary.value("notes").toString().toStdString());
         require(!fs::exists(keptFile(keyOf("b two.wav"))), "17: b two is left alone");
@@ -1753,6 +1792,26 @@ int main(int argc, char **argv)
         const auto record = recordOf(keyOf("b two.wav"));
         require(record.status == local::KeptRekordboxRecordLookup::Status::Found && !record.record.originKnown,
                 "17: then b two's analysis is kept, its origin unknown");
+        // A ledger that cannot be read (a folder where it belongs): an
+        // import lands, and the warning points to where the command is.
+        {
+            const fs::path ledgerFile = infrastructure::paths::stickAnalysisLedger(stick.root);
+            fs::remove(ledgerFile);
+            fs::create_directories(ledgerFile / "in the way");
+            writeBeatWav(computer / "b three.wav", 91, 120.0);
+            require(importer.importFiles(pioneer, engine, QVariantList{pathToQString(computer / "b three.wav")},
+                                         QStringLiteral("Broken Import"), true),
+                    "17: the import starts");
+            require(waitFor(&importer, &TrackImportController::busyChanged, [&] { return !importer.busy(); }),
+                    "17: the import ends");
+            const QString unreadable = savedClean("17: an import on an unreadable ledger").value("warning").toString();
+            require(unreadable.contains(QStringLiteral("Seabass's command line tool, seabass-cli, can move the record "
+                                                       "aside"))
+                        && unreadable.contains(QStringLiteral(
+                            "the command to run is in Seabass's documentation on experimental features.")),
+                    "17: the warning for an unreadable ledger says where the command is: " + unreadable.toStdString());
+            fs::remove_all(ledgerFile);
+        }
         ledgerAsBefore(before);
         std::cout << "case 17 (a damaged ledger moved aside and not written again: true words, and incomplete) OK\n";
     }
@@ -1814,16 +1873,24 @@ int main(int argc, char **argv)
                 "19: Engine's cues moved with Seabass's grid, as rekordbox's did");
         require(restore(QStringLiteral("EngineCopied")).value("staged").toInt() == 1, "19: the restore is staged");
         restorer.setMoveCuesBackForAll(true);
+        const std::size_t logBefore = logText().size();
         const QVariantMap summary = savedClean("19: the restore");
         invalidate();
-        require(summary.value("notes").toString().contains(QStringLiteral(
-                    "rekordbox's libraries have the kept analysis back; Engine keeps the grid it has, and "
-                    "the player's analysis that Copy Beat Grids kept goes back on the Beat Grids & Waveforms page, "
-                    "with Restore Engine's Analysis. The cue points of each library follow its own grid: those "
-                    "Analyse again moved went back in rekordbox and stay where they are in Engine."))
-                    && summary.value("notes").toString().contains(QStringLiteral("e two")),
-                "19: the summary says which library went back, which stayed, and where the cue points are: "
+        const QString expected = QStringLiteral(
+            "On one restored track, rekordbox's libraries have the kept analysis back and Engine keeps the grid it "
+            "has: the player's analysis that Copy Beat Grids kept goes back on the Beat Grids & Waveforms page, with "
+            "Restore Engine's Analysis. The cue points Analyse again moved in Engine do not follow that restore: the "
+            "record of their moves is not kept for it. In rekordbox's libraries, the cue points Analyse again moved "
+            "that were still where it put them went back with the grid. In Engine, the cue points Analyse again moved "
+            "stay where they are, on the grid Engine keeps.");
+        require(summary.value("notes").toString().contains(expected),
+                "19: the summary says which library went back, which stayed, where the cue points are, and that "
+                "Engine's do not follow Restore Engine's Analysis: "
                     + summary.value("notes").toString().toStdString());
+        require(logText().substr(logBefore).find("e two") != std::string::npos
+                    && logText().substr(logBefore).find("for the summary: " + expected.mid(23).toStdString())
+                           != std::string::npos,
+                "19: the log names the track with its words");
         require(gridOf("e two.wav") != seabassGrid["e two.wav"], "19: rekordbox's grid went back");
         require(std::abs(hotCue("e two.wav", 1) - one) < 1.0 && std::abs(hotCue("e two.wav", 2) - two) < 1.0
                     && std::abs(oneLibraryHotCue("e two.wav", 1) - one) < 1.0
@@ -1839,6 +1906,217 @@ int main(int argc, char **argv)
         fs::remove(file);
         std::cout << "case 19 (the player's analysis Copy Beat Grids kept is not Restore's; each library's cues follow "
                      "its own grid) OK\n";
+    }
+
+    // 25. What the summary says of the cue points is what the save did,
+    //     one note per outcome, and a track whose cue points were to go
+    //     back and cannot is refused. (a) Three tracks, their cue points
+    //     moved by Analyse again in rekordbox's libraries and Engine (which
+    //     keeps Seabass's grid: nothing of the player's was kept), the move
+    //     back switched on; then the DJ moves the hot cues in rekordbox's
+    //     libraries, on one track in Engine too: no cue goes back anywhere,
+    //     rekordbox's grid does, and the summary has two notes, one for two
+    //     tracks. (b) OneLibrary's row with an analysis file of its own:
+    //     its cue points made other than DeviceLibrary's after the restore
+    //     was staged with the switch on, the track is refused, nothing
+    //     written, what is kept kept; restored again, the review shows why
+    //     and keeps the switch off, and the save puts the grid back and says
+    //     the cue points no longer sit on it.
+    if (runs(25)) {
+        const auto movedBy = [](std::vector<domain::CuePoint> cues, double ms) {
+            for (auto &cue : cues) {
+                if (cue.kind == domain::CuePoint::Kind::Hot && !cue.isLoop
+                    && (cue.hotCueNumber == 1 || cue.hotCueNumber == 2)) {
+                    cue.positionMs += ms;
+                }
+            }
+            return cues;
+        };
+        // The DJ's edit in rekordbox, exported over the stick: the hot cues
+        // of the track's OneLibrary row and the analysis files it names.
+        const auto rekordboxEdit = [&](const std::string &name, const std::vector<domain::CuePoint> &cues) {
+            infrastructure::onelibrary::OneLibraryCueWriter(pathToUtf8(stick.pioneer))
+                .writeCuesForPath(pathToUtf8(onStick / name), cues);
+            invalidate();
+        };
+        // (a)
+        {
+            const std::vector<std::string> names{"u seven.wav", "u eight.wav", "u nine.wav"};
+            std::map<std::string, std::pair<double, double>> before;
+            for (const std::string &name : names) {
+                exportOver(name, 4);
+                const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), pdbRow(name).sourceId);
+                require(grid.size() > 20, "25: " + name + " has rekordbox's grid");
+                before[name] = {std::round(grid[8].timeMs), std::round(grid[16].timeMs)};
+                for (const QString format : {QStringLiteral("rekordbox"), QStringLiteral("engine")}) {
+                    setCueIn(format, name, 1, before[name].first);
+                    setCueIn(format, name, 2, before[name].second);
+                }
+            }
+            analyseAgainStaged(QStringLiteral("CueMoved"), "25: Analyse again of three tracks");
+            importer.setMoveCuesForAll(true);
+            savedClean("25: Analyse again of three tracks");
+            invalidate();
+            for (const std::string &name : names) {
+                require(keptOf(keyOf(name)).entry.cueMoves.size() == 4,
+                        "25: " + name + ": the kept entry records two moves in each library");
+                require(std::abs(hotCue(name, 1) - before[name].first) >= 3.0
+                            && std::abs(engineHotCue(name, 1) - hotCue(name, 1)) < 1.0,
+                        "25: " + name + ": its cues moved with Seabass's grid in both");
+            }
+            // Engine's of u eight edited before the review.
+            const double eightEngine1 = engineHotCue("u eight.wav", 1) + 600.0;
+            const double eightEngine2 = engineHotCue("u eight.wav", 2) + 600.0;
+            setCueIn(QStringLiteral("engine"), "u eight.wav", 1, eightEngine1);
+            setCueIn(QStringLiteral("engine"), "u eight.wav", 2, eightEngine2);
+            const QVariantMap staged = restore(QStringLiteral("CueMoved"));
+            require(staged.value("staged").toInt() == 3 && staged.value("cueTracks").toInt() == 3,
+                    "25: three restores staged, the move back offered for each");
+            restorer.setMoveCuesBackForAll(true);
+            // The DJ moves the hot cues in rekordbox after the review.
+            std::map<std::string, std::vector<domain::CuePoint>> rekordboxNow;
+            std::map<std::string, std::vector<domain::CuePoint>> engineNow;
+            for (const std::string &name : names) {
+                rekordboxNow[name] = movedBy(pdbRow(name).cues, 500.0);
+                rekordboxEdit(name, rekordboxNow[name]);
+                require(std::abs(hotCue(name, 1) - hotIn(rekordboxNow[name], 1)) < 1.0
+                            && std::abs(oneLibraryHotCue(name, 1) - hotIn(rekordboxNow[name], 1)) < 1.0,
+                        "25: " + name + ": the DJ's hot cues are in both of rekordbox's libraries");
+                engineNow[name] = engineRowOf(name).cues;
+            }
+            const QVariantMap summary = savedClean("25: the restore of three tracks");
+            invalidate();
+            const QString notes = summary.value("notes").toString();
+            for (const std::string &name : names) {
+                require(gridOf(name) != seabassGrid[name], "25: " + name + ": rekordbox's grid went back");
+                require(ledger().count(keyOf(name)) == 1 && !ledger().at(keyOf(name)).engineGrid.empty(),
+                        "25: " + name + ": Engine keeps Seabass's grid");
+                for (int pad = 1; pad <= 2; ++pad) {
+                    require(std::abs(hotCue(name, pad) - hotIn(rekordboxNow[name], pad)) < 1.0
+                                && std::abs(oneLibraryHotCue(name, pad) - hotIn(rekordboxNow[name], pad)) < 1.0,
+                            "25: " + name + ": the DJ's hot cue " + std::to_string(pad)
+                                + " stays in both of rekordbox's libraries");
+                    require(std::abs(engineHotCue(name, pad) - hotIn(engineNow[name], pad)) < 1.0,
+                            "25: " + name + ": Engine's hot cue " + std::to_string(pad) + " stays where it was");
+                }
+                require(!fs::exists(keptFile(keyOf(name))), "25: " + name + ": the kept original has done its work");
+            }
+            require(std::abs(engineHotCue("u eight.wav", 1) - eightEngine1) < 1.0,
+                    "25: u eight: Engine's edited cue stays where the DJ put it");
+            const QString head = QStringLiteral(
+                "rekordbox's libraries have the kept analysis back and Engine keeps the grid it has, as nothing of the "
+                "player's analysis was kept. In rekordbox's libraries, none of the cue points Analyse again moved is "
+                "where it put them any more, so none went back.");
+            require(notes.contains(QStringLiteral("On 2 restored tracks, ") + head
+                                   + QStringLiteral(" In Engine, the cue points Analyse again moved stay where they "
+                                                    "are, on the grid Engine keeps.")),
+                    "25: one note for the two tracks whose Engine cues stayed on Engine's grid: " + notes.toStdString());
+            require(notes.contains(QStringLiteral("On one restored track, ") + head
+                                   + QStringLiteral(" In Engine, none of the cue points Analyse again moved is where "
+                                                    "it put them any more, so none went back.")),
+                    "25: one note for the track whose Engine cues the DJ edited too: " + notes.toStdString());
+            require(!notes.contains(QStringLiteral("went back with the grid")),
+                    "25: no note says a cue point went back: " + notes.toStdString());
+            require(notes.count(QStringLiteral("restored track")) == 2, "25: two notes, not one per track: "
+                                                                            + notes.toStdString());
+        }
+        // (b)
+        {
+            const std::string name = "v one.wav";
+            exportOver(name, 4);
+            const auto [bPath, b] = copyAnalysisOf(name, "00000025");
+            pointOneLibraryOf(name, bPath);
+            const auto grid = infrastructure::rekordbox::readBeatGrid(pathToUtf8(stick.pioneer), pdbRow(name).sourceId);
+            require(grid.size() > 20, "25: v one has rekordbox's grid");
+            const std::pair<double, double> onBeats{std::round(grid[8].timeMs), std::round(grid[16].timeMs)};
+            setCue(name, 1, onBeats.first);
+            setCue(name, 2, onBeats.second);
+            require(std::abs(oneLibraryHotCue(name, 1) - onBeats.first) < 1.0, "25: v one: OneLibrary has the cues");
+            analyseAgainStaged(QStringLiteral("CueSplit"), "25: Analyse again of v one");
+            importer.setMoveCuesForAll(true);
+            savedClean("25: Analyse again of v one");
+            invalidate();
+            require(keptOf(keyOf(name)).entry.files.size() == 2 && !keptOf(keyOf(name)).entry.cueMoves.empty(),
+                    "25: v one: both analysis files kept, the cue moves recorded");
+            require(std::abs(hotCue(name, 1) - onBeats.first) >= 3.0
+                        && std::abs(oneLibraryHotCue(name, 1) - hotCue(name, 1)) < 1.0,
+                    "25: v one: its cues moved with the grid, in both of rekordbox's libraries");
+            const fs::path a = anlzOf(name, "DAT");
+            // (b1) Staged with the switch on, then OneLibrary's cue points
+            // made other than DeviceLibrary's: refused, nothing written.
+            {
+                const QVariantMap staged = restore(QStringLiteral("CueSplit"));
+                require(staged.value("staged").toInt() == 1 && staged.value("cuesCannotMoveTracks").toInt() == 0
+                            && restorer.cueReview().size() == 1,
+                        "25: v one: staged, the move back offered");
+                restorer.setMoveCuesBackForAll(true);
+                rekordboxEdit(name, movedBy(rowOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)),
+                                                  name)
+                                                .cues,
+                                            300.0));
+                require(std::abs(oneLibraryHotCue(name, 1) - hotCue(name, 1)) >= 3.0,
+                        "25: v one: OneLibrary's cue points are not DeviceLibrary's");
+                const std::string keptBytes = bytesOf(keptFile(keyOf(name)));
+                const std::string aBytes = bytesOf(a);
+                const std::string bBytes = bytesOf(b);
+                const std::string aExt = bytesOf(anlzOf(name, "EXT"));
+                const std::string pdbBytes = bytesOf(pdbFile);
+                const QVariantMap summary = savedClean("25: v one, the switch on and the cues cannot go back");
+                invalidate();
+                require(bytesOf(a) == aBytes && bytesOf(b) == bBytes && bytesOf(anlzOf(name, "EXT")) == aExt
+                            && bytesOf(pdbFile) == pdbBytes,
+                        "25: v one: refused, nothing written (grids, cues, export.pdb)");
+                require(bytesOf(keptFile(keyOf(name))) == keptBytes, "25: v one: what is kept stays, byte for byte");
+                const QString notes = summary.value("notes").toString();
+                require(notes.contains(QStringLiteral(
+                            "One track kept the analysis it has: its cue points were to move back with the grid, and "
+                            "they cannot, as DeviceLibrary and Device Library Plus hold different cue points. To give "
+                            "it its original analysis back without moving its cue points, restore it again and leave "
+                            "its cue point switch off.")),
+                        "25: v one: the summary says why and what to do: " + notes.toStdString());
+                require(!notes.contains(QStringLiteral("changed since Seabass analysed")),
+                        "25: v one: not counted under the other refusals: " + notes.toStdString());
+            }
+            // (b2) Restored again: the review knows, the switch stays off;
+            // the save puts the grid back and says where the cues are.
+            {
+                const QVariantMap staged = restore(QStringLiteral("CueSplit"));
+                const QVariantList review = restorer.cueReview();
+                require(staged.value("staged").toInt() == 1 && staged.value("cuesCannotMoveTracks").toInt() == 1
+                            && staged.value("askedCueTracks").toInt() == 0 && review.size() == 1
+                            && review[0].toMap().value("cannotMove").toString()
+                                   == QStringLiteral("DeviceLibrary and Device Library Plus hold different cue points")
+                            && !review[0].toMap().value("moveCues").toBool(),
+                        "25: v one: the review says why its cue points cannot go back, the switch off");
+                restorer.setMoveCuesBackForAll(true);
+                restorer.setMoveCuesBack(review[0].toMap().value("changeId").toString(), true);
+                require(!restorer.cueReview()[0].toMap().value("moveCues").toBool(),
+                        "25: v one: its switch cannot be turned on");
+                const double deviceLibrary1 = hotCue(name, 1);
+                const double oneLibrary1 = oneLibraryHotCue(name, 1);
+                const QVariantMap summary = savedClean("25: v one, restored with the switch off");
+                invalidate();
+                require(gridOf(name) != seabassGrid[name]
+                            && infrastructure::rekordbox::pqtzGridFingerprint(AnlzFile::readRaw(pathToUtf8(b)))
+                                   != seabassGrid[name],
+                        "25: v one: rekordbox's grid went back in both files");
+                require(std::abs(hotCue(name, 1) - deviceLibrary1) < 1.0
+                            && std::abs(oneLibraryHotCue(name, 1) - oneLibrary1) < 1.0,
+                        "25: v one: the cue points stay where they are in both libraries");
+                require(!fs::exists(keptFile(keyOf(name))), "25: v one: the kept original has done its work");
+                const QString notes = summary.value("notes").toString();
+                require(notes.contains(QStringLiteral(
+                            "On one restored track, rekordbox's libraries have the kept analysis back and Engine keeps "
+                            "the grid it has, as nothing of the player's analysis was kept. In rekordbox's libraries, "
+                            "the cue points Analyse again moved were not moved back: they stay where they are and no "
+                            "longer sit on the restored grid.")),
+                        "25: v one: the summary says the cue points no longer sit on the restored grid: "
+                            + notes.toStdString());
+            }
+            pointOneLibraryOf(name, pdbRow(name).analysisFile);
+        }
+        std::cout << "case 25 (the summary says what the save did to the cue points, one note per outcome; a track "
+                     "whose cue points were to go back and cannot is refused) OK\n";
     }
 
     // 20. The playlist menu: warmed when Browse loads the stick, it knows
@@ -1880,29 +2158,8 @@ int main(int argc, char **argv)
         const std::string key = keyOf(name);
         exportOver(name, 43);
         const fs::path a = anlzOf(name, "DAT");
-        const auto copyAnalysis = [&](const std::string &folder) {
-            const std::string dat = "/PIONEER/USBANLZ/P0TW/" + folder + "/ANLZ0000.DAT";
-            const fs::path to = stick.root / pathFromUtf8(dat.substr(1));
-            fs::create_directories(to.parent_path());
-            for (const char *extension : {"DAT", "EXT", "2EX"}) {
-                const fs::path from = anlzOf(name, extension);
-                if (fs::exists(from)) {
-                    fs::copy_file(from, to.parent_path() / ("ANLZ0000." + std::string(extension)),
-                                  fs::copy_options::overwrite_existing);
-                }
-            }
-            return std::pair{dat, to};
-        };
-        const auto pointOneLibraryAt = [&](const std::string &dat) {
-            const std::int64_t content = oneLibraryRows(name).at(0).contentId;
-            OneLibrarySql sql(stick.pioneer);
-            sql.db.exec("UPDATE content SET analysisDataFilePath = '" + dat + "' WHERE content_id = "
-                        + std::to_string(content));
-            invalidate();
-            require(rowOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(stick.pioneer)), name).analysisFile
-                        == dat,
-                    "23: OneLibrary's row names " + dat);
-        };
+        const auto copyAnalysis = [&](const std::string &folder) { return copyAnalysisOf(name, folder); };
+        const auto pointOneLibraryAt = [&](const std::string &dat) { pointOneLibraryOf(name, dat); };
         const auto shiftFile = [&](const fs::path &dat, int ms) {
             AnlzFile file = AnlzFile::readRaw(pathToUtf8(dat));
             shiftGrid(file, ms);
@@ -1960,6 +2217,19 @@ int main(int argc, char **argv)
         require(summary.value("notes").toString().contains(QStringLiteral(
                     "its rows name other analysis files than the ones Seabass kept its original from")),
                 "23: and the summary says why: " + summary.value("notes").toString().toStdString());
+        // Restore leaves it out before it is staged, with the true reason.
+        {
+            const QVariantMap left = restore(QStringLiteral("TwoFiles"));
+            const QVariantList leftAlone = left.value("leftAlone").toList();
+            const QString why = leftAlone.isEmpty() ? QString() : leftAlone[0].toMap().value("why").toString();
+            require(left.value("staged").toInt() == 0 && leftAlone.size() == 1
+                        && why.contains(QStringLiteral("its rows name other analysis files ("))
+                        && why.contains(QString::fromStdString(cPath))
+                        && why.contains(QStringLiteral("than the ones its original was kept from, so the kept original "
+                                                       "cannot be put back; it can only be removed in Free Up Space")),
+                    "23: Restore leaves out rows that name other files than the kept ones, saying so: "
+                        + why.toStdString());
+        }
         pointOneLibraryAt(bPath);
         std::cout << "case 23 (Analyse again decides on every file it writes, and only on the files kept) OK\n";
     }

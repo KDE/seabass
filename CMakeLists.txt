@@ -4174,7 +4174,7 @@ if(TARGET seabass_edit)
         # the per-test limit on slower CI machines. Each group stands on
         # its own; case 12 takes the stick's lock away and runs last in
         # its group. About 100 to 140 s each on a Linux Debug build.
-        foreach(_kept_group "1" "2,3,4,5,6,7,8,9,10,11" "13,14,19,20" "15,16,17,18,21,22,23,24,12")
+        foreach(_kept_group "1" "2,3,4,5,6,7,8,9,10,11" "13,14,19,20,25" "15,16,17,18,21,22,23,24,12")
             string(REPLACE "," "_" _kept_name "${_kept_group}")
             add_test(NAME kept_analysis_rules_test_${_kept_name} COMMAND kept_analysis_rules_test
                 ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)

@@ -253,7 +253,8 @@ void registerLedgerRecord(SaveContext &ctx, const std::string &stickRoot, const 
                 + "), so it will not know them for its own analyses later. The record on the stick cannot be read, so "
                   "Seabass leaves it as it is and says this at every save. Check the stick for errors on a computer. "
                   "If it stays unreadable, Seabass's command line tool, seabass-cli, can move the record aside, "
-                  "deleting nothing, and the next save starts a new one.");
+                  "deleting nothing, and the next save starts a new one: the command to run is in Seabass's "
+                  "documentation on experimental features.");
         }
         // A damaged ledger is never written over: whatever it still holds
         // stays on the stick, moved aside, and a new one starts with this

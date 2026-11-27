@@ -201,6 +201,45 @@ TestCase {
         tryCompare(dialog, "opened", false);
     }
 
+    // A track whose cue points cannot go back: its switch off and
+    // disabled, the reason under it, and a line above saying what the save
+    // then does.
+    function test_dialogCuesCannotMove() {
+        const fake = createTemporaryObject(fakeControllerComponent, testCase);
+        const host = createTemporaryObject(dialogComponent, testCase, {controller: fake});
+        const dialog = host.dialog;
+        fake.lastRestore = {playlist: "Warm Up", staged: 2, tracks: 2, leftAlone: [],
+                            cueTracks: 1, cuesToMove: 2, autoCueTracks: 0, askedCueTracks: 1,
+                            cueFollowThresholdMs: 20, blockedCueTracks: 0, unknownOriginTracks: 0,
+                            cuesCannotMoveTracks: 1};
+        fake.cueReview = [{changeId: "restore:one", subject: "One, Artist", moves: 2, largestMoveMs: 31,
+                           moveCues: false, chosen: false, cannotMove: ""},
+                          {changeId: "restore:two", subject: "Two, Artist", moves: 1, largestMoveMs: 12,
+                           moveCues: false, chosen: false,
+                           cannotMove: "DeviceLibrary and Device Library Plus hold different cue points"}];
+        fake.restoreReady();
+        tryCompare(dialog, "opened", true);
+        verify(dialog.detailText.indexOf("On 1 track(s) the cue points Analyse again moved cannot go back with the "
+                                         + "grid, for the reason given below. Saved, the grid goes back and those cue "
+                                         + "points stay where they are, so they no longer sit on it.") >= 0,
+               dialog.detailText);
+        const list = findChild(dialog, "restoreCueTracks");
+        tryVerify(() => list.itemAtIndex(1) !== null, 2000, "a row per track");
+        const free = list.itemAtIndex(0);
+        const stuck = list.itemAtIndex(1);
+        compare(findChild(free, "restoreCueSwitch").enabled, true, "a track whose cue points can go back");
+        compare(findChild(free, "restoreCueCannotMove").visible, false, "no reason under it");
+        const stuckSwitch = findChild(stuck, "restoreCueSwitch");
+        compare(stuckSwitch.enabled, false, "the switch of a track whose cue points cannot go back is disabled");
+        compare(stuckSwitch.checked, false, "and off");
+        const reason = findChild(stuck, "restoreCueCannotMove");
+        verify(reason.visible, "the reason is shown under it");
+        compare(reason.text, "Its cue points cannot go back: DeviceLibrary and Device Library Plus hold different "
+                             + "cue points.");
+        mouseClick(stuckSwitch);
+        verify(!calledWith(fake, "move:restore:two:true"), "a disabled switch asks nothing: " + fake.calls.join(","));
+    }
+
     function test_dialogNothingStaged() {
         const fake = createTemporaryObject(fakeControllerComponent, testCase);
         const host = createTemporaryObject(dialogComponent, testCase, {controller: fake});
@@ -213,7 +252,8 @@ TestCase {
         fake.restoreReady();
         tryCompare(dialog, "opened", true);
         compare(dialog.headline, "No track of \"Warm Up\" can get its original analysis back.");
-        verify(dialog.detailText.indexOf("cue point stays") < 0 && dialog.detailText.indexOf("on the stick before") < 0,
+        verify(dialog.detailText.indexOf("cue point stays") < 0 && dialog.detailText.indexOf("on the stick before") < 0
+                   && dialog.detailText.indexOf("cannot go back with the grid") < 0,
                "no line for what is not there: " + dialog.detailText);
         compare(findChild(dialog, "restoreTakeBackButton").visible, false, "nothing to take back");
         compare(findChild(dialog, "restoreCueTracks").visible, false, "no cue switches");

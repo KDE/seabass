@@ -55,8 +55,9 @@ namespace seabass::gui
 //   size, or not there: the size decides, as the analysis ledger's
 //   classifyAnalysis() decides it);
 // - the kept files do not belong to the track any more: its rows name
-//   other analysis files now, or the .DAT names another audio file than
-//   the kept one did (an export reused the folder);
+//   other analysis files now (prepareAnalysisRestore() leaves such a
+//   track out before it is staged), or the .DAT names another audio file
+//   than the kept one did (an export reused the folder);
 // - the kept entry's record is missing or cannot be read: Seabass cannot
 //   tell its own grids from one changed since;
 // - the grid in any of the track's kept .DAT files is neither one Seabass
@@ -90,11 +91,21 @@ namespace seabass::gui
 // it has (the player's analysis kept is Copy Beat Grids', or none was
 // kept), Engine's cues stay where Analyse again put them, on that grid.
 // The libraries then hold different cue points, as they hold different
-// grids, and the save's summary says so for the track: which library went
-// back, which stayed and why. The switch decides for every library whose
-// grid goes back, all or nothing: where DeviceLibrary's and OneLibrary's
-// rows hold different cue points, no cue of the track moves anywhere, and
-// the log and the summary say why.
+// grids, and the save's summary says so: which library went back, which
+// stayed and why, and in each library whether the cue points went back,
+// stayed though moved (not where Analyse again put them any more), or
+// stayed off the restored grid as they were not moved back. Each sentence
+// is made of what this save did. The summary has one note per distinct
+// outcome with the number of tracks; the log has each track's.
+// With the switch on, a track whose rekordbox cue points cannot go back
+// (rekordboxCuesCannotGoBack(): DeviceLibrary's and OneLibrary's rows
+// hold different cue points, two rows of one library do, or an analysis
+// file a row names cannot be read) is refused whole, nothing written and
+// the kept entry kept, and the summary says why and that restoring it with
+// the switch off puts the grid back without its cue points. The review
+// knows the first two before the save (CueReview::cuesCannotMove) and
+// keeps the switch off; with the switch off the restore goes ahead and the
+// summary says the moved cue points no longer sit on the restored grid.
 //
 // What is kept is taken away only for what went back. rekordbox's entry
 // goes once rekordbox's analysis is back, unless the player's analysis
@@ -131,6 +142,14 @@ std::optional<std::vector<domain::CuePoint>> cuesMovedBack(const std::vector<inf
                                                            const std::string &library,
                                                            const std::vector<domain::CuePoint> &cues,
                                                            int *blocked = nullptr);
+// Why the cue points Analyse again moved in rekordbox's libraries cannot
+// go back, for the person, or empty when they can: an analysis file a row
+// names cannot be read (`unreadable`), two rows of one library hold
+// different cue points, or DeviceLibrary's rows hold other cue points than
+// OneLibrary's. `deviceLibrary` and `oneLibrary`: the cue points of each
+// row of the file, per library. The words fit one track and many.
+std::string rekordboxCuesCannotGoBack(const std::vector<std::vector<domain::CuePoint>> &deviceLibrary,
+                                      const std::vector<std::vector<domain::CuePoint>> &oneLibrary, bool unreadable);
 
 class RestoreAnalysisChange : public PendingChange
 {
@@ -172,6 +191,10 @@ public:
         // The kept analysis is the one that was on the stick before, its
         // maker unknown (KeptRekordboxRecord::originKnown).
         bool originUnknown = false;
+        // Why the cue points Analyse again moved in rekordbox's libraries
+        // cannot go back, as the review can tell (rekordboxCuesCannotGoBack());
+        // empty when they can. The switch then stays off.
+        std::string cuesCannotMove;
     };
     void setCueReview(CueReview review) { m_cueReview = std::move(review); }
     const CueReview &cueReview() const { return m_cueReview; }

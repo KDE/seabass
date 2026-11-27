@@ -139,8 +139,11 @@ from day one.
   exactly as it is: nothing replaced, nothing moved aside, no warning,
   a line in the log. Where the analysis ledger cannot be read, the
   command line moves it aside, deleting nothing:
-  `seabass-cli analysis-ledger --reset`; the save's summary names the
-  tool, not the command.
+  `seabass-cli analysis-ledger --reset`, with the stick plugged in and
+  Seabass closed (it finds the stick itself; `--rekordbox PATH` or
+  `--engine PATH` names a library on it, as for the other commands). The
+  save's warning and summary name the tool and point to this page for the
+  command, which they cannot quote.
 
   Seabass can take an earlier analysis of its own for rekordbox's in
   three cases: writing the analysis ledger failed after an import (the
@@ -171,20 +174,34 @@ from day one.
   can be moved back with it, reviewed per track like Analyse again's, the
   switch on by itself only where every move is under the same threshold.
   A track is left as it is, with the reason, when its audio file is not
-  the size it was, when its rows name other analysis files, when its
-  record is missing or damaged, or when its grid is neither the original
-  nor one Seabass wrote: Seabass never writes over that; such a track is
-  left out when the restore is prepared, under "Left as they are" with
-  that reason, and never staged. Cue points follow the grid of their own
+  the size it was, when its rows name other analysis files than the ones
+  its original was kept from (the kept original then has no way back and
+  can only be removed in Free Up Space), when its record is missing or
+  damaged, or when its grid is neither the original nor one Seabass
+  wrote: Seabass never writes over that; such a track is left out when
+  the restore is prepared, under "Left as they are" with that reason, and
+  never staged. The playlist menu's number counts what is kept by name
+  alone, so it can include a track the restore then leaves out. Cue points follow the grid of their own
   library: where a library's grid goes back, the cue points Analyse
   again moved there go back, only where they are still exactly where it
   put them and never onto another cue; where Engine keeps the grid it
   has (the player's analysis kept is Copy Beat Grids', or none was
   kept), its cue points stay on it. The libraries may then hold
   different cue points, as they hold different grids, and the save's
-  summary says, per track, which library went back, which stayed and
-  why. The switch per track decides for every library whose grid goes
-  back, all or nothing. What is kept is removed only for what went
+  summary says which library went back, which stayed and why, and in
+  each library whether the moved cue points went back, stayed because
+  they are no longer where Analyse again put them, or stayed off the
+  restored grid because they were not moved back: one note per outcome
+  with the number of tracks, each track's in the log. With the switch
+  on, a track whose cue points cannot go back (DeviceLibrary and Device
+  Library Plus hold different ones, two rows of one library do, or an
+  analysis file a row names cannot be read) is refused whole, nothing
+  written and what is kept kept, and the summary says why and that
+  restoring it with its switch off puts the grid back without them. The
+  review already shows the first two on the track, its switch off and
+  disabled. After a restore where Engine keeps the grid Copy Beat Grids'
+  analysis is kept for, Engine's moved cue points do not follow a later
+  Restore Engine's Analysis, and the summary says so. What is kept is removed only for what went
   back: the player's analysis kept by Copy Beat Grids, and its beat grid
   ledger line, stay for Restore Engine's Analysis. `seabass-cli kept-analysis` counts what
   is kept on a stick.
