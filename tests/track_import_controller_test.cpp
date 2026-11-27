@@ -995,6 +995,27 @@ int main(int argc, char **argv)
             check("Engine", keysOf(infrastructure::engine::LibdjinteropEngineReader(stick.engineUtf8())));
             std::cout << "case 14 (the analyser's key in all three libraries, a tag's key kept) OK\n";
         }
+
+        // 4c. A file the libraries list, offered with no playlist named:
+        //     there was nothing to do for it. Taken out of Engine alone, it
+        //     is on the stick but not where an import would have put it, so
+        //     it is not one of the files the page calls "on the stick already".
+        {
+            const fs::path held = stick.root / "Contents" / "UnknownArtist" / "UnknownAlbum" / "c three.wav";
+            assert(offer(QVariantList{pathToQString(held)}, QString(), false));
+            QVariantList left = controller.lastResult().value("notImported").toList();
+            assert(left.size() == 1 && session->pendingCount() == 0);
+            assert(left[0].toMap().value("onStick").toBool());
+            assert(testing::sqlExec(pathToUtf8(stick.engine / "Database2" / "m.db"),
+                                    "DELETE FROM Track WHERE path LIKE '%/c three.wav';"));
+            LibraryCatalogCache::instance().invalidateEveryCatalogOn(pathToUtf8(stick.root));
+            assert(offer(QVariantList{pathToQString(held)}, QString(), false));
+            left = controller.lastResult().value("notImported").toList();
+            assert(left.size() == 1 && session->pendingCount() == 0);
+            assert(left[0].toMap().value("why").toString().contains(QLatin1String("is on the stick already")));
+            assert(!left[0].toMap().value("onStick").toBool());
+            std::cout << "case 4c (a file only some libraries list, no playlist named: not marked as on the stick) OK\n";
+        }
     }
 
 
