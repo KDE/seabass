@@ -1091,8 +1091,16 @@ TestCase {
             }
             function cancel() {}
             function releaseLanded() {}
-            function dropStaged() {}
-            function trackCountChange(playlist) { return 0; }
+            // The tracks the batch puts into "Own Recordings", and how
+            // often it was taken back.
+            property int importing: 0
+            property int dropped: 0
+            function dropStaged() {
+                dropped++;
+                importing = 0;
+                pendingRevision++;
+            }
+            function trackCountChange(playlist) { return playlist === "Own Recordings" ? importing : 0; }
             function reanalysisCount(playlist) { return 0; }
             function fileDialogFilter() { return "*.wav"; }
             function suggestedPlaylistName(files) { return ""; }
@@ -1186,7 +1194,10 @@ TestCase {
                 "saved, and the FLAC moved away since");
         keep.changed = {[path]: true};
         keep.revision++;
-        compare(said(), JSON.stringify([false, "Add to the library (its FLAC is no longer the one that was saved)"]),
+        // Kept from the import, but not a dead end: the file itself can
+        // still be dropped onto the row.
+        compare(said(), JSON.stringify([false, "Add to the library (its FLAC is no longer the one that was saved: "
+                                               + "drop the FLAC onto the row instead)"]),
                 "saved, and another file is under its name since");
         keep.changed = {};
         keep.flacs = {[path]: "/home/dj/Kept/Late Set.flac"};
@@ -1249,6 +1260,33 @@ TestCase {
                 calls.push(["add", playlist, filePath, toIndex]);
                 return true;
             }
+            // The one call for the row's playlist: its create where a
+            // library lacks it comes with the add.
+            function addToPlaylistMakingItWhereMissing(rekordboxPath, enginePath, playlist, filePath, title, toIndex,
+                                                       moveFrom) {
+                calls.push(["add where missing", playlist, filePath, toIndex]);
+                if (lacking && newPlaylists.indexOf(playlist) < 0) {
+                    newPlaylists = newPlaylists.concat([playlist]);
+                }
+                pendingRevision++;
+                return true;
+            }
+            // The renames staged, from the stick's name to the new.
+            property var pendingRenames: ({})
+            // The new playlists made only where a library lacks them.
+            property var madeWhereMissing: []
+            function isMadeWhereMissing(name) { return madeWhereMissing.indexOf(name) >= 0; }
+            function keepPlaylistName(name) {
+                calls.push(["keep name", name]);
+                const kept = {};
+                for (const from of Object.keys(pendingRenames)) {
+                    if (from !== name && pendingRenames[from] !== name) {
+                        kept[from] = pendingRenames[from];
+                    }
+                }
+                pendingRenames = kept;
+                pendingRevision++;
+            }
             function isNewPlaylistStaged(name) { return newPlaylists.indexOf(name) >= 0; }
             function isPlaylistStaged(name) { return deleted.indexOf(name) >= 0; }
             function isRemovalStaged() { return false; }
@@ -1276,8 +1314,7 @@ TestCase {
             drag.title = "Held Track 1001";
             drag.addChosen("Own Recordings");
             compare(JSON.stringify(edits.calls), JSON.stringify(
-                [["create where missing", "Own Recordings"],
-                 ["add", "Own Recordings", "/nonexistent/HELD/Contents/held-1001.mp3", -1]]));
+                [["add where missing", "Own Recordings", "/nonexistent/HELD/Contents/held-1001.mp3", -1]]));
             // Staged to be made: still the one row.
             if (!hasPlaylist) {
                 compare(sidebarNames(page), "All tracks(all)|Own Recordings(recordings)|Held Playlist");
@@ -1436,6 +1473,150 @@ TestCase {
         compare(JSON.stringify(edits.calls[edits.calls.length - 1]), JSON.stringify(["keep", "Own Recordings"]));
         tryCompare(recordingsRow(page), "pendingDelete", false);
         verify(recordingsRow(page).acceptsFileDrop, "kept: it takes files again");
+    }
+
+    // The track menu's "Add to" puts a track into the row's playlist by
+    // the row's one rule, as a drag does, and is refused as a drag is; any
+    // other playlist, and the same one with Experimental off, as always.
+    function test_theTrackMenuAddFollowsTheRowsRule() {
+        for (const experimental of [true, false]) {
+            const page = makePage(makeStick(testCase.threeRecordings), experimental, "Own Recordings");
+            const edits = createTemporaryObject(fakePlaylistEditComponent, testCase);
+            page.playlistEditController = edits;
+            const importer = createTemporaryObject(fakeImportComponent, testCase);
+            page.trackImportController = importer;
+            waitForRendering(page);
+            const menu = findChild(page, "trackMenu");
+            const addFromMenu = playlist => {
+                const row = trackRows(page)[0];
+                page.openTrackMenu(row, row);
+                tryCompare(menu, "opened", true);
+                verify(menu.addTargets.indexOf(playlist) >= 0, JSON.stringify(menu.addTargets));
+                const file = menu.filePath;
+                menu.toggleAdd(playlist);
+                menu.close();
+                tryCompare(menu, "visible", false);
+                return file;
+            };
+            const file = addFromMenu("Own Recordings");
+            addFromMenu("Held Playlist");
+            compare(JSON.stringify(edits.calls), JSON.stringify(
+                [[experimental ? "add where missing" : "add", "Own Recordings", file, -1],
+                 ["add", "Held Playlist", file, -1]]), experimental ? "Experimental on" : "Experimental off");
+            if (experimental) {
+                // Refused from the menu as from a drag: the playlist made by
+                // the import that waits, or to be deleted.
+                edits.calls = [];
+                importer.stagedPlaylist = "Own Recordings";
+                importer.stagedPlaylistIsNew = true;
+                importer.pendingRevision++;
+                addFromMenu("Own Recordings");
+                compare(edits.calls.length, 0, "nothing beside the import's create");
+                compare(closeMessage(page), "\"Own Recordings\" is made by the import waiting for Save. Save first, "
+                        + "then add tracks to it.");
+                importer.stagedPlaylistIsNew = false;
+                importer.pendingRevision++;
+                edits.deleted = ["Own Recordings"];
+                edits.pendingRevision++;
+                addFromMenu("Own Recordings");
+                compare(edits.calls.length, 0, "nothing into a playlist about to be deleted");
+                compare(closeMessage(page), "\"Own Recordings\" is to be deleted when you Save. Keep it first (the "
+                        + "row's menu), then add to it.");
+            }
+            page.destroy();
+            wait(0);
+            browseFixture.restore();
+        }
+    }
+
+    // A rename from or to the row's playlist's name staged (with
+    // Experimental off) is the row's once it is on: nothing goes into it
+    // (a track, files, Add to the library), each saying why, and the
+    // row's menu keeps the name, worded as a renamed playlist's menu.
+    function test_aStagedRenameIsTheRows() {
+        const keep = createTemporaryObject(fakeKeepComponent, testCase);
+        const page = makePage(makeStick(testCase.threeRecordings), true, "", keep);
+        const scan = findChild(page, "scanController");
+        tryCompare(scan, "recordingCount", 3);
+        const edits = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        page.playlistEditController = edits;
+        const importer = createTemporaryObject(fakeImportComponent, testCase);
+        page.trackImportController = importer;
+        page.showOwnRecordings();
+        tryCompare(findChild(page, "trackListView"), "count", 3);
+        const path = scan.tracks.trackAt(0).filePath;
+        keep.outcomes = {[path]: {state: "kept", fileName: "Late Set.flac", folder: "/home/dj/Kept"}};
+        keep.flacs = {[path]: "/home/dj/Kept/Late Set.flac"};
+        keep.revision++;
+        const drag = findChild(page, "trackDragItem");
+        drag.filePath = "/nonexistent/HELD/Contents/held-1001.mp3";
+        drag.title = "Held Track 1001";
+        for (const [from, to] of [["Own Recordings", "Old Sets"], ["Sets", "Own Recordings"]]) {
+            edits.calls = [];
+            edits.pendingRenames = {[from]: to};
+            edits.pendingRevision++;
+            const why = "\"" + from + "\" is to be renamed \"" + to + "\" when you Save. Keep its name first (the "
+                + "row's menu), then add to it.";
+            drag.addChosen("Own Recordings");
+            compare(edits.calls.length, 0, "no track into it: " + from);
+            compare(closeMessage(page), why);
+            page.importFiles(["file:///home/dj/a.wav"], "Own Recordings", false, -1);
+            compare(importer.calls.length, 0, "no files into it: " + from);
+            compare(closeMessage(page), why);
+            const menu = openRecordingMenu(page, "Session-0002.wav");
+            const add = findChild(menu, "addToLibraryItem");
+            compare(add.enabled, false);
+            compare(add.text, "Add to the library (\"Own Recordings\" is to be renamed when you Save)");
+            menu.close();
+            tryCompare(menu, "visible", false);
+
+            compare(JSON.stringify(ownRecordingsMenuTexts(page)), JSON.stringify(["Keep the name \"" + from + "\""]));
+            findChild(page, "ownRecordingsKeepNameItem").triggered();
+            closeOwnRecordingsMenu(page);
+            compare(JSON.stringify(edits.calls[edits.calls.length - 1]), JSON.stringify(["keep name", "Own Recordings"]));
+            compare(JSON.stringify(ownRecordingsMenuTexts(page)), "[]", "taken back: nothing waits");
+            const again = openRecordingMenu(page, "Session-0002.wav");
+            compare(findChild(again, "addToLibraryItem").enabled, true, "the name kept: Add to the library again");
+            again.close();
+            tryCompare(again, "visible", false);
+        }
+    }
+
+    // The import that waits for the row's playlist is taken back from the
+    // row's menu, in the words a playlist's own menu has for it.
+    function test_theRowTakesBackTheImport() {
+        const page = makePage(makeStick(testCase.threeRecordings), true, "");
+        tryCompare(findChild(page, "scanController"), "recordingCount", 3);
+        const importer = createTemporaryObject(fakeImportComponent, testCase);
+        page.trackImportController = importer;
+        compare(JSON.stringify(ownRecordingsMenuTexts(page)), "[]", "nothing waits: no menu");
+        importer.importing = 2;
+        importer.pendingRevision++;
+        compare(JSON.stringify(ownRecordingsMenuTexts(page)), JSON.stringify(["Don't import the 2 track(s)"]));
+        findChild(page, "ownRecordingsDontImportItem").triggered();
+        closeOwnRecordingsMenu(page);
+        compare(importer.dropped, 1, "the batch taken back");
+        compare(JSON.stringify(ownRecordingsMenuTexts(page)), "[]", "taken back: nothing waits");
+    }
+
+    // A staged new playlist the stick lists already is one row, the
+    // stick's, only when it is made where some library lacks it (the
+    // controller refuses its rename and delete until Save); any other is
+    // listed as it always was, a row of its own to take the create back.
+    function test_aNewPlaylistTheStickListsIsOneRowOnlyWhenMadeWhereMissing() {
+        const page = makePage(makeStick(testCase.threeRecordings), false, "Own Recordings");
+        const edits = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        page.playlistEditController = edits;
+        edits.newPlaylists = ["Own Recordings"];
+        edits.pendingRevision++;
+        const rowsOf = () => sidebarRows(page).filter(r => r.name === "Own Recordings");
+        tryCompare(rowsOf(), "length", 2);
+        // As before Own Recordings: both rows are the staged create's.
+        compare(JSON.stringify(rowsOf().map(r => r.pendingNew)), JSON.stringify([true, true]), "an ordinary one");
+        edits.madeWhereMissing = ["Own Recordings"];
+        edits.pendingRevision++;
+        tryVerify(() => rowsOf().length === 1, 5000, "made where missing: once");
+        compare(rowsOf()[0].pendingNew, false, "as the stick's");
     }
 
     // The tracks of a model, as it is at one moment.
@@ -1641,7 +1822,7 @@ TestCase {
         page.trackPanelOpen = false;
 
         for (const format of ["rekordbox", "onelibrary", "engine"]) {
-            verify(stickFixture.playlistsIn(stick, format).indexOf("Own Recordings") >= 0, format + " has the playlist");
+            compare(playlistCount(stick, format, "Own Recordings"), 1, format + " has the playlist, once");
             const files = playlistFiles(stick, format, "Own Recordings");
             compare(files.length, 1, format + ": " + files.join(", "));
             verify(files[0].endsWith(".flac"), format + ": " + files[0]);
@@ -1751,7 +1932,7 @@ TestCase {
 
         // Every library has the playlist, with both, the newest first.
         for (const format of ["rekordbox", "onelibrary", "engine"]) {
-            verify(stickFixture.playlistsIn(stick, format).indexOf("Own Recordings") >= 0, format + " has the playlist");
+            compare(playlistCount(stick, format, "Own Recordings"), 1, format + " has the playlist, once");
             const files = playlistFiles(stick, format, "Own Recordings");
             compare(files.length, 2, format + ": " + files.join(", "));
             verify(files[0].indexOf("Second Set") >= 0 && files[0].endsWith(".flac"), format + ": " + files.join(", "));
@@ -1777,8 +1958,8 @@ TestCase {
 
     // A track dragged onto the row with the playlist in some libraries
     // only: made in the others by the same save, the track then in it in
-    // every library that has the track (asked, as for any playlist, when
-    // one does not: the fixture's Engine has none of its tracks).
+    // every library. The track is one an import put into all three, so a
+    // library the add left out shows.
     function test_aDraggedTrackMakesThePlaylistWhereMissing_data() {
         return [
             {tag: "the library browsed has it", planted: ["rekordbox", "onelibrary"]},
@@ -1790,14 +1971,11 @@ TestCase {
         const stick = stickFixture.stickCopy(testCase.fixtureRoot);
         verify(stick.length > 0);
         verify(browseFixture.writeRecording(stick + "/Sessions/Session-0013.wav", 1, false, testCase.base));
-        // A track both rekordbox libraries list, by its own playlist.
-        compare(stickFixture.plantPlaylist(stick, "Picked", ["rekordbox", "onelibrary"], 1).length, 1);
         stickFixture.plantPlaylist(stick, "Own Recordings", data.planted, 0);
         for (const format of ["rekordbox", "onelibrary", "engine"]) {
             compare(stickFixture.playlistsIn(stick, format).indexOf("Own Recordings") >= 0,
                     data.planted.indexOf(format) >= 0, "precondition, " + format);
         }
-        const file = playlistFiles(stick, "rekordbox", "Picked")[0];
         const page = createTemporaryObject(pageComponent, testCase, {
             width: 1100, height: 660, stickLabel: "TESTSTICK",
             rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library",
@@ -1805,27 +1983,305 @@ TestCase {
         const scan = findChild(page, "scanController");
         tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 60000, "the stick is read");
         tryCompare(scan, "recordingCount", 1, 10000);
+
+        // A track in every library: imported into none, and saved.
+        const computer = stickFixture.scratchDirectory();
+        verify(artworkFixture.writeNoiseWav(computer + "/dragged set.wav", 3, 0, 31));
+        page.importFiles(["file://" + computer + "/dragged set.wav"], "", false, -1);
+        const importer = page.trackImportController;
+        tryCompare(importer, "busy", false, 120000);
+        compare(importer.errorMessage, "");
+        const dialog = findChild(page, "importResultDialog");
+        tryCompare(dialog, "opened", true);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+        let summary = saveStick(stick);
+        compare(summary.error, "", JSON.stringify(summary));
+        const file = playlistFiles(stick, "engine", "").find(f => f.endsWith("dragged set.wav"));
+        verify(file !== undefined, "Engine lists the imported track");
+        for (const format of ["rekordbox", "onelibrary"]) {
+            verify(playlistFiles(stick, format, "").indexOf(file) >= 0, format + " lists it");
+        }
+        tryVerify(() => !scan.busy, 60000, "read again");
         verify(recordingsRow(page).acceptsTrackDrop);
 
         const drag = findChild(page, "trackDragItem");
         drag.filePath = file;
-        drag.title = "Picked";
+        drag.title = "Dragged Set";
         drag.addChosen("Own Recordings");
-        const ask = findChild(page, "missingLibrariesDialog");
-        tryCompare(ask, "opened", true, 10000);
-        findChild(ask, "addAnywayButton").clicked();
         const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(stick + "/PIONEER"));
         tryCompare(session, "pendingCount", 2, 30000);
+        compare(findChild(page, "missingLibrariesDialog").opened, false, "every library has the track");
         compare(findChild(page, "playlistEditMessage").visible, false, "nothing refused");
-        const summary = saveStick(stick);
+        summary = saveStick(stick);
         compare(summary.error, "", JSON.stringify(summary));
 
         for (const format of ["rekordbox", "onelibrary", "engine"]) {
-            verify(stickFixture.playlistsIn(stick, format).indexOf("Own Recordings") >= 0, format + " has the playlist");
-        }
-        for (const format of ["rekordbox", "onelibrary"]) {
+            compare(playlistCount(stick, format, "Own Recordings"), 1, format + " has the playlist, once");
             compare(JSON.stringify(playlistFiles(stick, format, "Own Recordings")), JSON.stringify([file]), format);
         }
+    }
+
+    // ---- The playlist editor's rule for the row's playlist, on copies of
+    // a real stick, with the real PlaylistEditController ----
+
+    // Answers "Not in every library" with "add anyway" by itself: the
+    // fixture's Engine has none of the tracks.
+    Component {
+        id: realEditsComponent
+        PlaylistEditController {
+            onAdditionNeedsLibraries: (playlist, filePath) => addAnyway(playlist, filePath)
+        }
+    }
+    // A stick copy with "Own Recordings" in the libraries named, and a
+    // track both rekordbox libraries list (by its playlist "Picked").
+    function ownStick(planted) {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture stick copies");
+        const picked = stickFixture.plantPlaylist(stick, "Picked", ["rekordbox", "onelibrary"], 1);
+        compare(picked.length, 1);
+        if (planted.length > 0) {
+            compare(stickFixture.plantPlaylist(stick, "Own Recordings", planted, 0).length, 0);
+        }
+        const t = {stick: stick, pioneer: stick + "/PIONEER", engine: stick + "/Engine Library", file: picked[0]};
+        t.session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(t.pioneer));
+        verify(t.session !== null);
+        return t;
+    }
+    // One call of the editor's, its lookup done: its refusal, "" for none.
+    function edited(edits, accepted) {
+        if (!accepted) {
+            return edits.errorMessage;
+        }
+        tryCompare(edits, "busy", false, 60000);
+        return edits.errorMessage;
+    }
+    function playlistCount(stick, format, name) {
+        return stickFixture.playlistsIn(stick, format).filter(n => n === name).length;
+    }
+
+    // The one call for the row's playlist, whichever libraries lack it:
+    // made where missing (nothing staged for it where none does), the add
+    // into every library. Staged again after a restart as it was, kept
+    // whole also when the stick has the playlist everywhere by then.
+    function test_theEditorMakesThePlaylistWhereMissing_data() {
+        return [
+            {tag: "missing in some", planted: ["rekordbox", "onelibrary"], creates: true, some: true},
+            {tag: "missing in none", planted: ["rekordbox", "onelibrary", "engine"], creates: false, some: false},
+            {tag: "missing in all", planted: [], creates: true, some: false},
+            {tag: "in all by the restart", planted: ["rekordbox", "onelibrary"], creates: true, some: true,
+             plantedMeanwhile: ["engine"]},
+        ];
+    }
+    function test_theEditorMakesThePlaylistWhereMissing(data) {
+        const t = ownStick(data.planted);
+        let edits = createTemporaryObject(realEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(t.session.pendingCount, data.creates ? 2 : 1, JSON.stringify(t.session.pendingDescriptions));
+        compare(edits.isNewPlaylistStaged("Own Recordings"), data.creates);
+        compare(edits.isMadeWhereMissing("Own Recordings"), data.some);
+        verify(edits.isAdditionStaged("Own Recordings", t.file));
+        const descriptions = JSON.stringify(t.session.pendingDescriptions);
+
+        // A restart: the controller gone without a discard, the session's
+        // memory with it; the batch kept on this machine.
+        edits.destroy();
+        wait(50);
+        EditSessionRegistry.discardAll();
+        compare(t.session.pendingCount, 0);
+        for (const library of data.plantedMeanwhile ?? []) {
+            compare(stickFixture.plantPlaylist(t.stick, "Own Recordings", [library], 0).length, 0);
+        }
+        edits = createTemporaryObject(realEditsComponent, testCase);
+        const kept = signalSpy.createObject(testCase, {target: edits, signalName: "leftOverEditsKept"});
+        verify(edits.keepLeftOverEdits(t.pioneer, t.engine), edits.errorMessage);
+        tryCompare(kept, "count", 1, 60000);
+        const total = data.creates ? 2 : 1;
+        const [keptCount, keptTotal, refusals] = kept.signalArguments[0];
+        compare(JSON.stringify([keptCount, keptTotal]), JSON.stringify([total, total]),
+                "every edit kept: " + JSON.stringify(refusals));
+        compare(edits.errorMessage, "");
+        kept.destroy();
+        if (data.plantedMeanwhile) {
+            // Nothing to make any more: the add alone, into every library.
+            compare(t.session.pendingCount, 1, JSON.stringify(t.session.pendingDescriptions));
+            compare(edits.isNewPlaylistStaged("Own Recordings"), false);
+        } else {
+            compare(JSON.stringify(t.session.pendingDescriptions), descriptions, "the same batch");
+        }
+        verify(edits.isAdditionStaged("Own Recordings", t.file));
+
+        // Saved: the playlist once in each library, the track in it where
+        // the library has the track (both rekordbox libraries).
+        const summary = saveStick(t.stick);
+        compare(summary.error, "", JSON.stringify(summary));
+        for (const format of ["rekordbox", "onelibrary", "engine"]) {
+            compare(playlistCount(t.stick, format, "Own Recordings"), 1, format + " has the playlist once");
+        }
+        for (const format of ["rekordbox", "onelibrary"]) {
+            compare(JSON.stringify(playlistFiles(t.stick, format, "Own Recordings")), JSON.stringify([t.file]), format);
+        }
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+    }
+
+    // The page's answer to "Not in every library" decides for both: the
+    // playlist is not made for an add that is dropped.
+    Component {
+        id: droppingEditsComponent
+        PlaylistEditController {
+            onAdditionNeedsLibraries: (playlist, filePath) => dropAddition(playlist, filePath)
+        }
+    }
+    function test_anAddDroppedAtTheAskLeavesNoCreate() {
+        const t = ownStick(["rekordbox", "onelibrary"]);
+        const edits = createTemporaryObject(droppingEditsComponent, testCase);
+        const asked = signalSpy.createObject(testCase, {target: edits, signalName: "additionNeedsLibraries"});
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(asked.count, 1, "Engine has no row for the track: asked");
+        asked.destroy();
+        compare(t.session.pendingCount, 0, "neither the add nor the create");
+        compare(edits.isNewPlaylistStaged("Own Recordings"), false);
+    }
+
+    // What would leave the playlist split, under two names or only in
+    // some libraries, is refused before anything is staged, saying why:
+    // a delete or a rename while the playlist waits to be made where it
+    // is missing, an add while a delete or a rename of it waits, a folder
+    // of its name. Made in every library, it is renamed as any new one.
+    function test_theEditorRefusesWhatWouldSplitThePlaylist() {
+        let t = ownStick(["rekordbox", "onelibrary"]);
+        const edits = createTemporaryObject(realEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(t.session.pendingCount, 2);
+        compare(edited(edits, edits.deletePlaylist(t.pioneer, t.engine, "Own Recordings")),
+                "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then delete it.");
+        compare(edited(edits, edits.renamePlaylist(t.pioneer, t.engine, "Own Recordings", "Old Sets")),
+                "\"Own Recordings\" is on the stick in rekordbox, OneLibrary and waits to be made by Save in the other "
+                + "libraries. Save first, then rename it.");
+        compare(t.session.pendingCount, 2, "nothing staged by either");
+        edits.dropNewPlaylist("Own Recordings");
+        compare(t.session.pendingCount, 0, "the create taken back with its add");
+
+        // A rename of it staged (as Experimental off allows), then an add.
+        const renameWords = (from, to) => "\"" + from + "\" is to be renamed \"" + to + "\" when you Save. Keep its "
+            + "name first (the row's menu), then add to it.";
+        compare(edited(edits, edits.renamePlaylist(t.pioneer, t.engine, "Own Recordings", "Old Sets")), "");
+        compare(t.session.pendingCount, 1);
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), renameWords("Own Recordings", "Old Sets"));
+        compare(edited(edits, edits.createPlaylistWhereMissing(t.pioneer, t.engine, "Own Recordings")),
+                renameWords("Own Recordings", "Old Sets"));
+        compare(t.session.pendingCount, 1, "nothing beside the rename");
+        edits.keepPlaylistName("Own Recordings");
+        // A delete of it staged, then an add.
+        compare(edited(edits, edits.deletePlaylist(t.pioneer, t.engine, "Own Recordings")), "");
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")),
+                "\"Own Recordings\" is to be deleted when you Save. Keep it first (the row's menu), then add to it.");
+        compare(t.session.pendingCount, 1, "nothing beside the delete");
+        edits.keepPlaylist("Own Recordings");
+        compare(t.session.pendingCount, 0);
+        EditSessionRegistry.discardAll();
+
+        // On a stick without it: another playlist renamed to its name, and
+        // the playlist made in every library, which renames as any new one.
+        t = ownStick([]);
+        compare(edited(edits, edits.renamePlaylist(t.pioneer, t.engine, "Picked", "Own Recordings")), "");
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), renameWords("Picked", "Own Recordings"));
+        compare(t.session.pendingCount, 1, "nothing beside the rename");
+        edits.keepPlaylistName("Own Recordings");
+        compare(t.session.pendingCount, 0);
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), "");
+        compare(t.session.pendingCount, 2);
+        compare(edits.isMadeWhereMissing("Own Recordings"), false, "no library has it");
+        compare(edited(edits, edits.renamePlaylist(t.pioneer, t.engine, "Own Recordings", "Fresh Sets")), "");
+        compare(JSON.stringify(edits.newPlaylists), JSON.stringify(["Fresh Sets"]), "renamed in place");
+        verify(edits.isAdditionStaged("Fresh Sets", t.file));
+        compare(t.session.pendingCount, 2);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+    }
+
+    // A folder of the playlist's name in one library is no playlist: the
+    // editor stages nothing into it, naming the library, and the row does
+    // not count or list the folder as its playlist.
+    function test_aFolderOfItsNameIsNotThePlaylist_data() {
+        return [
+            {tag: "a folder in rekordbox", planted: ["engine"], folder: "rekordbox", named: "rekordbox"},
+            {tag: "a folder in Engine", planted: ["rekordbox", "onelibrary"], folder: "engine", named: "Engine"},
+        ];
+    }
+    function test_aFolderOfItsNameIsNotThePlaylist(data) {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const t = ownStick(data.planted);
+        verify(stickFixture.plantFolder(t.stick, "Own Recordings", data.folder));
+        verify(browseFixture.writeRecording(t.stick + "/Sessions/Session-0014.wav", 1, false, testCase.base));
+        const edits = createTemporaryObject(realEditsComponent, testCase);
+        const why = "\"Own Recordings\" is a folder in " + data.named + ", not a playlist, so it takes no tracks. "
+            + "Rename the folder first.";
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), why);
+        compare(edited(edits, edits.createPlaylistWhereMissing(t.pioneer, t.engine, "Own Recordings")), why);
+        compare(t.session.pendingCount, 0, "nothing staged");
+
+        if (data.folder === "rekordbox") {
+            // Browsed in rekordbox: the row is the recordings alone.
+            const page = createTemporaryObject(pageComponent, testCase, {
+                width: 1100, height: 660, stickLabel: "TESTSTICK", rekordboxPath: t.pioneer, enginePath: t.engine,
+                playbackController: realPlayback, appSettingsController: realAppSettings});
+            const scan = findChild(page, "scanController");
+            tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 60000, "the stick is read");
+            tryCompare(scan, "recordingCount", 1, 10000);
+            verify(scan.playlistNames.indexOf("Own Recordings") < 0, "the folder is no playlist of the list");
+            const row = recordingsRow(page);
+            compare(row.count, 1, "the recording alone");
+            compare(row.hasSummary, false);
+            page.showOwnRecordings();
+            tryCompare(findChild(page, "trackListView"), "count", 1);
+            compare(scan.tracks.trackAt(0).recording, true);
+        }
+    }
+
+    // While the import that makes the playlist where it is missing waits,
+    // the editor adds nothing beside it, and neither deletes nor renames
+    // it: either would reach the libraries that have it now only.
+    function test_theEditorWaitsForTheImportsCreate() {
+        realAppSettings.experimentalFeaturesEnabled = true;
+        const t = ownStick(["rekordbox", "onelibrary"]);
+        verify(browseFixture.writeRecording(t.stick + "/Sessions/Session-0015.wav", 1, false, testCase.base));
+        const page = createTemporaryObject(pageComponent, testCase, {
+            width: 1100, height: 660, stickLabel: "TESTSTICK", rekordboxPath: t.pioneer, enginePath: t.engine,
+            playbackController: realPlayback, appSettingsController: realAppSettings});
+        const scan = findChild(page, "scanController");
+        tryVerify(() => !scan.busy && scan.playlistNames.length > 0, 60000, "the stick is read");
+        const computer = stickFixture.scratchDirectory();
+        verify(artworkFixture.writeNoiseWav(computer + "/late set.wav", 3, 0, 21));
+        page.importFiles(["file://" + computer + "/late set.wav"], "Own Recordings", false, -1);
+        const importer = page.trackImportController;
+        tryCompare(importer, "busy", false, 120000);
+        compare(importer.errorMessage, "");
+        const dialog = findChild(page, "importResultDialog");
+        tryCompare(dialog, "opened", true);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+        compare(importer.stagedPlaylistIsNew, true, "made in Engine by the import");
+        const waiting = t.session.pendingCount;
+
+        const edits = page.playlistEditController;
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")),
+                "\"Own Recordings\" is made by the import waiting for Save. Save first, then add tracks to it.");
+        compare(edited(edits, edits.deletePlaylist(t.pioneer, t.engine, "Own Recordings")),
+                "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then delete it.");
+        compare(edited(edits, edits.renamePlaylist(t.pioneer, t.engine, "Own Recordings", "Old Sets")),
+                "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then rename it.");
+        compare(t.session.pendingCount, waiting, "nothing staged beside the import");
     }
 
     // A track of the row taken out of it leaves the stick playlist only:

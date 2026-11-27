@@ -34,6 +34,8 @@
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "engine_change_fixture.hpp"
 
+#include <djinterop/djinterop.hpp>
+
 using namespace seabass;
 using namespace seabass::gui;
 namespace fs = std::filesystem;
@@ -403,6 +405,95 @@ int main(int argc, char **argv)
         }
     }
     std::cout << "case 4f (a folder at the playlist's path: nothing staged, with the reason) OK\n";
+
+    // 4i. createWhereMissing (Browse's Own Recordings): made in the
+    //     libraries that lack the playlist and only there, nothing made
+    //     where none does, refused for a folder or a name held twice; the
+    //     staged set without it is what it was.
+    {
+        const testing::EngineChangeStick spread = testing::makeEngineChangeStick(fixture, "track_import_staging_where_missing");
+        testing::levelImportCounter(spread);
+        const QString pioneerQ = spread.pioneerPath();
+        const QString engineQ = spread.enginePath();
+        const auto plant = [&](const std::string &name, const QStringList &libraries) {
+            const auto made = std::make_shared<CreatePlaylistChange>(pioneerQ, engineQ, name, libraries);
+            assert(testing::saveChanges({made}, pioneerQ, engineQ).error.isEmpty());
+        };
+        plant("Everywhere", AllThree);
+        plant("Two Have", QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")});
+        plant("Foldered", QStringList{QStringLiteral("onelibrary"), QStringLiteral("engine")});
+        {
+            infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(spread.pioneer / "rekordbox" / "export.pdb"));
+            rows.createPlaylist(0, "Foldered", true);
+            assert(rows.commit());
+            // "Odd/Twice" spelled by two of Engine's playlists: one of that
+            // name, and "Twice" inside "Odd".
+            auto db = djinterop::engine::load_database(spread.engineUtf8());
+            db.create_root_playlist("Odd/Twice");
+            db.create_root_playlist("Odd").create_sub_playlist("Twice");
+        }
+        ImportTarget there{pathToQString(spread.root), pioneerQ, engineQ, AllThree};
+        domain::ImportPlan one;
+        one.entries.push_back(offer(computer, "w.mp3", "W", "Contents/Stager/Spread/w.mp3"));
+        const auto whereMissing = [](const std::string &name) {
+            ImportPlaylist playlist{name, false, std::nullopt};
+            playlist.createWhereMissing = true;
+            return playlist;
+        };
+        const auto stage = [&](const ImportPlaylist &playlist) {
+            return stageTrackImport(one, there, tags, probe, "2026-11-25", playlist);
+        };
+        const auto idsOf = [](const StagedImport &staged) {
+            std::vector<QString> ids;
+            for (const auto &change : staged.changes) {
+                ids.push_back(change->id());
+            }
+            return ids;
+        };
+        const auto creates = [](const StagedImport &staged) {
+            return std::count_if(staged.changes.begin(), staged.changes.end(), [](const auto &change) {
+                return std::dynamic_pointer_cast<CreatePlaylistChange>(change) != nullptr;
+            });
+        };
+        // Lacking in none: nothing made, the set as without the flag.
+        const StagedImport everywhere = stage(whereMissing("Everywhere"));
+        assert(everywhere.refusal.empty() && everywhere.createdIn.isEmpty() && creates(everywhere) == 0);
+        assert(idsOf(everywhere) == idsOf(stage({"Everywhere", false, std::nullopt})));
+        // Lacking in all: made in all three, as a new playlist is.
+        const StagedImport nowhere = stage(whereMissing("Nowhere"));
+        assert(nowhere.refusal.empty() && nowhere.createdIn == AllThree && creates(nowhere) == 1);
+        assert(idsOf(nowhere) == idsOf(stage({"Nowhere", true, std::nullopt})));
+        // Lacking in Engine: made there only; without the flag refused as
+        // before.
+        const StagedImport two = stage(whereMissing("Two Have"));
+        assert(two.refusal.empty() && (two.createdIn == QStringList{QStringLiteral("engine")}) && creates(two) == 1);
+        const auto made = std::dynamic_pointer_cast<CreatePlaylistChange>(two.changes.front());
+        assert(made && (made->formatsTouched() == QStringList{QStringLiteral("engine")}));
+        const StagedImport plain = stage({"Two Have", false, std::nullopt});
+        assert(plain.changes.empty() && plain.createdIn.isEmpty()
+               && plain.refusal.find("is not in every library") != std::string::npos);
+        // A folder in rekordbox, a name Engine holds twice: nothing.
+        const StagedImport foldered = stage(whereMissing("Foldered"));
+        assert(foldered.changes.empty() && foldered.createdIn.isEmpty()
+               && foldered.refusal.find("is a folder in rekordbox") != std::string::npos);
+        const StagedImport twice = stage(whereMissing("Odd/Twice"));
+        assert(twice.changes.empty() && twice.createdIn.isEmpty()
+               && twice.refusal.find("More than one playlist") != std::string::npos);
+        // Saved: the playlist once in every library, the track in it.
+        const SaveLoopResult saved = testing::saveChanges(two.changes, pioneerQ, engineQ);
+        assert(saved.error.isEmpty() && saved.skippedIds.isEmpty());
+        for (const char *catalog : {"rekordbox", "onelibrary", "engine"}) {
+            const auto paths = playlistPathsIn(catalog, pathToUtf8(std::string(catalog) == "engine" ? spread.engine
+                                                                                               : spread.pioneer));
+            assert(std::count(paths.begin(), paths.end(), "Two Have") == 1 && "once in each library");
+        }
+        const std::vector<std::string> w{pathToUtf8(spread.root / "Contents" / "Stager" / "Spread" / "w.mp3")};
+        assert(playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(spread.pioneer)), "Two Have") == w);
+        assert(playlistOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(spread.pioneer)), "Two Have") == w);
+        assert(playlistOf(infrastructure::engine::LibdjinteropEngineReader(spread.engineUtf8()), "Two Have") == w);
+    }
+    std::cout << "case 4i (made where missing: only in the libraries that lack it, nowhere when none does; a folder "
+                 "or a name held twice refused; the set without it unchanged) OK\n";
 
     // 4g. An export.pdb whose playlist-entries table cannot start a new
     //     page: the move of the run to its place would rewrite the

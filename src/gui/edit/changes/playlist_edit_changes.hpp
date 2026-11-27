@@ -56,6 +56,11 @@ struct PlaylistWhereabouts
     // have to guess there, so Browse refuses, and the changes fail rather
     // than guess if it happens by Save.
     QStringList several;
+    // The ones where a node at that path is a folder (Engine: a playlist
+    // holding others, its only notion of one), counted in `having` all
+    // the same: it takes no tracks, so a playlist Browse makes where it is
+    // missing (Own Recordings) is refused there rather than written.
+    QStringList folders;
     // Asked with a file: the libraries on the stick with a row for it,
     // looked up as AddToPlaylistChange looks it up (export.pdb by its path
     // on the stick, OneLibrary's content rows, Engine's tracks by the path
@@ -124,6 +129,8 @@ public:
     void stageForImport() { m_forImport = true; }
 
     static QString idFor(const std::string &playlist);
+    // The id the track import's create of `playlist` has (stageForImport).
+    static QString importIdFor(const std::string &playlist);
 
     QString id() const override;
     QString owner() const override;

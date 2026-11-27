@@ -64,6 +64,7 @@
 #include "gui/format_usb_controller.hpp"
 #include "gui/library_catalog_cache.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
+#include "infrastructure/rekordbox/pdb_row_writer.hpp"
 #include "infrastructure/onelibrary/onelibrary_key.hpp"
 #include "infrastructure/onelibrary/onelibrary_reader.hpp"
 #include "infrastructure/engine/engine_playlists.hpp"
@@ -1587,6 +1588,34 @@ public:
             return {};
         }
         return files;
+    }
+
+    // A folder `name` at the top level of one library of a stick copy
+    // ("rekordbox", "onelibrary", or "engine", where a folder is a
+    // playlist holding another, "<name>/Inside"), written straight to its
+    // file outside any edit session. False on failure.
+    Q_INVOKABLE bool plantFolder(const QString &stickRoot, const QString &name, const QString &library)
+    {
+        const std::string pioneer = (stickRoot + QStringLiteral("/PIONEER")).toStdString();
+        try {
+            if (library == QStringLiteral("rekordbox")) {
+                seabass::infrastructure::rekordbox::PdbRowWriter rows(pioneer + "/rekordbox/export.pdb");
+                rows.createPlaylist(0, name.toStdString(), true);
+                return rows.commit();
+            }
+            if (library == QStringLiteral("onelibrary")) {
+                seabass::infrastructure::onelibrary::OneLibraryCueWriter(pioneer).createPlaylist("", name.toStdString(), true);
+                return true;
+            }
+            if (library == QStringLiteral("engine")) {
+                seabass::infrastructure::engine::createEnginePlaylist(
+                    (stickRoot + QStringLiteral("/Engine Library")).toStdString(), name.toStdString() + "/Inside");
+                return true;
+            }
+        } catch (const std::exception &e) {
+            qWarning() << "plantFolder:" << e.what();
+        }
+        return false;
     }
 
     // The playlists one library of a stick copy holds, by full path, read

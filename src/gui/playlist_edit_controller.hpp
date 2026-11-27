@@ -8,7 +8,6 @@
 #include <QObject>
 #include <QPointer>
 #include <QQmlEngine>
-#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariantMap>
@@ -102,13 +101,29 @@ public:
     // those are, so that what is added to it after goes into every
     // library (Browse's Own Recordings, a playlist the person never
     // named, which some libraries may be without). Stages nothing where
-    // every library has it already. Staged, it is a new playlist as
-    // createPlaylist's is (newPlaylists, dropNewPlaylist), and is not
-    // renamed until saved: the libraries that have it keep their name.
+    // every library has it already, which is no refusal. Staged, it is a
+    // new playlist as createPlaylist's is (newPlaylists, dropNewPlaylist);
+    // while some libraries have it already it is not renamed or deleted
+    // until saved, as either would reach those libraries only. Refused
+    // while a delete or a rename of it is staged, the track import's
+    // create of it waits, a library holds the name twice, or one holds a
+    // folder there.
     Q_INVOKABLE bool createPlaylistWhereMissing(const QString &rekordboxPath, const QString &enginePath,
                                                 const QString &name);
+    // The one way a track goes into such a playlist: as addToPlaylist,
+    // with the playlist first made, in the same lookup, in the libraries
+    // that lack it (createPlaylistWhereMissing's rule), and the add then
+    // going into every library on the stick. Nothing is staged when either
+    // is refused, and the create waits with the add for the page's answer
+    // to additionNeedsLibraries (dropAddition leaves nothing behind).
+    Q_INVOKABLE bool addToPlaylistMakingItWhereMissing(const QString &rekordboxPath, const QString &enginePath,
+                                                       const QString &playlist, const QString &filePath,
+                                                       const QString &title, int toIndex = -1,
+                                                       const QString &moveFrom = QString());
     Q_INVOKABLE void dropNewPlaylist(const QString &name);
     Q_INVOKABLE bool isNewPlaylistStaged(const QString &name) const;
+    // Staged by createPlaylistWhereMissing while some library has it.
+    Q_INVOKABLE bool isMadeWhereMissing(const QString &name) const;
     Q_INVOKABLE bool deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
     // Deleting a playlist together with its tracks. A track is the
     // playlist's when any library on the stick lists its file there, and
@@ -310,12 +325,34 @@ private:
         QStringList libraries;
         // Confirmed past "Not in every library" (addAnyway, or kept so).
         bool anyway = false;
+        // Asked through addToPlaylistMakingItWhereMissing: the libraries
+        // the playlist is made in first (none when it needs no making or
+        // its create is staged), and those that had it.
+        bool whereMissing = false;
+        QStringList createIn;
+        QStringList having;
     };
     void stageAdd(const PendingAdd &add);
     // addToPlaylist, with the page's answer to additionNeedsLibraries
     // given in advance when `anyway` (a kept add, see keepLeftOverEdits).
     bool requestAdd(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
                     const QString &filePath, const QString &title, int toIndex, const QString &moveFrom, bool anyway);
+    // addToPlaylistMakingItWhereMissing, `anyway` as for requestAdd.
+    bool requestAddWhereMissing(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                                const QString &filePath, const QString &title, int toIndex, const QString &moveFrom,
+                                bool anyway);
+    // Why nothing may be made or added where `playlist` is missing now, ""
+    // when it may: a staged delete or rename of it, or the import's create.
+    QString whereMissingRefusal(const QString &playlist) const;
+    // ...and what the stick says against it, read by a lookup: a name a
+    // library holds twice, or a folder at its path.
+    static QString whereMissingRefusal(const QString &playlist, const PlaylistWhereabouts &where);
+    // Stages the where-missing create of `playlist` in `lacking`; false
+    // when the session refuses it.
+    bool stageCreateWhereMissing(const QString &rekordboxPath, const QString &enginePath, const QString &playlist,
+                                 const QStringList &lacking, const QStringList &having);
+    // The track import's create of `playlist` waits in the session.
+    bool importMakes(const QString &playlist) const;
     // Adds waiting for the page's answer, by playlist + "|" + file.
     std::map<QString, PendingAdd> m_waitingAdds;
 
@@ -348,8 +385,9 @@ private:
     std::map<QString, std::set<std::string>> m_trackDeletes;
     QStringList m_newPlaylists;
     // The new playlists made only where a library lacked them
-    // (createPlaylistWhereMissing()).
-    QSet<QString> m_madeWhereMissing;
+    // (createPlaylistWhereMissing()), with the libraries that had them:
+    // none, and it is renamed as any new playlist is.
+    std::map<QString, QStringList> m_madeWhereMissing;
     // One edit of a track's place in a playlist, as staged: `remake`
     // makes its change again for the playlist under another name (a new
     // playlist renamed in place), `sequence` says when it was staged
@@ -413,6 +451,9 @@ private:
     QString m_replayError;
     int m_replayRevision = 0;
     std::size_t m_replayWaiting = 0;
+    // The running call found nothing to do (a where-missing create of a
+    // playlist every library has by now): kept, not refused.
+    bool m_replayNothingNeeded = false;
     bool issue(const StagedEditRequest &request);
     void replayNext();
     void settleReplayCall(const StagedEditRequest &request);

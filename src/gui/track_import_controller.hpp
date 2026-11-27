@@ -207,8 +207,9 @@ public:
     // that lacks it (ImportPlaylist::createWhereMissing), for Browse's
     // Own Recordings: a playlist the person did not name, which a library
     // may be without. While an import into it waits, these files join it
-    // and, given a place, go there before the waiting ones, which follow
-    // them: the files added last come first.
+    // before the waiting ones, which follow them (the files added last come
+    // first), at the batch's place: one of their own is refused, as the
+    // run has one place and the batch's rows stay where they are shown.
     Q_INVOKABLE bool importMakingPlaylistWhereMissing(const QString &rekordboxPath, const QString &enginePath,
                                                       const QVariantList &files, const QString &playlist,
                                                       int atIndex = -1);
@@ -298,7 +299,7 @@ private:
     // `replacesStaged`: the request is the staged batch's own offer, to
     // be prepared again as it is (importPossibleDuplicates()).
     // `joinsFirst`: joining the batch that waits, the request's files go
-    // before its files, at the request's place when it names one.
+    // before its files, at its place; a request naming another is refused.
     bool start(ImportRequest request, bool replacesStaged = false, bool joinsFirst = false);
     // The request importFiles() and importMakingPlaylistWhereMissing()
     // make of what was offered; false, with errorMessage, for nothing.

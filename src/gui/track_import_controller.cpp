@@ -597,9 +597,24 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged, bo
                     joined.leftOutByPerson.erase(offered);
                 }
                 if (joinsFirst) {
-                    // The new files first, the waiting ones after them, the
-                    // run at the place the new offer names: the files added
-                    // last come first.
+                    // One run at one place: a batch moved to where these
+                    // were put would leave the rows shown before Save. A
+                    // place of its own is refused, none takes the batch's.
+                    const auto placeOf = [](const ImportRequest &r) {
+                        return r.playlist ? r.playlist->atIndex : std::nullopt;
+                    };
+                    if (placeOf(request) && placeOf(request) != placeOf(m_request)) {
+                        const auto where = [this](const std::optional<int> &at) {
+                            return at ? tr("at place %1").arg(*at + 1) : tr("at its end");
+                        };
+                        setErrorMessage(tr("The tracks waiting for Save go into \"%1\" %2; these would go %3. Add "
+                                           "them at the same place, or Save first.")
+                                            .arg(QString::fromStdString(m_request.playlist->path),
+                                                 where(placeOf(m_request)), where(placeOf(request))));
+                        return false;
+                    }
+                    // The new files first, the waiting ones after them: the
+                    // files added last come first.
                     std::vector<std::string> order = request.offered;
                     for (const std::string &waiting : m_request.offered) {
                         if (std::find(order.begin(), order.end(), waiting) == order.end()) {
@@ -607,9 +622,6 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged, bo
                         }
                     }
                     joined.offered = std::move(order);
-                    if (request.playlist && request.playlist->atIndex && joined.playlist) {
-                        joined.playlist->atIndex = request.playlist->atIndex;
-                    }
                 } else {
                     for (const std::string &offered : request.offered) {
                         if (std::find(joined.offered.begin(), joined.offered.end(), offered) == joined.offered.end()) {

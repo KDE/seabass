@@ -290,13 +290,21 @@ from day one.
   WAV), through the track import into the stick playlist "Own
   Recordings", at its top; a playlist of that name already on the stick
   is that playlist. One rule for every way into it (Add to the library,
-  files dropped, a track dragged): the save that puts tracks into it
-  first makes it in every library that lacks it (none, some or all,
-  whichever library Browse shows), then the tracks go into it in all of
-  them (`ImportPlaylist::createWhereMissing`,
-  `PlaylistEditController::createPlaylistWhereMissing`). A second add
-  before Save joins the import that waits and goes on top of it: the
-  newest added first, the files of the waiting import after it. While a
+  files dropped, a track dragged onto the row or added from its menu's
+  "Add to"): the save that puts tracks into it first makes it in every
+  library that lacks it (none, some or all, whichever library Browse
+  shows), then the tracks go into it in all of them
+  (`ImportPlaylist::createWhereMissing`,
+  `PlaylistEditController::addToPlaylistMakingItWhereMissing`, which
+  stages the create and the add from one lookup, or neither). Refused
+  before anything is staged, saying why: a folder of that name in a
+  library, a name a library holds twice, a staged delete or a staged
+  rename from or to that name; and, while it waits to be made where
+  some library has it already, a rename or a delete of it (either would
+  reach only the libraries that have it). A second add before Save joins
+  the import that waits and goes on top of it: the newest added first,
+  the files of the waiting import after it, at the waiting batch's
+  place; files put at another place are refused until Save. While a
   track dragged onto the row waits to make the playlist, Add to the
   library and files dropped wait for Save and say so (an import is
   checked against the stick as it is, so it cannot join playlist edits);
@@ -311,9 +319,12 @@ from day one.
   out of the row leaves the playlist only. The row has no playlist menu
   (no rename, no delete): its menu takes back what waits for its
   playlist ("Don't create this playlist", "Don't import the tracks",
-  "Keep this playlist" for a delete staged with Experimental off), and
-  shows a staged delete as the playlist's row would, taking nothing in
-  and saying why. Its summary is the playlist's. Verified on a scratch
+  "Keep this playlist" for a delete staged with Experimental off, "Keep
+  the name" for a rename), and shows a staged delete as the playlist's
+  row would, taking nothing in and saying why. A folder of that name is
+  not the row's playlist. Its summary is the playlist's. Staged edits
+  kept over a restart are staged again by the same rule; a create the
+  stick no longer needs counts as kept. Verified on a scratch
   stick through Save in all three libraries, with the playlist in some
   libraries only, both ways round (`tst_OwnRecordings`). Still owed: Free Up Space
   naming a recording that is in the library as FLAC, and Windows and

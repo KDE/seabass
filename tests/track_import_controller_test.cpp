@@ -3246,6 +3246,116 @@ int main(int argc, char **argv)
         std::cout << "case 22 (a controller going while a file is analysed is not held up by it) OK\n";
     }
 
+    // 30, on a stick of its own: Own Recordings' import
+    //     (importMakingPlaylistWhereMissing) joined by more files while it
+    //     waits. The new files go before the waiting ones, at the batch's
+    //     place; a place of their own is refused, the batch as it was. The
+    //     rows shown before Save are what Save writes, in every library,
+    //     the playlist made where it was missing and there once.
+    if (runs(1)) {
+        const testing::EngineChangeStick own = testing::makeEngineChangeStick(fixture, "track_import_controller_where_missing");
+        testing::levelImportCounter(own);
+        const QString ownPioneer = own.pioneerPath();
+        const QString ownEngine = own.enginePath();
+        LibraryEditSession *ownSession = registry->sessionFor(registry->libraryIdForPath(ownPioneer));
+        assert(ownSession && ownSession != session);
+        {
+            const auto made = std::make_shared<CreatePlaylistChange>(
+                ownPioneer, ownEngine, "Own Recordings", QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")});
+            assert(testing::saveChanges({made}, ownPioneer, ownEngine).error.isEmpty());
+        }
+        const fs::path in = computer / "where missing";
+        TrackImportController joins;
+        joins.setExperimentalEnabled(true);
+        QSignalSpy joinsResults(&joins, &TrackImportController::resultReady);
+        const auto offerOwn = [&](const std::vector<std::string> &names, int atIndex) {
+            QVariantList files;
+            for (const std::string &name : names) {
+                files << pathToQString(in / name);
+            }
+            const int before = joinsResults.count();
+            if (!joins.importMakingPlaylistWhereMissing(ownPioneer, ownEngine, files, QStringLiteral("Own Recordings"),
+                                                       atIndex)) {
+                return false;
+            }
+            assert(waitFor(&joins, &TrackImportController::busyChanged, [&] { return !joins.busy(); }));
+            return joinsResults.count() > before;
+        };
+        const auto saveOwn = [&]() {
+            QSignalSpy done(ownSession, &LibraryEditSession::saveFinished);
+            ownSession->save();
+            assert(waitFor(ownSession, &LibraryEditSession::saveFinished, [&] { return !done.isEmpty(); }));
+            return ownSession->lastSummary();
+        };
+        const auto shownRows = [&]() {
+            std::vector<std::string> names;
+            for (const QVariant &row : joins.stagedImport().value("rows").toList()) {
+                names.push_back(pathToUtf8(pathFromUtf8(row.toMap().value("filePath").toString().toStdString()).filename()));
+            }
+            return names;
+        };
+        const auto shownPlace = [&]() { return joins.stagedImport().value("atIndex").toInt(); };
+        const auto everywhere = [&](const std::vector<std::string> &expected) {
+            for (const char *catalog : {"rekordbox", "onelibrary", "engine"}) {
+                const auto paths = playlistPathsIn(catalog, pathToUtf8(std::string(catalog) == "engine" ? own.engine
+                                                                                                  : own.pioneer));
+                if (std::count(paths.begin(), paths.end(), "Own Recordings") != 1) {
+                    std::cerr << "  " << catalog << " does not hold \"Own Recordings\" once\n";
+                    return false;
+                }
+            }
+            return playlistOf(infrastructure::rekordbox::KaitaiRekordboxReader(pathToUtf8(own.pioneer)), "Own Recordings") == expected
+                && playlistOf(infrastructure::onelibrary::OneLibraryReader(pathToUtf8(own.pioneer)), "Own Recordings") == expected
+                && playlistOf(infrastructure::engine::LibdjinteropEngineReader(own.engineUtf8()), "Own Recordings") == expected;
+        };
+        for (int i = 1; i <= 7; ++i) {
+            writeWav(in / ("o" + std::to_string(i) + ".wav"), 44100 / 2 * i, static_cast<std::int16_t>(70 + i));
+        }
+        // Three at the end: made in Engine, the only library without it.
+        assert(offerOwn({"o1.wav", "o2.wav", "o3.wav"}, -1));
+        assert(joins.stagedPlaylistIsNew() && "made where it is missing");
+        assert(saveOwn().value("error").toString().isEmpty());
+        assert(everywhere({"o1.wav", "o2.wav", "o3.wav"}));
+
+        // One at the top; one more with no place of its own joins it there.
+        assert(offerOwn({"o4.wav"}, 0));
+        assert(!joins.stagedPlaylistIsNew() && "in every library now");
+        assert(offerOwn({"o5.wav"}, -1));
+        assert((shownRows() == std::vector<std::string>{"o5.wav", "o4.wav"}) && shownPlace() == 0);
+        // One for the third place: refused, the batch where it was.
+        const QString refused = [&] {
+            joins.importMakingPlaylistWhereMissing(ownPioneer, ownEngine, QVariantList{pathToQString(in / "o6.wav")},
+                                                   QStringLiteral("Own Recordings"), 2);
+            return joins.errorMessage();
+        }();
+        if (refused.isEmpty() || joins.busy()) {
+            std::cerr << "  a join at another place was taken\n";
+            assert(false);
+        }
+        assert(refused.contains(QLatin1String("at place 1")) && refused.contains(QLatin1String("at place 3")));
+        assert((shownRows() == std::vector<std::string>{"o5.wav", "o4.wav"}) && shownPlace() == 0);
+        // At the batch's own place it joins, first.
+        assert(offerOwn({"o6.wav"}, 0));
+        const std::vector<std::string> shown = shownRows();
+        assert((shown == std::vector<std::string>{"o6.wav", "o5.wav", "o4.wav"}) && shownPlace() == 0);
+        assert(joins.errorMessage().isEmpty());
+        // Saved as shown: the run at the top, the playlist's three after it.
+        assert(saveOwn().value("error").toString().isEmpty());
+        assert(everywhere({"o6.wav", "o5.wav", "o4.wav", "o1.wav", "o2.wav", "o3.wav"}));
+
+        // A batch at the end, joined at the top: refused the other way too.
+        assert(offerOwn({"o7.wav"}, -1));
+        joins.importMakingPlaylistWhereMissing(ownPioneer, ownEngine, QVariantList{pathToQString(in / "o1.wav")},
+                                               QStringLiteral("Own Recordings"), 0);
+        assert(!joins.busy() && joins.errorMessage().contains(QLatin1String("at its end"))
+               && joins.errorMessage().contains(QLatin1String("at place 1")));
+        assert((shownRows() == std::vector<std::string>{"o7.wav"}));
+        joins.dropStaged();
+        assert(ownSession->pendingCount() == 0);
+        std::cout << "case 30 (Own Recordings' import joined while it waits: the new files first at the batch's place, "
+                     "another place refused; saved as shown, the playlist once in every library) OK\n";
+    }
+
     // 23 to 27, on a stick of their own: what the track list shows of a
     // staged batch before Save (stagedImport) is the batch's changes as
     // the save will apply them, a row each, in their order; one row taken

@@ -56,6 +56,10 @@ ListView {
     // Whether a playlist is staged for deletion; re-read when
     // pendingRevision moves.
     property var isPendingDelete: name => false
+    // Whether a staged new playlist is made only where a library lacks
+    // it (Own Recordings'), the others holding it already; re-read when
+    // pendingRevision moves.
+    property var isMadeWhereMissing: name => false
     property int pendingRevision: 0
     // Creating a playlist (Browse): the playlists staged to
     // be created, shown after the stick's, and a last row that asks for a
@@ -326,12 +330,17 @@ ListView {
     // they are what is being put together, and at the end of a long
     // list they sat below the window's edge, where a track dragged in
     // from the right could not reach them.
-    // A new playlist the stick has in some library already (made where
-    // the others lack it, Own Recordings') is listed once, as the stick's.
+    // A new playlist made only where a library lacks it (Own Recordings')
+    // that the library shown has already is listed once, as the stick's
+    // row; its controller refuses a rename or delete of it until Save.
     property var allNames: root.fixedRows.map(row => row.name)
-        .concat((root.canCreate ? root.newPlaylists.filter(name => scanController.playlistNames.indexOf(name) < 0) : [])
+        .concat((root.canCreate ? root.newPlaylists.filter(name => !root.listedAsTheSticks(name)) : [])
                 .concat(scanController.playlistNames)
                 .filter(name => root.fixedPlaylists.indexOf(name) < 0))
+    function listedAsTheSticks(name) {
+        return root.pendingRevision >= 0 && root.isMadeWhereMissing(name)
+            && root.scanController.playlistNames.indexOf(name) >= 0;
+    }
     model: root.searchQuery.length === 0
         ? allNames
         : allNames.filter((n, i) => i < root.fixedRowCount || n.toLowerCase().includes(root.searchQuery.toLowerCase()))
@@ -382,7 +391,7 @@ ListView {
         // Staged to be created: not on the stick yet, so no count, no
         // summary, nothing to delete or rename; its menu takes it back.
         readonly property bool isNew: !isFixed && root.canCreate && root.newPlaylists.indexOf(modelData) >= 0
-            && root.scanController.playlistNames.indexOf(modelData) < 0
+            && !root.listedAsTheSticks(modelData)
         pendingNew: isNew
         // "All tracks" counts what it lists: the rows a save wrote too,
         // until the stick has been read again.

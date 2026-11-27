@@ -17,7 +17,7 @@ namespace seabass::gui
 // Kept so the call can be made again (see StagedEditsStore).
 //
 //   kind: "create", "create-where-missing", "delete", "deleteWithTracks",
-//         "add", "remove", "move" or "rename"
+//         "add", "add-where-missing", "remove", "move" or "rename"
 //   playlist: the playlist as the page named it; for a rename, the path
 //             the stick has
 //   file: the track's file, absolute in memory, relative to the stick's

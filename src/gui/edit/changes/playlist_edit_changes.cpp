@@ -203,7 +203,7 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
                                         const std::string &filePath)
 {
     PlaylistWhereabouts where;
-    const auto note = [&](const char *library, int count) {
+    const auto note = [&](const char *library, int count, bool folder) {
         where.onStick << QString::fromLatin1(library);
         if (count > 0) {
             where.having << QString::fromLatin1(library);
@@ -211,34 +211,49 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
         if (count > 1) {
             where.several << QString::fromLatin1(library);
         }
+        if (count > 0 && folder) {
+            where.folders << QString::fromLatin1(library);
+        }
     };
     const std::string pioneer = pioneerRoot.toStdString();
     if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))) {
         int count = 0;
+        bool folder = false;
         try {
-            count = static_cast<int>(pdbPlaylistIds(infrastructure::rekordbox::PdbRowWriter(exportPdbOf(pioneer)), playlist).size());
+            const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(pioneer));
+            count = static_cast<int>(pdbPlaylistIds(rows, playlist).size());
+            folder = count > 0 && folderAt(rows.playlistTree(), playlist);
         } catch (const std::exception &) {
         }
-        note("rekordbox", count);
+        note("rekordbox", count, folder);
     }
     if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
         int count = 0;
+        bool folder = false;
         try {
-            count = infrastructure::onelibrary::OneLibraryCueWriter(pioneer).playlistCountAtPath(playlist);
+            infrastructure::onelibrary::OneLibraryCueWriter writer(pioneer);
+            count = writer.playlistCountAtPath(playlist);
+            folder = count > 0 && folderAt(writer.playlistTree(), playlist);
         } catch (const std::exception &) {
         }
-        note("onelibrary", count);
+        note("onelibrary", count, folder);
     }
     const std::string engine = enginePath.toStdString();
     if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))) {
         int count = 0;
+        bool folder = false;
         try {
             // Only a look at the stick, not a save's: its read copy (#110).
             count = infrastructure::engine::enginePlaylistCountAtPath(engine, playlist,
                                                                       infrastructure::ReadFor::Reading);
+            if (count > 0) {
+                for (const auto &info : infrastructure::engine::listEnginePlaylists(engine)) {
+                    folder = folder || (info.path == playlist && info.folder);
+                }
+            }
         } catch (const std::exception &) {
         }
-        note("engine", count);
+        note("engine", count, folder);
     }
     if (!filePath.empty()) {
         for (const QString &library : where.onStick) {
@@ -388,6 +403,11 @@ QString importIdOf(const QString &id)
     return id.startsWith(owner) ? owner + QStringLiteral("import:") + id.mid(owner.size()) : id;
 }
 }  // namespace
+
+QString CreatePlaylistChange::importIdFor(const std::string &playlist)
+{
+    return importIdOf(idFor(playlist));
+}
 
 QString CreatePlaylistChange::id() const
 {

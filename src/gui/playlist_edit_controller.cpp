@@ -296,6 +296,7 @@ bool PlaylistEditController::createPlaylistWhereMissing(const QString &rekordbox
                                                         const QString &name)
 {
     setErrorMessage({});
+    m_replayNothingNeeded = false;
     QString why;
     const QString playlist = playlistName(name, why);
     if (playlist.isEmpty()) {
@@ -305,37 +306,22 @@ bool PlaylistEditController::createPlaylistWhereMissing(const QString &rekordbox
     if (!attachSession(rekordboxPath, enginePath)) {
         return false;
     }
-    const std::string path = playlist.toStdString();
-    const auto taken = [=, this]() -> QString {
-        for (const Rename &r : m_renames) {
-            if (r.to == playlist) {
-                return QStringLiteral("\"%1\" is the new name of \"%2\" already.").arg(playlist, r.from);
-            }
-        }
-        return {};
-    };
-    if (const QString refusal = taken(); !refusal.isEmpty()) {
+    if (const QString refusal = whereMissingRefusal(playlist); !refusal.isEmpty()) {
         setErrorMessage(refusal);
         return false;
     }
     // Staged already: what is added next goes into it in every library.
-    if (m_staged.count(CreatePlaylistChange::idFor(path)) > 0) {
+    if (isNewPlaylistStaged(playlist)) {
+        m_replayNothingNeeded = true;
         return true;
     }
-    lookUp(rekordboxPath, enginePath, path, [=, this](const PlaylistWhereabouts &where) {
-        if (const QString refusal = taken(); !refusal.isEmpty()) {
+    lookUp(rekordboxPath, enginePath, playlist.toStdString(), [=, this](const PlaylistWhereabouts &where) {
+        QString refusal = whereMissingRefusal(playlist);
+        if (refusal.isEmpty()) {
+            refusal = whereMissingRefusal(playlist, where);
+        }
+        if (!refusal.isEmpty()) {
             setErrorMessage(refusal);
-            return;
-        }
-        if (m_staged.count(CreatePlaylistChange::idFor(path)) > 0) {
-            return;
-        }
-        if (!where.several.isEmpty()) {
-            setErrorMessage(ambiguous(playlist, where.several));
-            return;
-        }
-        if (where.onStick.isEmpty()) {
-            setErrorMessage(QStringLiteral("This stick has no library to add a playlist to."));
             return;
         }
         QStringList lacking;
@@ -344,23 +330,144 @@ bool PlaylistEditController::createPlaylistWhereMissing(const QString &rekordbox
                 lacking << library;
             }
         }
-        if (lacking.isEmpty()) {
-            return;  // in every library: the add goes into it as it is
+        if (lacking.isEmpty() || isNewPlaylistStaged(playlist)) {
+            m_replayNothingNeeded = true;  // in every library: the add goes into it as it is
+            return;
         }
-        const auto remake = [=](const std::string &named) -> std::unique_ptr<PendingChange> {
-            return std::make_unique<CreatePlaylistChange>(rekordboxPath, enginePath, named, lacking);
-        };
-        if (!m_session->stage(remake(path))) {
-            return;  // the session reported why (another page's edits)
-        }
-        m_staged.insert(CreatePlaylistChange::idFor(path));
-        record(CreatePlaylistChange::idFor(path), {QStringLiteral("create-where-missing"), playlist});
-        m_creates[playlist] = remake;
-        m_newPlaylists << playlist;
-        m_madeWhereMissing.insert(playlist);
-        ++m_pendingRevision;
-        emit pendingChanged();
+        stageCreateWhereMissing(rekordboxPath, enginePath, playlist, lacking, where.having);
     });
+    return true;
+}
+
+bool PlaylistEditController::stageCreateWhereMissing(const QString &rekordboxPath, const QString &enginePath,
+                                                     const QString &playlist, const QStringList &lacking,
+                                                     const QStringList &having)
+{
+    const std::string path = playlist.toStdString();
+    const auto remake = [=](const std::string &named) -> std::unique_ptr<PendingChange> {
+        return std::make_unique<CreatePlaylistChange>(rekordboxPath, enginePath, named, lacking);
+    };
+    if (!m_session->stage(remake(path))) {
+        return false;  // the session reported why (another page's edits)
+    }
+    m_staged.insert(CreatePlaylistChange::idFor(path));
+    record(CreatePlaylistChange::idFor(path), {QStringLiteral("create-where-missing"), playlist});
+    m_creates[playlist] = remake;
+    m_newPlaylists << playlist;
+    m_madeWhereMissing[playlist] = having;
+    ++m_pendingRevision;
+    emit pendingChanged();
+    return true;
+}
+
+QString PlaylistEditController::whereMissingRefusal(const QString &playlist) const
+{
+    if (isPlaylistStaged(playlist)) {
+        return QStringLiteral("\"%1\" is to be deleted when you Save. Keep it first (the row's menu), then add to it.")
+            .arg(playlist);
+    }
+    // Renamed from or to its name: Save would leave it under two names,
+    // the libraries the rename reaches under the other.
+    for (const Rename &r : m_renames) {
+        if (m_staged.count(r.id) > 0 && (r.from == playlist || r.to == playlist)) {
+            return QStringLiteral("\"%1\" is to be renamed \"%2\" when you Save. Keep its name first (the row's "
+                                  "menu), then add to it.")
+                .arg(r.from, r.to);
+        }
+    }
+    // The import makes it where it is missing, as the stick is now: an
+    // add looked up beside it would find it only where it is already.
+    if (importMakes(playlist)) {
+        return QStringLiteral("\"%1\" is made by the import waiting for Save. Save first, then add tracks to it.")
+            .arg(playlist);
+    }
+    return {};
+}
+
+QString PlaylistEditController::whereMissingRefusal(const QString &playlist, const PlaylistWhereabouts &where)
+{
+    if (!where.several.isEmpty()) {
+        return ambiguous(playlist, where.several);
+    }
+    if (!where.folders.isEmpty()) {
+        return QStringLiteral("\"%1\" is a folder in %2, not a playlist, so it takes no tracks. Rename the folder "
+                              "first.")
+            .arg(playlist, displayNames(where.folders));
+    }
+    if (where.onStick.isEmpty()) {
+        return QStringLiteral("This stick has no library to add a playlist to.");
+    }
+    return {};
+}
+
+bool PlaylistEditController::importMakes(const QString &playlist) const
+{
+    return m_session && m_session->pendingIds().contains(CreatePlaylistChange::importIdFor(playlist.toStdString()));
+}
+
+bool PlaylistEditController::addToPlaylistMakingItWhereMissing(const QString &rekordboxPath, const QString &enginePath,
+                                                               const QString &playlist, const QString &filePath,
+                                                               const QString &title, int toIndex,
+                                                               const QString &moveFrom)
+{
+    return requestAddWhereMissing(rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, false);
+}
+
+bool PlaylistEditController::requestAddWhereMissing(const QString &rekordboxPath, const QString &enginePath,
+                                                    const QString &playlist, const QString &filePath,
+                                                    const QString &title, int toIndex, const QString &moveFrom,
+                                                    bool anyway)
+{
+    setErrorMessage({});
+    if (playlist.isEmpty() || filePath.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
+        return false;
+    }
+    if (const QString refusal = whereMissingRefusal(playlist); !refusal.isEmpty()) {
+        setErrorMessage(refusal);
+        return false;
+    }
+    if (lastAddPlaylist() != playlist) {
+        QSettings().setValue(QLatin1String(LastAddKey), playlist);
+        emit lastAddPlaylistChanged();
+    }
+    // One lookup for both: the create is staged with the add, never
+    // ahead of a lookup that may still refuse it.
+    lookUp(
+        rekordboxPath, enginePath, playlist.toStdString(),
+        [=, this](const PlaylistWhereabouts &where) {
+            QString refusal = whereMissingRefusal(playlist);
+            if (refusal.isEmpty()) {
+                refusal = whereMissingRefusal(playlist, where);
+            }
+            if (!refusal.isEmpty()) {
+                setErrorMessage(refusal);
+                return;
+            }
+            PendingAdd add{rekordboxPath, enginePath, playlist, filePath, title, toIndex, moveFrom, where.onStick, anyway};
+            add.whereMissing = true;
+            add.having = where.having;
+            if (!isNewPlaylistStaged(playlist)) {
+                for (const QString &library : where.onStick) {
+                    if (!where.having.contains(library)) {
+                        add.createIn << library;
+                    }
+                }
+            }
+            // Every library on the stick has the playlist by the add's
+            // turn; those without a row for the file are asked about.
+            QStringList missing;
+            QStringList reached;
+            for (const QString &library : where.onStick) {
+                (where.withFile.contains(library) ? reached : missing) << displayNames({library});
+            }
+            if (!missing.isEmpty() && !anyway) {
+                m_waitingAdds[playlist + QLatin1Char('|') + filePath] = add;
+                emit additionNeedsLibraries(playlist, filePath, title, missing, toIndex, reached);
+                return;
+            }
+            stageAdd(add);
+        },
+        filePath.toStdString());
     return true;
 }
 
@@ -423,6 +530,19 @@ bool PlaylistEditController::requestAdd(const QString &rekordboxPath, const QStr
 
 void PlaylistEditController::stageAdd(const PendingAdd &add)
 {
+    if (add.whereMissing) {
+        // Asked again now: the page's answer may have come after a delete,
+        // a rename or the import's create was staged.
+        if (const QString refusal = whereMissingRefusal(add.playlist); !refusal.isEmpty()) {
+            setErrorMessage(refusal);
+            return;
+        }
+        // Made first, unless another add has staged it meanwhile.
+        if (!add.createIn.isEmpty() && !isNewPlaylistStaged(add.playlist)
+            && !stageCreateWhereMissing(add.rekordboxPath, add.enginePath, add.playlist, add.createIn, add.having)) {
+            return;
+        }
+    }
     const std::string name = add.playlist.toStdString();
     const std::string file = add.filePath.toStdString();
     const std::optional<int> place = add.toIndex >= 0 ? std::optional<int>(add.toIndex) : std::nullopt;
@@ -440,7 +560,8 @@ void PlaylistEditController::stageAdd(const PendingAdd &add)
     std::erase_if(m_additions, [&](const Edit &a) { return a.id == id; });
     m_additions.push_back({id, add.playlist, add.filePath, add.toIndex, ++m_sequence, remake});
     // The add alone: the removal of a move is its own call, staged after.
-    record(id, {QStringLiteral("add"), add.playlist, add.filePath, add.title, add.toIndex, QString(), add.anyway});
+    record(id, {add.whereMissing ? QStringLiteral("add-where-missing") : QStringLiteral("add"), add.playlist,
+                add.filePath, add.title, add.toIndex, QString(), add.anyway});
     ++m_pendingRevision;
     emit pendingChanged();
     // The other half of a move, after the add: looked up in its turn.
@@ -621,10 +742,16 @@ bool PlaylistEditController::isNewPlaylistStaged(const QString &name) const
     return m_staged.count(CreatePlaylistChange::idFor(name.toStdString())) > 0;
 }
 
+bool PlaylistEditController::isMadeWhereMissing(const QString &name) const
+{
+    const auto made = m_madeWhereMissing.find(name);
+    return made != m_madeWhereMissing.end() && !made->second.isEmpty() && isNewPlaylistStaged(name);
+}
+
 void PlaylistEditController::forgetUnstagedNewPlaylists()
 {
     m_newPlaylists.removeIf([this](const QString &name) { return !isNewPlaylistStaged(name); });
-    m_madeWhereMissing.removeIf([this](const QString &name) { return !isNewPlaylistStaged(name); });
+    std::erase_if(m_madeWhereMissing, [this](const auto &made) { return !isNewPlaylistStaged(made.first); });
     std::erase_if(m_creates, [this](const auto &c) { return !isNewPlaylistStaged(c.first); });
     std::erase_if(m_additions, [this](const Edit &a) { return m_staged.count(a.id) == 0; });
     std::erase_if(m_removals, [this](const Edit &r) { return m_staged.count(r.id) == 0; });
@@ -647,6 +774,16 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
         }
         if (!where.several.isEmpty()) {
             setErrorMessage(ambiguous(playlist, where.several));
+            return;
+        }
+        // Made by this Save where a library lacks it (a track dragged onto
+        // Own Recordings, or the import into it): the delete would reach
+        // the libraries that have it now, and the create leave it in the
+        // others.
+        if (isNewPlaylistStaged(playlist) || importMakes(playlist)) {
+            setErrorMessage(QStringLiteral("\"%1\" waits to be made by Save in the libraries that lack it. Save "
+                                           "first, then delete it.")
+                                .arg(playlist));
             return;
         }
         if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, where.having))) {
@@ -900,11 +1037,13 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
         return false;
     }
     // Some libraries have it under this name already: renamed, it would
-    // be made under the new name in the others only.
-    if (m_madeWhereMissing.contains(playlist) && isNewPlaylistStaged(playlist)) {
-        setErrorMessage(QStringLiteral("\"%1\" is on the stick in some libraries and waits to be made in the others. "
-                                       "Save first to rename it.")
-                            .arg(playlist));
+    // be made under the new name in the others only. Made in every
+    // library, it is renamed as any new playlist is.
+    if (const auto made = m_madeWhereMissing.find(playlist);
+        made != m_madeWhereMissing.end() && !made->second.isEmpty() && isNewPlaylistStaged(playlist)) {
+        setErrorMessage(QStringLiteral("\"%1\" is on the stick in %2 and waits to be made by Save in the other "
+                                       "libraries. Save first, then rename it.")
+                            .arg(playlist, displayNames(made->second)));
         return false;
     }
     const auto renameOf = [this](const QString &shown) {
@@ -951,6 +1090,14 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
                }
                if (where.having.isEmpty()) {
                    setErrorMessage(QStringLiteral("No library on the stick has a playlist \"%1\".").arg(playlist));
+                   return;
+               }
+               // The import makes it in the libraries that lack it: renamed
+               // in the others, Save would leave it under two names.
+               if (importMakes(playlist)) {
+                   setErrorMessage(QStringLiteral("\"%1\" waits to be made by Save in the libraries that lack it. "
+                                                  "Save first, then rename it.")
+                                       .arg(playlist));
                    return;
                }
                if (!where.several.isEmpty()) {
@@ -1018,6 +1165,10 @@ void PlaylistEditController::renameNewPlaylist(const QString &playlist, const QS
             if (const auto asked = m_requests.find(e.id); asked != m_requests.end()) {
                 StagedEditRequest request = asked->second;
                 request.playlist = renamed;
+                // Under its new name it is an ordinary playlist.
+                if (request.kind == QLatin1String("add-where-missing")) {
+                    request.kind = QStringLiteral("add");
+                }
                 record(id, request);
             }
             e.id = id;
@@ -1475,6 +1626,9 @@ bool PlaylistEditController::issue(const StagedEditRequest &r)
     if (r.kind == QLatin1String("add")) {
         return requestAdd(rb, en, r.playlist, r.file, r.title, r.toIndex, QString(), r.anyway);
     }
+    if (r.kind == QLatin1String("add-where-missing")) {
+        return requestAddWhereMissing(rb, en, r.playlist, r.file, r.title, r.toIndex, QString(), r.anyway);
+    }
     if (r.kind == QLatin1String("remove")) {
         return removeFromPlaylist(rb, en, r.playlist, r.file, r.title);
     }
@@ -1496,6 +1650,7 @@ void PlaylistEditController::replayNext()
         m_replayError.clear();
         m_replayRevision = m_pendingRevision;
         m_replayWaiting = m_waitingAdds.size();
+        m_replayNothingNeeded = false;
         const bool accepted = issue(m_replayCurrent);
         if (accepted && (!m_lookups.empty() || m_lookupWatcher.isRunning())) {
             return;  // onLookupFinished settles it and comes back here
@@ -1523,7 +1678,8 @@ void PlaylistEditController::settleReplayCall(const StagedEditRequest &request)
 {
     // Kept when it staged something, or asked the page (an add that now
     // finds a library without the track, and was never confirmed).
-    if (m_replayError.isEmpty() && (m_pendingRevision != m_replayRevision || m_waitingAdds.size() > m_replayWaiting)) {
+    if (m_replayError.isEmpty()
+        && (m_pendingRevision != m_replayRevision || m_waitingAdds.size() > m_replayWaiting || m_replayNothingNeeded)) {
         return;
     }
     m_replayRefusals << (m_replayError.isEmpty()
