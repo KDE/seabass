@@ -1167,6 +1167,149 @@ TestCase {
         id: keptSpyComponent
         SignalSpy { signalName: "leftOverEditsKept" }
     }
+    Component {
+        id: plannedSpyComponent
+        SignalSpy { signalName: "deleteWithTracksPlanned" }
+    }
+    // The files `format`'s library on the stick lists in `playlist`.
+    function playlistFilesOf(stick, format, playlist) {
+        const scan = createTemporaryObject(scanControllerComponent, testCase);
+        scan.scan(format, format === "engine" ? stick + "/Engine Library" : stick + "/PIONEER",
+                  format === "engine" ? stick + "/PIONEER" : "");
+        tryVerify(() => !scan.busy && scan.tracks.trackCount() > 0, 60000, format + " is read");
+        scan.filterByPlaylist(playlist);
+        const files = [];
+        for (let i = 0; i < scan.tracks.trackCount(); ++i) {
+            files.push(scan.tracks.trackAt(i).filePath);
+        }
+        return files;
+    }
+
+    // "Delete playlist and its tracks" of a name that is a folder in
+    // rekordbox and OneLibrary and a playlist in Engine: Engine's playlist
+    // goes, the folders stay with what they hold, and no track goes on a
+    // folder's word (the one inside it is not counted, nor struck out, and
+    // is still listed after Save). Said before staging, when staged, and
+    // by the save's summary. A name that is a folder alone is refused.
+    function test_aDeleteWithTracksLeavesAFolderOfItsName() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        for (const library of ["rekordbox", "onelibrary"]) {
+            verify(stickFixture.plantFolder(stick, "Crate X", library), library);
+        }
+        const inside = stickFixture.plantPlaylist(stick, "Crate X/Inside", ["rekordbox", "onelibrary"], 1);
+        compare(inside.length, 1);
+        compare(stickFixture.fillEnginePlaylist(stick, "Crate X", 2), 2);
+        verify(stickFixture.plantFolder(stick, "Only Crate", "rekordbox"));
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        verify(session !== null);
+        const browse = createTemporaryObject(askingEditComponent, testCase);
+        browse.discardLeftOverEdits(pioneer, engine);
+        const planned = createTemporaryObject(plannedSpyComponent, testCase, {target: browse});
+        const notes = createTemporaryObject(noteSpyComponent, testCase, {target: browse});
+
+        const onlyFolder = "\"Only Crate\" is not deleted. In rekordbox it is a folder, not a playlist, and it stays "
+            + "with everything in it.";
+        verify(!edited(browse, browse.planDeleteWithTracks(pioneer, engine, "Only Crate")));
+        compare(browse.errorMessage, onlyFolder);
+        verify(!edited(browse, browse.deletePlaylistWithTracks(pioneer, engine, "Only Crate", -1)));
+        compare(browse.errorMessage, onlyFolder);
+        compare(planned.count, 0, "nothing to ask about");
+        compare(session.pendingCount, 0);
+
+        verify(edited(browse, browse.planDeleteWithTracks(pioneer, engine, "Crate X")), browse.errorMessage);
+        compare(planned.count, 1);
+        const plan = planned.signalArguments[0][0];
+        compare(JSON.stringify(plan.libraries), JSON.stringify(["Engine"]), "deleted from Engine only");
+        compare(plan.leftAlone, "In rekordbox and OneLibrary it is a folder, not a playlist, and it stays with "
+                + "everything in it.");
+        compare(plan.going + plan.staying, 2, "Engine's two tracks, none on the folder's word: " + JSON.stringify(plan));
+        compare(session.pendingCount, 0, "nothing staged by the question");
+
+        verify(edited(browse, browse.deletePlaylistWithTracks(pioneer, engine, "Crate X", plan.going)),
+               browse.errorMessage);
+        compare(notes.count, 1, "told what stays");
+        compare(notes.signalArguments[0][0], "\"Crate X\" is deleted from Engine when you Save. In rekordbox and "
+                + "OneLibrary it is a folder, not a playlist, and it stays with everything in it.");
+        verify(!browse.isTrackDeleteStaged(inside[0]), "the folder's track is not struck out");
+        const summary = saveAndWait(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        verify(summary.notes.indexOf("\"Crate X\" was not deleted in rekordbox and OneLibrary") >= 0, summary.notes);
+        verify(stickFixture.playlistsIn(stick, "engine").indexOf("Crate X") < 0, "Engine's playlist is gone");
+        for (const library of ["rekordbox", "onelibrary"]) {
+            verify(stickFixture.playlistsIn(stick, library).indexOf("Crate X/Inside") >= 0, "the folder's stays: " + library);
+            compare(JSON.stringify(playlistFilesOf(stick, library, "Crate X/Inside")), JSON.stringify(inside),
+                    "with its track: " + library);
+        }
+        browse.discardLeftOverEdits(pioneer, engine);
+    }
+
+    // The same for a name that is an Engine playlist holding others: it
+    // stays in Engine with its own tracks, which do not count as going.
+    function test_aDeleteWithTracksLeavesEnginesPlaylistHoldingOthers() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        compare(stickFixture.plantPlaylist(stick, "Holder", ["rekordbox", "onelibrary"], 1).length, 1);
+        compare(stickFixture.fillEnginePlaylist(stick, "Holder", 2), 2);
+        verify(stickFixture.plantFolder(stick, "Holder", "engine"), "Engine's Holder holds Holder/Inside");
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        const enginesBefore = playlistFilesOf(stick, "engine", "Holder");
+        compare(enginesBefore.length, 2, "precondition: Engine's Holder lists its two");
+        const browse = createTemporaryObject(askingEditComponent, testCase);
+        browse.discardLeftOverEdits(pioneer, engine);
+        const planned = createTemporaryObject(plannedSpyComponent, testCase, {target: browse});
+        verify(edited(browse, browse.planDeleteWithTracks(pioneer, engine, "Holder")), browse.errorMessage);
+        const plan = planned.signalArguments[0][0];
+        compare(JSON.stringify(plan.libraries), JSON.stringify(["rekordbox", "OneLibrary"]));
+        compare(plan.leftAlone, "In Engine it holds other playlists, and it stays with them: delete or move those first.");
+        compare(plan.going + plan.staying, 1, "the one track of rekordbox's and OneLibrary's: " + JSON.stringify(plan));
+        verify(edited(browse, browse.deletePlaylistWithTracks(pioneer, engine, "Holder", plan.going)), browse.errorMessage);
+        for (const file of enginesBefore) {
+            verify(!browse.isTrackDeleteStaged(file), "Engine's own tracks are not struck out");
+        }
+        const summary = saveAndWait(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        verify(summary.notes.indexOf("\"Holder\" was not deleted in Engine") >= 0, summary.notes);
+        verify(stickFixture.playlistsIn(stick, "rekordbox").indexOf("Holder") < 0, "rekordbox's is gone");
+        verify(stickFixture.playlistsIn(stick, "engine").indexOf("Holder/Inside") >= 0, "Engine's stays");
+        compare(JSON.stringify(playlistFilesOf(stick, "engine", "Holder")), JSON.stringify(enginesBefore),
+                "with its own tracks");
+        browse.discardLeftOverEdits(pioneer, engine);
+    }
+
+    // Kept over a restart, the delete with its tracks goes by the same
+    // rule: staged while Engine's "Box Two" held none, refused when kept on
+    // a stick where it holds a playlist by then.
+    function test_aKeptDeleteWithTracksOfAPlaylistHoldingOthersIsRefused() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        compare(stickFixture.fillEnginePlaylist(stick, "Box Two", 1), 1);
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        let browse = createTemporaryObject(askingEditComponent, testCase);
+        browse.discardLeftOverEdits(pioneer, engine);
+        verify(edited(browse, browse.deletePlaylistWithTracks(pioneer, engine, "Box Two", -1)), browse.errorMessage);
+        verify(session.pendingCount >= 1);
+        browse.destroy();
+        wait(50);
+        EditSessionRegistry.discardAll();
+        verify(stickFixture.plantFolder(stick, "Box Two", "engine"), "Engine's Box Two holds Box Two/Inside now");
+        browse = createTemporaryObject(askingEditComponent, testCase);
+        const kept = createTemporaryObject(keptSpyComponent, testCase, {target: browse});
+        verify(browse.keepLeftOverEdits(pioneer, engine), browse.errorMessage);
+        tryCompare(kept, "count", 1, 60000);
+        const [keptCount, keptTotal, refusals] = kept.signalArguments[0];
+        compare(JSON.stringify([keptCount, keptTotal]), JSON.stringify([0, 1]), JSON.stringify(refusals));
+        compare(JSON.stringify(refusals), JSON.stringify(["\"Box Two\" is not deleted. In Engine it holds other "
+                                                          + "playlists, and it stays with them: delete or move those first."]));
+        compare(session.pendingCount, 0, "nothing staged");
+        browse.discardLeftOverEdits(pioneer, engine);
+    }
 
     // A name that is a folder in rekordbox and OneLibrary, and in Engine a
     // playlist holding others (the same folder in two formats): renamed in

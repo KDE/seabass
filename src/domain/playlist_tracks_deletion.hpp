@@ -43,8 +43,16 @@ struct PlaylistTracksDeletion
 // `key` spells a file path the way the caller compares paths (the
 // application's normalizedPathKey). `playlist` is its full path on the
 // stick ("Folder/List").
+//
+// `leftAlone` names the libraries (catalog formats) the delete does not
+// reach because the node at that path is a folder (rekordbox, OneLibrary)
+// or an Engine playlist holding others: it stays there with everything in
+// it. What such a library lists there, or inside it, is then another
+// playlist's: no track is the playlist's on that library's word, and one
+// it lists stays on the stick.
 PlaylistTracksDeletion planPlaylistTracksDeletion(const std::vector<PlaylistCatalog> &catalogs,
                                                   const std::function<std::string(const std::string &)> &key,
-                                                  const std::string &playlist);
+                                                  const std::string &playlist,
+                                                  const std::vector<std::string> &leftAlone = {});
 
 }  // namespace seabass::domain

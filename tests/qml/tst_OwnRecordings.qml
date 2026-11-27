@@ -1294,6 +1294,9 @@ TestCase {
             }
             function isNewPlaylistStaged(name) { return newPlaylists.indexOf(name) >= 0; }
             function isPlaylistStaged(name) { return deleted.indexOf(name) >= 0; }
+            // ...and of those, the ones to go with their tracks.
+            property var tracksDeleted: []
+            function isTracksDeleteStaged(name) { return isPlaylistStaged(name) && tracksDeleted.indexOf(name) >= 0; }
             function isRemovalStaged() { return false; }
             function isAdditionStaged() { return false; }
             function isRenameStaged() { return false; }
@@ -1486,6 +1489,13 @@ TestCase {
         menu.close();
         tryCompare(menu, "visible", false);
 
+        // Staged with its tracks, Keep says it takes both back.
+        edits.tracksDeleted = ["Own Recordings"];
+        edits.pendingRevision++;
+        compare(JSON.stringify(ownRecordingsMenuTexts(page)), JSON.stringify(["Keep this playlist and its tracks"]));
+        closeOwnRecordingsMenu(page);
+        edits.tracksDeleted = [];
+        edits.pendingRevision++;
         compare(JSON.stringify(ownRecordingsMenuTexts(page)), JSON.stringify(["Keep this playlist"]));
         findChild(page, "ownRecordingsKeepItem").triggered();
         closeOwnRecordingsMenu(page);
@@ -2469,6 +2479,83 @@ TestCase {
         edits.discardLeftOverEdits(t.pioneer, t.engine);
     }
 
+    // "Delete playlist and its tracks" waits for the create made where
+    // missing as the plain delete does: refused in its lookup when the
+    // create was staged meanwhile, and at once when it is staged already.
+    // Kept over a restart behind the create, it is refused the same way.
+    function test_aDeleteWithTracksWaitsForTheCreate() {
+        const t = ownStick(["rekordbox", "onelibrary"]);
+        let edits = createTemporaryObject(askingEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        const words = "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then "
+            + "delete it.";
+        let planned = signalSpy.createObject(testCase, {target: edits, signalName: "deleteWithTracksPlanned"});
+        verify(edits.createPlaylistWhereMissing(t.pioneer, t.engine, "Own Recordings"));
+        verify(edits.busy, "precondition: the create's lookup runs");
+        verify(edits.planDeleteWithTracks(t.pioneer, t.engine, "Own Recordings"), "nothing staged yet to refuse");
+        verify(edits.deletePlaylistWithTracks(t.pioneer, t.engine, "Own Recordings", -1));
+        tryCompare(edits, "busy", false, 60000);
+        compare(edits.errorMessage, words, "refused when its lookup's turn came");
+        compare(planned.count, 0, "not asked about");
+        compare(t.session.pendingCount, 1, "the create alone: " + JSON.stringify(t.session.pendingDescriptions));
+        verify(edits.isMadeWhereMissing("Own Recordings"));
+
+        verify(!edits.deletePlaylistWithTracks(t.pioneer, t.engine, "Own Recordings", -1), "refused at once");
+        compare(edits.errorMessage, words);
+        verify(!edits.planDeleteWithTracks(t.pioneer, t.engine, "Own Recordings"), "asked: refused at once");
+        compare(edits.errorMessage, words);
+        verify(!edits.busy, "nothing looked up");
+        compare(t.session.pendingCount, 1);
+        planned.destroy();
+
+        // A kept batch with the delete behind the create, written by hand
+        // (the page stages no such pair): the create is kept, the delete
+        // refused.
+        const file = edits.leftOverEditsFile(t.pioneer, t.engine);
+        edits.destroy();
+        wait(50);
+        EditSessionRegistry.discardAll();
+        const batch = JSON.parse(stickFixture.readText(file));
+        compare(batch.edits.length, 1);
+        const doomed = Object.assign({}, batch.edits[0]);
+        doomed.kind = "deleteWithTracks";
+        doomed.toIndex = -1;
+        batch.edits.push(doomed);
+        verify(stickFixture.writeText(file, JSON.stringify(batch)));
+        edits = createTemporaryObject(askingEditsComponent, testCase);
+        const kept = signalSpy.createObject(testCase, {target: edits, signalName: "leftOverEditsKept"});
+        verify(edits.keepLeftOverEdits(t.pioneer, t.engine), edits.errorMessage);
+        tryCompare(kept, "count", 1, 60000);
+        const [keptCount, keptTotal, refusals] = kept.signalArguments[0];
+        kept.destroy();
+        compare(JSON.stringify([keptCount, keptTotal]), JSON.stringify([1, 2]), JSON.stringify(refusals));
+        compare(JSON.stringify(refusals), JSON.stringify([words]));
+        compare(t.session.pendingCount, 1, "the create alone: " + JSON.stringify(t.session.pendingDescriptions));
+        t.session.discard();
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+    }
+
+    // A staged delete with its tracks shuts the row's ways in as a plain
+    // delete does: nothing is made where missing or added to it.
+    function test_aDeleteWithTracksKeepsTheRowsWaysShut() {
+        const t = ownStick([]);
+        compare(stickFixture.plantPlaylist(t.stick, "Own Recordings", ["rekordbox", "onelibrary"], 1).length, 1);
+        const edits = createTemporaryObject(askingEditsComponent, testCase);
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+        compare(edited(edits, edits.deletePlaylistWithTracks(t.pioneer, t.engine, "Own Recordings", -1)), "");
+        verify(edits.isPlaylistStaged("Own Recordings"));
+        const staged = t.session.pendingCount;
+        verify(staged >= 1);
+        const words = "\"Own Recordings\" is to be deleted when you Save. Keep it first (the row's menu), then add to it.";
+        compare(edited(edits, edits.addToPlaylistMakingItWhereMissing(t.pioneer, t.engine, "Own Recordings", t.file,
+                                                                       "Picked")), words);
+        compare(edited(edits, edits.createPlaylistWhereMissing(t.pioneer, t.engine, "Own Recordings")), words);
+        compare(t.session.pendingCount, staged, "nothing more staged: " + JSON.stringify(t.session.pendingDescriptions));
+        edits.keepPlaylist("Own Recordings");
+        compare(t.session.pendingCount, 0, "Keep takes it back, its tracks with it");
+        edits.discardLeftOverEdits(t.pioneer, t.engine);
+    }
+
     // One ask, one answer: the same track asked into the same playlist
     // again while the first ask waits is not asked a second time, on
     // either way in.
@@ -2710,6 +2797,11 @@ TestCase {
                                                                        "Picked")),
                 "\"Own Recordings\" is made by the import waiting for Save. Save first, then add tracks to it.");
         compare(edited(edits, edits.deletePlaylist(t.pioneer, t.engine, "Own Recordings")),
+                "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then delete it.");
+        // With its tracks the same, asked or staged.
+        compare(edited(edits, edits.planDeleteWithTracks(t.pioneer, t.engine, "Own Recordings")),
+                "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then delete it.");
+        compare(edited(edits, edits.deletePlaylistWithTracks(t.pioneer, t.engine, "Own Recordings", -1)),
                 "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then delete it.");
         compare(edited(edits, edits.renamePlaylist(t.pioneer, t.engine, "Own Recordings", "Old Sets")),
                 "\"Own Recordings\" waits to be made by Save in the libraries that lack it. Save first, then rename it.");

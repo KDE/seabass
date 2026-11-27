@@ -154,6 +154,10 @@ Page {
     // track dragged onto the row or by the import that waits.
     readonly property bool ownRecordingsPendingDelete: root.playlistEditController.pendingRevision >= 0
         && root.playlistEditController.isPlaylistStaged(root.ownRecordingsPlaylist) === true
+    // ...with its tracks ("Delete playlist and its tracks"): Keep takes both back.
+    readonly property bool ownRecordingsPendingTracksDelete: root.ownRecordingsPendingDelete
+        && ("isTracksDeleteStaged" in root.playlistEditController)
+        && root.playlistEditController.isTracksDeleteStaged(root.ownRecordingsPlaylist) === true
     readonly property bool ownRecordingsMadeByDrag: root.playlistEditController.pendingRevision >= 0
         && root.playlistEditController.isNewPlaylistStaged(root.ownRecordingsPlaylist) === true
     readonly property bool ownRecordingsMadeByImport: root.trackImportController.stagedPlaylistIsNew === true
@@ -1119,6 +1123,9 @@ Page {
         property int staying: 0
         property int withoutFile: 0
         property int megabytes: 0
+        // Where it stays (a folder of its name, or an Engine playlist
+        // holding others), in the controller's words, or "".
+        property string leftAlone: ""
         function names(list) {
             return list.length <= 1 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1];
         }
@@ -1132,6 +1139,9 @@ Page {
             : qsTr("Delete \"%1\" and its %2 tracks from this stick?").arg(playlist).arg(going)
         detailText: {
             const lines = [qsTr("The playlist is deleted from %1.").arg(names(libraries))];
+            if (leftAlone.length > 0) {
+                lines.push(leftAlone);
+            }
             if (going > 0) {
                 const size = megabytes > 0 ? qsTr(" (%1 MB)").arg(megabytes) : "";
                 lines.push(going === 1
@@ -1367,6 +1377,7 @@ Page {
             deleteWithTracksDialog.staying = plan.staying ?? 0;
             deleteWithTracksDialog.withoutFile = plan.withoutFile ?? 0;
             deleteWithTracksDialog.megabytes = plan.megabytes ?? 0;
+            deleteWithTracksDialog.leftAlone = plan.leftAlone ?? "";
             deleteWithTracksDialog.open();
         }
         function onWaitingAdditionsDropped() {
@@ -1878,7 +1889,8 @@ Page {
             visible: root.ownRecordingsPendingDelete
             enabled: visible
             height: visible ? implicitHeight : 0
-            text: qsTr("Keep this playlist")
+            text: root.ownRecordingsPendingTracksDelete ? qsTr("Keep this playlist and its tracks")
+                                                        : qsTr("Keep this playlist")
             onTriggered: root.playlistEditController.keepPlaylist(root.ownRecordingsPlaylist)
         }
         // As a renamed playlist's own menu says it; from either side.

@@ -24,7 +24,8 @@ bool within(const std::string &name, const std::string &playlist)
 
 PlaylistTracksDeletion planPlaylistTracksDeletion(const std::vector<PlaylistCatalog> &catalogs,
                                                   const std::function<std::string(const std::string &)> &key,
-                                                  const std::string &playlist)
+                                                  const std::string &playlist,
+                                                  const std::vector<std::string> &leftAlone)
 {
     struct File
     {
@@ -38,13 +39,15 @@ PlaylistTracksDeletion planPlaylistTracksDeletion(const std::vector<PlaylistCata
     }
     std::map<std::string, File> files;
     for (const auto &catalog : catalogs) {
+        // The node stays in this library, with all it lists.
+        const bool alone = std::find(leftAlone.begin(), leftAlone.end(), catalog.format) != leftAlone.end();
         bool lists = false;
         int withoutFile = 0;
         for (const auto &track : catalog.tracks) {
             bool here = false;
             bool elsewhere = false;
             for (const auto &membership : track.playlists) {
-                (within(membership.name, playlist) ? here : elsewhere) = true;
+                (!alone && within(membership.name, playlist) ? here : elsewhere) = true;
             }
             if (track.filePath.empty()) {
                 withoutFile += here ? 1 : 0;

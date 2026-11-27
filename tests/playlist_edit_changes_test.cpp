@@ -868,7 +868,7 @@ int main(int argc, char **argv)
     }
     std::cout << "case 12 (a playlist deleted with its tracks: only the ones no other playlist holds go) OK\n";
 
-    // 12. An add asked for by a path that is a folder in rekordbox and in
+    // 13. An add asked for by a path that is a folder in rekordbox and in
     //     OneLibrary (a playlist only Engine has under that name, as Browse
     //     lists it): no entry is written against the folder; those two are
     //     left alone and the log says why, and Engine's playlist takes it.
@@ -910,7 +910,7 @@ int main(int argc, char **argv)
         assert(result.appliedIds.size() == 1 && "Engine took it");
         const size_t pdbEntries = entriesOfHolder();
         const size_t oneLibraryRows = oneLibraryRowsOfHolder();
-        std::cerr << "case 12: export.pdb entries against the folder " << pdbEntries << ", OneLibrary rows "
+        std::cerr << "case 13: export.pdb entries against the folder " << pdbEntries << ", OneLibrary rows "
                   << oneLibraryRows << "\n";
         assert(pdbEntries == 0 && "no export.pdb entry points at the folder");
         assert(oneLibraryRows == 0 && "no OneLibrary row points at the folder");
@@ -924,10 +924,10 @@ int main(int argc, char **argv)
                                      "is a folder, not a playlist.")
                && "the save's summary says so");
     }
-    std::cout << "case 12 (an add by a path that is a folder in rekordbox and OneLibrary: nothing written against "
+    std::cout << "case 13 (an add by a path that is a folder in rekordbox and OneLibrary: nothing written against "
                  "the folder there, said in the log) OK\n";
 
-    // 13. A delete and a rename asked for by a path that is a playlist in
+    // 14. A delete and a rename asked for by a path that is a playlist in
     //     Engine and, in rekordbox and OneLibrary, a folder holding a
     //     playlist with a track (Browse lists the name, browsing Engine):
     //     the folders and what is in them stay, Engine's playlist goes or
@@ -972,7 +972,7 @@ int main(int argc, char **argv)
         };
         size_t mark = logText().size();
         auto result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "Mixed D", all));
-        std::cerr << "case 13: after the delete, rekordbox and OneLibrary have \"Mixed D/Kept\" in "
+        std::cerr << "case 14: after the delete, rekordbox and OneLibrary have \"Mixed D/Kept\" in "
                   << playlistWhereabouts(pioneerQ, libraryQ, "Mixed D/Kept").having.join(QStringLiteral(", ")).toStdString()
                   << "\n";
         assert(keptIn("Mixed D") && "the folder's playlist and its track stay in rekordbox and OneLibrary");
@@ -1016,10 +1016,10 @@ int main(int argc, char **argv)
         assert(engineMembers(library, "Parent") == std::vector<std::int64_t>{engineId[A01.relative]}
                && "Engine's playlist holding another takes the track");
     }
-    std::cout << "case 13 (a delete and a rename by a path that is a folder in rekordbox and OneLibrary leave the "
+    std::cout << "case 14 (a delete and a rename by a path that is a folder in rekordbox and OneLibrary leave the "
                  "folder and what is in it alone, and say so; an Engine playlist holding another is not deleted) OK\n";
 
-    // 14. A root playlist "Solo" without children in each library, and in
+    // 15. A root playlist "Solo" without children in each library, and in
     //     Engine a second root playlist whose name holds a "/"
     //     ("Solo/Inner"; the rekordbox and OneLibrary writers refuse such
     //     a name): "Solo" holds no others (by the tree, not the spelling),
@@ -1037,7 +1037,7 @@ int main(int argc, char **argv)
         }
         const auto solo = playlistWhereabouts(pioneerQ, libraryQ, "Solo");
         assert(solo.having == all && solo.several.isEmpty());
-        std::cerr << "case 14: \"Solo\" holds others in " << solo.holdingOthers.join(QStringLiteral(", ")).toStdString()
+        std::cerr << "case 15: \"Solo\" holds others in " << solo.holdingOthers.join(QStringLiteral(", ")).toStdString()
                   << "\n";
         assert(solo.holdingOthers.isEmpty() && "a root playlist named \"Solo/Inner\" is no child of \"Solo\"");
         const QStringList engineOnly{QStringLiteral("engine")};
@@ -1048,9 +1048,9 @@ int main(int argc, char **argv)
         assert(playlistWhereabouts(pioneerQ, libraryQ, "Solo/Inner").having == engineOnly
                && "the other root playlist stays");
     }
-    std::cout << "case 14 (a root playlist named with a \"/\" is no child of the one its name starts with) OK\n";
+    std::cout << "case 15 (a root playlist named with a \"/\" is no child of the one its name starts with) OK\n";
 
-    // 15. A library on the stick that cannot be read is not one without
+    // 16. A library on the stick that cannot be read is not one without
     // the playlist: it is named unreadable, and nothing throws, whether
     // the reader fails on it (a folder where the file should be) or even
     // asking whether the file is there fails (a link to itself).
@@ -1079,17 +1079,17 @@ int main(int argc, char **argv)
         try {
             where = playlistWhereabouts(brokenPioneer, brokenLibrary, "Q1", file(A01));
         } catch (const std::exception &e) {
-            std::cerr << "case 15: the lookup threw: " << e.what() << "\n";
+            std::cerr << "case 16: the lookup threw: " << e.what() << "\n";
             assert(false && "the lookup throws nothing");
         }
-        std::cerr << "case 15: unreadable " << where.unreadable.join(QStringLiteral(", ")).toStdString() << "\n";
+        std::cerr << "case 16: unreadable " << where.unreadable.join(QStringLiteral(", ")).toStdString() << "\n";
         assert(where.unreadable == all && "each one that cannot be read is named");
         assert(where.onStick == all && "and counted as on the stick");
         assert(where.having.isEmpty() && where.folders.isEmpty() && where.holdingOthers.isEmpty()
                && where.withFile.isEmpty());
         fs::remove_all(broken);
     }
-    std::cout << "case 15 (a library that cannot be read is said to be, not taken for one without it) OK\n";
+    std::cout << "case 16 (a library that cannot be read is said to be, not taken for one without it) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";

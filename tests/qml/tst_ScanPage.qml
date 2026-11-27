@@ -976,6 +976,13 @@ TestCase {
              headline: "Delete \"Peak\"? None of its tracks would go with it.",
              detail: "The playlist is deleted from rekordbox, OneLibrary and Engine. 1 track stays on the stick: another "
                      + "playlist holds it. 2 streaming tracks have no file here to delete. Nothing changes until you Save."},
+            {tag: "a library left alone",
+             plan: {libraries: ["Engine"], going: 2, staying: 0, withoutFile: 0, megabytes: 0,
+                    leftAlone: "In rekordbox it is a folder, not a playlist, and it stays with everything in it."},
+             headline: "Delete \"Peak\" and its 2 tracks from this stick?",
+             detail: "The playlist is deleted from Engine. In rekordbox it is a folder, not a playlist, and it stays "
+                     + "with everything in it. 2 tracks are taken out of every library on the stick, and their files "
+                     + "are listed for Free Up Space to delete. Nothing changes until you Save."},
         ];
     }
     function test_theDeleteWithTracksQuestionSaysWhatGoes(data) {

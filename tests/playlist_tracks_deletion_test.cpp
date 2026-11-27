@@ -5,8 +5,8 @@
 // domain::planPlaylistTracksDeletion: a track is the playlist's when any
 // library lists it there, it goes only when no library lists it in any
 // other playlist, every library's rows come with it, a folder's path takes
-// the playlists inside it, and a name that merely starts the same is
-// another playlist.
+// the playlists inside it, a name that merely starts the same is another
+// playlist, and a library the delete leaves alone keeps what it lists.
 
 #include <cassert>
 #include <iostream>
@@ -115,6 +115,29 @@ int main()
         const auto unnamed = planPlaylistTracksDeletion(catalogs, lower, "");
         assert(unnamed.going.empty() && unnamed.staying.empty());
         std::cout << "case 3 (an empty playlist, and no playlist named) OK\n";
+    }
+
+    // 4. A library the delete leaves alone (its "Sets" a folder, or an
+    //    Engine playlist holding others): it keeps what it lists there and
+    //    inside, so no track is the playlist's on its word, and one it lists
+    //    stays. a: in Engine's Sets and rekordbox's folder: stays. b: in
+    //    Engine's Sets only: goes. c: in rekordbox's folder only: not the
+    //    playlist's at all.
+    {
+        std::vector<PlaylistCatalog> catalogs = {
+            {"rekordbox",
+             {row("rekordbox", "1", "/S/a.mp3", "A", {"Sets/Inside"}), row("rekordbox", "2", "/S/b.mp3", "B"),
+              row("rekordbox", "3", "/S/c.mp3", "C", {"Sets/Inside"})}},
+            {"engine", {row("engine", "21", "/S/a.mp3", "A", {"Sets"}), row("engine", "22", "/S/b.mp3", "B", {"Sets"})}},
+        };
+        const auto plan = planPlaylistTracksDeletion(catalogs, lower, "Sets", {"rekordbox"});
+        assert((plan.librariesListing == std::vector<std::string>{"engine"}) && "the folder's library lists none of it");
+        assert((titles(plan.going) == std::vector<std::string>{"B"}));
+        assert((titles(plan.staying) == std::vector<std::string>{"A"}) && "the folder still lists it");
+        assert(plan.going[0].rows.size() == 2 && "every library's row comes with the file");
+        const auto engineAlone = planPlaylistTracksDeletion(catalogs, lower, "Sets", {"engine"});
+        assert((titles(engineAlone.going) == std::vector<std::string>{"C"}) && (titles(engineAlone.staying) == std::vector<std::string>{"A"}));
+        std::cout << "case 4 (a library left alone keeps what it lists there) OK\n";
     }
     return 0;
 }

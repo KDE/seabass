@@ -140,6 +140,17 @@ public:
     // deletes from) only when no playlist in any library holds it once
     // this one is gone: one another playlist uses stays on the stick.
     //
+    // The playlist goes from the libraries deletePlaylist reaches. Where
+    // the node at that path is a folder (rekordbox, OneLibrary) or an
+    // Engine playlist holding others, it stays with everything in it, and
+    // what it lists counts as another playlist's: no track goes on such a
+    // library's word, and one it lists stays. The page is told before
+    // (deleteWithTracksPlanned's leftAlone) and when it is staged
+    // (stagedWithNote), and the save's summary says it again. Refused, as
+    // the plain delete is, when nothing but such nodes has the name, or
+    // while a create of it waits for Save (madeBySaveRefusal): when asked,
+    // and again when the stick has been read.
+    //
     // planDeleteWithTracks reads what that comes to and says it with
     // deleteWithTracksPlanned, for the page to ask with; nothing is
     // staged. deletePlaylistWithTracks stages it: the playlist's delete,
@@ -277,7 +288,8 @@ signals:
                                 const QStringList &missingLibraries, int toIndex, const QStringList &addedLibraries,
                                 const QStringList &folderLibraries);
     // What planDeleteWithTracks found: playlist, libraries (display names
-    // of the ones holding the playlist), going and staying (tracks that
+    // of the ones the playlist is deleted from), leftAlone (in words, the
+    // ones it stays in, or ""), going and staying (tracks that
     // would be deleted, and ones another playlist keeps), withoutFile
     // (streaming rows: nothing to delete), megabytes (the files going,
     // rounded up; 0 when no size is known).
@@ -391,6 +403,10 @@ private:
                                  const QStringList &lacking, const QStringList &having);
     // The track import's create of `playlist` waits in the session.
     bool importMakes(const QString &playlist) const;
+    // Why `playlist` may not be deleted, with or without its tracks, while
+    // a create of it waits for Save (made where missing, or the import's),
+    // or "".
+    QString madeBySaveRefusal(const QString &playlist) const;
     // The create of `playlist` made where missing, when nothing staged or
     // asked for goes into it any more.
     void takeBackUnneededCreate(const QString &playlist);

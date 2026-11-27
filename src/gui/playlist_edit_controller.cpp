@@ -62,12 +62,50 @@ QString ambiguous(const QString &playlist, const QStringList &libraries)
         .arg(playlist, displayNames(libraries));
 }
 
+// What a delete of a playlist reaches, by Browse's rule (569bf941): the
+// libraries holding it as a playlist. One where the node at that path is
+// a folder (rekordbox, OneLibrary) is not this playlist, and one where it
+// holds other playlists (Engine) would take them along: both are left
+// alone, `why` says so, and a delete with its tracks takes no track on
+// their word (planPlaylistTracksDeletion's leftAlone).
+struct DeleteReach
+{
+    QStringList libraries;
+    QStringList folders;
+    QStringList holding;
+    QString why;
+};
+DeleteReach deleteReach(const PlaylistWhereabouts &where)
+{
+    DeleteReach reach;
+    for (const QString &library : where.having) {
+        if (where.folders.contains(library)) {
+            reach.folders << library;
+        } else if (where.holdingOthers.contains(library)) {
+            reach.holding << library;
+        } else {
+            reach.libraries << library;
+        }
+    }
+    QStringList why;
+    if (!reach.folders.isEmpty()) {
+        why << QStringLiteral("In %1 it is a folder, not a playlist, and it stays with everything in it.")
+                   .arg(spokenNames(reach.folders));
+    }
+    if (!reach.holding.isEmpty()) {
+        why << QStringLiteral("In %1 it holds other playlists, and it stays with them: delete or move those first.")
+                   .arg(spokenNames(reach.holding));
+    }
+    reach.why = why.join(QLatin1Char(' '));
+    return reach;
+}
+
 // The tracks of `playlist` in every library on the stick, and what
 // deleting them comes to. From the catalogs as Browse has them (the cache
 // LibraryCatalogCache keeps, at its tracks-and-playlists stage), so a
 // library Browse is showing is not read again. Runs off the GUI thread.
 std::shared_ptr<const PlaylistTracksRead> readPlaylistTracks(const QString &rekordboxPath, const QString &enginePath,
-                                                             const std::string &playlist)
+                                                             const std::string &playlist, const QStringList &leftAlone)
 {
     auto read = std::make_shared<PlaylistTracksRead>();
     try {
@@ -86,8 +124,12 @@ std::shared_ptr<const PlaylistTracksRead> readPlaylistTracks(const QString &reko
         if (stick.catalogs.engine) {
             catalogs.push_back({"engine", std::move(*stick.catalogs.engine)});
         }
+        std::vector<std::string> alone;
+        for (const QString &library : leftAlone) {
+            alone.push_back(library.toStdString());
+        }
         read->plan = domain::planPlaylistTracksDeletion(
-            catalogs, [](const std::string &file) { return application::normalizedPathKey(file); }, playlist);
+            catalogs, [](const std::string &file) { return application::normalizedPathKey(file); }, playlist, alone);
     } catch (const std::exception &e) {
         read->error = QString::fromUtf8(e.what());
     }
@@ -1006,6 +1048,19 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
     return true;
 }
 
+QString PlaylistEditController::madeBySaveRefusal(const QString &playlist) const
+{
+    // Made by this Save where a library lacks it (a track dragged onto
+    // Own Recordings, or the import into it): a delete would reach the
+    // libraries that have it now, and the create leave it in the others.
+    if (isNewPlaylistStaged(playlist) || importMakes(playlist)) {
+        return QStringLiteral("\"%1\" waits to be made by Save in the libraries that lack it. Save first, then "
+                              "delete it.")
+            .arg(playlist);
+    }
+    return {};
+}
+
 bool PlaylistEditController::tracksDeletable(const QString &playlist, const PlaylistWhereabouts &where)
 {
     if (where.having.isEmpty()) {
@@ -1029,6 +1084,17 @@ bool PlaylistEditController::tracksDeletable(const QString &playlist, const Play
                             .arg(displayNames(where.tracks->unreadable), playlist));
         return false;
     }
+    // Asked again now: a create of it may have been staged meanwhile.
+    if (const QString refusal = madeBySaveRefusal(playlist); !refusal.isEmpty()) {
+        setErrorMessage(refusal);
+        return false;
+    }
+    // As the plain delete: nothing but folders, or Engine's playlist
+    // holding others, of that name is nothing to delete.
+    if (const DeleteReach reach = deleteReach(where); reach.libraries.isEmpty()) {
+        setErrorMessage(QStringLiteral("\"%1\" is not deleted. %2").arg(playlist, reach.why));
+        return false;
+    }
     return true;
 }
 
@@ -1039,10 +1105,15 @@ bool PlaylistEditController::planDeleteWithTracks(const QString &rekordboxPath, 
     if (playlist.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
         return false;
     }
+    if (const QString refusal = madeBySaveRefusal(playlist); !refusal.isEmpty()) {
+        setErrorMessage(refusal);
+        return false;
+    }
     lookUpWithTracks(rekordboxPath, enginePath, stickPathOf(playlist).toStdString(), [=, this](const PlaylistWhereabouts &where) {
         if (!tracksDeletable(playlist, where)) {
             return;
         }
+        const DeleteReach reach = deleteReach(where);
         const domain::PlaylistTracksDeletion &plan = where.tracks->plan;
         // Each file's size once, whichever library knows it.
         std::uint64_t bytes = 0;
@@ -1055,7 +1126,9 @@ bool PlaylistEditController::planDeleteWithTracks(const QString &rekordboxPath, 
         }
         QVariantMap said;
         said["playlist"] = playlist;
-        said["libraries"] = displayNames(where.having).split(QStringLiteral(", "));
+        said["libraries"] = displayNames(reach.libraries).split(QStringLiteral(", "));
+        // The libraries left alone, in words, for the question to say.
+        said["leftAlone"] = reach.why;
         said["going"] = static_cast<int>(plan.going.size());
         said["staying"] = static_cast<int>(plan.staying.size());
         said["withoutFile"] = plan.withoutFile;
@@ -1072,11 +1145,16 @@ bool PlaylistEditController::deletePlaylistWithTracks(const QString &rekordboxPa
     if (playlist.isEmpty() || !attachSession(rekordboxPath, enginePath)) {
         return false;
     }
+    if (const QString refusal = madeBySaveRefusal(playlist); !refusal.isEmpty()) {
+        setErrorMessage(refusal);
+        return false;
+    }
     const std::string name = playlist.toStdString();
     lookUpWithTracks(rekordboxPath, enginePath, stickPathOf(playlist).toStdString(), [=, this](const PlaylistWhereabouts &where) {
         if (!tracksDeletable(playlist, where)) {
             return;
         }
+        const DeleteReach reach = deleteReach(where);
         // What was agreed to is a number of tracks. The stick is read
         // again here (and again when a kept batch is staged after a
         // crash): more tracks than that, and it is asked again instead.
@@ -1091,7 +1169,9 @@ bool PlaylistEditController::deletePlaylistWithTracks(const QString &rekordboxPa
         // only then is a track of it in no playlist.
         const QString deleteId = DeletePlaylistChange::idFor(name);
         const QString tracksId = DeleteTracksChange::idForPlaylist(name);
-        if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, where.having))) {
+        auto change = std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, reach.libraries);
+        change->sayLeftAlone(reach.folders, reach.holding);  // said by the save's summary as well
+        if (!m_session->stage(std::move(change))) {
             return;  // the session reported why (another page's edits)
         }
         // Staged again (a kept batch, or asked twice): the tracks take
@@ -1124,6 +1204,10 @@ bool PlaylistEditController::deletePlaylistWithTracks(const QString &rekordboxPa
         record(deleteId, {QStringLiteral("deleteWithTracks"), playlist, QString(), QString(), going});
         ++m_pendingRevision;
         emit pendingChanged();
+        if (!reach.why.isEmpty()) {
+            notify(QStringLiteral("\"%1\" is deleted from %2 when you Save. %3")
+                       .arg(playlist, spokenNames(reach.libraries), reach.why));
+        }
     });
     return true;
 }
@@ -1568,7 +1652,15 @@ void PlaylistEditController::runNextLookup()
          file = next.file, withTracks = next.withTracks]() {
             PlaylistWhereabouts where = playlistWhereabouts(rekordboxPath, enginePath, playlist, file);
             if (withTracks) {
-                where.tracks = readPlaylistTracks(rekordboxPath, enginePath, playlist);
+                // A delete leaves these libraries alone (deleteReach): what
+                // they list there stays listed, so its tracks stay.
+                QStringList leftAlone = where.folders;
+                for (const QString &library : where.holdingOthers) {
+                    if (!leftAlone.contains(library)) {
+                        leftAlone << library;
+                    }
+                }
+                where.tracks = readPlaylistTracks(rekordboxPath, enginePath, playlist, leftAlone);
             }
             return std::make_pair(std::move(where),
                                   also.empty() ? PlaylistWhereabouts{} : playlistWhereabouts(rekordboxPath, enginePath, also));
