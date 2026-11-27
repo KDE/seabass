@@ -64,7 +64,8 @@ CueBeatAlignment measureCuesAgainstBeats(const std::vector<CuePoint> &cues, cons
 // The points more than CueOnBeatWithinMs and at most `toleranceMs` from
 // their beat: the ones a page lists, and aligning moves. One further off
 // than the tolerance was put there on purpose (an off-beat cue, a vocal),
-// and is left alone.
+// and is left alone. So is one whose beat is the very start of the track:
+// Engine reads a main cue at 0 as none.
 std::vector<CueBeatDistance> offBeatWithin(const CueBeatAlignment &alignment, double toleranceMs);
 
 // `cues` with every such point moved onto its beat. A loop whose start

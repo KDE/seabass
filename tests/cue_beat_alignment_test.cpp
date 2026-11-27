@@ -126,6 +126,23 @@ int main()
         std::cout << "case 3 (cues all off by one amount) OK\n";
     }
 
+    // 3b. A cue whose beat is the very start of the track is never moved
+    //     there (Engine reads a main cue at 0 as none): neither listed
+    //     nor moved.
+    {
+        std::vector<double> fromZero;
+        for (int i = 0; i < 16; ++i) {
+            fromZero.push_back(500.0 * i);
+        }
+        const std::vector<CuePoint> cues = {cue(6.0), cue(506.0)};
+        const CueBeatAlignment a = measureCuesAgainstBeats(cues, fromZero);
+        const auto listed = offBeatWithin(a, 20.0);
+        assert(listed.size() == 1 && listed[0].cueIndex == 1);
+        const std::vector<CuePoint> aligned = cuesAlignedToBeats(cues, a, 20.0);
+        assert(near(aligned[0].positionMs, 6.0) && near(aligned[1].positionMs, 500.0));
+        std::cout << "case 3b (no cue is moved onto the very start) OK\n";
+    }
+
     // 4. No grid to speak of: nothing measured, nothing moved.
     {
         const std::vector<CuePoint> cues = {cue(1108.0)};

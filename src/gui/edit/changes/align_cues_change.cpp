@@ -4,6 +4,7 @@
 
 #include "gui/edit/changes/align_cues_change.hpp"
 
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
@@ -98,6 +99,35 @@ struct RowsNow
 // A stored position and the one read may differ by how it is kept (whole
 // milliseconds, samples).
 constexpr double AsReadWithinMs = 1.0;
+
+// Whether every cue of `now` has the colour and the label the cue read at
+// its place had (domain::sameCuesAsRead looks at neither). The list this
+// change writes carries them as they were read: a colour or a label set
+// since would be put back to the old one, and a rekordbox cue whose colour
+// differs from the file's is encoded afresh, without its comment.
+bool sameColoursAndLabels(const std::vector<domain::CuePoint> &asRead, const std::vector<domain::CuePoint> &now)
+{
+    std::vector<bool> taken(now.size(), false);
+    for (const domain::CuePoint &read : asRead) {
+        bool found = false;
+        for (std::size_t i = 0; i < now.size() && !found; ++i) {
+            const domain::CuePoint &n = now[i];
+            if (taken[i] || n.kind != read.kind || n.hotCueNumber != read.hotCueNumber || n.isLoop != read.isLoop
+                || std::abs(n.positionMs - read.positionMs) > AsReadWithinMs) {
+                continue;
+            }
+            if (n.color != read.color || domain::withoutTrailingNuls(n.comment) != domain::withoutTrailingNuls(read.comment)) {
+                return false;
+            }
+            taken[i] = true;
+            found = true;
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
 
 }  // namespace
 
@@ -203,7 +233,7 @@ ChangeOutcome AlignCuesChange::apply(SaveContext &ctx)
     } catch (const std::exception &) {
         now.reset();  // unreadable is not "as read": nothing is written
     }
-    if (!now || !domain::sameCuesAsRead(asRead, *now, AsReadWithinMs, true)) {
+    if (!now || !domain::sameCuesAsRead(asRead, *now, AsReadWithinMs, true) || !sameColoursAndLabels(asRead, *now)) {
         m_written = 0;
         const QString title = QString::fromStdString(m_track.title.empty() ? m_track.filename : m_track.title);
         ctx.addSummaryNote(now ? QStringLiteral("\"%1\" was left alone: its cue points changed after they were read.").arg(title)

@@ -116,15 +116,24 @@ RawHotCueEntry movedTo(RawHotCueEntry entry, uint32_t timeMs, uint32_t loopEndMs
             entry.rawBytes[at + static_cast<std::size_t>(i)] = static_cast<char>((value >> (24 - 8 * i)) & 0xff);
         }
     };
+    // A loop whose length changes is no longer the length in beats its
+    // bytes say (loop_numerator and loop_denominator, at 36 and 38): they
+    // go to 0, as on an entry encoded fresh, rather than say three
+    // quarters of a beat over a loop that is now a whole one.
+    const bool lengthChanged = entry.isLoop
+        && static_cast<std::int64_t>(loopEndMs) - timeMs != static_cast<std::int64_t>(entry.loopEndMs) - entry.timeMs;
     entry.timeMs = timeMs;
     if (entry.isLoop) {
         entry.loopEndMs = loopEndMs;
     }
     // time at 20, loop_time at 24, as decodeHotCues() reads them.
-    if (entry.rawBytes.size() >= 28) {
+    if (entry.rawBytes.size() >= 44) {
         put(20, timeMs);
         if (entry.isLoop) {
             put(24, loopEndMs);
+        }
+        if (lengthChanged) {
+            put(36, 0);
         }
     }
     return entry;

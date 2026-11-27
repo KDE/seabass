@@ -40,11 +40,14 @@ struct MeasuredTrack
     // own, so the cues were measured with this taken off.
     double gridShiftMs = 0.0;
     domain::CueBeatAlignment alignment;
-    // Every cue start that is off its beat is off by what this file's
-    // audio sits apart in rekordbox and in Engine (gridShiftMs, to 2.5
-    // ms): the row holds the other library's number, or its grid does.
-    // Which side is wrong is Sync Cue Points' question (its cue offset
-    // repair), not a matter of the nearest beat.
+    // An Engine row of an MP3 whose cue starts that are off their beat are
+    // all off by what the file's audio sits apart in rekordbox and in
+    // Engine (its lead-in, read from the file whatever the correction in
+    // Preferences says, to 2.5 ms): the row holds the other library's
+    // number, or its grid does. Which side is wrong is Sync Cue Points'
+    // question (its cue offset repair), not a matter of the nearest beat.
+    // Also set where the file's lead-in cannot be read: such a row cannot
+    // be told from one of those.
     bool offByLibraryOffset = false;
     // Listed, never ticked or staged.
     bool held() const { return alignment.sameOffset || offByLibraryOffset; }

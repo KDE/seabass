@@ -7,6 +7,7 @@
 #include <QSettings>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <map>
@@ -18,6 +19,8 @@
 #include "gui/edit/edit_session_registry.hpp"
 #include "gui/edit/library_edit_session.hpp"
 #include "gui/library_catalog_cache.hpp"
+#include "domain/mp3_lead_in.hpp"
+#include "infrastructure/audio/mp3_lead_in_reader.hpp"
 #include "infrastructure/engine/engine_library_layout.hpp"
 #include "infrastructure/engine/libdjinterop_beat_grid_reader.hpp"
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
@@ -77,6 +80,16 @@ QString cueName(const domain::Track &track, const domain::CuePoint &cue, bool lo
                    .arg(QChar(QLatin1Char(static_cast<char>('A' + number - 1))));
     }
     return cue.isLoop && loopEnd ? name + QStringLiteral(" (end)") : name;
+}
+
+bool isMp3(const std::string &filePath)
+{
+    if (filePath.size() < 4) {
+        return false;
+    }
+    std::string end = filePath.substr(filePath.size() - 4);
+    std::transform(end.begin(), end.end(), end.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return end == ".mp3";
 }
 
 int wholeMs(double offMs)
@@ -167,17 +180,29 @@ std::shared_ptr<const CueAlignmentScan> scanCueAlignment(const QString &rekordbo
             if (domain::offBeatWithin(measured.alignment, CueAlignmentController::MaximumToleranceMs).empty()) {
                 continue;
             }
-            if (std::abs(measured.gridShiftMs) > domain::CueOnBeatWithinMs) {
-                int off = 0;
-                bool all = true;
-                for (const domain::CueBeatDistance &point : measured.alignment.points) {
-                    if (point.loopEnd || std::abs(point.offMs) <= domain::CueOnBeatWithinMs) {
-                        continue;
+            // An Engine row of an MP3: what the file sits apart in the two
+            // libraries, read from the file itself, whatever the
+            // correction in Preferences is set to (with it off the reader
+            // adds no shift, and the rows holding rekordbox's number are
+            // off their grid by it all the same). Not readable: held too,
+            // since it cannot be told from such a row.
+            if (format == "engine" && isMp3(track.filePath)) {
+                const std::optional<domain::Mp3LeadIn> leadIn = infrastructure::audio::readMp3LeadIn(track.filePath);
+                const double apart = leadIn ? std::abs(domain::engineToRekordboxOffsetMs(*leadIn)) : 0.0;
+                if (!leadIn) {
+                    measured.offByLibraryOffset = true;
+                } else if (apart > domain::CueOnBeatWithinMs) {
+                    int off = 0;
+                    bool all = true;
+                    for (const domain::CueBeatDistance &point : measured.alignment.points) {
+                        if (point.loopEnd || std::abs(point.offMs) <= domain::CueOnBeatWithinMs) {
+                            continue;
+                        }
+                        ++off;
+                        all = all && std::abs(std::abs(point.offMs) - apart) <= 2.5;
                     }
-                    ++off;
-                    all = all && std::abs(std::abs(point.offMs) - std::abs(measured.gridShiftMs)) <= 2.5;
+                    measured.offByLibraryOffset = off > 0 && all;
                 }
-                measured.offByLibraryOffset = off > 0 && all;
             }
             measured.key = junkKeyFor(track);
             measured.path = path;

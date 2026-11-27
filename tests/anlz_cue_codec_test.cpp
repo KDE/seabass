@@ -388,6 +388,23 @@ int main()
         assert(movedAgain.size() == 1 && movedAgain[0].timeMs == 61'480 && movedAgain[0].hotCueNumber == 4);
         assert(movedAgain[0].rawBytes.find(comment) != std::string::npos && "the comment moved with its cue");
         assert(!movedAgain[0].isLoop && "and the loop field of a cue that is none is left alone");
+
+        // A loop with a length in beats: moved whole, it keeps saying so;
+        // made longer, it no longer says the length it had.
+        RawHotCueEntry loop = decoded[0];
+        loop.isLoop = true;
+        loop.loopEndMs = 61'375;
+        loop.rawBytes[16] = 2;
+        for (int i = 0; i < 4; ++i) {
+            loop.rawBytes[24 + i] = static_cast<char>((61'375u >> (24 - 8 * i)) & 0xff);
+        }
+        loop.rawBytes[37] = 3;  // loop_numerator 3
+        loop.rawBytes[39] = 4;  // loop_denominator 4
+        const RawHotCueEntry whole = movedTo(loop, 61'006, 61'381);
+        assert(whole.rawBytes[37] == 3 && whole.rawBytes[39] == 4 && "the same length: three quarters still");
+        const RawHotCueEntry longer = movedTo(loop, 61'000, 61'500);
+        assert(longer.rawBytes[37] == 0 && longer.rawBytes[39] == 0 && "another length: no length in beats claimed");
+        assert(longer.loopEndMs == 61'500 && longer.rawBytes.find(comment) != std::string::npos);
         std::cout << "case 13 (a cue comment with non-ASCII in it survives a rewrite, and a move) OK\n";
     }
 

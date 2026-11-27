@@ -43,8 +43,9 @@ struct RawHotCueEntry
 // `entry`, read from a file, at another place: its stored bytes kept
 // (comment, colour, colour id, the loop's length in beats) with only the
 // time, and a loop's end, set anew. For a cue that was moved and is
-// otherwise the cue it was. An entry without stored bytes just takes the
-// times.
+// otherwise the cue it was. A loop whose length changes loses its length
+// in beats (set to 0, as a fresh entry has it). An entry without stored
+// bytes just takes the times.
 RawHotCueEntry movedTo(RawHotCueEntry entry, uint32_t timeMs, uint32_t loopEndMs);
 
 // cue_list_type values for the PCO2 section's `type` field -- which of

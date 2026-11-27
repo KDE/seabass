@@ -33,7 +33,9 @@ double nearestBeat(const std::vector<double> &beats, double ms)
 bool counts(const CueBeatDistance &point, double toleranceMs)
 {
     const double off = std::abs(point.offMs);
-    return off > CueOnBeatWithinMs && off <= toleranceMs;
+    // Never onto the very start of the track: Engine reads a main cue at
+    // 0 as none, so a cue moved there would be lost.
+    return off > CueOnBeatWithinMs && off <= toleranceMs && point.beatMs > 0.0;
 }
 
 }  // namespace
