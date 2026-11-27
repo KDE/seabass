@@ -1055,4 +1055,67 @@ TestCase {
         compare(findChild(page, "savedToast").showing, false, "and no toast calls it done");
         findChild(findChild(page, "summaryDialog"), "okButton").clicked();
     }
+
+    Component {
+        id: noteSpyComponent
+        SignalSpy { signalName: "stagedWithNote" }
+    }
+
+    // A name that is a playlist in Engine and a folder in rekordbox and
+    // OneLibrary (Browse lists it, browsing Engine): Browse's delete and
+    // rename reach Engine's playlist only, and say the folders stay as
+    // they are; the save leaves them. A name that is a folder alone, or
+    // an Engine playlist holding another, is not deleted, saying why.
+    function test_aFolderOfThePlaylistsNameIsLeftAlone() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0);
+        for (const name of ["Mixed", "Mixed R"]) {
+            compare(stickFixture.plantPlaylist(stick, name, ["engine"], 0).length, 0, name);
+            verify(stickFixture.plantFolder(stick, name, "rekordbox"), name);
+            verify(stickFixture.plantFolder(stick, name, "onelibrary"), name);
+        }
+        verify(stickFixture.plantFolder(stick, "Only Folder", "rekordbox"));
+        verify(stickFixture.plantFolder(stick, "Holder", "engine"));
+        const pioneer = stick + "/PIONEER";
+        const engine = stick + "/Engine Library";
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(pioneer));
+        verify(session !== null);
+        const browse = createTemporaryObject(playlistEditComponent, testCase);
+        const notes = createTemporaryObject(noteSpyComponent, testCase, {target: browse});
+
+        verify(edited(browse, browse.deletePlaylist(pioneer, engine, "Mixed")), browse.errorMessage);
+        compare(session.pendingCount, 1);
+        compare(notes.count, 1, "told what stays");
+        compare(notes.signalArguments[0][0], "\"Mixed\" is deleted from Engine when you Save. In rekordbox and "
+                + "OneLibrary it is a folder, not a playlist, and it stays with everything in it.");
+        verify(edited(browse, browse.renamePlaylist(pioneer, engine, "Mixed R", "Moved")), browse.errorMessage);
+        compare(session.pendingCount, 2);
+        compare(notes.count, 2);
+        compare(notes.signalArguments[1][0], "\"Mixed R\" is renamed \"Moved\" in Engine when you Save. In "
+                + "rekordbox and OneLibrary it is a folder, not a playlist, and it keeps its name.");
+
+        verify(!edited(browse, browse.deletePlaylist(pioneer, engine, "Only Folder")));
+        compare(browse.errorMessage, "\"Only Folder\" is not deleted. In rekordbox it is a folder, not a playlist, "
+                + "and it stays with everything in it.");
+        verify(!edited(browse, browse.renamePlaylist(pioneer, engine, "Only Folder", "Renamed Folder")));
+        compare(browse.errorMessage, "\"Only Folder\" is not renamed. In rekordbox it is a folder, not a playlist, "
+                + "and it keeps its name.");
+        verify(!edited(browse, browse.deletePlaylist(pioneer, engine, "Holder")));
+        compare(browse.errorMessage, "\"Holder\" is not deleted. In Engine it holds other playlists, and it stays "
+                + "with them: delete or move those first.");
+        compare(session.pendingCount, 2, "nothing staged by the refusals");
+        compare(notes.count, 2);
+
+        const summary = saveAndWait(session);
+        compare(summary.error, "", JSON.stringify(summary));
+        compare(summary.notes, "", "nothing left alone at Save: the folders were never asked of it");
+        for (const library of ["rekordbox", "onelibrary"]) {
+            const folders = stickFixture.topLevelFoldersIn(stick, library);
+            verify(folders.indexOf("Mixed") >= 0 && folders.indexOf("Mixed R") >= 0, library + ": " + folders);
+        }
+        const enginePlaylists = stickFixture.playlistsIn(stick, "engine");
+        verify(enginePlaylists.indexOf("Mixed") < 0, "Engine's playlist deleted");
+        verify(enginePlaylists.indexOf("Moved") >= 0 && enginePlaylists.indexOf("Mixed R") < 0, "Engine's renamed");
+        verify(enginePlaylists.indexOf("Holder/Inside") >= 0, "the playlist inside Engine's Holder stays");
+    }
 }

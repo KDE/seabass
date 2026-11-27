@@ -124,6 +124,10 @@ public:
     Q_INVOKABLE bool isNewPlaylistStaged(const QString &name) const;
     // Staged by createPlaylistWhereMissing while some library has it.
     Q_INVOKABLE bool isMadeWhereMissing(const QString &name) const;
+    // `playlist` deleted from every library on the stick that has it as a
+    // playlist: a library where the node at that path is a folder, or a
+    // playlist holding others (Engine), is left alone and the page told
+    // (stagedWithNote); refused when that leaves none.
     Q_INVOKABLE bool deletePlaylist(const QString &rekordboxPath, const QString &enginePath, const QString &playlist);
     // Deleting a playlist together with its tracks. A track is the
     // playlist's when any library on the stick lists its file there, and
@@ -192,10 +196,12 @@ public:
     Q_INVOKABLE bool isPlaylistStaged(const QString &playlist) const;
     Q_INVOKABLE bool isRemovalStaged(const QString &playlist, const QString &filePath) const;
 
-    // Renames `playlist` (its last segment; a folder takes its children
-    // along) to `newName`, trimmed, in every library on the stick that has
-    // it. Refuses a name that is empty or holds "/" or ";", one the stick
-    // has at the new path, a new playlist's or another rename's name, a
+    // Renames `playlist` (its last segment; an Engine playlist's children
+    // follow it) to `newName`, trimmed, in every library on the stick that
+    // has it; a library where the node at that path is a folder keeps its
+    // name, the page told (stagedWithNote), and none but those is a
+    // refusal. Refuses a name that is empty or holds "/" or ";", one the
+    // stick has at the new path, a new playlist's or another rename's name, a
     // playlist inside a folder being renamed or a folder holding one, and
     // a second rename of a playlist edited under its new name since.
     //
@@ -266,6 +272,10 @@ signals:
     // (streaming rows: nothing to delete), megabytes (the files going,
     // rounded up; 0 when no size is known).
     void deleteWithTracksPlanned(const QVariantMap &plan);
+    // An edit asked for is staged, and leaves some library alone that the
+    // person may have expected it to reach (a folder of the playlist's
+    // name): `message` says which, and why, for the page to show.
+    void stagedWithNote(const QString &message);
     // keepLeftOverEdits is done: `kept` of `total` edits are staged again,
     // and `refusals` say why the others are not.
     void leftOverEditsKept(int kept, int total, const QStringList &refusals);
@@ -294,6 +304,8 @@ private:
     void noteApplied(const QString &changeId);
     QString describeApplied() const;
     void setErrorMessage(const QString &message);
+    // stagedWithNote(message), unless kept calls are being made again.
+    void notify(const QString &message);
     void unstage(const QString &changeId);
     // Drops from m_newPlaylists every name whose create is no longer
     // staged, and from m_additions, m_removals and m_moves every change

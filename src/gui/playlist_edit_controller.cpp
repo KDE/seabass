@@ -41,6 +41,20 @@ QString displayNames(const QStringList &libraries)
     return names.join(QStringLiteral(", "));
 }
 
+// "rekordbox", "rekordbox and Engine", "rekordbox, OneLibrary and Engine".
+QString spokenNames(const QStringList &libraries)
+{
+    QStringList names;
+    for (const QString &l : libraries) {
+        names << displayNames({l});
+    }
+    if (names.size() <= 1) {
+        return names.join(QString());
+    }
+    const QString last = names.takeLast();
+    return names.join(QStringLiteral(", ")) + QStringLiteral(" and ") + last;
+}
+
 QString ambiguous(const QString &playlist, const QStringList &libraries)
 {
     return QStringLiteral("More than one playlist is called \"%1\" (in %2), so Seabass cannot tell which "
@@ -389,10 +403,19 @@ QString PlaylistEditController::whereMissingRefusal(const QString &playlist, con
     if (!where.several.isEmpty()) {
         return ambiguous(playlist, where.several);
     }
-    if (!where.folders.isEmpty()) {
+    // An Engine playlist holding others counts as a folder here, as it
+    // always has: whether a player lists the tracks of such a playlist is
+    // not known, so the row's playlist is never made one.
+    QStringList folders = where.folders;
+    for (const QString &library : where.holdingOthers) {
+        if (!folders.contains(library)) {
+            folders << library;
+        }
+    }
+    if (!folders.isEmpty()) {
         return QStringLiteral("\"%1\" is a folder in %2, not a playlist, so it takes no tracks. Rename the folder "
                               "first.")
-            .arg(playlist, displayNames(where.folders));
+            .arg(playlist, displayNames(folders));
     }
     if (where.onStick.isEmpty()) {
         return QStringLiteral("This stick has no library to add a playlist to.");
@@ -786,7 +809,36 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
                                 .arg(playlist));
             return;
         }
-        if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, where.having))) {
+        // A folder of that name (rekordbox, OneLibrary) is not this
+        // playlist, and a playlist holding others (Engine) would take them
+        // along: those libraries are left alone, and the person told.
+        QStringList libraries;
+        QStringList folders;
+        QStringList holding;
+        for (const QString &library : where.having) {
+            if (where.folders.contains(library)) {
+                folders << library;
+            } else if (where.holdingOthers.contains(library)) {
+                holding << library;
+            } else {
+                libraries << library;
+            }
+        }
+        QStringList why;
+        if (!folders.isEmpty()) {
+            why << QStringLiteral("In %1 it is a folder, not a playlist, and it stays with everything in it.")
+                       .arg(spokenNames(folders));
+        }
+        if (!holding.isEmpty()) {
+            why << QStringLiteral("In %1 it holds other playlists, and it stays with them: delete or move those "
+                                  "first.")
+                       .arg(spokenNames(holding));
+        }
+        if (libraries.isEmpty()) {
+            setErrorMessage(QStringLiteral("\"%1\" is not deleted. %2").arg(playlist, why.join(QLatin1Char(' '))));
+            return;
+        }
+        if (!m_session->stage(std::make_unique<DeletePlaylistChange>(rekordboxPath, enginePath, name, libraries))) {
             return;  // the session reported why (another page's edits)
         }
         // The playlist alone, whatever was asked of its tracks before.
@@ -798,6 +850,10 @@ bool PlaylistEditController::deletePlaylist(const QString &rekordboxPath, const 
         record(DeletePlaylistChange::idFor(name), {QStringLiteral("delete"), playlist});
         ++m_pendingRevision;
         emit pendingChanged();
+        if (!why.isEmpty()) {
+            notify(QStringLiteral("\"%1\" is deleted from %2 when you Save. %3")
+                       .arg(playlist, spokenNames(libraries), why.join(QLatin1Char(' '))));
+        }
     });
     return true;
 }
@@ -1104,8 +1160,23 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
                    setErrorMessage(ambiguous(playlist, where.several));
                    return;
                }
+               // A folder of that name (rekordbox, OneLibrary) is not this
+               // playlist: it keeps its name, and the person is told.
+               QStringList libraries;
+               QStringList folders;
+               for (const QString &library : where.having) {
+                   (where.folders.contains(library) ? folders : libraries) << library;
+               }
+               const QString folderWords =
+                   folders.isEmpty() ? QString()
+                                     : QStringLiteral("In %1 it is a folder, not a playlist, and it keeps its name.")
+                                           .arg(spokenNames(folders));
+               if (libraries.isEmpty()) {
+                   setErrorMessage(QStringLiteral("\"%1\" is not renamed. %2").arg(playlist, folderWords));
+                   return;
+               }
                if (!m_session->stage(std::make_unique<RenamePlaylistChange>(rekordboxPath, enginePath, from.toStdString(),
-                                                                            name.toStdString(), where.having))) {
+                                                                            name.toStdString(), libraries))) {
                    return;
                }
                const QString id = RenamePlaylistChange::idFor(from.toStdString());
@@ -1117,6 +1188,10 @@ bool PlaylistEditController::renamePlaylist(const QString &rekordboxPath, const 
                record(id, {QStringLiteral("rename"), from, QString(), QString(), -1, name});
                ++m_pendingRevision;
                emit pendingChanged();
+               if (!folderWords.isEmpty()) {
+                   notify(QStringLiteral("\"%1\" is renamed \"%2\" in %3 when you Save. %4")
+                              .arg(playlist, renamed, spokenNames(libraries), folderWords));
+               }
            });
     return true;
 }
@@ -1502,6 +1577,14 @@ void PlaylistEditController::setErrorMessage(const QString &message)
     if (m_errorMessage != message) {
         m_errorMessage = message;
         emit errorMessageChanged();
+    }
+}
+
+void PlaylistEditController::notify(const QString &message)
+{
+    // Kept calls are made again as they were staged: told once, then.
+    if (!m_replaying) {
+        emit stagedWithNote(message);
     }
 }
 

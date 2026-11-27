@@ -8,8 +8,8 @@
 // F1 holding F1A with b01 and c01), the OneLibrary database rekordbox
 // started from with the same playlists made in it, and an Engine library
 // built to match. RemoveFromPlaylistChange takes a03 out of Q1 in all
-// three, by path; DeletePlaylistChange deletes the folder F1 with F1A in
-// all three, tracks kept.
+// three, by path; DeletePlaylistChange deletes F1A from the folder F1 in
+// all three, tracks kept, and never the folder.
 
 #include <cassert>
 #include <cstdint>
@@ -196,13 +196,26 @@ int main(int argc, char **argv)
     }
     std::cout << "case 2 (a track out of a playlist in all three libraries) OK\n";
 
-    // 3. The folder F1 with F1A, from all three; the tracks stay.
-    assert(playlistWhereabouts(pioneerQ, libraryQ, "F1").having == all);
+    // 3. The folder F1 is not deleted, nor Engine's F1 while it holds
+    //    F1A: a delete takes nothing below the playlist named. F1A is
+    //    deleted from all three, then Engine's F1, empty by then; the
+    //    tracks stay, and so do the folders.
     {
-        const auto result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "F1", all));
+        const auto f1 = playlistWhereabouts(pioneerQ, libraryQ, "F1");
+        assert(f1.having == all);
+        assert((f1.folders == QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")}));
+        assert(f1.holdingOthers == all && "each holds F1A");
+        auto result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "F1", all));
+        assert(result.skippedIds.size() == 1 && "left alone everywhere: a skip");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "F1/F1A").having == all && "F1A stays in all three");
+        result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "F1/F1A", all));
         assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
+        result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "F1", all));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty() && "Engine's F1, empty now, is deleted");
     }
-    assert(playlistWhereabouts(pioneerQ, libraryQ, "F1").having.isEmpty());
+    assert((playlistWhereabouts(pioneerQ, libraryQ, "F1").having
+            == QStringList{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")})
+           && "the folders stay");
     assert(playlistWhereabouts(pioneerQ, libraryQ, "F1/F1A").having.isEmpty());
     {
         infrastructure::rekordbox::PdbRowWriter rows(pathToUtf8(pioneer / "rekordbox" / "export.pdb"));
@@ -215,7 +228,8 @@ int main(int argc, char **argv)
         assert(!db.root_playlist_by_name("F1").has_value());
     }
     assert(playlistWhereabouts(pioneerQ, libraryQ, "Q1").having == all && "the other playlist is untouched");
-    std::cout << "case 3 (a folder deleted from all three libraries, tracks kept) OK\n";
+    std::cout << "case 3 (a playlist in a folder deleted from all three libraries, tracks kept; no folder, and no "
+                 "Engine playlist holding another, deleted) OK\n";
 
     // 4. Deleting tracks that are in no playlist: a10 is in none in any
     //    library, a01 is in Q1. Only a10 goes, from all three, and its file
@@ -682,7 +696,10 @@ int main(int argc, char **argv)
         assert(std::get<2>(orderIn("Q Two")) == std::get<2>(before) && "Engine's entries in their order");
 
         // A folder: "Crate" holding "Inside" (with a02) in all three,
-        // renamed to "Box": the child's path follows, its track stays.
+        // renamed to "Box": rekordbox's and OneLibrary's folder is no
+        // playlist and keeps its name, said; Engine's "Crate" is a playlist
+        // holding "Inside", renamed, the child's path following, its track
+        // staying.
         {
             infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
             const uint32_t crate = rows.createPlaylist(0, "Crate", true);
@@ -698,13 +715,20 @@ int main(int argc, char **argv)
                                                              std::nullopt);
         }
         assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate/Inside").having == all);
+        mark = logText().size();
         result = save(rename("Crate", "Box", all));
         assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty());
-        assert(playlistWhereabouts(pioneerQ, libraryQ, "Box/Inside").having == all && "the child follows");
-        assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate/Inside").having.isEmpty());
-        assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate").having.isEmpty());
+        const QStringList pioneerSide{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")};
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Box/Inside").having == QStringList{QStringLiteral("engine")}
+               && "Engine's child follows");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate/Inside").having == pioneerSide && "the folders' stay");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Crate").having == pioneerSide);
         assert(engineMembers(library, "Box/Inside") == std::vector<std::int64_t>{engineId[A02.relative]});
-        assert(infrastructure::onelibrary::OneLibraryCueWriter(pathToUtf8(pioneer)).playlistContent("Box/Inside").size() == 1);
+        assert(infrastructure::onelibrary::OneLibraryCueWriter(pathToUtf8(pioneer)).playlistContent("Crate/Inside").size() == 1);
+        assert(logText().substr(mark).find("not renamed in \"Crate\" there: rekordbox's \"Crate\" is a folder")
+               != std::string::npos);
+        assert(result.notes.join(QLatin1Char(' ')).contains(
+            QStringLiteral("\"Crate\" was not renamed in rekordbox and OneLibrary: there it is a folder")));
 
         // A name with a "/" fails, nothing written.
         {
@@ -721,7 +745,7 @@ int main(int argc, char **argv)
             assert(playlistWhereabouts(pioneerQ, libraryQ, " Padded").having.isEmpty() && "written nowhere");
         }
     }
-    std::cout << "case 10 (a playlist and a folder renamed in all three libraries) OK\n";
+    std::cout << "case 10 (a playlist renamed in all three libraries; a folder keeps its name) OK\n";
 
     // 11. Which libraries have a row for a file, asked with the playlist
     //     in one lookup, as an add needs to know before it is staged: a01
@@ -898,6 +922,89 @@ int main(int argc, char **argv)
     }
     std::cout << "case 12 (an add by a path that is a folder in rekordbox and OneLibrary: nothing written against "
                  "the folder there, said in the log) OK\n";
+
+    // 13. A delete and a rename asked for by a path that is a playlist in
+    //     Engine and, in rekordbox and OneLibrary, a folder holding a
+    //     playlist with a track (Browse lists the name, browsing Engine):
+    //     the folders and what is in them stay, Engine's playlist goes or
+    //     is renamed, and the log and the save's summary say what was left
+    //     alone. An Engine playlist holding another is not deleted either:
+    //     the one inside would go with it.
+    {
+        const std::string pdbPath = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
+        for (const std::string name : {"Mixed D", "Mixed R"}) {
+            infrastructure::rekordbox::PdbRowWriter rows(pdbPath);
+            const uint32_t folder = rows.createPlaylist(0, name, true);
+            const uint32_t kept = rows.createPlaylist(folder, "Kept", false);
+            rows.appendPlaylistEntries(kept, {A01.pdbId});
+            assert(rows.commit());
+            infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+            w.createPlaylist("", name, true);
+            w.createPlaylist(name, "Kept", false);
+            w.addToPlaylist(name + "/Kept", file(A01));
+            infrastructure::engine::createEnginePlaylist(pathToUtf8(library), name);
+        }
+        infrastructure::engine::createEnginePlaylist(pathToUtf8(library), "Parent/Child");
+        const QStringList pioneerSide{QStringLiteral("rekordbox"), QStringLiteral("onelibrary")};
+        const auto keptIn = [&](const std::string &folder) {
+            const auto where = playlistWhereabouts(pioneerQ, libraryQ, folder + "/Kept");
+            if (where.having != pioneerSide) {
+                return false;
+            }
+            return infrastructure::onelibrary::OneLibraryCueWriter(pathToUtf8(pioneer)).playlistContent(folder + "/Kept").size()
+                   == 1;
+        };
+        assert(keptIn("Mixed D") && keptIn("Mixed R") && "precondition: each folder holds a playlist with a01");
+        const auto mixed = playlistWhereabouts(pioneerQ, libraryQ, "Mixed D");
+        assert(mixed.having == all && "the lookup finds a node at the path in each");
+
+        const std::string logFile = infrastructure::backup::operationLogForStickRoot(
+            infrastructure::backup::stickRootForCatalogPath(pathToUtf8(library)));
+        const auto logText = [&]() {
+            std::ifstream in(pathFromUtf8(logFile));
+            std::stringstream text;
+            text << in.rdbuf();
+            return text.str();
+        };
+        size_t mark = logText().size();
+        auto result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "Mixed D", all));
+        std::cerr << "case 13: after the delete, rekordbox and OneLibrary have \"Mixed D/Kept\" in "
+                  << playlistWhereabouts(pioneerQ, libraryQ, "Mixed D/Kept").having.join(QStringLiteral(", ")).toStdString()
+                  << "\n";
+        assert(keptIn("Mixed D") && "the folder's playlist and its track stay in rekordbox and OneLibrary");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Mixed D").having == pioneerSide && "the folders stay");
+        assert(infrastructure::engine::enginePlaylistCountAtPath(pathToUtf8(library), "Mixed D") == 0
+               && "Engine's playlist is deleted");
+        assert(result.appliedIds.size() == 1);
+        std::string log = logText().substr(mark);
+        assert(log.find("rekordbox's \"Mixed D\" is a folder") != std::string::npos);
+        assert(log.find("OneLibrary's \"Mixed D\" is a folder") != std::string::npos);
+        assert(result.notes.join(QLatin1Char(' ')).contains(
+                   QStringLiteral("\"Mixed D\" was not deleted in rekordbox and OneLibrary"))
+               && "the summary says so");
+
+        mark = logText().size();
+        result = save(std::make_shared<RenamePlaylistChange>(pioneerQ, libraryQ, "Mixed R", "Mixed S", all));
+        assert(keptIn("Mixed R") && "the folder keeps its name and its playlist");
+        assert(playlistWhereabouts(pioneerQ, libraryQ, "Mixed S").having == QStringList{QStringLiteral("engine")}
+               && "Engine's playlist is renamed, the folders are not");
+        log = logText().substr(mark);
+        assert(log.find("rekordbox's \"Mixed R\" is a folder") != std::string::npos);
+        assert(result.notes.join(QLatin1Char(' ')).contains(
+            QStringLiteral("\"Mixed R\" was not renamed in rekordbox and OneLibrary")));
+
+        result = save(std::make_shared<DeletePlaylistChange>(pioneerQ, libraryQ, "Parent",
+                                                             QStringList{QStringLiteral("engine")}));
+        assert(result.skippedIds.size() == 1 && "Engine's playlist holding another is left alone: a skip");
+        assert(infrastructure::engine::enginePlaylistCountAtPath(pathToUtf8(library), "Parent/Child") == 1
+               && "the playlist inside stays");
+        assert(result.notes.join(QLatin1Char(' ')).contains(QStringLiteral("\"Parent\" was not deleted in Engine")));
+        const auto parent = playlistWhereabouts(pioneerQ, libraryQ, "Parent");
+        assert(parent.holdingOthers == QStringList{QStringLiteral("engine")} && parent.folders.isEmpty()
+               && "an Engine playlist holding another is no folder, and is said to hold others");
+    }
+    std::cout << "case 13 (a delete and a rename by a path that is a folder in rekordbox and OneLibrary leave the "
+                 "folder and what is in it alone, and say so; an Engine playlist holding another is not deleted) OK\n";
 
     fs::remove_all(stick);
     std::cout << "playlist_edit_changes_test: all cases passed\n";

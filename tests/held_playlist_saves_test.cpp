@@ -606,7 +606,7 @@ int main(int argc, char **argv)
                         return rows.setTrackRating(a01.front(), 4);
                     },
                     ran),
-                std::make_shared<DeletePlaylistChange>(p, e, "F1", All),
+                std::make_shared<DeletePlaylistChange>(p, e, "F1/F1A", All),
                 std::make_shared<AddToPlaylistChange>(p, e, "Q One", s.file(A10), QStringLiteral("a10"), All, 1),
             };
         };
@@ -632,7 +632,7 @@ int main(int argc, char **argv)
             std::cerr << "\n";
         }
         assert(got == expected && "Q One alike in all three libraries");
-        assert(playlistInThree(held, "F1/F1A") == (InThree{{"<none>"}, {"<none>"}, {"<none>"}}) && "F1 gone from all three");
+        assert(playlistInThree(held, "F1/F1A") == (InThree{{"<none>"}, {"<none>"}, {"<none>"}}) && "F1A gone from all three");
         assert(playlistInThree(held, "Q1") == (InThree{{"<none>"}, {"<none>"}, {"<none>"}}) && "Q1 renamed in all three");
         assert(playlistInThree(each, "Q One") == expected);
         assert(exportPdbOf(held.pioneer) == exportPdbOf(each.pioneer) && "export.pdb the bytes of the changes saved one by one");

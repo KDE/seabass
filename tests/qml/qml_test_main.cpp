@@ -1618,6 +1618,35 @@ public:
         return false;
     }
 
+    // The folders at the top level of export.pdb ("rekordbox") or
+    // OneLibrary ("onelibrary") on a stick copy, by name, read from the
+    // file; nothing when it cannot be read.
+    Q_INVOKABLE QStringList topLevelFoldersIn(const QString &stickRoot, const QString &library) const
+    {
+        const std::string pioneer = (stickRoot + QStringLiteral("/PIONEER")).toStdString();
+        QStringList out;
+        try {
+            if (library == QStringLiteral("rekordbox")) {
+                const seabass::infrastructure::rekordbox::PdbRowWriter rows(pioneer + "/rekordbox/export.pdb");
+                for (const auto &node : rows.playlistTree()) {
+                    if (node.parentId == 0 && node.isFolder) {
+                        out << QString::fromStdString(node.name);
+                    }
+                }
+            } else if (library == QStringLiteral("onelibrary")) {
+                seabass::infrastructure::onelibrary::OneLibraryCueWriter writer(pioneer);
+                for (const auto &node : writer.playlistTree()) {
+                    if (node.parentId == 0 && node.isFolder) {
+                        out << QString::fromStdString(node.name);
+                    }
+                }
+            }
+        } catch (const std::exception &e) {
+            qWarning() << "topLevelFoldersIn:" << e.what();
+        }
+        return out;
+    }
+
     // The playlists one library of a stick copy holds, by full path, read
     // from the files (playlistPathsIn): "rekordbox", "onelibrary", "engine".
     Q_INVOKABLE QStringList playlistsIn(const QString &stickRoot, const QString &library) const

@@ -56,11 +56,18 @@ struct PlaylistWhereabouts
     // have to guess there, so Browse refuses, and the changes fail rather
     // than guess if it happens by Save.
     QStringList several;
-    // The ones where a node at that path is a folder (Engine: a playlist
-    // holding others, its only notion of one), counted in `having` all
-    // the same: it takes no tracks, so a playlist Browse makes where it is
-    // missing (Own Recordings) is refused there rather than written.
+    // The ones where the node at that path is a folder (rekordbox,
+    // OneLibrary), counted in `having` all the same. A folder is not the
+    // playlist Browse lists by that name: it takes no tracks, and an add,
+    // a rename or a delete of the playlist leaves that library alone.
     QStringList folders;
+    // The ones where other playlists lie below the node at that path, also
+    // counted in `having`. Engine has no folders of its own kind: a
+    // playlist holding others is one, and keeps tracks of its own. A
+    // delete of it would take the ones inside along, so Browse's delete
+    // leaves that library alone; a rekordbox or OneLibrary folder holding
+    // playlists is listed here too.
+    QStringList holdingOthers;
     // Asked with a file: the libraries on the stick with a row for it,
     // looked up as AddToPlaylistChange looks it up (export.pdb by its path
     // on the stick, OneLibrary's content rows, Engine's tracks by the path
@@ -156,9 +163,12 @@ private:
     bool m_forImport = false;
 };
 
-// Deletes a playlist (or a folder, with everything in it) from every
-// library on the stick that has it, each through its own writer, the way
-// rekordbox does it (#62). Tracks stay. Staged from Browse, whose editor
+// Deletes a playlist from every library on the stick named, each through
+// its own writer, the way rekordbox does it (#62). Tracks stay. A library
+// where the node at that path is a folder (rekordbox, OneLibrary), or one
+// holding other playlists (an Engine playlist with others inside), is left
+// alone: a delete there would take everything below it along. The log and
+// the save's summary say so; nothing deleted anywhere is a skip. Staged from Browse, whose editor
 // is "addcue", and from Library Health's Playlists check, whose session
 // belongs to "library-health": a session refuses a change of another
 // owner than the batch's, so the stager says whose it is. A page that
@@ -419,14 +429,16 @@ std::optional<std::vector<Id>> orderWithRunAt(const std::vector<Id> &order, cons
     return rest;
 }
 
-// Renames a playlist or a folder (the last segment of its path; the
-// folders above it stay, and a folder's children follow it) in every
-// library on the stick named, each through its own writer: export.pdb's
-// level rewritten as rekordbox writes a level, OneLibrary's playlist row
+// Renames a playlist (the last segment of its path; the folders above it
+// stay, and an Engine playlist's children follow it) in every library on
+// the stick named, each through its own writer: export.pdb's level
+// rewritten as rekordbox writes a level, OneLibrary's playlist row
 // renamed, Engine's title. A library with no playlist at the old path,
 // two there, or one at the new path already, is left alone and the log
 // says why, and so is an Engine library with smart playlists filed by the
-// old path; nothing renamed anywhere is a skip. A name that is empty
+// old path, and a rekordbox or OneLibrary library where the node at the
+// old path is a folder (the save's summary says that one too); nothing
+// renamed anywhere is a skip. A name that is empty
 // (trimmed), or holds "/" or ";", fails.
 class RenamePlaylistChange : public PendingChange
 {

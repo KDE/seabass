@@ -1233,6 +1233,7 @@ TestCase {
             // is asked for, so that it stages one.
             property bool lacking: true
             signal pendingChanged()
+            signal stagedWithNote(string message)
             function createPlaylist(rekordboxPath, enginePath, name) {
                 calls.push(["create", name]);
                 newPlaylists = newPlaylists.concat([name]);
@@ -1323,6 +1324,20 @@ TestCase {
             wait(0);
             browseFixture.restore();
         }
+    }
+
+    // An edit staged that leaves a library alone (a folder of the
+    // playlist's name) is said, as news, not as a refusal.
+    function test_aNoteOnStagingIsShown() {
+        const page = makePage(makeStick([]), false, "");
+        const edits = createTemporaryObject(fakePlaylistEditComponent, testCase);
+        page.playlistEditController = edits;
+        edits.stagedWithNote("\"Mixed\" is deleted from Engine when you Save.");
+        const message = findChild(page, "playlistEditMessage");
+        tryCompare(message, "visible", true);
+        compare(message.title, "Not in every library");
+        compare(message.severity, SeabassDialog.Info, "news, not a refusal");
+        compare(closeMessage(page), "\"Mixed\" is deleted from Engine when you Save.");
     }
 
     // The row's summary is its playlist's, once the stick has it; the

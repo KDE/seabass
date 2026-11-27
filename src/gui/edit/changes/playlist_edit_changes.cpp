@@ -100,6 +100,82 @@ bool folderAt(const std::vector<Node> &tree, const std::string &path)
     return false;
 }
 
+// Whether a node of the tree lies below `path`: deleting the node at
+// `path` would take it along.
+template<typename Node>
+bool nodesBelow(const std::vector<Node> &tree, const std::string &path)
+{
+    const std::string prefix = path + "/";
+    for (const auto &[node, spelled] : spelledPaths(tree)) {
+        if (spelled.compare(0, prefix.size(), prefix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether Engine's library at `engineLibraryPath` has a playlist below
+// `path`. Engine's delete takes those along (deleteEnginePlaylist).
+bool enginePlaylistsBelow(const std::string &engineLibraryPath, const std::string &path)
+{
+    const std::string prefix = path + "/";
+    for (const auto &info : infrastructure::engine::listEnginePlaylists(engineLibraryPath)) {
+        if (info.path.compare(0, prefix.size(), prefix) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// "rekordbox", "OneLibrary and Engine": the libraries named for a person.
+QString spokenLibraries(const QStringList &libraries)
+{
+    QStringList names;
+    for (const QString &l : libraries) {
+        names << (l == QLatin1String("onelibrary") ? QStringLiteral("OneLibrary")
+                  : l == QLatin1String("engine")   ? QStringLiteral("Engine")
+                                                   : QStringLiteral("rekordbox"));
+    }
+    if (names.size() <= 1) {
+        return names.join(QString());
+    }
+    const QString last = names.takeLast();
+    return names.join(QStringLiteral(", ")) + QStringLiteral(" and ") + last;
+}
+
+// What a playlist edit left alone in a library because of what the node
+// at its path is there (a folder, or a playlist holding others), for the
+// save's summary: said once the save has landed with the change in it, so
+// a save that went back says nothing (SaveContext::addSummaryNote).
+struct LeftAloneNotes
+{
+    std::vector<std::pair<QString, QString>> notes;  // change id, sentence
+};
+
+void noteLeftAlone(SaveContext &ctx, const QString &changeId, const QString &sentence)
+{
+    static const std::string key = "playlist-edits:left-alone";
+    bool created = false;
+    auto &notes = ctx.sharedForWholeSave<LeftAloneNotes>(key, [&]() {
+        created = true;
+        return std::make_unique<LeftAloneNotes>();
+    });
+    notes.notes.emplace_back(changeId, sentence);
+    if (created) {
+        ctx.onAfterCommit([&ctx](const SaveContext::AfterCommit &after) {
+            const auto *landed = ctx.sharedForWholeSaveIfPresent<LeftAloneNotes>(key);
+            if (landed == nullptr) {
+                return;
+            }
+            for (const auto &[id, said] : landed->notes) {
+                if (after.appliedIds.contains(id)) {
+                    ctx.addSummaryNote(said);
+                }
+            }
+        });
+    }
+}
+
 // The one playlist at `path`, or nothing when there is none; throws when
 // there are several, since editing by path would have to guess.
 std::optional<uint32_t> pdbPlaylistId(const infrastructure::rekordbox::PdbRowWriter &rows, const std::string &path)
@@ -203,7 +279,7 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
                                         const std::string &filePath)
 {
     PlaylistWhereabouts where;
-    const auto note = [&](const char *library, int count, bool folder) {
+    const auto note = [&](const char *library, int count, bool folder, bool holding) {
         where.onStick << QString::fromLatin1(library);
         if (count > 0) {
             where.having << QString::fromLatin1(library);
@@ -214,46 +290,49 @@ PlaylistWhereabouts playlistWhereabouts(const QString &pioneerRoot, const QStrin
         if (count > 0 && folder) {
             where.folders << QString::fromLatin1(library);
         }
+        if (count > 0 && holding) {
+            where.holdingOthers << QString::fromLatin1(library);
+        }
     };
     const std::string pioneer = pioneerRoot.toStdString();
     if (!pioneer.empty() && std::filesystem::exists(pathFromUtf8(exportPdbOf(pioneer)))) {
         int count = 0;
         bool folder = false;
+        bool holding = false;
         try {
             const infrastructure::rekordbox::PdbRowWriter rows(exportPdbOf(pioneer));
             count = static_cast<int>(pdbPlaylistIds(rows, playlist).size());
             folder = count > 0 && folderAt(rows.playlistTree(), playlist);
+            holding = count > 0 && nodesBelow(rows.playlistTree(), playlist);
         } catch (const std::exception &) {
         }
-        note("rekordbox", count, folder);
+        note("rekordbox", count, folder, holding);
     }
     if (!pioneer.empty() && infrastructure::onelibrary::OneLibraryCueWriter::existsFor(pioneer)) {
         int count = 0;
         bool folder = false;
+        bool holding = false;
         try {
             infrastructure::onelibrary::OneLibraryCueWriter writer(pioneer);
             count = writer.playlistCountAtPath(playlist);
             folder = count > 0 && folderAt(writer.playlistTree(), playlist);
+            holding = count > 0 && nodesBelow(writer.playlistTree(), playlist);
         } catch (const std::exception &) {
         }
-        note("onelibrary", count, folder);
+        note("onelibrary", count, folder, holding);
     }
     const std::string engine = enginePath.toStdString();
     if (!engine.empty() && std::filesystem::exists(pathFromUtf8(engineDbOf(engine)))) {
         int count = 0;
-        bool folder = false;
+        bool holding = false;
         try {
             // Only a look at the stick, not a save's: its read copy (#110).
             count = infrastructure::engine::enginePlaylistCountAtPath(engine, playlist,
                                                                       infrastructure::ReadFor::Reading);
-            if (count > 0) {
-                for (const auto &info : infrastructure::engine::listEnginePlaylists(engine)) {
-                    folder = folder || (info.path == playlist && info.folder);
-                }
-            }
+            holding = count > 0 && enginePlaylistsBelow(engine, playlist);
         } catch (const std::exception &) {
         }
-        note("engine", count, folder);
+        note("engine", count, false, holding);
     }
     if (!filePath.empty()) {
         for (const QString &library : where.onStick) {
@@ -534,13 +613,21 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
 {
     const std::string pioneer = m_pioneerRoot.toStdString();
     int deleted = 0;
+    // Left alone for what the node is there: a folder, or a playlist
+    // holding others. Said in the log and in the save's summary.
+    std::vector<std::string> leftAlone;
+    QStringList folders;
+    QStringList holding;
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session =
                 sharedFormatWriteSession(ctx, "rekordbox", pioneer, m_itemCountHint, m_label);
             infrastructure::rekordbox::PdbRowWriter &rows = sharedPdbRows(ctx, session);
             if (const auto id = pdbPlaylistId(rows, m_playlist)) {
-                if (rows.deletePlaylist(*id) > 0) {
+                if (folderAt(rows.playlistTree(), m_playlist)) {
+                    leftAlone.push_back("rekordbox's \"" + m_playlist + "\" is a folder, not a playlist");
+                    folders << QStringLiteral("rekordbox");
+                } else if (rows.deletePlaylist(*id) > 0) {
                     rows.endEdit();
                     session.noteItemApplied();
                     ++deleted;
@@ -549,8 +636,12 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
         }
         if (m_libraries.contains(QStringLiteral("onelibrary"))) {
             ctx.backupOnce(infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pioneer), m_label);
-            requireOneOneLibraryPlaylist(sharedOneLibraryWriter(ctx, pioneer), m_playlist);
-            if (sharedOneLibraryWriter(ctx, pioneer).deletePlaylist(m_playlist) > 0) {
+            auto &writer = sharedOneLibraryWriter(ctx, pioneer);
+            requireOneOneLibraryPlaylist(writer, m_playlist);
+            if (writer.playlistCountAtPath(m_playlist) > 0 && folderAt(writer.playlistTree(), m_playlist)) {
+                leftAlone.push_back("OneLibrary's \"" + m_playlist + "\" is a folder, not a playlist");
+                folders << QStringLiteral("onelibrary");
+            } else if (writer.deletePlaylist(m_playlist) > 0) {
                 ++deleted;
             }
         }
@@ -558,13 +649,33 @@ ChangeOutcome DeletePlaylistChange::apply(SaveContext &ctx)
             FormatWriteSession &session =
                 sharedFormatWriteSession(ctx, "engine", m_enginePath.toStdString(), m_itemCountHint, m_label);
             requireOneEnginePlaylist(session.writeRoot(), m_playlist);
-            if (infrastructure::engine::deleteEnginePlaylist(session.writeRoot(), m_playlist) > 0) {
+            if (infrastructure::engine::enginePlaylistCountAtPath(session.writeRoot(), m_playlist) > 0
+                && enginePlaylistsBelow(session.writeRoot(), m_playlist)) {
+                leftAlone.push_back("Engine's \"" + m_playlist + "\" holds other playlists");
+                holding << QStringLiteral("engine");
+            } else if (infrastructure::engine::deleteEnginePlaylist(session.writeRoot(), m_playlist) > 0) {
                 session.noteItemApplied();
                 ++deleted;
             }
         }
     } catch (const std::exception &e) {
         return ChangeOutcome::failure(QString::fromStdString(e.what()));
+    }
+    for (const auto &why : leftAlone) {
+        ctx.log().record("playlist-delete: not deleted from \"" + m_playlist + "\" there: " + why);
+    }
+    const QString name = QString::fromStdString(m_playlist);
+    if (!folders.isEmpty()) {
+        noteLeftAlone(ctx, id(),
+                      QStringLiteral("\"%1\" was not deleted in %2: there it is a folder, not a playlist, and it "
+                                     "stays with everything in it.")
+                          .arg(name, spokenLibraries(folders)));
+    }
+    if (!holding.isEmpty()) {
+        noteLeftAlone(ctx, id(),
+                      QStringLiteral("\"%1\" was not deleted in %2: there it holds other playlists, which a delete "
+                                     "would take with it. Delete or move those first.")
+                          .arg(name, spokenLibraries(holding)));
     }
     if (deleted == 0) {
         ctx.log().record("playlist-delete: \"" + m_playlist + "\" is in no library any more, skipped");
@@ -1337,6 +1448,9 @@ ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
     };
     int done = 0;
     std::vector<std::string> leftAlone;
+    // The libraries where the node at the old path is a folder: not the
+    // playlist Browse renames, so it keeps its name there.
+    QStringList folders;
     try {
         if (m_libraries.contains(QStringLiteral("rekordbox"))) {
             FormatWriteSession &session = sharedFormatWriteSession(ctx, "rekordbox", pioneer, 1, RenameLabel);
@@ -1345,6 +1459,9 @@ ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
             if (const auto why = refusal("rekordbox", static_cast<int>(ids.size()),
                                          static_cast<int>(pdbPlaylistIds(rows, renamed).size()))) {
                 leftAlone.push_back(*why);
+            } else if (folderAt(rows.playlistTree(), m_playlist)) {
+                leftAlone.push_back("rekordbox's \"" + m_playlist + "\" is a folder, not a playlist");
+                folders << QStringLiteral("rekordbox");
             } else if (rows.renamePlaylist(ids.front(), m_newName)) {
                 rows.endEdit();
                 session.noteItemApplied();
@@ -1357,6 +1474,9 @@ ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
             if (const auto why = refusal("OneLibrary", writer.playlistCountAtPath(m_playlist),
                                          writer.playlistCountAtPath(renamed))) {
                 leftAlone.push_back(*why);
+            } else if (folderAt(writer.playlistTree(), m_playlist)) {
+                leftAlone.push_back("OneLibrary's \"" + m_playlist + "\" is a folder, not a playlist");
+                folders << QStringLiteral("onelibrary");
             } else if (writer.renamePlaylist(m_playlist, m_newName)) {
                 ++done;
             }
@@ -1380,6 +1500,12 @@ ChangeOutcome RenamePlaylistChange::apply(SaveContext &ctx)
     }
     for (const auto &why : leftAlone) {
         ctx.log().record("playlist-rename: not renamed in \"" + m_playlist + "\" there: " + why);
+    }
+    if (!folders.isEmpty()) {
+        noteLeftAlone(ctx, id(),
+                      QStringLiteral("\"%1\" was not renamed in %2: there it is a folder, not a playlist, and it "
+                                     "keeps its name.")
+                          .arg(QString::fromStdString(m_playlist), spokenLibraries(folders)));
     }
     if (done == 0) {
         ctx.log().record("playlist-rename: \"" + m_playlist + "\" renamed nowhere, skipped");

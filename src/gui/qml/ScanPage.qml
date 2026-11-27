@@ -237,6 +237,11 @@ Page {
                 root.settled();
             }
         }
+        // Staged, leaving a library alone the person may have expected
+        // it to reach (a folder of the playlist's name).
+        function onStagedWithNote(message) {
+            playlistEditMessage.show(message, false, qsTr("Not in every library"));
+        }
         // The edit asked for at a place is staged: the list shows it there
         // (the page's pending* bindings answer the same signal), and the
         // held place can close. After them, not before.
