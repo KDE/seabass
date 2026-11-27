@@ -60,12 +60,41 @@ Page {
     // name collide, and the binding would refer to itself.
     readonly property var consistencyController: healthController
 
+    // Cue points a little off the beat of their own library's grid: the
+    // measure Align Cue Points lists and fixes, run once the scan above has
+    // read the catalogs (so it reads them from the cache, and the two do
+    // not fight over the stick), and again when that page hands back.
+    CueAlignmentController {
+        id: cueAlignment
+    }
+    readonly property var cueAlignmentController: cueAlignment
+    // A measure that failed keeps the last one's list, so its counts are
+    // not shown: they could be of another tolerance, or of a stick that is
+    // gone.
+    readonly property bool cueAlignmentFailed: cueAlignment.errorMessage.length > 0
+    readonly property int cueAlignmentFixable: root.cueAlignmentFailed ? 0 : cueAlignment.alignableSongCount
+    readonly property int cueAlignmentFound: root.cueAlignmentFailed
+                                             ? 0 : cueAlignment.alignableSongCount + cueAlignment.heldSongCount
+
     readonly property bool scanning: healthController.busy
     readonly property bool scanned: internal.hasScanned && !root.scanning
 
     QtObject {
         id: internal
         property bool hasScanned: false
+        // Align Cue Points was opened from here: its cues may have moved.
+        property bool cueAlignmentOpened: false
+    }
+
+    function measureCueAlignment() {
+        cueAlignment.scan(root.rekordboxPath, root.enginePath);
+    }
+
+    StackView.onActivated: {
+        if (internal.cueAlignmentOpened) {
+            internal.cueAlignmentOpened = false;
+            root.measureCueAlignment();
+        }
     }
 
     Component.onCompleted: root.runChecks()
@@ -93,6 +122,7 @@ Page {
         function onBusyChanged() {
             if (!healthController.busy) {
                 internal.hasScanned = true;
+                root.measureCueAlignment();
             }
         }
         // Both outcomes get said, in the same place, in so many words.
@@ -441,6 +471,40 @@ Page {
              + "player ever doing it properly.";
     }
 
+    readonly property string cueAlignmentSummary: {
+        if (root.scanning || cueAlignment.busy) {
+            return "Measuring cue points against the beat grids...";
+        }
+        if (root.cueAlignmentFailed) {
+            return cueAlignment.errorMessage;
+        }
+        if (!cueAlignment.checked) {
+            return "Not checked yet.";
+        }
+        if (cueAlignment.tracksMeasured === 0) {
+            return "No track here has both cue points and a beat grid to measure them against.";
+        }
+        const within = cueAlignment.toleranceMs + " ms";
+        if (root.cueAlignmentFound === 0) {
+            return "Every cue point within " + within + " of a beat sits on it.";
+        }
+        const parts = [];
+        const alignable = cueAlignment.alignableSongCount;
+        if (alignable > 0) {
+            parts.push((alignable === 1 ? "One track has" : alignable + " tracks have")
+                       + " cue points up to " + within + " off the beat of their own library's grid: placed a "
+                       + "little early or late, or left behind when the track got a better grid. Seabass can "
+                       + "move them onto the beat.");
+        }
+        const held = cueAlignment.heldSongCount;
+        if (held > 0) {
+            parts.push((held === 1 ? "One track has" : held + " tracks have")
+                       + " every cue point off by the same amount, which is more likely a shifted grid than "
+                       + "misplaced cues, so " + (held === 1 ? "it is" : "they are") + " listed but not moved.");
+        }
+        return parts.join(" ");
+    }
+
     readonly property string junkCueSummary: {
         if (root.scanning) {
             return "Looking for cues sitting at the very start of a track...";
@@ -588,6 +652,24 @@ Page {
                 ok: root.junkCueCount === 0
                 actionLabel: root.junkCueCount > 0 ? "Review these cues" : ""
                 onActionRequested: root.detailRequested("junkcues")
+            }
+
+            HealthCheckCard {
+                objectName: "cueAlignmentCard"
+                fixableCount: root.cueAlignmentFixable
+                foundCount: root.cueAlignmentFound
+                actionEnabled: !healthController.stickReadOnly
+                actionDisabledReason: root.blockedByReadOnly
+                title: "Cue points off the beat"
+                summary: root.cueAlignmentSummary
+                running: root.scanning || cueAlignment.busy
+                ok: root.cueAlignmentFound === 0 && !root.cueAlignmentFailed
+                failed: root.cueAlignmentFailed
+                actionLabel: root.cueAlignmentFound > 0 ? "Review cue points" : ""
+                onActionRequested: {
+                    internal.cueAlignmentOpened = true;
+                    root.detailRequested("aligncues");
+                }
             }
 
             HealthCheckCard {

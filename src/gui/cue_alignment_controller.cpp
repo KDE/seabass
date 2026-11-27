@@ -324,9 +324,14 @@ void CueAlignmentListModel::setStaged(int row, bool staged)
 
 CueAlignmentController::CueAlignmentController(QObject *parent) : QObject(parent)
 {
+    m_toleranceMs = savedToleranceMs();
+}
+
+int CueAlignmentController::savedToleranceMs()
+{
     QSettings settings;
-    m_toleranceMs = std::clamp(settings.value(QLatin1String(ToleranceKey), DefaultToleranceMs).toInt(), MinimumToleranceMs,
-                               MaximumToleranceMs);
+    return std::clamp(settings.value(QLatin1String(ToleranceKey), DefaultToleranceMs).toInt(), MinimumToleranceMs,
+                      MaximumToleranceMs);
 }
 
 CueAlignmentController::~CueAlignmentController() = default;
@@ -410,6 +415,41 @@ int CueAlignmentController::tickableCount() const
     }));
 }
 
+namespace
+{
+
+// The audio files of the listed rows, held back or not.
+std::set<std::string> songsOf(const CueAlignmentListModel &model, bool held)
+{
+    std::set<std::string> songs;
+    for (const auto &row : model.rows()) {
+        const MeasuredTrack &measured = model.trackOf(row);
+        if (measured.held() == held) {
+            songs.insert(measured.track.filePath.empty() ? measured.key.toStdString()
+                                                         : application::normalizedPathKey(measured.track.filePath));
+        }
+    }
+    return songs;
+}
+
+}  // namespace
+
+int CueAlignmentController::alignableSongCount() const
+{
+    return static_cast<int>(songsOf(m_model, false).size());
+}
+
+int CueAlignmentController::heldSongCount() const
+{
+    // A song one library can align is counted there, not here as well.
+    const std::set<std::string> alignable = songsOf(m_model, false);
+    int count = 0;
+    for (const std::string &song : songsOf(m_model, true)) {
+        count += alignable.count(song) == 0 ? 1 : 0;
+    }
+    return count;
+}
+
 int CueAlignmentController::tickedCount() const
 {
     return static_cast<int>(std::count_if(m_model.rows().begin(), m_model.rows().end(), [](const auto &row) { return row.ticked; }));
@@ -424,6 +464,15 @@ void CueAlignmentController::scan(const QString &rekordboxPath, const QString &e
 {
     m_rekordboxPath = rekordboxPath;
     m_enginePath = enginePath;
+    // The tolerance another page set since this one was made (Library
+    // Health's card counts with whatever Align Cue Points was left at).
+    // Not under staged changes, as in setToleranceMs(): a save that leaves
+    // some staged reads the stick again, and they stay listed at the
+    // tolerance they were staged at.
+    if (const int saved = savedToleranceMs(); saved != m_toleranceMs && m_staged.isEmpty()) {
+        m_toleranceMs = saved;
+        emit toleranceChanged();
+    }
     attachSession();
     setErrorMessage({});
     const QString any = rekordboxPath.isEmpty() ? enginePath : rekordboxPath;

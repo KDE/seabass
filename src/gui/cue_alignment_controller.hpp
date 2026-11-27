@@ -158,6 +158,13 @@ class CueAlignmentController : public QObject
     Q_PROPERTY(int tickableCount READ tickableCount NOTIFY listChanged)
     Q_PROPERTY(int tickedCount READ tickedCount NOTIFY listChanged)
     Q_PROPERTY(int stagedCount READ stagedCount NOTIFY listChanged)
+    // The same listed rows counted in audio files, for Library Health's
+    // card: one song is a row in every library that holds it, and a count
+    // of rows read as two or three times the problem there is. Songs that
+    // can be aligned; songs whose every row is held back (a shifted grid,
+    // the MP3 offset), which the page lists but will not move.
+    Q_PROPERTY(int alignableSongCount READ alignableSongCount NOTIFY listChanged)
+    Q_PROPERTY(int heldSongCount READ heldSongCount NOTIFY listChanged)
 
 public:
     explicit CueAlignmentController(QObject *parent = nullptr);
@@ -166,6 +173,8 @@ public:
     static constexpr int DefaultToleranceMs = 20;
     static constexpr int MinimumToleranceMs = 2;
     static constexpr int MaximumToleranceMs = 100;
+    // What the page was last left at, or the default.
+    static int savedToleranceMs();
 
     CueAlignmentListModel *tracks() { return &m_model; }
     bool busy() const { return m_scan.busy(); }
@@ -181,6 +190,8 @@ public:
     int tickableCount() const;
     int tickedCount() const;
     int stagedCount() const;
+    int alignableSongCount() const;
+    int heldSongCount() const;
 
     // rekordboxPath is the stick's PIONEER folder and enginePath its
     // Engine Library folder; either may be empty.

@@ -861,6 +861,18 @@ ApplicationWindow {
             id: healthHub
             playbackController: playbackCtrl
             onDetailRequested: (section) => {
+                // Align Cue Points is a Maintain page of its own, with its
+                // own measure and tolerance: opened as from there, under
+                // this page's crumb.
+                if (section === "aligncues") {
+                    stackView.push(alignCuePointsPageComponent, {
+                        stickLabel: healthHub.stickLabel,
+                        hubLabel: "Library Health",
+                        rekordboxPath: healthHub.rekordboxPath,
+                        enginePath: healthHub.enginePath,
+                    });
+                    return;
+                }
                 const page = window.healthCheckPage(section);
                 if (page === null) {
                     return;

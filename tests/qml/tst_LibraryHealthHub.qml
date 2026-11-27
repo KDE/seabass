@@ -154,6 +154,7 @@ TestCase {
         var expected = [
             {card: "brokenFilesCard", section: "broken"},
             {card: "junkCuesCard", section: "junkcues"},
+            {card: "cueAlignmentCard", section: "aligncues"},
             {card: "importPromptCard", section: "import"},
             {card: "sampleRateCard", section: "samplerates"},
             {card: "coverArtCard", section: "artwork"},
@@ -1247,5 +1248,133 @@ TestCase {
             compare(controller.scanTotal, started[started.length - 1].total, run + ": one total to the end");
             compare(controller.scanPhase, "", run + ": nothing is left standing once the check is done");
         }
+    }
+
+    // Cue points a little off the beat of their own library's grid, on the
+    // cue-offsets stick (see tst_AlignCuePointsPage): measured once the
+    // check has read the catalogs, counted in songs at the tolerance
+    // Align Cue Points was left at, and measured again when that page
+    // hands back, at whatever it was left at then.
+    readonly property string cueOffsetsRoot: {
+        const url = Qt.resolvedUrl("../fixtures/cue-offsets/stick").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    Component {
+        id: toleranceComponent
+        CueAlignmentController {}
+    }
+
+    // Set when a test saves a tolerance of its own: put back after it even
+    // when it fails half way, so no later test measures at it.
+    property bool toleranceSaved: false
+
+    function cleanup() {
+        if (testCase.toleranceSaved) {
+            testCase.toleranceSaved = false;
+            const tolerance = createTemporaryObject(toleranceComponent, testCase);
+            tolerance.toleranceMs = 20;
+        }
+    }
+
+    function test_cuePointsOffTheBeatAreCountedInSongs() {
+        const tolerance = createTemporaryObject(toleranceComponent, testCase);
+        testCase.toleranceSaved = true;
+        tolerance.toleranceMs = 20;  // saved, as the page saves it
+        const stick = stickFixture.wholeStickCopy(testCase.cueOffsetsRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const page = createTemporaryObject(stickPageComponent, testCase,
+                                           {rekordboxPath: stick + "/PIONEER", enginePath: stick + "/Engine Library"});
+        const measure = page.cueAlignmentController;
+        const card = findByObjectName(page, "cueAlignmentCard");
+        verify(card !== null && card.visible);
+        tryVerify(() => !page.consistencyController.busy && measure.checked && !measure.busy, 300000,
+                  "the check and the measure finish");
+        compare(measure.errorMessage, "");
+        // At 20 ms: rekordbox's two pads 2 and 3 ms off their click. The
+        // Engine rows off by their file's MP3 offset are 26 ms and more.
+        compare(measure.toleranceMs, 20);
+        compare(measure.alignableSongCount, 2);
+        compare(measure.heldSongCount, 0);
+        compare(card.fixableCount, 2);
+        compare(card.foundCount, 2);
+        compare(card.ok, false);
+        compare(card.actionLabel, "Review cue points");
+        verify(card.summary.indexOf("2 tracks have cue points up to 20 ms off the beat") === 0, card.summary);
+        verify(card.summary.indexOf("not moved") < 0, card.summary);
+
+        // Align Cue Points left at 100 ms: the rows held back by the MP3
+        // offset are counted too, apart, and not as fixable.
+        tolerance.toleranceMs = 100;
+        page.measureCueAlignment();
+        tryVerify(() => measure.checked && !measure.busy && measure.toleranceMs === 100, 120000, "measured again");
+        // Two songs each way, and none in both: a song one library can
+        // align is not also counted as held back by the other.
+        compare(measure.alignableSongCount, 2);
+        compare(measure.heldSongCount, 2);
+        compare(card.fixableCount, measure.alignableSongCount);
+        compare(card.foundCount, measure.alignableSongCount + measure.heldSongCount);
+        verify(card.summary.indexOf("up to 100 ms") > 0, card.summary);
+        verify(card.summary.indexOf("listed but not moved") > 0, card.summary);
+
+        // The next measure cannot read its catalog (a stick that went, or
+        // a file that is not a catalog): the last list stays in the
+        // controller, and the card must not show it.
+        const unreadable = stickFixture.scratchDirectory() + "/unreadable/PIONEER";
+        verify(stickFixture.makeDirectory(unreadable + "/rekordbox"));
+        verify(stickFixture.writeText(unreadable + "/rekordbox/export.pdb", "not a catalog"));
+        measure.scan(unreadable, "");
+        tryVerify(() => !measure.busy && measure.errorMessage.length > 0, 120000, "the measure fails");
+        compare(card.failed, true);
+        compare(card.ok, false);
+        compare(card.fixableCount, 0);
+        compare(card.foundCount, 0);
+        compare(card.actionLabel, "");
+        compare(card.summary, measure.errorMessage);
+        verify(measure.checked, "the last list is still there, which is what the card must not show");
+    }
+
+    SignalSpy {
+        id: measuredSpy
+        signalName: "scanChanged"
+    }
+
+    // Coming back from Align Cue Points measures again, since its save may
+    // have moved cues; coming back from any other page does not.
+    function test_cuePointsAreMeasuredAgainAfterTheirReview() {
+        const stick = stickFixture.wholeStickCopy(testCase.cueOffsetsRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const stack = createTemporaryObject(crumbStackComponent, testCase);
+        const page = stack.push(stickPageComponent, {rekordboxPath: stick + "/PIONEER",
+                                                     enginePath: stick + "/Engine Library"}, StackView.Immediate);
+        const measure = page.cueAlignmentController;
+        const card = findByObjectName(page, "cueAlignmentCard");
+        tryVerify(() => !page.consistencyController.busy && measure.checked && !measure.busy, 300000,
+                  "the check and the measure finish");
+        measuredSpy.clear();
+        measuredSpy.target = measure;
+
+        // Another page opened and closed: nothing is measured.
+        stack.push(crumbFillerComponent, {}, StackView.Immediate);
+        stack.pop(StackView.Immediate);
+        wait(200);
+        compare(measuredSpy.count, 0, "no measure after a page that is not the review");
+        verify(!measure.busy);
+
+        // The card's own review opened and closed: measured once more.
+        card.actionRequested();
+        stack.push(crumbFillerComponent, {}, StackView.Immediate);
+        stack.pop(StackView.Immediate);
+        tryCompare(measuredSpy, "count", 1, 120000, "measured again after the review");
+        tryVerify(() => !measure.busy);
+
+        // And only once for that review.
+        stack.push(crumbFillerComponent, {}, StackView.Immediate);
+        stack.pop(StackView.Immediate);
+        wait(200);
+        // Not busy either: a second measure would still be under way.
+        verify(!measure.busy, "no second measure is running");
+        compare(measuredSpy.count, 1, "the review is answered once");
+        measuredSpy.target = null;
     }
 }

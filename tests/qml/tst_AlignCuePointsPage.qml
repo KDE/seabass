@@ -165,6 +165,51 @@ TestCase {
         compare(o.c.toleranceMs, o.c.maximumToleranceMs);
     }
 
+    Component {
+        id: otherControllerComponent
+        CueAlignmentController {}
+    }
+
+    // The tolerance is saved for the whole run of this file: a test that
+    // fails half way must not leave its own for the tests after it.
+    function cleanup() {
+        const controller = createTemporaryObject(otherControllerComponent, testCase);
+        controller.toleranceMs = 20;
+    }
+
+    // A tolerance saved elsewhere while changes are staged here does not
+    // reach this page with its next read of the stick (after a save that
+    // left some staged, say): what is staged stays listed as it was staged.
+    // With nothing staged, the next read takes it.
+    function test_aReadUnderStagedChangesKeepsTheirTolerance() {
+        const stick = freshStick();
+        const o = openOn(stick);
+        o.c.toleranceMs = 100;
+        const index = key => rows(o.c).findIndex(row => row.key === key);
+        o.c.setTicked(index("rekordbox:102"), true);
+        o.c.setTicked(index("engine:107"), true);
+        const stage = findChild(o.page, "stageButton");
+        mouseClick(stage);
+        compare(o.c.stagedCount, 2);
+        const stagedRows = JSON.stringify(rows(o.c));
+
+        const other = createTemporaryObject(otherControllerComponent, testCase);
+        other.toleranceMs = 10;
+        compare(other.toleranceMs, 10, "saved from outside");
+        o.c.scan(stick + "/PIONEER", stick + "/Engine Library");
+        tryVerify(() => o.c.checked && !o.c.busy, 120000, "read again");
+        compare(o.c.toleranceMs, 100);
+        compare(o.c.stagedCount, 2);
+        compare(JSON.stringify(rows(o.c)), stagedRows);
+
+        mouseClick(stage);
+        compare(o.c.stagedCount, 0, "Unstage");
+        o.c.scan(stick + "/PIONEER", stick + "/Engine Library");
+        tryVerify(() => o.c.checked && !o.c.busy && o.c.toleranceMs === 10, 120000,
+                  "with nothing staged the saved tolerance is taken");
+        o.c.toleranceMs = 20;
+    }
+
     // Ticked, staged and saved: the listed cue points of the ticked tracks
     // are on their beats when the stick is read again, in rekordbox's
     // analysis file and in Engine's row, and what was not ticked is as it
