@@ -510,6 +510,7 @@ add_library(seabass_core STATIC
     src/domain/hidden_engine_cues.cpp
     src/domain/playlist_sync.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/cue_beat_alignment.cpp
     src/domain/playlist_tracks_deletion.cpp
     src/domain/onelibrary_cue_table.cpp
     src/domain/playlist_diff.cpp
@@ -763,6 +764,7 @@ add_library(seabass_core_testing STATIC
     src/domain/rekordbox_baseline.cpp
     src/domain/engine_update_planning.cpp
     src/domain/tracks_in_no_playlist.cpp
+    src/domain/cue_beat_alignment.cpp
     src/domain/playlist_tracks_deletion.cpp
     src/domain/moved_files.cpp
     src/domain/imported_track.cpp
@@ -1342,6 +1344,8 @@ if(SEABASS_GUI AND Qt6_FOUND)
         src/gui/edit/changes/restore_metadata_change.cpp
         src/gui/edit/changes/remove_junk_cue_change.hpp
         src/gui/edit/changes/remove_junk_cue_change.cpp
+        src/gui/edit/changes/align_cues_change.hpp
+        src/gui/edit/changes/align_cues_change.cpp
         src/gui/edit/changes/repair_artwork_change.hpp
         src/gui/edit/changes/repair_artwork_change.cpp
         src/gui/artwork_rescue_sources.hpp
@@ -2768,6 +2772,11 @@ add_executable(tracks_in_no_playlist_test tests/tracks_in_no_playlist_test.cpp)
 target_link_libraries(tracks_in_no_playlist_test PRIVATE seabass_core_testing)
 target_include_directories(tracks_in_no_playlist_test PRIVATE src)
 add_test(NAME tracks_in_no_playlist_test COMMAND tracks_in_no_playlist_test)
+
+add_executable(cue_beat_alignment_test tests/cue_beat_alignment_test.cpp)
+target_link_libraries(cue_beat_alignment_test PRIVATE seabass_core_testing)
+target_include_directories(cue_beat_alignment_test PRIVATE src)
+add_test(NAME cue_beat_alignment_test COMMAND cue_beat_alignment_test)
 
 add_executable(playlist_tracks_deletion_test tests/playlist_tracks_deletion_test.cpp)
 target_link_libraries(playlist_tracks_deletion_test PRIVATE seabass_core_testing)

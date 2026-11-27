@@ -155,6 +155,7 @@ set(SEABASS_GUI_QML_FILES
     qml/PendingDeletionsPage.qml
     qml/RecordingsPage.qml
     qml/JunkCuePage.qml
+    qml/AlignCuePointsPage.qml
     qml/LibraryConsistencyPage.qml
     qml/CuesAtZeroPage.qml
     qml/ImportPromptPage.qml
@@ -240,6 +241,8 @@ set(SEABASS_GUI_SOURCES
     add_cue_controller.cpp
     playlist_edit_controller.hpp
     playlist_edit_controller.cpp
+    cue_alignment_controller.hpp
+    cue_alignment_controller.cpp
     track_edit_controller.hpp
     track_edit_controller.cpp
     track_import_controller.hpp

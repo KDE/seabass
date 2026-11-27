@@ -451,6 +451,7 @@ Page {
     signal cleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal pendingDeletionsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal junkCueCleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal alignCuePointsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal recordingsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
@@ -841,6 +842,8 @@ Page {
                                 root.pendingDeletionsRequested(stickLabel, rekordboxPath, enginePath)
                             onJunkCueCleanupRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.junkCueCleanupRequested(stickLabel, rekordboxPath, enginePath)
+                            onAlignCuePointsRequested: (stickLabel, rekordboxPath, enginePath) =>
+                                root.alignCuePointsRequested(stickLabel, rekordboxPath, enginePath)
                             onRecordingsRequested: (stickLabel, rekordboxPath, enginePath) =>
                                 root.recordingsRequested(stickLabel, rekordboxPath, enginePath)
                             onLibraryHealthRequested: (stickLabel, rekordboxPath, enginePath) =>

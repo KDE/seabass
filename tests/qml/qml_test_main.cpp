@@ -609,6 +609,27 @@ public:
         return m_roots.last();
     }
 
+    // A fixture that is a whole stick already (PIONEER, Engine Library,
+    // Contents and whatever else it holds), copied as it is. The stick's
+    // root, or empty on failure.
+    Q_INVOKABLE QString wholeStickCopy(const QString &stickRoot)
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        static std::atomic<int> copies{0};
+        const fs::path root = seabass::testing::scratchRoot()
+            / ("seabass_qml_whole_stick_" + std::to_string(QCoreApplication::applicationPid()) + "_"
+               + std::to_string(copies++));
+        fs::remove_all(root, ec);
+        fs::create_directories(root.parent_path(), ec);
+        fs::copy(seabass::pathFromUtf8(stickRoot.toStdString()), root, fs::copy_options::recursive, ec);
+        if (ec) {
+            return {};
+        }
+        m_roots.append(QString::fromStdString(seabass::pathToUtf8(root)));
+        return m_roots.last();
+    }
+
     // stickCopy without its Engine Library: a stick with only a rekordbox
     // export, which is what Create Engine Library starts from.
     Q_INVOKABLE QString rekordboxOnlyStickCopy(const QString &fixtureRoot)

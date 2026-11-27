@@ -574,6 +574,11 @@ ApplicationWindow {
                 rekordboxPath: rekordboxPath,
                 enginePath: enginePath,
             })
+            onAlignCuePointsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(alignCuePointsPageComponent, {
+                stickLabel: stickLabel,
+                rekordboxPath: rekordboxPath,
+                enginePath: enginePath,
+            })
             onRecordingsRequested: (stickLabel, rekordboxPath, enginePath) => stackView.push(recordingsPageComponent, {
                 stickLabel: stickLabel,
                 rekordboxPath: rekordboxPath,
@@ -702,6 +707,14 @@ ApplicationWindow {
     Component {
         id: trackDetailPageComponent
         TrackDetailPage {
+            playbackController: playbackCtrl
+            appSettingsController: appSettingsCtrl
+        }
+    }
+
+    Component {
+        id: alignCuePointsPageComponent
+        AlignCuePointsPage {
             playbackController: playbackCtrl
             appSettingsController: appSettingsCtrl
         }

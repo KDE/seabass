@@ -61,6 +61,7 @@ Item {
     signal cleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal pendingDeletionsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal junkCueCleanupRequested(string stickLabel, string rekordboxPath, string enginePath)
+    signal alignCuePointsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal recordingsRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal libraryHealthRequested(string stickLabel, string rekordboxPath, string enginePath)
     signal stickStatisticsRequested(string stickLabel, string rekordboxPath, string enginePath)
@@ -835,6 +836,23 @@ Item {
                 enabled: root.hasRekordbox || root.hasEngine
                 disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
                 onClicked: root.junkCueCleanupRequested(root.label, root.rekordboxPath, root.enginePath)
+            }
+            ActionCard {
+                objectName: "alignCuesCard"
+                large: root.large
+                Layout.preferredWidth: grid.cellWidth
+                Layout.maximumWidth: grid.cellWidth
+                Layout.fillHeight: true
+                cardTitle: "Align Cue Points"
+                readOnly: root.lockedByOther || root.stickReadOnly
+                readOnlyReason: root.stickReadOnly ? root.readOnlyNote : root.lockNote
+                onReadOnlyClicked: root.explainWriteBlock()
+                cardSubtitle: "Find cue points a little off the beat grid, and move them onto it"
+                cardIcon: "edit-find"
+                visible: root.group === "maintain" && root.showCleanUp
+                enabled: root.hasRekordbox || root.hasEngine
+                disabledReason: root.hasRekordbox || root.hasEngine ? "" : root.noLibraryReason
+                onClicked: root.alignCuePointsRequested(root.label, root.rekordboxPath, root.enginePath)
             }
             ActionCard {
                 objectName: "recordingsCard"
