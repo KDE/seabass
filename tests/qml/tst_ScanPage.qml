@@ -735,24 +735,20 @@ TestCase {
         cleanupExperimental();
     }
 
-    // Delete asks first, in the page; only OK stages, and the menu then
-    // offers Keep, which takes it back.
-    function test_deletingAPlaylistAsksThenStagesAndKeepTakesItBack() {
+    // Delete stages at once, with no question asked: nothing is written
+    // before Save, and the menu then offers Keep, which takes it back.
+    function test_deletingAPlaylistStagesAtOnceAndKeepTakesItBack() {
         const page = makeEditingPage();
         const menu = findChild(page, "playlistMenu");
-        const dialog = findChild(page, "deletePlaylistDialog");
+        compare(findChild(page, "deletePlaylistDialog"), null, "no dialog to ask in");
         page.openPlaylistMenu("Peak", page);
         tryCompare(menu, "opened", true);
         const item = findChild(page, "deletePlaylistItem");
-        compare(item.text, "Delete playlist...");
+        compare(item.text, "Delete playlist", "no dots: nothing follows the click");
         waitForRendering(page);
         saveScreenshot(page, "browse_playlist_menu");
         item.triggered();
-        tryCompare(dialog, "opened", true);
-        waitForRendering(page);
-        saveScreenshot(page, "browse_delete_playlist_dialog");
-        compare(page.playlistEditController.calls.length, 0, "nothing staged before OK");
-        dialog.accept();
+        compare(page.playlistEditController.calls.length, 1, "staged by the click itself");
         compare(JSON.stringify(page.playlistEditController.calls[0]),
                 JSON.stringify(["delete", "/nonexistent/TESTSTICK/PIONEER", "/nonexistent/TESTSTICK/Engine Library", "Peak"]));
         menu.close();
@@ -1097,17 +1093,6 @@ TestCase {
         cleanupExperimental();
     }
 
-    function test_cancellingTheDeleteDialogStagesNothing() {
-        const page = makeEditingPage();
-        page.openPlaylistMenu("Peak", page);
-        findChild(page, "deletePlaylistItem").triggered();
-        const dialog = findChild(page, "deletePlaylistDialog");
-        tryCompare(dialog, "opened", true);
-        dialog.reject();
-        compare(page.playlistEditController.calls.length, 0);
-        cleanupExperimental();
-    }
-
     // The sort combo stands in the same page as the library picker, one
     // row down, and is as tall as it.
     function test_theSortComboIsAsTallAsTheLibraryPicker() {
@@ -1163,8 +1148,26 @@ TestCase {
         return t;
     }
 
-    // Typed, key by key, the way a user fills it.
+    // The track search opened with its icon, and grown to its full width.
+    function openSearch(page) {
+        const search = findChild(page, "searchField");
+        if (!page.searchExpanded) {
+            mouseClick(findChild(page, "searchButton"));
+        }
+        tryCompare(search, "width", search.openWidth);
+        return search;
+    }
+
+    // Typed, key by key, the way a user fills it. The track search is
+    // folded into its icon until asked for.
     function typeInto(field, text) {
+        if (field.objectName === "searchField") {
+            let page = field.parent;
+            while (page !== null && typeof page.openSearch !== "function") {
+                page = page.parent;
+            }
+            openSearch(page);
+        }
         mouseClick(field);
         tryCompare(field, "activeFocus", true);
         for (const ch of text) {
@@ -1275,6 +1278,120 @@ TestCase {
         tryCompare(searchClear, "visible", false);
     }
 
+    // The track search is an icon in the header, left of the Sort by
+    // combo's side, and no row over the list: clicked, it grows into the
+    // field and takes the keyboard.
+    function test_theTrackSearchIsAnIconUntilAskedFor() {
+        const t = makeFilterPage();
+        const button = findChild(t.page, "searchButton");
+        verify(button !== null && button.visible);
+        compare(t.search.visible, false, "folded away until asked for");
+        compare(t.page.searchExpanded, false);
+        // In the header, on the sidebar button's row and right of it.
+        const sidebarButton = findChild(t.page, "playlistSidebarButton");
+        compare(button.parent, sidebarButton.parent);
+        verify(button.x > sidebarButton.x);
+        verify(button.x < findChild(t.page, "sortCombo").x);
+        // And nothing between the top of the list's column and its headers.
+        const title = findChild(t.page, "sortHeader_title");
+        const column = t.tracks.parent;
+        verify(title.mapToItem(column, 0, 0).y < Theme.compactControlHeight,
+               "the column headers start the column: " + title.mapToItem(column, 0, 0).y);
+
+        mouseClick(button);
+        compare(t.page.searchExpanded, true);
+        compare(t.search.visible, true);
+        tryCompare(t.search, "activeFocus", true);
+        tryCompare(t.search, "width", t.search.openWidth);
+        compare(t.search.parent, button.parent, "beside its icon");
+        verify(t.search.x > button.x);
+        for (const ch of "1004") {
+            keyClick(ch);
+        }
+        compare(t.search.text, "1004", "typed straight in, with no second click");
+        tryCompare(t.tracks, "count", 1);
+    }
+
+    // Left empty, the field folds back into the icon; holding text it
+    // stays, wherever the keyboard goes, so a narrowed list shows why.
+    function test_theTrackSearchFoldsAwayOnlyWhenEmpty() {
+        const t = makeFilterPage();
+        openSearch(t.page);
+        tryCompare(t.search, "activeFocus", true);
+        t.tracks.forceActiveFocus();
+        tryCompare(t.search, "visible", false);
+        compare(t.page.searchExpanded, false);
+
+        typeInto(t.search, "1002");
+        tryCompare(t.tracks, "count", 1);
+        t.tracks.forceActiveFocus();
+        tryCompare(t.search, "activeFocus", false);
+        wait(Theme.shortTransitionDuration * 2);
+        compare(t.search.visible, true, "a search in force stays in sight");
+        compare(t.search.width, t.search.openWidth);
+        compare(t.tracks.count, 1);
+
+        // Text put there by anything else opens it too.
+        t.search.text = "";
+        tryCompare(t.search, "visible", false);
+        t.search.text = "1005";
+        compare(t.search.visible, true);
+        tryCompare(t.tracks, "count", 1);
+    }
+
+    // Escape, or the icon again, closes the search and ends it: closed,
+    // it narrows nothing.
+    function test_closingTheTrackSearchEndsIt() {
+        const t = makeFilterPage();
+        typeInto(t.search, "1001");
+        tryCompare(t.tracks, "count", 1);
+        keyClick(Qt.Key_Escape);
+        compare(t.search.text, "");
+        tryCompare(t.search, "visible", false);
+        tryCompare(t.tracks, "count", 6);
+
+        typeInto(t.search, "1003");
+        tryCompare(t.tracks, "count", 1);
+        const button = findChild(t.page, "searchButton");
+        compare(button.text, "Close the search");
+        mouseClick(button);
+        compare(t.search.text, "");
+        tryCompare(t.search, "visible", false);
+        tryCompare(t.tracks, "count", 6);
+        compare(button.text, "Search tracks");
+
+        // Open and empty, the icon closes it as well, and one click does
+        // not open it straight back.
+        mouseClick(button);
+        tryCompare(t.search, "activeFocus", true);
+        mouseClick(button);
+        tryCompare(t.search, "visible", false);
+        compare(t.page.searchExpanded, false);
+    }
+
+    // Cleared with its button, a field keeps the keyboard: the track
+    // search stays open for the next thing to look for.
+    function test_clearingAFieldKeepsTheKeyboardInIt() {
+        const t = makeFilterPage();
+        typeInto(t.search, "1002");
+        const searchClear = findChild(t.page, "searchClearButton");
+        tryCompare(searchClear, "visible", true);
+        mouseClick(searchClear);
+        compare(t.search.text, "");
+        tryCompare(t.search, "activeFocus", true);
+        compare(t.search.visible, true);
+        compare(t.page.searchExpanded, true, "open, for the next search");
+        for (const ch of "1005") {
+            keyClick(ch);
+        }
+        compare(t.search.text, "1005");
+
+        typeInto(t.playlistFilter, "rev");
+        mouseClick(findChild(t.page, "playlistFilterClearButton"));
+        compare(t.playlistFilter.text, "");
+        tryCompare(t.playlistFilter, "activeFocus", true);
+    }
+
     function test_anEmptyFilterResultSaysSo() {
         const t = makeFilterPage();
         const playlistsEmpty = findChild(t.page, "playlistFilterEmptyState");
@@ -1313,29 +1430,32 @@ TestCase {
         compare(tracksEmpty.visible, true);
     }
 
-    // Each field stands with the list it filters: the playlist filter
-    // over the sidebar, the track search over the track list.
+    // The playlist filter stands over the sidebar it filters; the track
+    // search is in the header, on the Sort by combo's row and as tall, so
+    // the track list's columns start its column.
     function test_eachFilterSitsWithItsOwnList() {
         const t = makeFilterPage();
+        openSearch(t.page);
         waitForPolish(t.page.Window.window);
         const sidebar = findChild(t.page, "playlistSidebar");
         const sidebarLeft = sidebar.mapToItem(t.page, 0, 0).x;
-        const tracksLeft = t.tracks.mapToItem(t.page, 0, 0).x;
         const filterAt = t.playlistFilter.mapToItem(t.page, 0, 0);
         const searchAt = t.search.mapToItem(t.page, 0, 0);
         verify(t.playlistFilter.width > 0 && t.search.width > 0);
 
         verify(filterAt.x >= sidebarLeft && filterAt.x + t.playlistFilter.width <= sidebarLeft + sidebar.width,
                "the playlist filter within the sidebar: " + filterAt.x + " in " + sidebarLeft + ".." + (sidebarLeft + sidebar.width));
-        verify(searchAt.x >= tracksLeft && searchAt.x + t.search.width <= tracksLeft + t.tracks.width,
-               "the track search within the track list: " + searchAt.x + " in " + tracksLeft + ".." + (tracksLeft + t.tracks.width));
-        // Over their lists, on one line.
         verify(filterAt.y + t.playlistFilter.height <= t.playlists.mapToItem(t.page, 0, 0).y + 1, "over the playlists");
-        verify(searchAt.y + t.search.height <= t.tracks.mapToItem(t.page, 0, 0).y + 1, "over the tracks");
-        compare(Math.round(filterAt.y), Math.round(searchAt.y));
+
+        const combo = findChild(t.page, "sortCombo");
+        const comboAt = combo.mapToItem(t.page, 0, 0);
+        const bodyTop = t.tracks.parent.mapToItem(t.page, 0, 0).y;
+        verify(searchAt.y + t.search.height <= bodyTop + 1,
+               "in the header, over the page's body: " + (searchAt.y + t.search.height) + " above " + bodyTop);
+        compare(t.search.height, combo.height);
+        compare(Math.round(searchAt.y), Math.round(comboAt.y));
+        verify(searchAt.x + t.search.width <= comboAt.x, "left of Sort by");
         compare(t.playlistFilter.height, t.search.height);
-        // The search on the columns' left line.
-        compare(Math.round(searchAt.x), Math.round(findChild(t.page, "headerCell_artwork").mapToItem(t.page, 0, 0).x));
     }
 
     // The pane is where the playing track is shown. A track played from
@@ -2000,7 +2120,9 @@ TestCase {
     // it came from.
     function test_aDropIsCancelledByEscapeOrAClickElsewhere() {
         const t = makeDragPage();
-        const row = t.list.itemAtIndex(1);
+        // A row the card, put down on the playlist, does not reach over:
+        // a press under the card is the card's.
+        const row = t.list.itemAtIndex(4);
         const target = playlistRow(t, "Held Playlist");
         const confirmDrop = () => {
             dragOnto(row, target);

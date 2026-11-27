@@ -919,38 +919,28 @@ Page {
             text: qsTr("Keep the name \"%1\"").arg(playlistMenu.oldName)
             onTriggered: root.playlistEditController.keepPlaylistName(playlistMenu.playlist)
         }
+        // Delete asks nothing: it only marks the playlist, nothing is
+        // written before Save, and this same item then takes it back.
         MenuItem {
             objectName: "deletePlaylistItem"
             text: playlistMenu.isNew ? qsTr("Don't create this playlist")
-                : playlistMenu.staged ? qsTr("Keep this playlist") : qsTr("Delete playlist...")
+                : playlistMenu.staged ? qsTr("Keep this playlist") : qsTr("Delete playlist")
             onTriggered: {
                 if (playlistMenu.isNew) {
                     root.playlistEditController.dropNewPlaylist(playlistMenu.playlist);
                 } else if (playlistMenu.staged) {
                     root.playlistEditController.keepPlaylist(playlistMenu.playlist);
                 } else {
-                    deletePlaylistDialog.playlist = playlistMenu.playlist;
-                    deletePlaylistDialog.open();
+                    root.playlistEditController.deletePlaylist(root.rekordboxPath, root.enginePath, playlistMenu.playlist);
                 }
             }
         }
     }
 
-    // The three playlist dialogs wear SeabassDialog's frame, which is
-    // what insets their buttons from the edge: a plain Dialog left them
-    // flush against the frame's right and bottom border.
-    SeabassDialog {
-        id: deletePlaylistDialog
-        objectName: "deletePlaylistDialog"
-        property string playlist: ""
-        severity: SeabassDialog.Question
-        title: qsTr("Delete playlist")
-        headline: qsTr("Delete \"%1\" from every library on this stick?").arg(deletePlaylistDialog.playlist)
-        detailText: qsTr("Its tracks stay on the stick. Nothing changes until you Save.")
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        onAccepted: root.playlistEditController.deletePlaylist(root.rekordboxPath, root.enginePath, deletePlaylistDialog.playlist)
-    }
-
+    // The playlist dialogs wear SeabassDialog's frame, which is what
+    // insets their buttons from the edge: a plain Dialog left them flush
+    // against the frame's right and bottom border.
+    //
     // A new name for a playlist (its last segment), given in every library
     // on the stick on Save.
     SeabassDialog {
@@ -2000,6 +1990,21 @@ Page {
         return oneDecimal.endsWith(".0") ? oneDecimal.slice(0, -2) : oneDecimal;
     }
 
+    // The track search in the header (searchField): asked for with its
+    // icon, and open for as long as it holds text whoever put it there.
+    property bool searchOpen: false
+    readonly property bool searchExpanded: root.searchOpen || searchField.text.length > 0
+    function openSearch() {
+        root.searchOpen = true;
+        searchField.forceActiveFocus();
+    }
+    // Closed, it narrows nothing: a search that could not be seen would
+    // leave a short list with no reason shown.
+    function closeSearch() {
+        searchField.text = "";
+        root.searchOpen = false;
+    }
+
     // A filter field with its own clear button: the playlist sidebar has
     // one for playlist names and the track list one for its tracks, each
     // over what it narrows (#106). One text used to narrow both, so a
@@ -2042,7 +2047,11 @@ Page {
             iconName: "edit-clear"
             ToolTip.visible: hovered
             ToolTip.text: filterField.clearText
-            onClicked: filterField.text = ""
+            // The field keeps the keyboard: cleared to type something else.
+            onClicked: {
+                filterField.forceActiveFocus();
+                filterField.text = "";
+            }
         }
     }
 
@@ -2108,6 +2117,59 @@ Page {
                     ToolTip.visible: hovered
                     ToolTip.text: root.playlistSidebarOpen ? "Collapse the playlist sidebar" : "Show the playlist sidebar"
                     onClicked: root.playlistSidebarOpen = !root.playlistSidebarOpen
+                }
+                // The track search, folded into its icon: a field over the
+                // list cost every playlist a row, searched or not. Open
+                // while it has the keyboard or holds text (root.
+                // searchExpanded), so a narrowed list always shows what
+                // narrows it. The sidebar's playlists have their own filter
+                // (playlistFilterField).
+                IconToolButton {
+                    id: searchButton
+                    objectName: "searchButton"
+                    iconName: "edit-find"
+                    text: root.searchExpanded ? "Close the search" : "Search tracks"
+                    ToolTip.visible: hovered
+                    ToolTip.text: text
+                    // By Tab, not by a click: a click that took the
+                    // keyboard from the empty field would close it, and
+                    // the click itself then open it again.
+                    focusPolicy: Qt.TabFocus
+                    onClicked: root.searchExpanded ? root.closeSearch() : root.openSearch()
+                }
+                FilterField {
+                    id: searchField
+                    objectName: "searchField"
+                    // Grows out of the icon and back into it. Shown from the
+                    // moment it opens, so it can take the keyboard then, and
+                    // until it has closed all the way.
+                    readonly property real openWidth: Theme.scaled(260)
+                    property real shownWidth: root.searchExpanded ? openWidth : 0
+                    Behavior on shownWidth {
+                        NumberAnimation { duration: Theme.shortTransitionDuration; easing.type: Easing.OutCubic }
+                    }
+                    visible: root.searchExpanded || shownWidth > 0
+                    clip: true
+                    Layout.preferredWidth: shownWidth
+                    Layout.minimumWidth: 0
+                    placeholderText: "Search title, artist, or album..."
+                    accessibleName: "Search tracks"
+                    clearText: "Clear search"
+                    clearObjectName: "searchClearButton"
+                    // Left empty, or emptied while the keyboard is
+                    // elsewhere, it folds away again.
+                    onTextChanged: {
+                        scanController.search(text);
+                        if (!activeFocus && text.length === 0) {
+                            root.searchOpen = false;
+                        }
+                    }
+                    onActiveFocusChanged: {
+                        if (!activeFocus && text.length === 0) {
+                            root.searchOpen = false;
+                        }
+                    }
+                    Keys.onEscapePressed: root.closeSearch()
                 }
                 Item { Layout.fillWidth: true }
                 Label { text: "Sort by" }
@@ -2476,24 +2538,6 @@ Page {
             id: browseColumn
             SplitView.fillWidth: true
             spacing: 0
-
-            // Narrows the tracks of the playlist shown, by title, artist
-            // or album; the sidebar's playlists have their own filter
-            // (playlistFilterField). On the same line as that one, and on
-            // the left line of the columns under it.
-            FilterField {
-                id: searchField
-                objectName: "searchField"
-                Layout.preferredWidth: Theme.scaled(260)
-                Layout.leftMargin: root.trackRowInset
-                Layout.topMargin: Theme.tightSpacing
-                Layout.bottomMargin: Theme.tightSpacing
-                placeholderText: "Search title, artist, or album..."
-                accessibleName: "Search tracks"
-                clearText: "Clear search"
-                clearObjectName: "searchClearButton"
-                onTextChanged: scanController.search(text)
-            }
 
             RowLayout {
                 // The track rows' column geometry (root.trackRowInset and

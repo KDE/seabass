@@ -1542,7 +1542,7 @@ TestCase {
         compare(strip.expanded, false);
         // Escape in the search field is the field's.
         const search = findChild(page, "searchField");
-        search.forceActiveFocus();
+        page.openSearch();
         tryCompare(search, "activeFocus", true);
         keyClick(Qt.Key_Escape);
         compare(JSON.stringify(fake.calls), JSON.stringify([["cancel"]]), "no cancel from a text field");
