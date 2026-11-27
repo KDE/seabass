@@ -542,9 +542,18 @@ PreparedImport prepareTrackImportOn(const ImportRequest &request, const applicat
                 prepared.notImported.push_back(left->second);
             }
         } else if (entry.verdict != domain::ImportVerdict::Import) {
-            prepared.notImported.push_back(
-                {source, whyNot(entry, rootText),
-                 entry.verdict == domain::ImportVerdict::AlreadyOnStick && entry.inLibrary});
+            // Nothing to do only when every library of the stick lists
+            // it, as the staging asks of a file for a playlist: one that
+            // only some list is not where an import would have put it.
+            bool everywhere = entry.verdict == domain::ImportVerdict::AlreadyOnStick && entry.inLibrary;
+            if (everywhere) {
+                const auto known = listed.find(application::normalizedPathKey(entry.existingPath));
+                everywhere = known != listed.end()
+                             && std::all_of(target.libraries.begin(), target.libraries.end(), [&](const QString &library) {
+                                    return known->second.track.listedIn.contains(library);
+                                });
+            }
+            prepared.notImported.push_back({source, whyNot(entry, rootText), everywhere});
             if (entry.verdict == domain::ImportVerdict::PossibleDuplicate) {
                 prepared.possibleDuplicates.push_back(source);
             }

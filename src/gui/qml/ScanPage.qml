@@ -331,8 +331,8 @@ Page {
         headline: staged === 0 && added > 0 ? qsTr("%n track(s) of the stick ready to go into \"%1\".", "", added).arg(playlist)
             : staged === 0 && allOnStick ? qsTr("Nothing to import: %n file(s) on the stick already.", "", onStick)
             : staged === 0 && onStick > 0
-                ? qsTr("Nothing to import: %n file(s) on the stick already.", "", onStick) + " "
-                    + qsTr("%n other file(s) cannot be imported.", "", notImported.length - onStick)
+                ? qsTr("%n file(s) on the stick already.", "", onStick) + " "
+                    + qsTr("%n other file(s) not imported.", "", notImported.length - onStick)
             : staged === 0 ? qsTr("None of these files can be imported.")
             : playlist.length === 0 ? qsTr("%n track(s) ready to import.", "", staged)
             : (outcome.playlistIsNew ? qsTr("%n track(s) ready to import into the new playlist \"%1\".", "", staged)

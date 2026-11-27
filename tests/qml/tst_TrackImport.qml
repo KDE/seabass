@@ -544,7 +544,7 @@ TestCase {
                            possibleDuplicates: 0};
         fake.resultReady();
         tryCompare(dialog, "opened", true);
-        compare(dialog.headline, "Nothing to import: 1 file(s) on the stick already. 1 other file(s) cannot be imported.");
+        compare(dialog.headline, "1 file(s) on the stick already. 1 other file(s) not imported.");
         compare(dialog.severity, SeabassDialog.Warning);
         dialog.close();
     }
