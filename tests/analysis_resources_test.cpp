@@ -154,6 +154,16 @@ int main()
         assert(analysisBytesFor(3600.0, 48000) < 270ull * 1024 * 1024);
         assert(analysisBytesFor(0.0, 96000) == AnalysisBaseBytes + AnalysisHighRateBytes);
         assert(analysisBytesFor(-5.0, 44100) == AnalysisBaseBytes);
+        // A high-rate track a minute in: the rest of eight minutes' worth at
+        // its own rate is held back, its extra 40 MB in it.
+        {
+            AnalysisMemoryGate highRate([] { return std::optional<std::uint64_t>(100 * GB); });
+            const int ticket = highRate.enter(cancel);
+            highRate.noteRead(ticket, 60.0, 96000, cancel);
+            assert(highRate.stillToTake() == analysisBytesFor(AnalysisTypicalSeconds, 96000) - analysisBytesFor(60.0, 96000));
+            assert(highRate.stillToTake() == 7 * AnalysisBytesPerMinute);
+            highRate.leave(ticket);
+        }
 
         // A cancel ends a wait.
         free = 0;

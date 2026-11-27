@@ -71,7 +71,6 @@
 using namespace seabass;
 using infrastructure::audio::QtCoverArtPreparer;
 using infrastructure::audio::QtFlacRecordingEncoder;
-using infrastructure::audio::RecordingEncodeTempSuffix;
 using infrastructure::audio::TagLibRecordingTagWriter;
 namespace fs = std::filesystem;
 
@@ -118,9 +117,7 @@ ino_t inodeOf(const std::string &path)
 // name, as a keep job has it before the tags.
 application::VerifiedFlac unplaced(QtFlacRecordingEncoder &encoder, const std::string &wav, const std::string &flac)
 {
-    application::RecordingEncodeOptions options;
-    options.leaveUnplaced = true;
-    const auto made = encoder.encode(wav, flac, options);
+    const auto made = encoder.encode(wav, flac, {});
     check(made.encoded && !made.unplaced.path.empty(), "the FLAC to tag is made, unplaced (" + made.error + ")");
     return made.unplaced;
 }
@@ -426,10 +423,6 @@ void notTheFileChecked(const std::string &dir)
               "another STREAMINFO than described: refused (" + result.error + ")");
         check(readAll(proven.path) == bytes, "another STREAMINFO than described: the file is as it was");
     }
-    check(infrastructure::audio::recordingTempNameExtraBytes()
-              == 1 + 16 + std::string_view(RecordingEncodeTempSuffix).size(),
-          "the name budget's extra bytes are the encoder's temporary name's: "
-              + std::to_string(infrastructure::audio::recordingTempNameExtraBytes()));
     fs::remove(pathFromUtf8(proven.path));
 }
 

@@ -199,7 +199,10 @@ public:
     // that already holds these cues is left alone. The cue table is then
     // kept in step for whatever else reads it (rekordbox desktop may;
     // unverified), never as the source of truth. A row naming no
-    // analysis file on the stick gets the table only, with a warning.
+    // analysis file on the stick gets the table only, with a warning. A
+    // cue before the start of the track, or at a time that is not a
+    // number, is left out of both and the rest written, as
+    // rekordbox::writableCues() leaves it out of DeviceLibrary's files.
     //
     // The analysis files are not exportLibrary.db, so a caller backing
     // up before a save must cover them too: cueFilesForPath() names them,

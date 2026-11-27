@@ -26,19 +26,13 @@ struct RecordingEncodeOptions
     CancellationToken cancel;
     // Called with how much of the whole job is done, 0 to 1, from the
     // thread that called encode(). The encoding and the check of what was
-    // written are both in it.
+    // written are both in it; it stops short of 1, which is the placing.
     std::function<void(double)> progress;
     // The person chose to keep the audio of a recording the player did
     // not finish (its header unfinished): every whole frame the file holds
     // after the data chunk's header is encoded, and checked against
     // exactly those. Without it such a recording is refused (unfinished).
     bool keepUnfinished = false;
-    // The proven file is not given the target's name: it stays under its
-    // temporary name beside the target, and RecordingEncodeResult::unplaced
-    // describes it. From then on it is the caller's: placeVerified() gives
-    // it the target's name, and a caller that does not place it removes it.
-    // Progress then stops short of 1, which is the placing.
-    bool leaveUnplaced = false;
 };
 
 // A FLAC that was proven to hold a recording, as it is now: where it is,
@@ -86,12 +80,14 @@ struct RecordingEncodeResult
     // framesDeclared is then not to be said as a length).
     std::uint64_t bytesMissing = 0;
     bool declaredUnusable = false;
-    // When encoded with leaveUnplaced: the proven file under its temporary
-    // name. Empty otherwise.
+    // When encoded: the proven file under its temporary name. Empty
+    // otherwise.
     VerifiedFlac unplaced;
-    // Things the person should know of an encoding that succeeded, in
-    // words (a second name of the FLAC that could not be removed).
-    std::vector<std::string> notes;
+    // When not encoded or cancelled: the path of the temporary file that
+    // is still there, or may be (it could not be removed, something else
+    // is under its name, or the filesystem would not say). Empty when
+    // nothing was left.
+    std::string leftBehind;
 };
 
 // What RecordingEncoder::placeVerified did.
@@ -105,8 +101,12 @@ struct RecordingPlaceResult
     // where it is, and does not count as kept. When false and not placed,
     // the file is still under its own name.
     bool leftUnderTargetName = false;
-    // Things the person should know of a placing that succeeded (a second
-    // name of the FLAC that could not be removed).
+    // When placed through a hard link whose old name could not be removed
+    // (NoReplaceRename::oldNameRemains): that second name of the FLAC, a
+    // leftover in the folder. Empty otherwise.
+    std::string leftBehind;
+    // Things the person should know of a placing that succeeded, in words
+    // (the second name, with its path).
     std::vector<std::string> notes;
 };
 
@@ -114,16 +114,16 @@ struct RecordingPlaceResult
 // FLAC, for keeping it.
 //
 // The FLAC counts only once it was decoded again and found to hold the
-// WAV's samples, every one of every channel, and as many of them. Until
-// then it lies under a temporary name beside the target, and any failure,
-// a mismatch or a cancel takes that away again: a file under the target's
-// name is always a whole and proven one. A target that exists is refused
-// and never replaced.
+// WAV's samples, every one of every channel, and as many of them. It lies
+// under a temporary name beside the target, and any failure, a mismatch or
+// a cancel takes that away again (RecordingEncodeResult::leftBehind says
+// when it could not): a file under the target's name is always a whole
+// and proven one. A target that exists is refused and never replaced.
 //
-// encode() places the proven file itself, unless asked to leave it
-// unplaced (RecordingEncodeOptions::leaveUnplaced), for a caller that
-// writes into it first (the tags) and then has it placed by
-// placeVerified(). Both place the same way.
+// encode() leaves the proven file under its temporary name
+// (RecordingEncodeResult::unplaced): from then on it is the caller's,
+// which writes into it (the tags) and has it placed by placeVerified(),
+// or removes it. Progress stops short of 1, which is the placing.
 //
 // Blocks until done. Never throws.
 class RecordingEncoder

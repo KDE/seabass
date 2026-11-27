@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -86,8 +87,49 @@ void noteAnalysisFileWritten(const std::string &path);
 // How many analysis file writes have been noted in this process: a reader
 // that remembers the number sees whether any write came since.
 std::uint64_t analysisFileWriteSerial();
-// The paths noted after the first `serial` writes, in order, and in
-// `serialNow` the serial they bring it to.
-std::vector<std::string> analysisFilesWrittenSince(std::uint64_t serial, std::uint64_t *serialNow);
+
+// How many noted paths are held for readers that have not taken them. A
+// write noted past this many forgets them all, and every reader that had
+// not taken them is told that anything may have changed. A full stick
+// restore writes more analysis files than this, and after it nothing
+// kept of the stick's analyses is worth keeping anyway.
+constexpr std::size_t AnalysisFileWritesHeld = 20000;
+// The paths held right now, for the test.
+std::size_t analysisFileWritesHeldNow();
+
+// A reader of the analysis file writes noted in this process. Every
+// reader is handed every write noted from the start of the process (a
+// cache made late still forgets what was written before it), each
+// once, or where some of them are no longer held, told that anything
+// may have changed. A path is held until every reader alive has taken
+// it, and never more than AnalysisFileWritesHeld paths in all, readers
+// alive or not.
+class AnalysisFileWriteReader
+{
+public:
+    AnalysisFileWriteReader();
+    ~AnalysisFileWriteReader();
+    AnalysisFileWriteReader(const AnalysisFileWriteReader &) = delete;
+    AnalysisFileWriteReader &operator=(const AnalysisFileWriteReader &) = delete;
+
+    struct Writes
+    {
+        // In the order they were noted.
+        std::vector<std::string> paths;
+        // Writes this reader had not taken were forgotten (the cap, or
+        // other readers took them before this one existed): any analysis
+        // file may have changed.
+        bool everything = false;
+    };
+    // Whether a write was noted that take() has not handed over: one
+    // atomic read, no lock.
+    bool behind() const;
+    // The writes noted since the last take(), and lets go of them.
+    Writes take();
+
+private:
+    // The serial up to which this reader has taken the writes.
+    std::uint64_t m_seen = 0;
+};
 
 }  // namespace seabass::infrastructure

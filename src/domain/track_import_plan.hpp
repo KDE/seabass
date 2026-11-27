@@ -27,8 +27,9 @@ enum class ImportVerdict {
     Import,
     // These bytes are on the stick already (`existingPath`): the very file
     // offered, or a copy of it under any name. Nothing is copied.
-    // `inLibrary` says whether a library lists that file; when none does,
-    // the file on the stick gets the rows.
+    // `inLibrary` says whether a library lists that file. One that no
+    // library lists stays as it is: putting a file already on the stick
+    // into the libraries is not something an import does.
     AlreadyOnStick,
     // The library holds another file with this artist and title (or, with
     // no tags, this file name) and the same length: `existingPath`. It
@@ -162,8 +163,6 @@ struct ImportPlanEntry
     std::string existingPath;
     // AlreadyOnStick: a library has a row for existingPath.
     bool inLibrary = false;
-    // Import: this was a PossibleDuplicate the person chose to import.
-    bool importedAnyway = false;
 };
 
 struct ImportPlan
@@ -218,8 +217,8 @@ std::string importDestination(const Track &file);
 std::set<std::string> importableExtensions(const std::set<std::string> &formats);
 
 // The largest file a filesystem holds, by the lowercase type name the OS
-// reports ("vfat", "msdos", "fat32": 4 GiB less one byte; "fat", "fat16",
-// "fat12": 2 GiB less one); 0 for the rest.
+// reports, in any case ("vfat", "msdos", "msdosfs", "fat32": 4 GiB less
+// one byte; "fat", "fat16", "fat12": 2 GiB less one); 0 for the rest.
 std::uint64_t maxFileBytesFor(const std::string &filesystem);
 
 }  // namespace seabass::domain

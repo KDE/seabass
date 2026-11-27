@@ -127,7 +127,7 @@ void TrackImportController::setExperimentalEnabled(bool enabled)
 bool TrackImportController::allowedToStage()
 {
     if (!m_experimentalEnabled) {
-        setErrorMessage(QStringLiteral("Importing tracks and Analyse again are experimental features, switched off in "
+        setErrorMessage(tr("Importing tracks and Analyse again are experimental features, switched off in "
                                        "Preferences."));
         return false;
     }
@@ -470,12 +470,12 @@ bool TrackImportController::attachSession(const QString &rekordboxPath, const QS
         }
     }
     if (!m_session) {
-        setErrorMessage(QStringLiteral("This stick has no edit session open."));
+        setErrorMessage(tr("This stick has no edit session open."));
         return false;
     }
     m_session->setLibraryPaths(rekordboxPath, enginePath);
     if (m_session->writing()) {
-        setErrorMessage(QStringLiteral("A save is writing to the stick. Try again when it has finished."));
+        setErrorMessage(tr("A save is writing to the stick. Try again when it has finished."));
         return false;
     }
     return true;
@@ -498,7 +498,7 @@ bool TrackImportController::importFiles(const QString &rekordboxPath, const QStr
         }
     }
     if (request.offered.empty()) {
-        setErrorMessage(QStringLiteral("Nothing that was dropped is a file on this computer."));
+        setErrorMessage(tr("Nothing that was dropped is a file on this computer."));
         return false;
     }
     request.rekordboxPath = rekordboxPath;
@@ -534,8 +534,8 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged)
 {
     if (m_busy) {
         setErrorMessage(!m_reanalysingPlaylist.isEmpty()
-                            ? QStringLiteral("Tracks are being analysed again. Import when that has finished.")
-                            : QStringLiteral("An import is being prepared already."));
+                            ? tr("Tracks are being analysed again. Import when that has finished.")
+                            : tr("An import is being prepared already."));
         return false;
     }
     if (!attachSession(request.rekordboxPath, request.enginePath)) {
@@ -568,12 +568,12 @@ bool TrackImportController::start(ImportRequest request, bool replacesStaged)
             joins = true;
         } else {
             setErrorMessage(!m_reanalysed.empty()
-                                ? QStringLiteral("Tracks analysed again are waiting to be saved: an import is checked "
+                                ? tr("Tracks analysed again are waiting to be saved: an import is checked "
                                                  "against the stick as it is. Save or take them back first.")
                             : oursOnly
-                                ? QStringLiteral("An import into another playlist is waiting to be saved. Save it, or take "
+                                ? tr("An import into another playlist is waiting to be saved. Save it, or take "
                                                  "it back, before the next.")
-                                : QStringLiteral("Save or discard the edits that are waiting first: an import is checked "
+                                : tr("Save or discard the edits that are waiting first: an import is checked "
                                                  "against the stick as it is now."));
             return false;
         }
@@ -646,7 +646,7 @@ void TrackImportController::onPrepared()
         return;
     }
     if (!thrown.isEmpty()) {
-        setErrorMessage(QStringLiteral("The import could not be prepared: %1").arg(thrown));
+        setErrorMessage(tr("The import could not be prepared: %1").arg(thrown));
         return;
     }
     if (!prepared.refusal.empty()) {
@@ -662,13 +662,13 @@ void TrackImportController::onPrepared()
     // the stick by now, or that were just refused.
     const bool joining = m_joining;
     if (joining && m_staged != m_joined) {
-        setErrorMessage(QStringLiteral("The import that was waiting changed while more was added to it. Offer the new "
+        setErrorMessage(tr("The import that was waiting changed while more was added to it. Offer the new "
                                        "files again."));
         return;
     }
     // Nothing but that batch may wait.
     if (m_session->pendingCount() != (joining ? static_cast<int>(m_staged.size()) : 0)) {
-        setErrorMessage(QStringLiteral("Edits were staged while the import was being prepared. Save or discard them, "
+        setErrorMessage(tr("Edits were staged while the import was being prepared. Save or discard them, "
                                        "then import again."));
         return;
     }
@@ -682,7 +682,7 @@ void TrackImportController::onPrepared()
         // waited having been staged here.
         dropStaged();
         if (m_session->pendingCount() > 0) {
-            setErrorMessage(QStringLiteral("The import that waits could not be taken back to add to it."));
+            setErrorMessage(tr("The import that waits could not be taken back to add to it."));
             return;
         }
     }
@@ -736,7 +736,7 @@ void TrackImportController::onPrepared()
         if (!m_session->stageAll(prepared.staged.changes)) {
             // The session said why (a lock another instance holds, a
             // browsed backup).
-            setErrorMessage(QStringLiteral("The import could not be staged on this stick."));
+            setErrorMessage(tr("The import could not be staged on this stick."));
             return;
         }
         m_sourceOf = std::move(sources);
@@ -802,12 +802,12 @@ bool TrackImportController::analyseAgain(const QString &rekordboxPath, const QSt
     }
     if (m_busy) {
         setErrorMessage(!m_reanalysingPlaylist.isEmpty()
-                            ? QStringLiteral("Tracks are being analysed again already.")
-                            : QStringLiteral("An import is being prepared. Analyse again when it has finished."));
+                            ? tr("Tracks are being analysed again already.")
+                            : tr("An import is being prepared. Analyse again when it has finished."));
         return false;
     }
     if (playlist.isEmpty()) {
-        setErrorMessage(QStringLiteral("Analyse again takes the tracks of a playlist."));
+        setErrorMessage(tr("Analyse again takes the tracks of a playlist."));
         return false;
     }
     if (!attachSession(rekordboxPath, enginePath)) {
@@ -844,7 +844,7 @@ void TrackImportController::onReanalysed()
         return;
     }
     if (!thrown.isEmpty()) {
-        setErrorMessage(QStringLiteral("The tracks could not be analysed: %1").arg(thrown));
+        setErrorMessage(tr("The tracks could not be analysed: %1").arg(thrown));
         return;
     }
     if (!prepared.refusal.empty()) {
@@ -860,7 +860,7 @@ void TrackImportController::onReanalysed()
         if (!m_session->stageAll(std::move(changes))) {
             // The session said why (a lock another instance holds, another
             // page's edits, a browsed backup).
-            setErrorMessage(QStringLiteral("The new analyses could not be staged on this stick."));
+            setErrorMessage(tr("The new analyses could not be staged on this stick."));
             return;
         }
         for (const auto &change : prepared.changes) {

@@ -475,6 +475,26 @@ ApplicationWindow {
         updateCtrl.checkIfDue();
     }
 
+    // Keep this recording (Clean Up Recordings): with the window, not the
+    // page, so that a keep of minutes goes on when the page is left, and
+    // the page shows its strip again when it is opened again.
+    KeepRecordingController {
+        id: recordingsKeepCtrl
+    }
+    // A stick taken out while a recording on it is kept, or waits to be:
+    // the work is stopped, as the person would, and the strip says so.
+    Connections {
+        target: mediaCtrl.sticks
+        function onCountsChanged() {
+            const keep = recordingsKeepCtrl;
+            const recordings = [keep.currentWavPath].concat((keep.queued ?? []).map(job => job.wavPath))
+                .filter(path => path.length > 0);
+            if (recordings.some(path => !mediaCtrl.pathIsPresent(path))) {
+                keep.cancel();
+            }
+        }
+    }
+
     // Shared by the stick list and every stick's Backups page: what each
     // mounted stick's backup situation is, gathered once per stick.
     BackupAdvisorController {
@@ -719,10 +739,14 @@ ApplicationWindow {
         id: recordingsPageComponent
         RecordingsPage {
             // The two are wired in C++: nothing is deleted while a
-            // recording is kept, and none is kept onto the stick.
-            controller: RecordingsController { keepController: recordingsKeepCtrl }
+            // recording is kept, and none is kept onto the stick. Without
+            // Experimental the listing reads no WAV header.
+            controller: RecordingsController {
+                keepController: recordingsKeepCtrl
+                keepEnabled: appSettingsCtrl.experimentalFeaturesEnabled === true
+            }
             playbackController: playbackCtrl
-            keepController: KeepRecordingController { id: recordingsKeepCtrl }
+            keepController: recordingsKeepCtrl
             keepEnabled: appSettingsCtrl.experimentalFeaturesEnabled === true
         }
     }

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <system_error>
@@ -76,14 +77,33 @@ std::vector<fs::path> missingFolders(const fs::path &folder)
     return missing;
 }
 
+// `text` with each of `paths` in it cut to the file's name.
+std::string namesOnly(std::string text, std::initializer_list<fs::path> paths)
+{
+    for (const fs::path &path : paths) {
+        const std::string spelled = pathToUtf8(path);
+        const std::string name = pathToUtf8(path.filename());
+        if (spelled.empty() || spelled == name) {
+            continue;
+        }
+        for (size_t at = text.find(spelled); at != std::string::npos; at = text.find(spelled, at + name.size())) {
+            text.replace(at, spelled.size(), name);
+        }
+    }
+    return text;
+}
+
 FileCopyResult copy(const fs::path &source, const fs::path &destination, const FileCopyOptions &options)
 {
     FileCopyResult result;
     const std::string name = pathToUtf8(destination.filename());
+    // The source by its name only, as every text here says a file: the
+    // errors go into the stick's log, and the computer's folders do not.
+    const std::string sourceName = pathToUtf8(source.filename());
     std::error_code ec;
 
     if (!fs::is_regular_file(longPathSafe(source), ec)) {
-        result.error = pathToUtf8(source) + " is not a file that can be read";
+        result.error = sourceName + " is not a file that can be read";
         return result;
     }
     fs::path temp = destination;
@@ -104,7 +124,7 @@ FileCopyResult copy(const fs::path &source, const fs::path &destination, const F
     // A source offered under the temporary name would be emptied by the
     // copy of itself.
     if (fs::equivalent(longPathSafe(source), longPathSafe(temp), ec)) {
-        result.error = pathToUtf8(source) + " is the leftover of an interrupted import; not copied";
+        result.error = sourceName + " is the leftover of an interrupted import; not copied";
         return result;
     }
     ec.clear();
@@ -139,7 +159,7 @@ FileCopyResult copy(const fs::path &source, const fs::path &destination, const F
         // afterwards that nothing wrote to it meanwhile.
         const fs::file_time_type modified = fs::last_write_time(longPathSafe(source), ec);
         if (ec) {
-            return fail("could not read the modification time of " + pathToUtf8(source));
+            return fail("could not read the modification time of " + sourceName);
         }
 
         std::vector<std::byte> buffer(std::max<std::size_t>(options.chunkSize, 4096));
@@ -187,7 +207,7 @@ FileCopyResult copy(const fs::path &source, const fs::path &destination, const F
         const bool sizeKept = !ec && sizeNow == size;
         const fs::file_time_type modifiedNow = fs::last_write_time(longPathSafe(source), ec);
         if (!sizeKept || ec || modifiedNow != modified) {
-            return fail(pathToUtf8(source) + " changed while it was copied; not imported");
+            return fail(sourceName + " changed while it was copied; not imported");
         }
 
         // What landed, read back through a handle of its own.
@@ -235,7 +255,10 @@ FileCopyResult copy(const fs::path &source, const fs::path &destination, const F
         discard();
         result = {};
         result.error = "copy failed";  // short enough to need no memory
-        result.error = "could not copy " + name + ": " + e.what();
+        // The reader's own text names the files in full: they are said
+        // by name.
+        result.error = "could not copy " + name + ": " + namesOnly(e.what(), {longPathSafe(source), longPathSafe(temp), longPathSafe(destination),
+                                                                         source, temp, destination});
         return result;
     } catch (...) {
         // Not a std::exception: a progress callback's own.

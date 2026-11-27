@@ -100,7 +100,10 @@ std::string whyNot(const domain::ImportPlanEntry &entry, const std::string &root
     using domain::ImportVerdict;
     switch (entry.verdict) {
     case ImportVerdict::AlreadyOnStick:
-        return "is on the stick already, as " + onStick(entry.existingPath, root);
+        return entry.inLibrary ? "is on the stick already, as " + onStick(entry.existingPath, root)
+                               : "is on the stick already, as " + onStick(entry.existingPath, root)
+                + ", but in no library, so it was not added (putting files that are on the stick already "
+                  "into the libraries is not supported yet)";
     case ImportVerdict::PossibleDuplicate:
         return "may be the track the stick has as " + onStick(entry.existingPath, root);
     case ImportVerdict::OfferedTwice:

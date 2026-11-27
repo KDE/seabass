@@ -12,6 +12,8 @@
 #include <span>
 #include <string>
 
+#include "domain/recording_length.hpp"
+
 namespace seabass::infrastructure::stick_backup
 {
 class PosixArchiveFile;
@@ -93,10 +95,8 @@ inline constexpr std::uint64_t MaxUsableRf64DeclaredFactor = 1000;
 bool declaredLengthUsable(std::uint64_t framesDeclared, int sampleRate, std::uint64_t bytesDeclared,
                           std::uint64_t bytesHeld, bool rf64);
 
-// "it declares 1:00:00 of audio, and the file holds 42:10", with the
-// bytes missing in words when the two lengths print the same, or "the
-// header's length is not usable, and the file holds 42:10". For PastEnd.
-std::string declaredAgainstHeld(const WavUnfinished &unfinished, int sampleRate);
+// The lengths of an unfinished header, for domain::unfinishedHeaderText().
+domain::UnfinishedHeaderLengths unfinishedLengths(const WavUnfinished &unfinished, int sampleRate);
 
 // A PCM WAV as DJ hardware records it, read piece by piece: the header is
 // read when the file is opened, the samples only as asked for, so a
@@ -168,6 +168,12 @@ public:
     // hold whole frames that lie inside what is read.
     void readFrames(std::uint64_t firstFrame, std::span<std::byte> out) const;
 
+    // How many bytes were read from the file so far. Opening it reads the
+    // header, the chunks after the audio and at most one second of audio's
+    // worth of zero bytes after it, never the audio itself, however long
+    // a run of zero bytes follows; readFrames() adds what it reads.
+    std::uint64_t bytesRead() const { return m_bytesRead; }
+
 private:
     // Whether the bytes from `at` to the end are what may follow the
     // audio (see the class comment). `strict`: whole chunks only, ending
@@ -175,6 +181,7 @@ private:
     // padding only up to `maxZeroBytes`.
     bool onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize, bool strict, std::uint64_t maxZeroBytes) const;
     bool zeroBytesFrom(std::uint64_t at, std::uint64_t fileSize) const;
+    void readAt(std::uint64_t at, std::span<std::byte> out) const;
     void refuse(std::string why);
 
     std::unique_ptr<stick_backup::PosixArchiveFile> m_file;
@@ -183,10 +190,7 @@ private:
     std::optional<WavUnfinished> m_unfinished;
     bool m_noAudio = false;
     std::string m_error;
+    mutable std::uint64_t m_bytesRead = 0;
 };
-
-// A number of frames as a length a person reads: "1:02:03" or "2:03",
-// cut to whole seconds as a clock shows them (never rounded up).
-std::string wavDuration(std::uint64_t frames, int sampleRate);
 
 }  // namespace seabass::infrastructure::audio

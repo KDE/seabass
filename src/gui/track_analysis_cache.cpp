@@ -8,11 +8,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSet>
 #include <QStandardPaths>
 
 #include <cmath>
 #include <cstring>
-#include <set>
+#include <vector>
 
 #include <sqlite3.h>
 
@@ -320,32 +321,74 @@ void TrackAnalysisCache::evictIfNeeded()
 
 void TrackAnalysisCache::forgetWrittenFiles()
 {
-    if (infrastructure::analysisFileWriteSerial() == m_writesSeen) {
+    if (!m_writes.behind()) {
         return;
     }
-    std::uint64_t now = 0;
-    const std::vector<std::string> written = infrastructure::analysisFilesWrittenSince(m_writesSeen, &now);
+    const infrastructure::AnalysisFileWriteReader::Writes written = m_writes.take();
+    if (m_db == nullptr) {
+        return;
+    }
     // A key starts with its .DAT's absolute path, and a track's .DAT, .EXT
-    // and .2EX share one folder: an entry goes with any of them.
-    std::set<QString> folders;
-    for (const std::string &path : written) {
-        folders.insert(QFileInfo(QDir::cleanPath(pathToQString(pathFromUtf8(path)))).absolutePath()
-                       + QLatin1Char('/'));
+    // and .2EX share one folder: an entry goes with any of them, matched
+    // as a prefix of the key that ends at a '/'. Case is not compared: a
+    // stick is FAT or exFAT, which ignore it, and the writer and this
+    // cache may name one file in two cases (a path built from export.pdb,
+    // one picked by the user, a drive letter on Windows). Lowered by
+    // Unicode's rules, which match every pair ASCII lowering matches; a
+    // false match only costs a read.
+    QSet<QString> folders;
+    folders.reserve(static_cast<qsizetype>(written.paths.size()));
+    for (const std::string &path : written.paths) {
+        folders.insert((QFileInfo(QDir::cleanPath(pathToQString(pathFromUtf8(path)))).absolutePath()
+                        + QLatin1Char('/'))
+                           .toLower());
     }
     const bool forgotten = withDatabase([&] {
+        if (written.everything) {
+            m_counters.forgetStatements++;
+            exec(m_db, "DELETE FROM analyses;", Context);
+            m_storedBytes = 0;
+            return;
+        }
+        // One pass over the keys, which SQLite reads from the primary
+        // key's index, not the rows; the folders are looked up in C++.
+        std::vector<std::string> gone;
+        {
+            m_counters.forgetStatements++;
+            Statement keys(m_db, "SELECT key FROM analyses;", Context);
+            while (keys.step()) {
+                m_counters.forgetKeysRead++;
+                std::string key = keys.columnText(0);
+                const QString lowered = QString::fromStdString(key).toLower();
+                for (qsizetype slash = lowered.indexOf(QLatin1Char('/')); slash >= 0;
+                     slash = lowered.indexOf(QLatin1Char('/'), slash + 1)) {
+                    if (folders.contains(lowered.left(slash + 1))) {
+                        gone.push_back(std::move(key));
+                        break;
+                    }
+                }
+            }
+        }
+        if (gone.empty()) {
+            return;
+        }
+        m_counters.forgetStatements++;
         exec(m_db, "BEGIN IMMEDIATE;", Context);
         try {
-            for (const QString &folder : folders) {
-                Statement forget(m_db, "DELETE FROM analyses WHERE lower(substr(key, 1, length(?1))) = lower(?1);",
-                                 Context);
-                forget.bind(1, folder.toStdString());
+            Statement forget(m_db, "DELETE FROM analyses WHERE key = ?;", Context);
+            for (const std::string &key : gone) {
+                m_counters.forgetStatements++;
+                forget.bind(1, key);
                 forget.run();
+                forget.reset();
             }
+            m_counters.forgetStatements++;
             exec(m_db, "COMMIT;", Context);
         } catch (...) {
             sqlite3_exec(m_db, "ROLLBACK;", nullptr, nullptr, nullptr);
             throw;
         }
+        m_counters.forgetStatements++;
         Statement sum(m_db, "SELECT coalesce(sum(bytes), 0) FROM analyses;", Context);
         m_storedBytes = sum.step() ? sum.columnInt64(0) : 0;
     });
@@ -354,7 +397,6 @@ void TrackAnalysisCache::forgetWrittenFiles()
     if (!forgotten) {
         closeDatabase();
     }
-    m_writesSeen = now;
 }
 
 domain::TrackAnalysis TrackAnalysisCache::rekordboxAnalysis(const std::string &pioneerRoot,

@@ -788,7 +788,7 @@ TestCase {
         compare(lines, ["Writing DJ Kelp - Late Set.flac in /home/dj/Music/Own Recordings",
                         "Waiting: Session-0002.wav, as DJ Kelp - Early Set.flac"], "what is in hand, and what waits");
         compare(findChild(strip, "passiveProgressNote").text,
-                "The recording on the stick is only read. Leaving this page stops the work.");
+                "The recording on the stick is only read. The work goes on when you leave this page.");
         saveScreenshot(page, "recordings-keep-progress-open");
         mouseClick(findChild(strip, "passiveProgressCancel"));
         compare(page.keepController.calls[page.keepController.calls.length - 1], "cancel", "Cancel by mouse");
@@ -965,7 +965,7 @@ TestCase {
         compare(findChild(row(page, 0), "keptLabel").text, "Not kept: stopped while it was being kept");
         const strip = findChild(page, "keepProgress");
         verify(strip.visible);
-        compare(findChild(strip, "passiveProgressSummary").text, "3 of 3 recordings not kept");
+        compare(findChild(strip, "passiveProgressSummary").text, "3 of 3 recording(s) not kept");
         mouseClick(findChild(strip, "passiveProgressArea"), 10, 4);
         verify(waitForPolish(page.Window.window));
         compare(findAll(strip, "passiveProgressActivityLine").map(l => l.text),
@@ -1167,14 +1167,14 @@ TestCase {
             controller.recordings.setProperty(0, "missingBytes", 10706400);
         });
         const details = findChild(row(page, 1), "detailsLabel").text;
-        verify(details.endsWith("header not completed: it declares 42:10, the file holds 42:10 (9600 bytes less "
+        verify(details.endsWith("header not completed: it declares 42:10, the file holds 42:10 (9600 byte(s) less "
                                 + "than the header declares)"), details);
-        verify(findChild(row(page, 0), "detailsLabel").text.indexOf("bytes less") < 0,
+        verify(findChild(row(page, 0), "detailsLabel").text.indexOf("less than the header") < 0,
                "lengths that print apart: no bytes said");
         openForm(page, 1);
         compare(field(page, "keepUnfinishedLabel").text,
                 "The header of this recording was not completed: the header declares 42:10 of audio, the file "
-                + "holds 42:10 (9600 bytes less than the header declares). This happens when a player is switched "
+                + "holds 42:10 (9600 byte(s) less than the header declares). This happens when a player is switched "
                 + "off or a stick is pulled while recording. The recording on the stick is not changed.");
     }
 
@@ -1227,5 +1227,106 @@ TestCase {
                 "The header of this recording was not completed and did not say how long the audio is, so the file "
                 + "was read to its end. The FLAC holds 1:02:03 of audio, every whole frame the file held. The "
                 + "recording on the stick was not changed.");
+    }
+
+    // Experimental off: the rows are the released page's, whatever the
+    // controller hands over of a WAV's header (it reads none then): folder,
+    // date and the length rounded to the nearest second, no header texts.
+    // On: the header texts, and lengths cut to whole seconds.
+    function test_experimentalOffShowsTheReleasedRows() {
+        const states = controller => {
+            addRecordings(controller);
+            controller.recordings.setProperty(1, "unfinished", true);
+            controller.recordings.setProperty(1, "heldSeconds", 2530.2);
+            controller.recordings.setProperty(1, "declaredSeconds", 3600);
+            controller.recordings.setProperty(2, "holdsNoAudio", true);
+        };
+        const stamp = (date) => date.toLocaleString(Qt.locale(), Locale.ShortFormat);
+        let page = makePage(states, null, false);
+        compare(findChild(row(page, 0), "detailsLabel").text,
+                "Sessions (Engine OS) · " + stamp(new Date(2026, 4, 7, 20, 6)) + " · 3:31:34",
+                "12693.5 seconds, rounded as the released page rounds it");
+        compare(findChild(row(page, 1), "detailsLabel").text,
+                "Sessions (Engine OS) · " + stamp(new Date(2026, 6, 12, 2, 30)) + " · 10:31",
+                "an unfinished header says nothing: the length the listing gave");
+        compare(findChild(row(page, 2), "detailsLabel").text,
+                "PIONEER REC (Pioneer) · " + stamp(new Date(2017, 0, 1, 1, 0)),
+                "one that holds no audio says nothing of it either");
+
+        page = makePage(states);
+        verify(findChild(row(page, 0), "detailsLabel").text.endsWith(" · 3:31:33"), "on: cut to whole seconds");
+        verify(findChild(row(page, 1), "detailsLabel").text.endsWith(
+                   "header not completed: it declares 1:00:00, the file holds 42:10"),
+               "on: the header's state");
+        verify(findChild(row(page, 2), "detailsLabel").text.endsWith("holds no audio"), "on: no audio said");
+    }
+
+    // A count in a sentence takes its plural from the translation (%n).
+    function test_countsTakeTheirPluralForm() {
+        const page = makePage(controller => {
+            addRecordings(controller);
+            controller.recordings.setProperty(1, "unfinished", true);
+            controller.recordings.setProperty(1, "heldSeconds", 2530.2);
+            controller.recordings.setProperty(1, "declaredSeconds", 2530.5);
+            controller.recordings.setProperty(1, "missingBytes", 1);
+        });
+        verify(findChild(row(page, 1), "detailsLabel").text.endsWith(
+                   "(1 byte(s) less than the header declares)"),
+               findChild(row(page, 1), "detailsLabel").text);
+        page.keepController.finishedJobs = [
+            {state: "kept", recording: "A.wav", fileName: "A.flac", folder: "/f", flacPath: "/f/A.flac",
+             leftBehind: ""},
+            {state: "failed", recording: "B.wav", fileName: "B.flac", folder: "/f", flacPath: "", leftBehind: "",
+             message: "no room"},
+        ];
+        compare(findChild(findChild(page, "keepProgress"), "passiveProgressSummary").text,
+                "1 of 2 recording(s) not kept");
+    }
+
+    // The keep controller outlives the page (it lives with the window): a
+    // page made again for it shows the work under way and what ended.
+    function test_theStripComesBackWhenThePageIsOpenedAgain() {
+        const keep = createTemporaryObject(fakeKeepComponent, testCase);
+        busyKeep(keep);
+        const open = () => {
+            const stack = createTemporaryObject(stackComponent, testCase);
+            const controller = createTemporaryObject(fakeControllerComponent, testCase);
+            addRecordings(controller);
+            const player = createTemporaryObject(fakePlayerComponent, testCase);
+            stack.push(fillerComponent, {}, StackView.Immediate);
+            const page = stack.push(pageComponent, {controller: controller, playbackController: player,
+                                                    keepController: keep, keepEnabled: true}, StackView.Immediate);
+            waitForRendering(page);
+            return {stack: stack, page: page};
+        };
+        let opened = open();
+        verify(findChild(opened.page, "keepProgress").visible, "the strip shows the job");
+        let destroyed = false;
+        opened.page.Component.destruction.connect(() => { destroyed = true; });
+        opened.stack.pop(StackView.Immediate);
+        tryVerify(() => destroyed, 2000, "the page is left and destroyed");
+        compare(keep.calls.indexOf("cancel"), -1, "leaving the page does not stop the work");
+        opened = open();
+        const strip = findChild(opened.page, "keepProgress");
+        verify(strip.visible, "opened again: the strip is there");
+        verify(findChild(strip, "passiveProgressSummary").text.indexOf("Keeping Milkshaken.wav") === 0,
+               findChild(strip, "passiveProgressSummary").text);
+        compare(findChild(row(opened.page, 0), "keptLabel").text, "Being kept as DJ Kelp - Late Set.flac");
+    }
+
+    // A second name of a kept FLAC that could not be removed: the strip
+    // names the leftover.
+    function test_aKeptFlacsSecondNameIsSaid() {
+        const page = makePage(addRecordings, keep => {
+            keptKeep(keep);
+            const done = Object.assign({}, keep.finishedJobs[0]);
+            done.leftBehind = "/home/dj/Music/Own Recordings/"
+                + "DJ Kelp - Late Set.flac.00000000000000aa.seabass-encode-tmp";
+            keep.finishedJobs = [done];
+            keep.revision++;
+        });
+        compare(findChild(findChild(page, "keepProgress"), "passiveProgressSummary").text,
+                "Kept Milkshaken.wav as DJ Kelp - Late Set.flac, and a second file was left in "
+                + "/home/dj/Music/Own Recordings");
     }
 }

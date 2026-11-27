@@ -79,6 +79,13 @@ Rectangle {
     }
 
     activeFocusOnTab: root.running
+    // To a screen reader: a button named by what runs, which opens and
+    // closes the steps.
+    Accessible.role: Accessible.Button
+    Accessible.name: root.summary
+    Accessible.description: root.expanded ? qsTr("Showing the steps of the work. Press to close.")
+                                          : qsTr("Press to show the steps of the work.")
+    Accessible.onPressAction: root.expanded = !root.expanded
     Keys.onPressed: (event) => {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
             root.expanded = !root.expanded;

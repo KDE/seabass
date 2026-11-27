@@ -72,6 +72,24 @@ std::function<KeepRecordingParts()> &partsForTesting()
     return make;
 }
 
+std::function<void(const char *, bool)> &stopWaitObserver()
+{
+    static std::function<void(const char *, bool)> observe;
+    return observe;
+}
+
+// Waits for a worker's end up to KeepRecordingStopWaitMs; true when it
+// ended. A test is told whether the wait ended on the worker's signal.
+bool waitForWorker(WorkerEnd &end, const char *what)
+{
+    const QDeadlineTimer deadline(KeepRecordingStopWaitMs);
+    const bool ended = end.waitUntil(deadline);
+    if (stopWaitObserver()) {
+        stopWaitObserver()(what, ended && !deadline.hasExpired());
+    }
+    return ended;
+}
+
 KeepRecordingParts makeParts()
 {
     if (partsForTesting()) {
@@ -104,10 +122,9 @@ private:
     std::shared_ptr<WorkerEnd> m_end;
 };
 
-// How many bytes the longest temporary name the encoder and the tag
-// writer give beside a FLAC adds to its name: computed from the suffix
-// constants (recording_temp_names.hpp), which uniqueTempBeside() uses;
-// recording_tag_writer_test proves the two agree.
+// How many bytes the encoder's temporary name beside a FLAC adds to its
+// name (recording_temp_names.hpp); recording_encoder_test proves the
+// encoder's name is that long.
 std::size_t tempNameExtraBytes()
 {
     return infrastructure::audio::recordingTempNameExtraBytes();
@@ -211,6 +228,12 @@ void WorkerEnd::markEnded()
     m_ended.wakeAll();
 }
 
+bool WorkerEnd::ended()
+{
+    const QMutexLocker lock(&m_mutex);
+    return m_done;
+}
+
 bool WorkerEnd::waitUntil(QDeadlineTimer deadline)
 {
     QMutexLocker lock(&m_mutex);
@@ -227,6 +250,11 @@ void KeepRecordingController::setPartsForTesting(std::function<KeepRecordingPart
     partsForTesting() = std::move(make);
 }
 
+void KeepRecordingController::setStopWaitObserverForTesting(std::function<void(const char *, bool)> observe)
+{
+    stopWaitObserver() = std::move(observe);
+}
+
 KeepRecordingController::KeepRecordingController(QObject *parent) : QObject(parent)
 {
     connect(&m_watcher, &QFutureWatcher<KeepRecordingResult>::finished, this, &KeepRecordingController::onJobFinished);
@@ -240,14 +268,14 @@ KeepRecordingController::~KeepRecordingController()
     // long as a job is. One still under way after that is left to end on
     // its own: it uses nothing of this object, and the global pool is
     // waited for at exit.
-    if (m_coverEnd) {
-        m_coverEnd->waitUntil(QDeadlineTimer(KeepRecordingStopWaitMs));
+    if (m_coverEnd && !m_coverEnd->ended()) {
+        waitForWorker(*m_coverEnd, "cover");
     }
     if (!m_running) {
         return;
     }
     m_cancel.cancel();
-    if (!m_jobEnd->waitUntil(QDeadlineTimer(KeepRecordingStopWaitMs))) {
+    if (!waitForWorker(*m_jobEnd, "job")) {
         // In the tag writer, which cannot be interrupted: the worker owns
         // all it uses and removes its temporary file when it returns. The
         // application knows a write is still out (DetachedWrites) and the
@@ -761,7 +789,7 @@ void KeepRecordingController::onJobFinished()
         {"fileName", QString::fromStdString(job.request.fileName)},
         {"folder", folder},
         {"flacPath", flacPath},
-        {"leftBehind", kept ? QString() : QDir::toNativeSeparators(QString::fromStdString(result.leftBehind))},
+        {"leftBehind", QDir::toNativeSeparators(QString::fromStdString(result.leftBehind))},
         {"message", QString::fromStdString(result.message)},
         {"notes", notes},
         {"unfinished", result.unfinished},

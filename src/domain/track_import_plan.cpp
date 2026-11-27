@@ -355,7 +355,11 @@ ImportSideWrites importSideWrites(const std::set<std::string> &formats, bool ana
 std::uint64_t maxFileBytesFor(const std::string &filesystem)
 {
     const std::string fs = asciiLower(filesystem);
-    if (fs == "vfat" || fs == "fat32" || fs == "msdos") {
+    // FAT32 as QStorageInfo::fileSystemType() names it: "vfat" (or
+    // "msdos") on Linux, "msdos" on macOS, "msdosfs" on FreeBSD, "FAT32"
+    // on Windows. macOS and FreeBSD say the same for FAT16, whose files
+    // are held to no more than that either.
+    if (fs == "vfat" || fs == "fat32" || fs == "msdos" || fs == "msdosfs") {
         return (std::uint64_t{4} << 30) - 1;
     }
     // What Windows calls FAT16 and FAT12.
@@ -590,7 +594,6 @@ ImportPlan planTrackImport(const std::vector<ImportFile> &offered, const ImportS
                     entry.existingPath = song->second->filePath;
                     return ImportVerdict::PossibleDuplicate;
                 }
-                entry.importedAnyway = true;
             }
 
             // The folders as the stick spells them, then a name nothing
@@ -627,7 +630,6 @@ ImportPlan planTrackImport(const std::vector<ImportFile> &offered, const ImportS
             const std::uint64_t forFolders = newFolders * stick.clusterBytes;
             cost = add(add(forFile, forFolders), sideCost(file.durationSeconds, imported));
             if (cost > room) {
-                entry.importedAnyway = false;
                 return ImportVerdict::DoesNotFit;
             }
             return ImportVerdict::Import;

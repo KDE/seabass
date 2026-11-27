@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <system_error>
 
 #include "infrastructure/long_paths.hpp"
@@ -63,6 +64,18 @@ NoReplaceRename answer(Status status, Way way, std::string error = {})
     return result;
 }
 
+// An error in words for a UTF-8 message. On Windows the number only:
+// std::system_category().message() is in the system's ANSI code page.
+std::string errorText(int code, const std::error_category &category)
+{
+#if defined(_WIN32)
+    if (category == std::system_category()) {
+        return "Windows error " + std::to_string(code);
+    }
+#endif
+    return category.message(code);
+}
+
 // The last way: look, then rename. The gap between the two is documented
 // in the header.
 NoReplaceRename checkThenRename(const fs::path &from, const fs::path &to)
@@ -78,7 +91,7 @@ NoReplaceRename checkThenRename(const fs::path &from, const fs::path &to)
     ec.clear();
     fs::rename(from, to, ec);
     if (ec) {
-        return answer(Status::Failed, Way::CheckThenRename, ec.message());
+        return answer(Status::Failed, Way::CheckThenRename, errorText(ec.value(), ec.category()));
     }
     return answer(Status::Renamed, Way::CheckThenRename);
 }
@@ -113,7 +126,7 @@ NoReplaceRename renameNoReplace(const fs::path &fromPath, const fs::path &toPath
     if (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS) {
         return answer(Status::TargetExists, Way::Atomic);
     }
-    return answer(Status::Failed, Way::Atomic, std::system_category().message(static_cast<int>(error)));
+    return answer(Status::Failed, Way::Atomic, errorText(static_cast<int>(error), std::system_category()));
 }
 
 #else

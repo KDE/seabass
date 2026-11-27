@@ -207,6 +207,23 @@ TestCase {
         compare(findChild(page, "importTracksItem").visible, false);
         compare(findChild(page, "importFolderItem").visible, false);
         compare(findChild(page, "takeBackImportItem").visible, false);
+        compare(findChild(page, "playlistImportSeparator").visible, false);
+        // The keys never land on a hidden item, where Return would
+        // trigger what is not shown.
+        // (The import's and Analyse again's items; the menu's own are not
+        // this test's.)
+        const imports = ["importTracksItem", "importFolderItem", "takeBackImportItem", "playlistAnalyseAgainItem",
+                         "takeBackReanalysisItem", "restoreOriginalAnalysisItem"];
+        menu.forceActiveFocus();
+        const visited = [];
+        for (let i = 0; i < 2 * menu.count; ++i) {
+            keyClick(Qt.Key_Down);
+            const item = menu.itemAt(menu.currentIndex);
+            verify(item !== null, "an item is current");
+            visited.push(item.objectName);
+            verify(imports.indexOf(item.objectName) < 0, "the keys landed on the hidden " + item.objectName);
+        }
+        verify(visited.indexOf("renamePlaylistItem") >= 0, visited.join(" "));
         menu.close();
         compare(findChild(page, "playlistList").fileDropsEnabled, false);
         compare(findChild(page, "newPlaylistFileDropArea").enabled, false);
@@ -393,6 +410,9 @@ TestCase {
         fake.progressFile = "c three.wav";
         fake.progressFiles = ["d four.wav", "e five.wav"];
         compare(findChild(strip, "passiveProgressSummary").text, "Import: analysing track 3 of 5");
+        // A screen reader hears what runs, as a button that opens the steps.
+        compare(strip.Accessible.role, Accessible.Button);
+        compare(strip.Accessible.name, "Import: analysing track 3 of 5");
         // Two are analysed at once: both named, and the one last done.
         compare(strip.activity.join("|"), "Analysing d four.wav|Analysing e five.wav");
         compare(findChild(strip, "passiveProgressDetail").text, "Last done: c three.wav");
@@ -456,6 +476,17 @@ TestCase {
         findChild(page, "importDuplicatesButton").clicked();
         tryCompare(dialog, "visible", false);
         compare(JSON.stringify(fake.calls), JSON.stringify([["drop"], ["duplicates"]]));
+
+        // Experimental switched off while the import ran: the import of the
+        // possible duplicates is not offered, as it would be refused.
+        realAppSettings.experimentalFeaturesEnabled = false;
+        fake.resultReady();
+        tryCompare(dialog, "opened", true);
+        compare(findChild(page, "importDuplicatesButton").visible, false);
+        compare(findChild(page, "importTakeBackButton").visible, true);
+        dialog.close();
+        tryCompare(dialog, "visible", false);
+        realAppSettings.experimentalFeaturesEnabled = true;
 
         // Tracks the stick already has, on their way into the playlist:
         // said beside the new ones, and alone when there are no new ones.

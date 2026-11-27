@@ -175,8 +175,9 @@ application::RecordingDeleteHooks &deleteHooks()
 }
 
 // For each WAV, whether its header was completed, and whether it holds any
-// audio: its header only, a few reads. A recording refused for another
-// reason says nothing here.
+// audio: its header and what follows the audio only, a few reads
+// (WavPcmFile::bytesRead()). A recording refused for another reason says
+// nothing here.
 std::vector<RecordingListModel::HeaderState> headerStates(const std::vector<application::Recording> &recordings)
 {
     std::vector<RecordingListModel::HeaderState> states(recordings.size());
@@ -273,7 +274,17 @@ RecordingsController::~RecordingsController()
     awaitQuietly(m_listWatcher);
     if (m_working) {
         m_cancel.cancel();
-        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver());
+        // The keep controller outlives the page: told once the delete has
+        // ended, so that it keeps again after it.
+        QList<QPointer<KeepRecordingController>> told = m_detachedKeeps;
+        told.append(m_keep);
+        finishWriteDetached(m_runWatcher.future(), m_writeHold.handOver(), [told]() {
+            for (const QPointer<KeepRecordingController> &keep : told) {
+                if (keep) {
+                    keep->setDeleteRunning(false);
+                }
+            }
+        });
     }
 }
 
@@ -300,6 +311,21 @@ void RecordingsController::setKeepController(KeepRecordingController *keep)
         m_keep->setDeleteRunning(m_working);
     }
     emit keepControllerChanged();
+}
+
+void RecordingsController::setKeepEnabled(bool enabled)
+{
+    if (m_keepEnabled == enabled) {
+        return;
+    }
+    m_keepEnabled = enabled;
+    emit keepEnabledChanged();
+    // The rows were listed with or without their header states: listed
+    // again to match. A listing or a delete under way lists when it is
+    // asked to next.
+    if (m_listed && !busy()) {
+        load(m_stickLabel, m_rekordboxPath, m_enginePath);
+    }
 }
 
 QVariantMap RecordingsController::summarize(const QString &rekordboxPath, const QString &enginePath) const
@@ -349,7 +375,7 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
     }
     m_listing = true;
     emit busyChanged();
-    m_listWatcher.setFuture(QtConcurrent::run([root]() {
+    m_listWatcher.setFuture(QtConcurrent::run([root, readHeaders = m_keepEnabled]() {
         RecordingsListResult result;
         try {
             const fs::path stick = pathFromQString(root);
@@ -357,7 +383,11 @@ void RecordingsController::load(const QString &stickLabel, const QString &rekord
             // millisecond for a 2.2 GB file, so every row gets a length.
             result.listing = infrastructure::audio::withDurationProbe(
                 [&stick](application::TrackDurationProbe &probe) { return application::listRecordings(stick, probe); });
-            result.states = headerStates(result.listing.recordings);
+            // The header states are Keep's (experimental): without it the
+            // listing reads no more than TagLib's length.
+            if (readHeaders) {
+                result.states = headerStates(result.listing.recordings);
+            }
             // As CleanupController's stickSpace(): 0/0 when it cannot tell.
             std::error_code ec;
             const fs::space_info space = fs::space(stick, ec);

@@ -61,9 +61,11 @@ constexpr std::uint64_t AnalysisHighRateBytes = 40ull * 1024 * 1024;
 constexpr int AnalysisHighRateHz = 88200;
 // For `seconds` of audio at that rate.
 std::uint64_t analysisBytesFor(double seconds, int sampleRateHz);
-// What a track not yet read is taken to need: eight minutes' worth. Its
-// sample rate is not known before its first piece is read, so the high
-// rate's extra is not in it: the track's first noteRead() adds it.
+// What a track not yet read is taken to need: eight minutes' worth at a
+// usual rate. Its sample rate is not known before its first piece is
+// read, so the high rate's extra is not in it: from the track's first
+// noteRead() the gate holds back eight minutes' worth at its own rate.
+constexpr double AnalysisTypicalSeconds = 8 * 60.0;
 constexpr std::uint64_t AnalysisTypicalBytes = AnalysisBaseBytes + 8 * AnalysisBytesPerMinute;
 // Left to the rest of the computer.
 constexpr std::uint64_t AnalysisMemoryMargin = 1024ull * 1024 * 1024;

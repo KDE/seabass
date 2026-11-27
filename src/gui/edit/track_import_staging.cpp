@@ -18,6 +18,7 @@
 #ifdef SEABASS_HAVE_TAGLIB
 #include "infrastructure/audio/taglib_metadata_probe.hpp"
 #endif
+#include "infrastructure/long_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
 
 namespace seabass::gui
@@ -137,7 +138,8 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             const OnStickTrack known = onStick(entry.existingPath, playlist->path);
             if (!allLibraries(known.listedIn)) {
                 leave(known.listedIn.isEmpty()
-                          ? "it is on the stick already, in no library, so no playlist can list it"
+                          ? "it is on the stick already, but in no library, so it was not added (putting files that are on "
+                            "the stick already into the libraries is not supported yet)"
                           : "it is on the stick already, but not in every library, so it is not added to the playlist");
                 continue;
             }
@@ -204,7 +206,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             std::error_code ec;
             const auto root = pathFromUtf8(target.stickRoot.toStdString());
             const auto place = root / pathFromUtf8(entry.destination);
-            if (std::filesystem::symlink_status(place, ec).type() != std::filesystem::file_type::not_found) {
+            if (std::filesystem::symlink_status(infrastructure::longPathSafe(place), ec).type() != std::filesystem::file_type::not_found) {
                 leave("/" + entry.destination + " is on the stick already");
                 continue;
             }
@@ -214,7 +216,7 @@ StagedImport stageTrackImport(const domain::ImportPlan &plan, const ImportTarget
             bool blocked = false;
             for (auto folder = place.parent_path(); folder != root && folder.has_relative_path() && !blocked;
                  folder = folder.parent_path()) {
-                const auto kind = std::filesystem::symlink_status(folder, ec).type();
+                const auto kind = std::filesystem::symlink_status(infrastructure::longPathSafe(folder), ec).type();
                 blocked = kind != std::filesystem::file_type::not_found && kind != std::filesystem::file_type::directory;
             }
             if (blocked) {

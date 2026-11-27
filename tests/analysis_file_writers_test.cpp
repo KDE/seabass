@@ -9,7 +9,9 @@
 // so a writer that goes through them is covered without a list.
 //
 // This test reads src/ for every other way of writing a file (a stream
-// opened for writing, a rename, a copy, a file opened to be created) and
+// opened for writing, a Windows handle or a POSIX descriptor opened for
+// writing, a rename, a link, a copy, a file opened to be created or cut,
+// a SQLite database opened to be written) and
 // fails for a source file that has one and is not listed below. Each
 // entry says why its writes are never an analysis file on a stick, or the
 // file has to call noteAnalysisFileWritten() itself. A writer added
@@ -58,10 +60,12 @@ const std::map<std::string, Entry> &knownWriters()
         {"application/use_cases/open_stick_backup.cpp", {Kind::NeverAnalysis, "a browsed backup's folders on the computer"}},
         {"application/use_cases/restore_stick_backup.cpp",
          {Kind::NotesItself, "places every restored file by rename, analysis files among them"}},
+        {"cli/damage_filesystem.cpp", {Kind::NeverAnalysis, "a hidden test command that damages a FAT32 device's bookkeeping"}},
         {"cli/main.cpp", {Kind::NeverAnalysis, "a rekordbox XML named on the command line"}},
         {"gui/app_color_scheme.cpp", {Kind::NeverAnalysis, "a colour scheme in the user's settings"}},
         {"gui/backup_changelog_text.cpp", {Kind::NeverAnalysis, "a backup's history as text, where the user saves it"}},
         {"gui/cover_cache.cpp", {Kind::NeverAnalysis, "a QBuffer in memory"}},
+        {"gui/edit/changes/import_track_change.cpp", {Kind::NeverAnalysis, "a cover picture in the computer's temporary folder; analysis files go through writeFileDurablyAtomic()"}},
         {"gui/edit/changes/moved_file_changes.cpp", {Kind::NeverAnalysis, "moves an audio file to the place its row names"}},
         {"gui/edit/format_write_session.cpp", {Kind::NeverAnalysis, "a database's scratch copy"}},
         {"gui/edit/save_context.cpp",
@@ -69,6 +73,8 @@ const std::map<std::string, Entry> &knownWriters()
                                "aside"}},
         {"gui/edit/staged_edits_store.cpp", {Kind::NeverAnalysis, "the staged edits on the computer"}},
         {"gui/stick_backup_controller.cpp", {Kind::NeverAnalysis, "the stick backup's archive and its journal"}},
+        {"gui/track_analysis_cache.cpp", {Kind::NeverAnalysis, "the analysis cache's own database on the computer"}},
+        {"gui/track_import_controller.cpp", {Kind::NeverAnalysis, "a staged track's cover in a cache folder on the computer"}},
         {"gui/track_import_cover.cpp", {Kind::NeverAnalysis, "a QBuffer in memory"}},
         {"infrastructure/audio/qt_cover_art_preparer.cpp", {Kind::NeverAnalysis, "a QBuffer in memory"}},
         {"infrastructure/audio/qt_flac_recording_encoder.cpp", {Kind::NeverAnalysis, "a recording's FLAC file"}},
@@ -78,22 +84,34 @@ const std::map<std::string, Entry> &knownWriters()
         {"infrastructure/backup/stick_write_lock.cpp", {Kind::NeverAnalysis, "the stick's lock file"}},
         {"infrastructure/database_read_copy.hpp", {Kind::NeverAnalysis, "read copies of a database"}},
         {"infrastructure/durable_file_write.cpp", {Kind::NotesItself, "the two durable writes themselves"}},
+        {"infrastructure/engine/engine_artwork.cpp", {Kind::NeverAnalysis, "an Engine database's covers"}},
+        {"infrastructure/engine/engine_import_state.cpp", {Kind::NeverAnalysis, "an Engine database's import counter"}},
+        {"infrastructure/engine/engine_pending_journals.hpp", {Kind::NeverAnalysis, "an Engine database whose journal is settled"}},
+        {"infrastructure/engine/engine_playlists.cpp", {Kind::NeverAnalysis, "an Engine database's playlists"}},
+        {"infrastructure/engine/engine_track_rows.cpp", {Kind::NeverAnalysis, "an Engine database's track rows"}},
         {"infrastructure/engine/libdjinterop_engine_anonymizer.cpp",
          {Kind::NeverAnalysis, "an Engine Library copied for an anonymised copy"}},
+        {"infrastructure/engine/libdjinterop_engine_cleanup_writer.cpp", {Kind::NeverAnalysis, "an Engine database"}},
         {"infrastructure/engine/libdjinterop_engine_library_creator.cpp",
          {Kind::NeverAnalysis, "a new Engine Library's databases and covers"}},
         {"infrastructure/engine/libdjinterop_engine_reader.cpp", {Kind::NeverAnalysis, "a cover cached on the computer"}},
         {"infrastructure/local/analysis_ledger_file.cpp", {Kind::NeverAnalysis, "sets a ledger that does not read aside"}},
         {"infrastructure/local/file_library_edit_lock_store.cpp", {Kind::NeverAnalysis, "an edit lock file"}},
+        {"infrastructure/local/local_cue_store.cpp", {Kind::NeverAnalysis, "the cue store's database on the computer"}},
         {"infrastructure/local/metadata_store.cpp", {Kind::NeverAnalysis, "the metadata database and its export"}},
+        {"infrastructure/logging/file_operation_log.cpp", {Kind::NeverAnalysis, "the operation log"}},
         {"infrastructure/logging/file_operation_log.hpp", {Kind::NeverAnalysis, "the operation log"}},
+        {"infrastructure/media/windows_removable_media_mounter.cpp", {Kind::NeverAnalysis, "a volume handle, to mount or eject a stick"}},
         {"infrastructure/media/windows_usb_formatter.cpp", {Kind::NeverAnalysis, "a script for the formatter"}},
         {"infrastructure/no_replace_rename.cpp",
          {Kind::NeverAnalysis, "the rename that never replaces; its one caller writes a FLAC"}},
         {"infrastructure/no_replace_rename.hpp", {Kind::NeverAnalysis, "the declaration of the same"}},
+        {"infrastructure/onelibrary/sqlcipher_dyn.cpp", {Kind::NeverAnalysis, "a database in memory, to see that SQLCipher loads"}},
+        {"infrastructure/onelibrary/sqlcipher_dyn.hpp", {Kind::NeverAnalysis, "SQLite's flag for opening to write, defined"}},
         {"infrastructure/rekordbox/rekordbox_library_anonymizer.cpp",
          {Kind::NeverAnalysis, "analysis files copied into a new anonymised copy, which no cache entry names"}},
         {"infrastructure/sqlite_pending_journal.hpp", {Kind::NeverAnalysis, "a database and its journal kept aside"}},
+        {"infrastructure/sqlite_settle_copy.cpp", {Kind::NeverAnalysis, "a database's copy, settled"}},
         {"infrastructure/stick_backup/backup_artwork_lookup.cpp", {Kind::NeverAnalysis, "a cover read from a backup"}},
         {"infrastructure/stick_backup/posix_archive_file.cpp", {Kind::NeverAnalysis, "the stick backup's archive"}},
         {"infrastructure/track_import/verified_file_copy.cpp", {Kind::NeverAnalysis, "an imported audio file"}},
@@ -110,13 +128,32 @@ const std::regex &rawWrite()
     static const std::regex pattern(
         R"(\bofstream\b|\bfs::rename\(|std::filesystem::rename\(|\bcopy_file\(|\bfs::copy\(|std::filesystem::copy\()"
         R"(|QFile::rename|QFile::copy|\.rename\(|QSaveFile|\bfopen\(|_wfopen|O_CREAT|QIODevice::WriteOnly)"
-        R"(|QIODevice::Append|QIODevice::ReadWrite|MoveFileEx|\bCopyFile(W|A|Ex|ExW)?\(|renameNoReplace\()");
+        R"(|QIODevice::Append|QIODevice::ReadWrite|MoveFileEx|\bCopyFile(W|A|Ex|ExW)?\(|renameNoReplace\()"
+        // A stream that may write: std::fstream (not the header's name),
+        // or any stream given an output mode.
+        R"(|\bfstream\b(?!>)|\bios(_base)?::(out|app|trunc)\b)"
+        // A Windows handle opened for writing, or to create a file.
+        R"(|\bGENERIC_WRITE\b|\bFILE_(GENERIC_WRITE|WRITE_DATA|APPEND_DATA)\b)"
+        R"(|\b(CREATE_ALWAYS|CREATE_NEW|OPEN_ALWAYS|TRUNCATE_EXISTING)\b)"
+        // A POSIX descriptor opened for writing.
+        R"(|\bO_(WRONLY|RDWR|TRUNC|APPEND)\b)"
+        // Renames, links and replacements under other names.
+        R"(|\brename\(|\b_wrename\(|\bMoveFile(W|A)?\(|\bReplaceFile(W|A)?\(|\bCreateHardLink(W|A)?\()"
+        R"(|\bcreate_(hard_link|symlink|directory_symlink)\(|\bQFile::link\b|\bresize_file\()"
+        // Qt's other ways to create or cut a file.
+        R"(|QIODevice::Truncate|QIODevice::NewOnly|\bQTemporaryFile\b)"
+        // A SQLite database opened to be written.
+        R"(|\bSQLITE_OPEN_READWRITE\b|\bsqlite3_open\()");
     return pattern;
 }
 
-// The code of a line: not a // comment, whole or trailing.
+// The code of a line: not a // comment, whole or trailing, nor an
+// #include, which names a header and opens nothing.
 std::string codeOf(const std::string &line)
 {
+    if (line.find_first_not_of(" \t") != std::string::npos && line.compare(line.find_first_not_of(" \t"), 8, "#include") == 0) {
+        return {};
+    }
     const auto comment = line.find("//");
     return comment == std::string::npos ? line : line.substr(0, comment);
 }

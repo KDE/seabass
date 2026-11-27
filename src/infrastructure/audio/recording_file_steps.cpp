@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <random>
 #include <system_error>
 
@@ -36,11 +35,6 @@ bool equalIgnoringAsciiCase(const std::string &a, const std::string &b)
         && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return foldAscii(x) == foldAscii(y); });
 }
 
-bool isHexDigit(char c)
-{
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-}
-
 }  // namespace
 
 fs::path uniqueTempBeside(const fs::path &target, const char *suffix)
@@ -60,20 +54,6 @@ fs::path uniqueTempBeside(const fs::path &target, const char *suffix)
     fs::path temp = target;
     temp += "." + token + suffix;
     return temp;
-}
-
-bool isTempNameOf(const std::string &name, const std::string &targetName, const char *suffix)
-{
-    const std::size_t suffixLength = std::strlen(suffix);
-    if (name.size() != targetName.size() + 1 + TokenDigits + suffixLength) {
-        return false;
-    }
-    if (name.compare(0, targetName.size(), targetName) != 0 || name[targetName.size()] != '.'
-        || name.compare(name.size() - suffixLength, suffixLength, suffix) != 0) {
-        return false;
-    }
-    const auto first = name.begin() + static_cast<std::ptrdiff_t>(targetName.size() + 1);
-    return std::all_of(first, first + static_cast<std::ptrdiff_t>(TokenDigits), isHexDigit);
 }
 
 std::optional<bool> somethingAt(const fs::path &path, std::error_code *error)
@@ -167,26 +147,35 @@ std::optional<std::uint64_t> fileSizeOf(const fs::path &path)
     return static_cast<std::uint64_t>(size);
 }
 
-std::vector<fs::path> tempsBeside(const fs::path &folder, const std::string &targetName, const char *suffix)
+std::size_t utf16Units(const fs::path &path)
 {
-    std::vector<fs::path> found;
-    std::error_code ec;
-    DirectoryReader reader(folder, ec);
-    if (ec) {
-        return found;
-    }
-    fs::path child;
-    while (reader.next(child, ec)) {
-        if (!isTempNameOf(pathToUtf8(child.filename()), targetName, suffix)) {
+#if defined(_WIN32)
+    return path.native().size();
+#else
+    // From UTF-8: a code point past U+FFFF (four bytes) takes two units,
+    // any other one; continuation bytes take none.
+    std::size_t units = 0;
+    for (const char c : path.native()) {
+        const auto byte = static_cast<unsigned char>(c);
+        if ((byte & 0xC0) == 0x80) {
             continue;
         }
-        std::error_code statusEc;
-        if (fs::symlink_status(longPathSafe(child), statusEc).type() == fs::file_type::regular) {
-            found.push_back(child);
-        }
+        units += byte >= 0xF0 ? 2 : 1;
     }
-    std::sort(found.begin(), found.end());
-    return found;
+    return units;
+#endif
+}
+
+std::string mediaPathProblem(const fs::path &temp)
+{
+    const std::size_t units = utf16Units(temp);
+    if (units <= MaxMediaPathUnits) {
+        return {};
+    }
+    return "the path of its temporary file in " + pathToUtf8(temp.parent_path()) + " would be "
+        + std::to_string(units) + " characters long, and the encoder on Windows takes at most "
+        + std::to_string(MaxMediaPathUnits) + ". Choose a folder with a shorter path, or make the artist or the track "
+          "name shorter";
 }
 
 }  // namespace seabass::infrastructure::audio

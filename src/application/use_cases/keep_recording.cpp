@@ -10,6 +10,7 @@
 #include <mutex>
 #include <set>
 
+#include "domain/recording_length.hpp"
 #include "domain/track_import_plan.hpp"
 
 namespace seabass::application
@@ -36,17 +37,6 @@ std::string joinPath(const std::string &folder, const std::string &name)
     }
     const char last = folder.back();
     return (last == '/' || last == '\\') ? folder + name : folder + "/" + name;
-}
-
-// "1:02:03" or "2:03".
-std::string clockDuration(std::uint64_t frames, int sampleRate)
-{
-    const std::uint64_t seconds = sampleRate > 0 ? frames / static_cast<std::uint64_t>(sampleRate) : 0;
-    const auto two = [](std::uint64_t v) { return (v < 10 ? "0" : "") + std::to_string(v); };
-    const std::uint64_t h = seconds / 3600;
-    const std::uint64_t m = seconds / 60 % 60;
-    return h > 0 ? std::to_string(h) + ":" + two(m) + ":" + two(seconds % 60)
-                 : std::to_string(m) + ":" + two(seconds % 60);
 }
 
 std::string megabytes(std::uint64_t bytes)
@@ -347,19 +337,6 @@ private:
         return true;
     }
 
-    // What a header that declares a length says against what the file
-    // holds, after its subject: "declares 1:00:00 of audio, the file holds
-    // 42:10", the bytes missing in words when the two print the same. An
-    // unusable length is not said as one (see the callers).
-    std::string declaredAgainstHeld(const std::string &holdsWord) const
-    {
-        std::string text = "declares " + *m_declaredDuration + " of audio, the file " + holdsWord + " " + m_keptDuration;
-        if (*m_declaredDuration == m_keptDuration) {
-            text += " (" + std::to_string(m_bytesMissing) + " bytes less than the header declares)";
-        }
-        return text;
-    }
-
     bool encode()
     {
         RecordingEncodeOptions options;
@@ -370,49 +347,41 @@ private:
             report(step, EncoderShareOfJob * fraction);
         };
         options.keepUnfinished = m_request.keepUnfinished;
-        options.leaveUnplaced = true;
         report(KeepRecordingStep::Encoding, 0.0);
         const RecordingEncodeResult encoded = m_encoder.encode(m_request.wavPath, m_flacPath, options);
         m_temp = encoded.unplaced;
         m_result.unfinished = encoded.unfinished;
-        for (const std::string &note : encoded.notes) {
-            m_result.notes.push_back(note);
-        }
         if (encoded.unfinished) {
-            m_keptDuration = clockDuration(encoded.framesInWav, encoded.sampleRate);
+            m_lengths.framesHeld = encoded.framesInWav;
+            m_lengths.framesDeclared = encoded.framesDeclared;
+            m_lengths.declaredUsable = !encoded.declaredUnusable;
+            m_lengths.bytesMissing = encoded.bytesMissing;
+            m_lengths.sampleRate = encoded.sampleRate;
             m_partialBytes = encoded.partialFrameBytesDropped;
-            if (encoded.framesDeclared) {
-                m_declaredDuration = clockDuration(*encoded.framesDeclared, encoded.sampleRate);
-                m_declaredUnusable = encoded.declaredUnusable;
-                m_bytesMissing = encoded.bytesMissing;
-            }
             if (encoded.sampleRate > 0) {
                 m_result.keptSeconds =
                     static_cast<double>(encoded.framesInWav) / static_cast<double>(encoded.sampleRate);
             }
         }
+        if (!encoded.encoded) {
+            // The encoder's own temporary file it could not take away.
+            m_leftByEncoder = encoded.leftBehind;
+        }
         if (encoded.unfinished && !m_request.keepUnfinished && !encoded.encoded && !encoded.cancelled) {
-            std::string said;
-            if (!m_declaredDuration) {
-                said = "its header was not completed and does not say how long the audio is. The file holds "
-                    + m_keptDuration + " of audio.";
-            } else if (m_declaredUnusable) {
-                said = "its header was not completed. The header's length is not usable, and the file holds "
-                    + m_keptDuration + " of audio.";
-            } else {
-                said = "its header was not completed. The header " + declaredAgainstHeld("holds") + ".";
-            }
-            return fail("The recording was not kept: " + said
-                        + " This happens when a player is switched off or a stick is pulled while recording. "
-                          "Choose \"Keep the audio the file holds\" to keep that.");
+            return failLeavingEncoderFile("The recording was not kept. Its header was not completed: "
+                                          + domain::unfinishedHeaderText(m_lengths, domain::RecordingTense::Present)
+                                          + ". This happens when a player is switched off or a stick is pulled while "
+                                            "recording. Choose \"Keep the audio the file holds\" to keep that.");
         }
         if (encoded.cancelled) {
             m_result.status = KeepRecordingResult::Status::Cancelled;
             m_result.message.clear();
+            sayEncoderFileLeft();
             return false;
         }
         if (!encoded.encoded) {
-            return fail(encoded.error.empty() ? std::string("The recording was not encoded.") : encoded.error);
+            return failLeavingEncoderFile(encoded.error.empty() ? std::string("The recording was not encoded.")
+                                                                : encoded.error);
         }
         if (m_temp.path.empty()) {
             return fail("The recording was not kept: the encoder did not say where it wrote the FLAC.");
@@ -469,6 +438,9 @@ private:
         if (placed.placed) {
             m_placed = true;
             m_temp.path.clear();
+            // A second name of the FLAC the hard link left: a leftover,
+            // said with its path in the notes too.
+            m_secondName = placed.leftBehind;
             return true;
         }
         fail("The recording was not kept: " + placed.error);
@@ -486,22 +458,15 @@ private:
         m_result.status = KeepRecordingResult::Status::Kept;
         m_result.flacPath = m_flacPath;
         m_result.message.clear();
-        m_result.leftBehind.clear();
+        m_result.leftBehind = m_secondName;
         if (!m_result.unfinished || m_keptNoted) {
             return;
         }
         m_keptNoted = true;
-        std::string said;
-        if (!m_declaredDuration) {
-            said = "The header of this recording was not completed and did not say how long the audio is, so the "
-                   "file was read to its end.";
-        } else if (m_declaredUnusable) {
-            said = "The header of this recording was not completed: the header's length is not usable, and the "
-                   "file held " + m_keptDuration + ".";
-        } else {
-            said = "The header of this recording was not completed: it " + declaredAgainstHeld("held") + ".";
-        }
-        m_result.notes.push_back(said + " The FLAC holds " + m_keptDuration
+        const std::string held = domain::recordingClock(m_lengths.framesHeld, m_lengths.sampleRate);
+        m_result.notes.push_back("The header of this recording was not completed: "
+                                 + domain::unfinishedHeaderText(m_lengths, domain::RecordingTense::Past)
+                                 + ". The FLAC holds " + held
                                  + " of audio, every whole frame the file held"
                                  + (m_partialBytes > 0 ? "; the last " + std::to_string(m_partialBytes)
                                                              + " bytes, less than a frame, were left out."
@@ -516,6 +481,25 @@ private:
         m_result.leftBehind = m_flacPath;
         addToMessage("A file named " + m_request.fileName + " is in " + m_request.folder
                      + " now. It does not count as kept, and it was left as it is: " + m_flacPath);
+    }
+
+    // A failure, and the encoder's temporary file that it could not take
+    // away, said after it.
+    bool failLeavingEncoderFile(const std::string &why)
+    {
+        fail(why);
+        sayEncoderFileLeft();
+        return false;
+    }
+
+    void sayEncoderFileLeft()
+    {
+        if (m_leftByEncoder.empty()) {
+            return;
+        }
+        m_result.leftBehind = m_leftByEncoder;
+        addToMessage("Its temporary file could not be removed from " + m_request.folder
+                     + ". It does not count as kept and can be deleted: " + m_leftByEncoder);
     }
 
     // Takes the job's temporary file away again; said when it cannot be.
@@ -551,12 +535,13 @@ private:
     VerifiedFlac m_temp;
     bool m_placing = false;
     bool m_placed = false;
+    // A temporary file the encoder left after a failure or a cancel, and a
+    // second name of the placed FLAC; empty for none.
+    std::string m_leftByEncoder;
+    std::string m_secondName;
     bool m_keptNoted = false;
-    std::string m_keptDuration;
-    // What the header declares; nullopt when it declares no size.
-    std::optional<std::string> m_declaredDuration;
-    bool m_declaredUnusable = false;
-    std::uint64_t m_bytesMissing = 0;
+    // What an unfinished header declares against what the file holds.
+    domain::UnfinishedHeaderLengths m_lengths;
     std::uint64_t m_partialBytes = 0;
 };
 

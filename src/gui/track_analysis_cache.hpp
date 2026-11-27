@@ -13,6 +13,7 @@
 #include <string>
 
 #include "domain/track_analysis.hpp"
+#include "infrastructure/durable_file_write.hpp"
 
 struct sqlite3;
 
@@ -88,6 +89,10 @@ public:
         int reads = 0;      // analyses read from the stick
         int stores = 0;
         int rebuilds = 0;
+        // The work of dropping the entries of written folders, for the
+        // test: SQL statements run, and keys read.
+        int forgetStatements = 0;
+        int forgetKeysRead = 0;
     };
     Counters counters() const;
     bool persistent() const;
@@ -112,9 +117,8 @@ private:
     std::int64_t m_storedBytes = 0;
     sqlite3 *m_db = nullptr;
     Counters m_counters;
-    // The analysis file writes (infrastructure::analysisFileWriteSerial())
-    // whose entries are gone.
-    std::uint64_t m_writesSeen = 0;
+    // The analysis file writes whose entries are not yet gone.
+    infrastructure::AnalysisFileWriteReader m_writes;
     mutable std::mutex m_lock;
 };
 

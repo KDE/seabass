@@ -210,9 +210,8 @@ int main()
         ImportChoices choices;
         choices.importAnyway = {"/home/dj/in/Someone - Song.flac"};
         plan = planTrackImport(offered, s, tools(), choices);
-        assert(plan.entries[0].verdict == ImportVerdict::Import && plan.entries[0].importedAnyway);
+        assert(plan.entries[0].verdict == ImportVerdict::Import);
         assert(plan.entries[0].destination == "Contents/Someone/X/Someone - Song.flac");
-        assert(!plan.entries[1].importedAnyway);
         assert(plan.bytesToCopy == 12000);
         std::cout << "case 5 (a song the library already holds is a person's decision) OK\n";
     }
@@ -264,7 +263,7 @@ int main()
         ImportChoices choices;
         choices.importAnyway = {"/in/song.mp3"};
         plan = planTrackImport({offer("/in/song.mp3", 1000, "Song", "Someone")}, s, tools(), choices);
-        assert(plan.entries[0].verdict == ImportVerdict::DoesNotFit && !plan.entries[0].importedAnyway);
+        assert(plan.entries[0].verdict == ImportVerdict::DoesNotFit);
 
         s = stick();
         s.freeBytes = std::uint64_t{64} << 30;
@@ -275,6 +274,8 @@ int main()
         assert(plan.entries[0].verdict == ImportVerdict::TooLargeForFilesystem);
         assert(plan.entries[1].verdict == ImportVerdict::Import);
         assert(maxFileBytesFor("exfat") == 0 && maxFileBytesFor("FAT32") == 4294967295u);
+        // Each system's name for FAT32 (Linux, macOS, FreeBSD).
+        assert(maxFileBytesFor("msdos") == 4294967295u && maxFileBytesFor("msdosfs") == 4294967295u);
         std::cout << "case 7 (room on the stick, and FAT32's largest file) OK\n";
     }
 
@@ -462,7 +463,7 @@ int main()
         // (It is a copy of b, which is imported: that it is.)
         assert(plan.entries[3].verdict == ImportVerdict::OfferedTwice);
         assert(plan.entries[3].existingPath == "/in/b.mp3");
-        assert(plan.entries[1].verdict == ImportVerdict::Import && plan.entries[1].importedAnyway);
+        assert(plan.entries[1].verdict == ImportVerdict::Import);
         assert(plan.entries[2].verdict == ImportVerdict::OfferedTwice);
         assert(plan.bytesToCopy == 1000);
         g_bytes.clear();

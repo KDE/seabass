@@ -264,7 +264,8 @@ void AnalysisMemoryGate::noteRead(int ticket, double seconds, int sampleRateHz,
         return;
     }
     track->second.heldBytes = analysisBytesFor(seconds, sampleRateHz);
-    track->second.peakBytes = std::max(AnalysisTypicalBytes, track->second.heldBytes);
+    // The typical share at the track's own rate, now that the rate is known.
+    track->second.peakBytes = std::max(analysisBytesFor(AnalysisTypicalSeconds, sampleRateHz), track->second.heldBytes);
     bool waited = false;
     for (;;) {
         cancel.throwIfCancelled();

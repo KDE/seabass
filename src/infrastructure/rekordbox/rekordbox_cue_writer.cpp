@@ -250,8 +250,10 @@ bool fitsAnlzMs(double ms)
     return ms >= 0.0 && ms <= double(UINT32_MAX);
 }
 
-// The cues the files can hold. A cue before the start of the track is
-// not one of them: domain::isJunkCue calls a negative position junk
+}  // namespace
+
+// A cue before the start of the track is not one of the cues the files
+// can hold: domain::isJunkCue calls a negative position junk
 // whatever the user prefers, a "no cue set" sentinel read as a position
 // that points nowhere, and there is no way to write it that a player
 // would read as that. So it is left off the rekordbox side, as Clean Up
@@ -266,8 +268,6 @@ std::vector<domain::CuePoint> writableCues(const std::vector<domain::CuePoint> &
     }
     return out;
 }
-
-}  // namespace
 
 std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, const std::string &analyzePath)
 {

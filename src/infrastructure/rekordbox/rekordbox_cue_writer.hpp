@@ -40,6 +40,14 @@ namespace seabass::infrastructure::rekordbox
 // add_cue_mirror_failure_test is what noticed.
 std::vector<std::string> rekordboxCueFilesFor(const std::string &pioneerRoot, const std::string &analyzePath);
 
+// The cues of `cues` the analysis files can hold, in order: every cue
+// but one whose position, or a loop's end, is before the start of the
+// track or not a time at all. The rest are left out, not reported: such
+// a cue is junk to domain::isJunkCue whatever the user prefers. The
+// OneLibrary writer leaves out the same ones, so its table and the files
+// agree.
+std::vector<domain::CuePoint> writableCues(const std::vector<domain::CuePoint> &cues);
+
 class RekordboxCueWriter : public application::CueWriter
 {
 public:

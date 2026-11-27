@@ -172,6 +172,11 @@ class RecordingsController : public QObject
     // The page's KeepRecordingController; null for none.
     Q_PROPERTY(seabass::gui::KeepRecordingController *keepController READ keepController WRITE setKeepController
                    NOTIFY keepControllerChanged)
+    // Keep this recording is offered (Experimental on). Only then does the
+    // listing read each WAV's header for the rows' header states
+    // (UnfinishedRole and the rest); without it every row says nothing of
+    // its header. A change once listed lists again.
+    Q_PROPERTY(bool keepEnabled READ keepEnabled WRITE setKeepEnabled NOTIFY keepEnabledChanged)
 
 public:
     explicit RecordingsController(QObject *parent = nullptr);
@@ -197,6 +202,8 @@ public:
     QString errorMessage() const { return m_errorMessage; }
     KeepRecordingController *keepController() const { return m_keep; }
     void setKeepController(KeepRecordingController *keep);
+    bool keepEnabled() const { return m_keepEnabled; }
+    void setKeepEnabled(bool enabled);
 
     // For the Housekeeping hub's card: directory entries and stats only,
     // on the calling thread (a few folders, a handful of files). Returns
@@ -236,6 +243,7 @@ signals:
     void finished(const QVariantMap &summary);
     void lockRefused(const QVariantMap &holder);
     void keepControllerChanged();
+    void keepEnabledChanged();
 
 private:
     void onListed();
@@ -265,6 +273,7 @@ private:
     QString m_currentItem;
     QString m_errorMessage;
     QPointer<KeepRecordingController> m_keep;
+    bool m_keepEnabled = false;
     // Keep controllers let go of while a delete ran: told when it ends.
     QList<QPointer<KeepRecordingController>> m_detachedKeeps;
 };

@@ -11,6 +11,7 @@
 #include <QCoreApplication>
 #include <QSignalSpy>
 #include <QStringList>
+#include <QThreadPool>
 
 #include <atomic>
 #include <cassert>
@@ -422,6 +423,45 @@ int main(int argc, char **argv)
             wiredListed.wait(100);
         }
         wired.setKeepController(nullptr);
+
+        // The keep controller outlives the page (it lives with the window):
+        // a page left while its delete runs tells it when the delete has
+        // ended, and it keeps again after that.
+        {
+            write(stick / "Sessions" / "K3.wav", wav(1000, 'm'));
+            auto page = std::make_unique<RecordingsController>();
+            QSignalSpy pageListed(page.get(), &RecordingsController::listingChanged);
+            page->setKeepController(&keep);
+            page->load(QStringLiteral("STICK"), QString(), pathToQString(engine));
+            assert(waitFor(pageListed, 1));
+            page->setAllIncluded(true);
+            letDelete = false;
+            RecordingsController::setDeleteHooksForTesting(hooks);
+            page->deleteSelected();
+            assert(page->working());
+            page.reset();
+            QVariantMap third = form;
+            third.insert("wavPath", pathToQString(stick / "Sessions" / "K3.wav"));
+            third.insert("recording", QStringLiteral("K3.wav"));
+            third.insert("title", QStringLiteral("K3"));
+            third.insert("folder", pathToQString(scratch / "kept-after-page"));
+            assert(!keep.keep(third));
+            assert(keep.errorMessage().contains(QStringLiteral("deleted")));
+            std::cout << "ok: a page left while its delete runs: nothing is kept until the delete has ended\n";
+            letDelete = true;
+            bool refusedForTheDelete = true;
+            for (int i = 0; i < 300 && refusedForTheDelete; ++i) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                QThreadPool::globalInstance()->waitForDone(50);
+                QVariantMap noFolder = third;
+                noFolder.insert("folder", QString());
+                keep.keep(noFolder);
+                refusedForTheDelete = keep.errorMessage().contains(QStringLiteral("deleted"));
+            }
+            assert(!refusedForTheDelete);
+            std::cout << "ok: and once it has ended, the keep controller is told and keeps again\n";
+        }
+        RecordingsController::setDeleteHooksForTesting({});
         KeepRecordingController::setPartsForTesting({});
     }
 
@@ -451,11 +491,28 @@ int main(int argc, char **argv)
         // after. It holds no audio too, and is not offered to keep.
         write(stick / "Sessions" / "N1.wav", wav(44100, 'n').substr(0, 36));
         write(stick / "Sessions" / "F1.wav", wav(44100, 'f'));
-        const int listedBefore = listed.count();
-        controller.load(QStringLiteral("STICK"), QString(), pathToQString(engine));
-        assert(waitFor(listed, listedBefore + 1));
         auto *model = controller.recordings();
         using Model = seabass::gui::RecordingListModel;
+        // Keep off (Experimental off): no header is read, and every row
+        // says nothing of one, as the released page's listing.
+        assert(!controller.keepEnabled());
+        int listedBefore = listed.count();
+        controller.load(QStringLiteral("STICK"), QString(), pathToQString(engine));
+        assert(waitFor(listed, listedBefore + 1));
+        bool anyState = false;
+        for (int i = 0; i < model->rowCount(); ++i) {
+            const QModelIndex index = model->index(i);
+            anyState = anyState || model->data(index, Model::UnfinishedRole).toBool()
+                || model->data(index, Model::HoldsNoAudioRole).toBool()
+                || model->data(index, Model::HeldSecondsRole).toDouble() >= 0
+                || model->data(index, Model::MissingBytesRole).toDouble() >= 0;
+        }
+        assert(model->rowCount() >= 5 && !anyState);
+        std::cout << "ok: with Keep off, no row says anything of its header\n";
+        // Switched on once listed: listed again, with the header states.
+        listedBefore = listed.count();
+        controller.setKeepEnabled(true);
+        assert(waitFor(listed, listedBefore + 1));
         bool sawUnfinished = false;
         bool sawCutShort = false;
         bool sawEmpty = false;

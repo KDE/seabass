@@ -14,9 +14,11 @@
 #include <atomic>
 #include <cctype>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <system_error>
@@ -329,14 +331,33 @@ bool flushFilesystemOf(const std::string &path)
 namespace
 {
 
-// Every analysis file noted, in order. A few thousand paths in a long
-// session at most (one per file Analyse again or an import writes), so
-// kept whole: a reader that asks late still sees every write.
+// The analysis file writes noted and not yet taken by every reader:
+// `paths` are the writes after the first `base`, in order. `readers`
+// holds each reader alive and the serial it has taken up to.
 struct AnalysisFileWrites
 {
     std::mutex lock;
-    std::vector<std::string> paths;
+    std::deque<std::string> paths;
+    std::uint64_t base = 0;
     std::atomic<std::uint64_t> serial{0};
+    std::map<const AnalysisFileWriteReader *, std::uint64_t> readers;
+
+    // Lets go of the paths every reader alive has taken. Caller holds
+    // `lock`.
+    void trim()
+    {
+        if (readers.empty()) {
+            return;
+        }
+        std::uint64_t oldest = serial.load();
+        for (const auto &[reader, seen] : readers) {
+            oldest = std::min(oldest, seen);
+        }
+        if (oldest > base) {
+            paths.erase(paths.begin(), paths.begin() + static_cast<std::ptrdiff_t>(oldest - base));
+            base = oldest;
+        }
+    }
 };
 
 AnalysisFileWrites &analysisFileWrites()
@@ -363,7 +384,11 @@ void noteAnalysisFileWritten(const std::string &path)
     AnalysisFileWrites &writes = analysisFileWrites();
     const std::lock_guard<std::mutex> guard(writes.lock);
     writes.paths.push_back(path);
-    writes.serial.store(writes.paths.size());
+    if (writes.paths.size() > AnalysisFileWritesHeld) {
+        writes.base += writes.paths.size();
+        writes.paths.clear();
+    }
+    writes.serial.store(writes.base + writes.paths.size());
 }
 
 std::uint64_t analysisFileWriteSerial()
@@ -371,17 +396,48 @@ std::uint64_t analysisFileWriteSerial()
     return analysisFileWrites().serial.load();
 }
 
-std::vector<std::string> analysisFilesWrittenSince(std::uint64_t serial, std::uint64_t *serialNow)
+std::size_t analysisFileWritesHeldNow()
 {
     AnalysisFileWrites &writes = analysisFileWrites();
     const std::lock_guard<std::mutex> guard(writes.lock);
-    if (serialNow != nullptr) {
-        *serialNow = writes.paths.size();
+    return writes.paths.size();
+}
+
+AnalysisFileWriteReader::AnalysisFileWriteReader()
+{
+    AnalysisFileWrites &writes = analysisFileWrites();
+    const std::lock_guard<std::mutex> guard(writes.lock);
+    writes.readers[this] = 0;
+}
+
+AnalysisFileWriteReader::~AnalysisFileWriteReader()
+{
+    AnalysisFileWrites &writes = analysisFileWrites();
+    const std::lock_guard<std::mutex> guard(writes.lock);
+    writes.readers.erase(this);
+    writes.trim();
+}
+
+bool AnalysisFileWriteReader::behind() const
+{
+    return analysisFileWrites().serial.load() != m_seen;
+}
+
+AnalysisFileWriteReader::Writes AnalysisFileWriteReader::take()
+{
+    AnalysisFileWrites &writes = analysisFileWrites();
+    const std::lock_guard<std::mutex> guard(writes.lock);
+    Writes taken;
+    const std::uint64_t now = writes.serial.load();
+    if (m_seen < writes.base) {
+        taken.everything = true;
+    } else {
+        taken.paths.assign(writes.paths.begin() + static_cast<std::ptrdiff_t>(m_seen - writes.base), writes.paths.end());
     }
-    if (serial >= writes.paths.size()) {
-        return {};
-    }
-    return {writes.paths.begin() + static_cast<std::ptrdiff_t>(serial), writes.paths.end()};
+    m_seen = now;
+    writes.readers[this] = now;
+    writes.trim();
+    return taken;
 }
 
 }  // namespace seabass::infrastructure

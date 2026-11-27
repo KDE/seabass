@@ -3219,8 +3219,13 @@ endfunction()
 
 # analysis-ledger --reset on a scratch stick: what cannot be used is moved
 # aside, never deleted; a ledger that can be read is never moved.
+# The ledger that can be read is written by the ledger's own writer: the
+# CMake the project requires has no raw gzip.
+add_executable(write_empty_analysis_ledger tests/write_empty_analysis_ledger.cpp)
+target_link_libraries(write_empty_analysis_ledger PRIVATE seabass_core)
 add_test(NAME cli_analysis_ledger_reset
     COMMAND ${CMAKE_COMMAND} "-DCLI=$<TARGET_FILE:seabass-cli>"
+            "-DWRITE_LEDGER=$<TARGET_FILE:write_empty_analysis_ledger>"
             "-DSCRATCH=${CMAKE_BINARY_DIR}/test-scratch/cli_analysis_ledger_reset"
             -P ${CMAKE_SOURCE_DIR}/tests/cli_analysis_ledger_reset.cmake)
 
@@ -4095,10 +4100,17 @@ if(TARGET seabass_edit)
             target_link_libraries(track_import_tool PRIVATE seabass_edit seabass_taglib seabass_audio_qt
                 Qt6::Core Qt6::Gui)
         endif()
-        add_test(NAME track_import_controller_test COMMAND track_import_controller_test
-            ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
-        set_tests_properties(track_import_controller_test PROPERTIES LABELS "integration"
-            ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen")
+        # Three parts side by side, each on a stick of its own (the cases
+        # are minutes of real saves): 1, the import, its ledger and its
+        # rows; 2, Analyse again and its first cue cases (to 16k); 3, the rest of
+        # the cue cases. 900 s each: each part takes under 200 s alone on
+        # a fast Linux Debug build, and under load several times that.
+        foreach(part 1 2 3)
+            add_test(NAME track_import_controller_test_${part} COMMAND track_import_controller_test
+                ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library ${part})
+            set_tests_properties(track_import_controller_test_${part} PROPERTIES LABELS "integration"
+                ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1;QT_QPA_PLATFORM=offscreen" TIMEOUT 900)
+        endforeach()
 
         # Analyse again keeps the analysis rekordbox and the player made, and
         # Restore original analysis and Free Up Space's kept originals, on a

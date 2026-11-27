@@ -18,6 +18,12 @@ namespace seabass::gui
 
 class AnalysisMemoryGate;
 
+// How many files an import analyses at once on this computer
+// (analysisJobsFor: by its cores and their strength, two at least, eight
+// at most). Whether the next file may start is asked of the memory that
+// is free at that moment (AnalysisMemoryGate), file by file.
+int importAnalysisJobs();
+
 // Seabass's own analysis of an audio file for the track import: the file
 // is decoded once (QtMultimediaPcmSource) and given to
 // domain::analyseAudio piece by piece as it is decoded, which makes
@@ -31,16 +37,9 @@ class AnalysisMemoryGate;
 // Needs a QCoreApplication; runs a nested event loop in the calling
 // thread. Throws application::OperationCancelled on a cancel, which is
 // asked at every piece read.
-
-// How many files an import analyses at once on this computer
-// (analysisJobsFor: by its cores and their strength, two at least, eight
-// at most). Whether the next file may start is asked of the memory that
-// is free at that moment (AnalysisMemoryGate), file by file.
-int importAnalysisJobs();
-
 //
-// `range`: the tempos a grid may have (domain::TempoRange); the default
-// until Preferences has a setting for it.
+// `range`: the tempos a grid may have (domain::TempoRange). The import
+// passes the one Preferences sets (storedAnalysisTempoRange()).
 std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioFile,
                                                        const application::CancellationToken &cancel,
                                                        domain::TempoRange range = {});

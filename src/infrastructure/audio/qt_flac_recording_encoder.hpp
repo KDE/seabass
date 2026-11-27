@@ -45,11 +45,11 @@ namespace seabass::infrastructure::audio
 // that last block (or has been quiet for a while), and the end of the job
 // is the decoded check, which also proves the stop lost nothing.
 //
-// The checked file is then (in encode(), or later in placeVerified() for
-// one left unplaced) flushed without being created (a temporary
-// file that went away is a failure, never an empty FLAC), looked at again
+// encode() leaves the checked file under its temporary name.
+// placeVerified() then flushes it without creating it (a temporary file
+// that went away is a failure, never an empty FLAC), looks at it again
 // (its size and its STREAMINFO block, with the MD5 of the samples, must be
-// those that were checked), and renamed to the target by a rename that
+// those that were checked), and renames it to the target by a rename that
 // never replaces (renameNoReplace()). The target's size is read once more
 // after the rename.
 //
@@ -74,8 +74,8 @@ public:
                                                     const std::string &flacPath) override;
 
     // For tests: called with the path of the temporary file at three
-    // points, to change the world there and see the encoder refuse. The
-    // last two in placeVerified() too.
+    // points, to change the world there and see the encoder refuse: the
+    // first in encode(), the last two in placeVerified().
     struct TestHooks
     {
         // Before the check: to damage the file.

@@ -29,6 +29,7 @@
 #include "infrastructure/audio/playback_timeline.hpp"
 #include "infrastructure/durable_file_write.hpp"
 #include "infrastructure/engine/libdjinterop_engine_cue_writer.hpp"
+#include "infrastructure/long_paths.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/rekordbox/anlz_analysis_merge.hpp"
 #include "infrastructure/rekordbox/anlz_builder.hpp"
@@ -53,6 +54,24 @@ namespace
 namespace fs = std::filesystem;
 
 constexpr const char *Label = "track-import";
+
+// `text` with every spelling of `path` in it cut to the file's name. The
+// texts of a change end up in the stick's own log, which goes wherever
+// the stick goes: a folder of the computer (and its owner's name in it)
+// does not.
+std::string withNameOnly(std::string text, const std::string &path)
+{
+    const std::string name = pathToUtf8(pathFromUtf8(path).filename());
+    for (const std::string &spelled : {path, pathToUtf8(pathFromUtf8(path).make_preferred())}) {
+        if (spelled.empty() || spelled == name) {
+            continue;
+        }
+        for (size_t at = text.find(spelled); at != std::string::npos; at = text.find(spelled, at + name.size())) {
+            text.replace(at, spelled.size(), name);
+        }
+    }
+    return text;
+}
 
 std::string exportPdbUnder(const std::string &pioneerRoot)
 {
@@ -487,7 +506,7 @@ std::vector<BackupTarget> ImportTrackChange::filesToBackup(SaveContext &) const
     // no file to the backup, so it counts as absent).
     std::error_code ec;
     const std::string destination = destinationFile();
-    if (fs::symlink_status(pathFromUtf8(destination), ec).type() == fs::file_type::not_found) {
+    if (fs::symlink_status(infrastructure::longPathSafe(pathFromUtf8(destination)), ec).type() == fs::file_type::not_found) {
         BackupTarget audio{destination, Label};
         audio.removeOnRestoreIfAbsent = true;
         targets.push_back(std::move(audio));
@@ -501,7 +520,26 @@ std::vector<BackupTarget> ImportTrackChange::filesToBackup(SaveContext &) const
     return targets;
 }
 
+QString ImportTrackChange::sourceName() const
+{
+    return pathToQString(pathFromUtf8(m_sourceFile).filename());
+}
+
 ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
+{
+    ChangeOutcome outcome;
+    try {
+        outcome = applyToStick(ctx);
+    } catch (const std::exception &e) {
+        outcome = ChangeOutcome::failure(QString::fromStdString(e.what()));
+    }
+    if (!outcome.ok) {
+        outcome.error = QString::fromStdString(withNameOnly(outcome.error.toStdString(), m_sourceFile));
+    }
+    return outcome;
+}
+
+ChangeOutcome ImportTrackChange::applyToStick(SaveContext &ctx)
 {
     m_deviceLibraryId = 0;
     m_oneLibraryId = -1;
@@ -518,9 +556,9 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     // before it included, so a refusal has to come while nothing is
     // written, not after the file is on the stick.
     std::error_code ec;
-    const std::uintmax_t sourceSize = fs::file_size(pathFromUtf8(source), ec);
+    const std::uintmax_t sourceSize = fs::file_size(infrastructure::longPathSafe(pathFromUtf8(source)), ec);
     if (ec) {
-        return ChangeOutcome::failure(QStringLiteral("%1 is not a file that can be read. Nothing was imported.").arg(pathToQString(pathFromUtf8(m_sourceFile))));
+        return ChangeOutcome::failure(QStringLiteral("%1 is not a file that can be read. Nothing was imported.").arg(sourceName()));
     }
     // The analysis is of the file as it was when it was staged. A file
     // replaced on the computer since then (another size or another time)
@@ -573,7 +611,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     }
     // Never over a file that is there (the copy would refuse too, after
     // the libraries were opened).
-    if (fs::symlink_status(pathFromUtf8(destination), ec).type() != fs::file_type::not_found) {
+    if (fs::symlink_status(infrastructure::longPathSafe(pathFromUtf8(destination)), ec).type() != fs::file_type::not_found) {
         return ChangeOutcome::failure(
             QStringLiteral("%1 is on the stick already; not replaced. Nothing was imported.")
                 .arg(QString::fromStdString(track.stickPath)));
@@ -605,7 +643,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         if (track.sampleRateHz <= 0) {
             return ChangeOutcome::failure(
                 QStringLiteral("The sample rate of %1 could not be read, which an Engine row needs. Nothing was imported.")
-                    .arg(pathToQString(pathFromUtf8(m_sourceFile))));
+                    .arg(sourceName()));
         }
     }
 
@@ -622,8 +660,9 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
     const auto pictureFile = [&](const std::string &onStick) { return stickRoot / pathFromUtf8(onStick.substr(1)); };
     const auto pictureNamesFree = [&](const std::string &onStick) {
         std::error_code missing;
-        return fs::symlink_status(pictureFile(onStick), missing).type() == fs::file_type::not_found
-               && fs::symlink_status(pictureFile(mediumPictureOf(onStick)), missing).type() == fs::file_type::not_found;
+        return fs::symlink_status(infrastructure::longPathSafe(pictureFile(onStick)), missing).type() == fs::file_type::not_found
+               && fs::symlink_status(infrastructure::longPathSafe(pictureFile(mediumPictureOf(onStick))), missing).type()
+                      == fs::file_type::not_found;
     };
     // A cover file is named after a row made in this very save, so it
     // cannot be declared with filesToBackup(). Declared here, before it
@@ -667,7 +706,8 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         if (!built.error.empty()) {
             // A grid or a path the files cannot hold: the track goes in
             // unanalysed, and the log says so.
-            ctx.log().record(std::string(Label) + ": no analysis files for " + track.stickPath + ": " + built.error);
+            ctx.log().record(std::string(Label) + ": no analysis files for " + track.stickPath + ": "
+                             + withNameOnly(built.error, source));
         }
     }
     std::string analysisFile;  // "/PIONEER/USBANLZ/.../ANLZ0000.DAT"
@@ -686,7 +726,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
             for (const char *extension : {"DAT", "EXT", "2EX"}) {
                 std::error_code missing;
                 taken = taken
-                        || fs::symlink_status(stickRoot / pathFromUtf8((stem + extension).substr(1)), missing).type()
+                        || fs::symlink_status(infrastructure::longPathSafe(stickRoot / pathFromUtf8((stem + extension).substr(1))), missing).type()
                                != fs::file_type::not_found;
             }
             // Nor one a row names whose files are gone: either library
@@ -749,7 +789,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         const fs::path folder = pathFromUtf8(destination).parent_path();
         ctx.sharedForWholeSave<bool>("track-import:swept:" + application::normalizedPathKey(pathToUtf8(folder)), [&]() {
             for (const fs::path &leftover : infrastructure::track_import::sweepImportLeftovers(stickRoot, folder)) {
-                ctx.log().record(std::string(Label) + ": removed " + pathToUtf8(leftover)
+                ctx.log().record(std::string(Label) + ": removed /" + pathToGenericUtf8(leftover.lexically_relative(stickRoot))
                                  + ", left by an import that did not finish");
             }
             return std::make_unique<bool>(true);
@@ -780,7 +820,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
         // file that is another size now is not the file the row is for.
         if (copied.bytes != sourceSize) {
             return ChangeOutcome::failure(
-                QStringLiteral("%1 changed while it was imported.").arg(pathToQString(pathFromUtf8(m_sourceFile))));
+                QStringLiteral("%1 changed while it was imported.").arg(sourceName()));
         }
 
         if (!analysisFile.empty()) {
@@ -795,7 +835,8 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                 declareCreated(path);
                 fs::create_directories(file.parent_path());
                 if (!infrastructure::writeFileDurablyAtomic(path, *bytes)) {
-                    return ChangeOutcome::failure(QStringLiteral("Could not write the analysis file %1.").arg(pathToQString(file)));
+                    return ChangeOutcome::failure(
+                        QStringLiteral("Could not write the analysis file %1.").arg(QString::fromStdString(stem + extension)));
                 }
             }
         }
@@ -928,7 +969,7 @@ ChangeOutcome ImportTrackChange::apply(SaveContext &ctx)
                                           Label);
             }
         }
-        ctx.log().record(std::string(Label) + ": imported \"" + track.title + "\" from " + source + " to "
+        ctx.log().record(std::string(Label) + ": imported \"" + track.title + "\" from " + pathToUtf8(pathFromUtf8(source).filename()) + " to "
                          + track.stickPath + " (" + std::to_string(copied.bytes) + " bytes): DeviceLibrary id "
                          + std::to_string(m_deviceLibraryId) + ", OneLibrary id " + std::to_string(m_oneLibraryId)
                          + ", Engine id " + std::to_string(m_engineId) + " (0 or -1: not on this stick)");

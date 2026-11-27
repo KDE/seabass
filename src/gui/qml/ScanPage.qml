@@ -161,8 +161,14 @@ Page {
     readonly property bool trackImportEnabled: root.appSettingsController.experimentalFeaturesEnabled === true
     // Switched off, it stages nothing new; what waits stays staged.
     property var originalAnalysisController: OriginalAnalysisController {}
-    property var trackImportController: TrackImportController {
-        experimentalEnabled: root.trackImportEnabled
+    property var trackImportController: TrackImportController {}
+    // The switch, for whichever controller the page has: one that is not
+    // told stages nothing.
+    Binding {
+        target: root.trackImportController
+        property: "experimentalEnabled"
+        value: root.trackImportEnabled
+        when: root.trackImportController !== null && ("experimentalEnabled" in root.trackImportController)
     }
     Connections {
         target: ("objectName" in root.trackImportController) ? root.trackImportController : null
@@ -323,8 +329,8 @@ Page {
                         .arg(Math.ceil(outcome.megabytes ?? 0)) + " "
                     + ((outcome.analysed ?? 0) === 0 ? qsTr("They have no beat grid or waveform yet.")
                         : (outcome.withGrid ?? 0) === staged
-                            ? qsTr("Seabass analysed them: each has a beat grid and waveforms (a test version).")
-                            : qsTr("Seabass analysed %1 of them, %2 with a beat grid (a test version).")
+                            ? qsTr("Seabass analysed them with its own analysis, which is experimental: each has a beat grid and waveforms.")
+                            : qsTr("Seabass analysed %1 of them with its own analysis, which is experimental: %2 with a beat grid.")
                                 .arg(outcome.analysed).arg(outcome.withGrid ?? 0))
                 : "")
             + ((outcome.followedGrids ?? []).length > 0
@@ -375,7 +381,9 @@ Page {
         footer: DialogButtonBox {
             Button {
                 objectName: "importDuplicatesButton"
-                visible: importResultDialog.possibleDuplicates > 0
+                // Not offered once Experimental is switched off: the
+                // import it starts would be refused.
+                visible: importResultDialog.possibleDuplicates > 0 && root.trackImportEnabled
                 text: qsTr("Import possible duplicates too")
                 DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
                 onClicked: {
@@ -809,9 +817,14 @@ Page {
         readonly property int reanalysing: root.trackImportController.pendingRevision >= 0 && playlist.length > 0
             && ("reanalysisCount" in root.trackImportController)
             ? root.trackImportController.reanalysisCount(playlist) : 0
+        // Each of the items up to the separator is enabled only while it
+        // is shown: the keys of a menu pass over a disabled item, not over
+        // one that is merely hidden, and Return would trigger it.
         MenuItem {
+            id: importTracksItem
             objectName: "importTracksItem"
             visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
+            enabled: visible
             height: visible ? implicitHeight : 0
             text: qsTr("Import tracks...")
             onTriggered: {
@@ -820,8 +833,10 @@ Page {
             }
         }
         MenuItem {
+            id: importFolderItem
             objectName: "importFolderItem"
             visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
+            enabled: visible
             height: visible ? implicitHeight : 0
             text: qsTr("Import a folder...")
             onTriggered: {
@@ -830,23 +845,28 @@ Page {
             }
         }
         MenuItem {
+            id: takeBackImportItem
             objectName: "takeBackImportItem"
             visible: playlistMenu.importing > 0
+            enabled: visible
             height: visible ? implicitHeight : 0
             text: qsTr("Don't import the %n track(s)", "", playlistMenu.importing)
             onTriggered: root.trackImportController.dropStaged()
         }
         MenuItem {
+            id: analyseAgainItem
             objectName: "playlistAnalyseAgainItem"
             visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
             height: visible ? implicitHeight : 0
-            enabled: root.trackImportController.busy !== true
+            enabled: visible && root.trackImportController.busy !== true
             text: qsTr("Analyse again")
             onTriggered: root.trackImportController.analyseAgain(root.rekordboxPath, root.enginePath, playlistMenu.playlist)
         }
         MenuItem {
+            id: takeBackReanalysisItem
             objectName: "takeBackReanalysisItem"
             visible: playlistMenu.reanalysing > 0
+            enabled: visible
             height: visible ? implicitHeight : 0
             text: qsTr("Don't analyse the %n track(s) again", "", playlistMenu.reanalysing)
             onTriggered: root.trackImportController.dropReanalysis(playlistMenu.playlist)
@@ -854,15 +874,20 @@ Page {
         // The way back from Analyse again: offered whenever something is
         // kept for the playlist's tracks, also with the feature switched off.
         RestoreOriginalAnalysisMenuItem {
+            id: restoreAnalysisItem
             visible: (root.trackImportEnabled || kept > 0) && !playlistMenu.isNew && !playlistMenu.staged
+            enabled: visible && kept > 0 && controller.busy !== true
             height: visible ? implicitHeight : 0
             controller: root.originalAnalysisController
             rekordboxPath: root.rekordboxPath
             enginePath: root.enginePath
             playlist: playlistMenu.playlist
         }
+        // Under the items above whenever one of them is shown.
         MenuSeparator {
-            visible: root.trackImportEnabled && !playlistMenu.isNew && !playlistMenu.staged
+            objectName: "playlistImportSeparator"
+            visible: importTracksItem.visible || importFolderItem.visible || takeBackImportItem.visible
+                || analyseAgainItem.visible || takeBackReanalysisItem.visible || restoreAnalysisItem.visible
             height: visible ? implicitHeight : 0
         }
         MenuItem {

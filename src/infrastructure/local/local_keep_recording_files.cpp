@@ -272,49 +272,41 @@ std::vector<std::string> LocalKeepRecordingFiles::sweepLeftovers(const std::stri
                                                                  const std::function<bool(const std::string &)> &inHand)
 {
     std::vector<std::string> notes;
-    const fs::path folder = local(folderText);
+    // As written, made absolute: DirectoryReader adds a long path's prefix
+    // itself, and the notes name the files without it.
+    std::error_code absoluteEc;
+    fs::path folder = fs::absolute(pathFromUtf8(folderText), absoluteEc);
+    if (absoluteEc) {
+        folder = pathFromUtf8(folderText);
+    }
     const auto oldest = fs::file_time_type::clock::now() - std::chrono::hours(application::KeepRecordingLeftoverAgeHours);
     std::error_code ec;
     // Not recursive, and an entry that is a link is never followed: only
-    // regular files in the folder itself.
-    for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
-        const fs::path entry = it->path();
+    // regular files in the folder itself. Listed through DirectoryReader,
+    // which takes a long path's prefix (long_paths.hpp).
+    DirectoryReader reader(folder, ec);
+    fs::path entry;
+    while (!ec && reader.next(entry, ec)) {
         const std::string name = pathToUtf8(entry.filename());
         const std::optional<std::string> flacName = audio::recordingTempTargetName(name);
         if (!flacName) {
             continue;
         }
+        const fs::path file = longPathSafe(entry);
         std::error_code statusEc;
-        if (fs::symlink_status(entry, statusEc).type() != fs::file_type::regular || statusEc) {
+        if (fs::symlink_status(file, statusEc).type() != fs::file_type::regular || statusEc) {
             continue;
         }
         if (inHand && inHand(*flacName)) {
             continue;  // a job of this process is writing it
         }
-        const fs::file_time_type modified = fs::last_write_time(entry, statusEc);
+        const fs::file_time_type modified = fs::last_write_time(file, statusEc);
         if (statusEc || modified > oldest) {
             continue;  // younger than a day: another Seabass may be writing it
         }
-        const std::string path = pathToUtf8(entry);
-        // A tag copy of a FLAC whose FLAC is not there: earlier builds
-        // tagged a copy and renamed it over the FLAC, and after an
-        // interrupted replace on FAT or exFAT it can be the only copy of a
-        // kept recording. Never removed, and named, so it is not left
-        // unseen. The encoder's file was never placed and goes.
-        if (name.ends_with(audio::RecordingTagTempSuffix)) {
-            std::error_code flacEc;
-            const fs::file_status flac = fs::symlink_status(folder / pathFromUtf8(*flacName), flacEc);
-            if (flac.type() == fs::file_type::not_found) {
-                notes.push_back("A FLAC copy from an interrupted earlier run is still in the folder under this name; "
-                                "it may be a complete recording: " + path);
-                continue;
-            }
-            if (flacEc) {
-                continue;  // cannot tell whether the FLAC is there: left alone
-            }
-        }
+        const std::string path = pathToUtf8(folder / entry.filename());
         std::string failure;
-        if (removeEntry(entry, failure)) {
+        if (removeEntry(file, failure)) {
             notes.push_back("A temporary file an earlier keep left behind, more than a day old, was removed: " + path);
         } else {
             notes.push_back("A temporary file an earlier keep left behind could not be removed (" + failure + "): " + path);

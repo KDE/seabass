@@ -19,6 +19,9 @@
 // file on every platform, proven before anything is written.
 
 #include <QDir>
+#include <QDeadlineTimer>
+#include <QWaitCondition>
+#include <QMutex>
 #include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QImage>
@@ -30,12 +33,14 @@
 #include <QThread>
 #include <QThreadPool>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <taglib/flacfile.h>
@@ -54,7 +59,6 @@
 
 using seabass::gui::KeepRecordingController;
 using seabass::gui::KeepRecordingParts;
-constexpr int KeepRecordingStopWaitMsForTest = seabass::gui::KeepRecordingStopWaitMs;
 namespace fs = std::filesystem;
 
 namespace
@@ -405,6 +409,58 @@ void cancelInTheMiddle(const QString &scratch)
     check(fs::file_size(seabass::pathFromUtf8(wav)) == 44 + 44100ULL * 240 * 4, "the recording is as it was");
 }
 
+// How the destructor's waits for its workers ended: what, and whether on
+// the worker's own signal before the deadline.
+struct StopWaits
+{
+    std::vector<std::pair<std::string, bool>> seen;
+    StopWaits()
+    {
+        KeepRecordingController::setStopWaitObserverForTesting(
+            [this](const char *what, bool ended) { seen.emplace_back(what, ended); });
+    }
+    ~StopWaits() { KeepRecordingController::setStopWaitObserverForTesting({}); }
+    StopWaits(const StopWaits &) = delete;
+    StopWaits &operator=(const StopWaits &) = delete;
+};
+
+// A hang guard only: the destructor waits KeepRecordingStopWaitMs at the
+// most for each of its two workers; this is far above that.
+constexpr qint64 DestructorHangGuardMs = 30000;
+
+// Held until the test lets it go (or the hang guard passes): a step the
+// destructor cannot interrupt, without a wait of fixed length.
+class Latch
+{
+public:
+    void release()
+    {
+        const QMutexLocker lock(&m_mutex);
+        m_released = true;
+        m_wake.wakeAll();
+    }
+    // True when released, false when the hang guard passed first.
+    bool wait()
+    {
+        QMutexLocker lock(&m_mutex);
+        const QDeadlineTimer guard(DestructorHangGuardMs);
+        while (!m_released) {
+            if (!m_wake.wait(&m_mutex, guard)) {
+                break;
+            }
+        }
+        return m_released;
+    }
+    void markEntered() { m_entered = true; }
+    bool entered() const { return m_entered.load(); }
+
+private:
+    QMutex m_mutex;
+    QWaitCondition m_wake;
+    bool m_released = false;
+    std::atomic<bool> m_entered{false};
+};
+
 void destroyedMidEncoding(const QString &scratch)
 {
     const QString folder = scratch + QStringLiteral("/destroyed");
@@ -413,52 +469,66 @@ void destroyedMidEncoding(const QString &scratch)
     controller->setStickRoot(makeStick(scratch));
     check(controller->keep(form(wav, folder, QString(), QStringLiteral("Gone"))), "a job taken, to be left");
     check(waitUntil([&]() { return controller->progress() >= 0.1; }), "it is under way");
+    StopWaits waits;
     QElapsedTimer timer;
     timer.start();
     controller.reset();
     const qint64 ms = timer.elapsed();
-    check(ms < 1500, "the controller goes within a second and a half: " + std::to_string(ms) + " ms");
+    check(ms < DestructorHangGuardMs, "the controller goes (hang guard): " + std::to_string(ms) + " ms");
     // Woken as the worker ends, not at the end of the wait.
-    check(ms < KeepRecordingStopWaitMsForTest - 200,
-          "and as soon as the worker has stopped, well before the wait's end: " + std::to_string(ms) + " ms");
+    check(waits.seen == (std::vector<std::pair<std::string, bool>>{{"job", true}}),
+          "the destructor's wait for the job ended on the worker's own signal, the cancel answered in time");
     QThreadPool::globalInstance()->waitForDone();
     check(entries(folder).empty(), "no file left in the folder");
 }
 
-// A tag writer that takes its time: the step the destructor cannot
-// interrupt.
-class SlowTags : public seabass::application::RecordingTagWriter
+// A tag writer held until the test lets it go: the step the destructor
+// cannot interrupt.
+class HeldTags : public seabass::application::RecordingTagWriter
 {
 public:
+    explicit HeldTags(Latch *latch) : m_latch(latch) {}
     seabass::application::RecordingTagWriteResult tagInPlace(const seabass::application::VerifiedFlac &file,
                                                              const seabass::application::RecordingTags &) override
     {
-        QThread::msleep(2500);
+        m_latch->markEntered();
+        m_latch->wait();
         return {true, {}, file};
     }
+
+private:
+    Latch *m_latch;
 };
 
 void destroyedMidTagging(const QString &scratch)
 {
     const QString folder = scratch + QStringLiteral("/destroyed-tagging");
     const std::string wav = writeWav(scratch, QStringLiteral("tagging.wav"), 2);
-    KeepRecordingController::setPartsForTesting([]() {
+    Latch latch;
+    KeepRecordingController::setPartsForTesting([&latch]() {
         KeepRecordingParts parts;
         parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
         parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
         parts.covers = std::make_unique<seabass::infrastructure::audio::QtCoverArtPreparer>();
-        parts.tags = std::make_unique<SlowTags>();
+        parts.tags = std::make_unique<HeldTags>(&latch);
         return parts;
     });
     auto controller = std::make_unique<KeepRecordingController>();
     controller->setStickRoot(makeStick(scratch));
     check(controller->keep(form(wav, folder, QString(), QStringLiteral("Slow"))), "a job taken, to be left while tagged");
-    check(waitUntil([&]() { return controller->progressStep() == QStringLiteral("tags"); }), "it reaches the tags");
+    check(waitUntil([&]() { return latch.entered(); }), "it reaches the tags, and the tag writer holds");
+    StopWaits waits;
     QElapsedTimer timer;
     timer.start();
     controller.reset();
     const qint64 ms = timer.elapsed();
-    check(ms < 1500, "the controller goes within a second and a half while the tags are written: " + std::to_string(ms) + " ms");
+    // Back while the tag writer still holds: the destructor did not wait
+    // for it, it gave up at its deadline (and the worker is left to end).
+    check(ms < DestructorHangGuardMs, "the controller goes while the tags are written (hang guard): "
+                                          + std::to_string(ms) + " ms");
+    check(waits.seen == (std::vector<std::pair<std::string, bool>>{{"job", false}}),
+          "the destructor's wait for the job gave up at its deadline: the tag writer had not returned");
+    latch.release();
     QThreadPool::globalInstance()->waitForDone();
     // The tag writer said written, but the FLAC was not placed yet: the
     // cancel that came while it wrote is seen before the placing, and
@@ -467,41 +537,53 @@ void destroyedMidTagging(const QString &scratch)
     KeepRecordingController::setPartsForTesting({});
 }
 
-// A cover preparer that takes its time, as a huge picture on a slow disk.
-class SlowCovers : public seabass::application::CoverArtPreparer
+// A cover preparer held until the test lets it go, as a huge picture on a
+// slow disk.
+class HeldCovers : public seabass::application::CoverArtPreparer
 {
 public:
+    explicit HeldCovers(Latch *latch) : m_latch(latch) {}
     seabass::application::CoverArtResult prepare(const std::string &) override
     {
-        QThread::msleep(3000);
+        m_latch->markEntered();
+        m_latch->wait();
         return {std::nullopt, "too slow"};
     }
+
+private:
+    Latch *m_latch;
 };
 
-// Leaving the page while a cover preview is under way waits for it about
-// a second, not until it ends.
+// Leaving while a cover preview is under way waits for it until the
+// deadline, not until it ends.
 void destroyedMidCoverPreview(const QString &scratch)
 {
     QDir().mkpath(scratch);
     const QString picture = scratch + QStringLiteral("/slow.png");
     QImage(64, 64, QImage::Format_RGB32).save(picture);
-    KeepRecordingController::setPartsForTesting([]() {
+    Latch latch;
+    KeepRecordingController::setPartsForTesting([&latch]() {
         KeepRecordingParts parts;
         parts.files = std::make_unique<seabass::infrastructure::LocalKeepRecordingFiles>();
         parts.encoder = std::make_unique<seabass::infrastructure::audio::QtFlacRecordingEncoder>();
-        parts.covers = std::make_unique<SlowCovers>();
-        parts.tags = std::make_unique<SlowTags>();
+        parts.covers = std::make_unique<HeldCovers>(&latch);
+        parts.tags = std::make_unique<HeldTags>(&latch);
         return parts;
     });
     auto controller = std::make_unique<KeepRecordingController>();
     controller->pickCover(picture);
     check(controller->coverPreparing(), "a cover preview is under way");
+    check(waitUntil([&]() { return latch.entered(); }), "and the preparer holds");
+    StopWaits waits;
     QElapsedTimer timer;
     timer.start();
     controller.reset();
     const qint64 ms = timer.elapsed();
-    check(ms < 1500, "the controller goes within a second and a half while a cover is prepared: " + std::to_string(ms)
-                         + " ms");
+    check(ms < DestructorHangGuardMs, "the controller goes while a cover is prepared (hang guard): "
+                                          + std::to_string(ms) + " ms");
+    check(waits.seen == (std::vector<std::pair<std::string, bool>>{{"cover", false}}),
+          "the destructor's wait for the preview gave up at its deadline: the preparer had not returned");
+    latch.release();
     QThreadPool::globalInstance()->waitForDone();
     KeepRecordingController::setPartsForTesting({});
 }
@@ -812,8 +894,8 @@ void keptCopiesAndIdentity(const QString &scratch)
     const QVariantMap refused = runJob(form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Unfinished")));
     check(refused.value("state").toString() == QStringLiteral("failed")
               && refused.value("message").toString().contains(
-                  QStringLiteral("its header was not completed and does not say how long the audio is. The file "
-                                 "holds 0:01 of audio.")),
+                  QStringLiteral("Its header was not completed: it does not say how long the audio is, and the "
+                                 "file holds 0:01 of audio.")),
           "an unfinished recording without the choice: not kept: " + refused.value("message").toString().toStdString());
     // With it: kept, the notes say so.
     QVariantMap chosen = form(wav, folder, QStringLiteral("DJ Kelp"), QStringLiteral("Unfinished"));
@@ -823,7 +905,8 @@ void keptCopiesAndIdentity(const QString &scratch)
               && kept.value("keptSeconds").toDouble() > 0.99 && kept.value("keptSeconds").toDouble() < 1.01,
           "an unfinished recording with the choice: kept, with how much");
     check(kept.value("notes").toStringList().join(QLatin1Char(' ')).contains(
-              QStringLiteral("did not say how long the audio is, so the file was read to its end. The FLAC holds 0:01")),
+              QStringLiteral("did not say how long the audio is, so the file was read to its end: it held "
+                             "0:01 of audio. The FLAC holds 0:01")),
           "and its notes say the header was not completed and the file was read to its end: "
               + kept.value("notes").toStringList().join(QLatin1Char(' ')).toStdString());
     const QString flac = kept.value("flacPath").toString();

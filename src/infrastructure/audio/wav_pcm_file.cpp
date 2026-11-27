@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "domain/recording_length.hpp"
 #include "infrastructure/long_paths.hpp"
 #include "infrastructure/stick_backup/posix_archive_file.hpp"
 
@@ -62,16 +63,6 @@ bool isChunkId(const std::byte *p)
 
 }  // namespace
 
-std::string wavDuration(std::uint64_t frames, int sampleRate)
-{
-    const std::uint64_t seconds = frames / static_cast<std::uint64_t>(sampleRate);
-    const std::uint64_t h = seconds / 3600;
-    const std::uint64_t m = seconds / 60 % 60;
-    const std::uint64_t sec = seconds % 60;
-    const auto two = [](std::uint64_t v) { return (v < 10 ? "0" : "") + std::to_string(v); };
-    return h > 0 ? std::to_string(h) + ":" + two(m) + ":" + two(sec) : std::to_string(m) + ":" + two(sec);
-}
-
 bool declaredLengthUsable(std::uint64_t framesDeclared, int sampleRate, std::uint64_t bytesDeclared,
                           std::uint64_t bytesHeld, bool rf64)
 {
@@ -81,18 +72,17 @@ bool declaredLengthUsable(std::uint64_t framesDeclared, int sampleRate, std::uin
     return !rf64 || bytesHeld == 0 || bytesDeclared / bytesHeld <= MaxUsableRf64DeclaredFactor;
 }
 
-std::string declaredAgainstHeld(const WavUnfinished &unfinished, int sampleRate)
+domain::UnfinishedHeaderLengths unfinishedLengths(const WavUnfinished &unfinished, int sampleRate)
 {
-    const std::string holds = wavDuration(unfinished.framesHeld, sampleRate);
-    if (!unfinished.declaredUsable) {
-        return "the header's length is not usable, and the file holds " + holds;
+    domain::UnfinishedHeaderLengths lengths;
+    lengths.framesHeld = unfinished.framesHeld;
+    if (unfinished.kind == WavUnfinished::Kind::PastEnd) {
+        lengths.framesDeclared = unfinished.framesDeclared;
     }
-    const std::string declared = wavDuration(unfinished.framesDeclared, sampleRate);
-    std::string text = "it declares " + declared + " of audio, and the file holds " + holds;
-    if (declared == holds) {
-        text += " (" + std::to_string(unfinished.bytesMissing) + " bytes less than the header declares)";
-    }
-    return text;
+    lengths.declaredUsable = unfinished.declaredUsable;
+    lengths.bytesMissing = unfinished.bytesMissing;
+    lengths.sampleRate = sampleRate;
+    return lengths;
 }
 
 namespace
@@ -180,7 +170,7 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
             refuse("it is not a WAV file");
             return;
         }
-        m_file->readAt(0, head);
+        readAt(0, head);
         const bool riff = isId(head.data(), "RIFF");
         m_layout.rf64 = isId(head.data(), "RF64") || isId(head.data(), "BW64");
         if ((!riff && !m_layout.rf64) || !isId(head.data() + 8, "WAVE")) {
@@ -198,7 +188,7 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
         std::uint64_t at = head.size();
         while (at + 8 <= fileSize && (!fmt || !dataOffset)) {
             std::array<std::byte, 8> chunk{};
-            m_file->readAt(at, chunk);
+            readAt(at, chunk);
             const std::uint32_t size32 = le32(chunk.data() + 4);
             const std::uint64_t payloadAt = at + 8;
             std::uint64_t size = size32;
@@ -208,7 +198,7 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
                     return;
                 }
                 std::array<std::byte, 24> ds64{};
-                m_file->readAt(payloadAt, ds64);
+                readAt(payloadAt, ds64);
                 ds64DataSize = le64(ds64.data() + 8);
             } else if (isId(chunk.data(), "fmt ")) {
                 if (size > 1024 || payloadAt + size > fileSize) {
@@ -216,7 +206,7 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
                     return;
                 }
                 std::vector<std::byte> payload(static_cast<std::size_t>(size));
-                m_file->readAt(payloadAt, payload);
+                readAt(payloadAt, payload);
                 fmt = parseFmt(payload, m_error);
                 if (!fmt) {
                     refuse(m_error);
@@ -304,8 +294,8 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
                 // this does not know (a raw ID3v2 tag, a stray byte before
                 // a chunk) would have it appended as noise. Only what is
                 // known is said.
-                const std::string declared = wavDuration(dataBytes / align, fmt->sampleRate);
-                const std::string room = wavDuration(held / align, fmt->sampleRate);
+                const std::string declared = domain::recordingClock(dataBytes / align, fmt->sampleRate);
+                const std::string room = domain::recordingClock(held / align, fmt->sampleRate);
                 std::string why = "its header declares " + declared + " of audio and the file could hold " + room;
                 if (declared == room) {
                     why += " (" + std::to_string(held - dataBytes) + " bytes more than the header declares)";
@@ -332,18 +322,11 @@ WavPcmFile::WavPcmFile(const std::filesystem::path &path, WavReading reading)
                 return;
             }
             m_unfinished = info;
-            const std::string holds = wavDuration(info.framesHeld, fmt->sampleRate);
             if (reading == WavReading::AsDeclared) {
                 m_state = State::Unfinished;
-                switch (info.kind) {
-                    case WavUnfinished::Kind::NoSize:
-                        m_error = "its header was not completed: it does not say how long the audio is. The file "
-                                  "holds " + holds + " of audio";
-                        break;
-                    case WavUnfinished::Kind::PastEnd:
-                        m_error = "its header was not completed: " + declaredAgainstHeld(info, fmt->sampleRate);
-                        break;
-                }
+                m_error = "its header was not completed: "
+                    + domain::unfinishedHeaderText(unfinishedLengths(info, fmt->sampleRate),
+                                                   domain::RecordingTense::Present);
                 return;
             }
             dataBytes = info.framesHeld * align;
@@ -370,12 +353,18 @@ void WavPcmFile::refuse(std::string why)
     m_error = std::move(why);
 }
 
+void WavPcmFile::readAt(std::uint64_t at, std::span<std::byte> out) const
+{
+    m_file->readAt(at, out);
+    m_bytesRead += out.size();
+}
+
 bool WavPcmFile::zeroBytesFrom(std::uint64_t at, std::uint64_t fileSize) const
 {
     std::array<std::byte, 65536> piece{};
     while (at < fileSize) {
         const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(piece.size(), fileSize - at));
-        m_file->readAt(at, std::span<std::byte>(piece.data(), count));
+        readAt(at, std::span<std::byte>(piece.data(), count));
         if (std::any_of(piece.begin(), piece.begin() + static_cast<std::ptrdiff_t>(count),
                         [](std::byte b) { return b != std::byte{0}; })) {
             return false;
@@ -391,13 +380,17 @@ bool WavPcmFile::onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize, bool s
     constexpr std::uint64_t Id3v1Bytes = 128;
     while (at < fileSize) {
         if (!strict) {
-            // Padding to the end, or an ID3v1 block at the very end.
-            if (zeroBytesFrom(at, fileSize)) {
-                return fileSize - at <= maxZeroBytes;
+            // Padding to the end, or an ID3v1 block at the very end. A run
+            // longer than padding may be is not read at all: zero bytes are
+            // no chunk id and no "TAG" either, so what starts with one is
+            // refused below whatever follows it, and what does not is not
+            // padding. Only up to `maxZeroBytes` is ever read for it.
+            if (fileSize - at <= maxZeroBytes && zeroBytesFrom(at, fileSize)) {
+                return true;
             }
             if (fileSize - at == Id3v1Bytes) {
                 std::array<std::byte, 3> tag{};
-                m_file->readAt(at, tag);
+                readAt(at, tag);
                 if (std::memcmp(tag.data(), "TAG", 3) == 0) {
                     return true;
                 }
@@ -409,7 +402,7 @@ bool WavPcmFile::onlyChunksFrom(std::uint64_t at, std::uint64_t fileSize, bool s
             return !strict && at + 1 == fileSize;
         }
         std::array<std::byte, 8> chunk{};
-        m_file->readAt(at, chunk);
+        readAt(at, chunk);
         if (!isChunkId(chunk.data()) || isId(chunk.data(), "data")) {
             return false;
         }
@@ -432,7 +425,7 @@ void WavPcmFile::readFrames(std::uint64_t firstFrame, std::span<std::byte> out) 
     if (!m_file || out.size() % align != 0 || firstFrame + out.size() / align > m_layout.frames) {
         throw std::out_of_range("frames outside the WAV's audio");
     }
-    m_file->readAt(m_layout.dataOffset + firstFrame * align, out);
+    readAt(m_layout.dataOffset + firstFrame * align, out);
 }
 
 }  // namespace seabass::infrastructure::audio

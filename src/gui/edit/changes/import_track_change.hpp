@@ -34,7 +34,8 @@ namespace seabass::gui
 //      needs (PdbRowWriter::addTrack);
 //   3. OneLibrary: a content row in exportLibrary.db
 //      (OneLibraryCueWriter::addTrack);
-//   4. Engine: a Track row in m.db (createEngineTrack), left for the
+//   4. Engine: a Track row in m.db (createEngineTrack), with the
+//      analysis of setAnalysis() when there is one, else left for the
 //      player to analyse.
 // All three rows are filled from the one domain::ImportedTrack, so the
 // libraries say the same about the track.
@@ -135,9 +136,9 @@ struct CoverPictures
 // (gui/track_import_cover.hpp has the one the app uses).
 using CoverReader = std::function<std::optional<CoverPictures>(const std::string &audioFile)>;
 
-// What Seabass's own analysis made of an audio file (a test version: the
-// grid is domain::SeabassGridAnalyser's, the waveform
-// domain::waveformFromSamples').
+// What Seabass's own analysis made of an audio file: the grid is
+// domain::SeabassGridAnalyser's, the waveform
+// domain::waveformFromSamples'.
 struct ImportAnalysis
 {
     // Every beat, on the decoder's timeline, which is Engine's
@@ -332,6 +333,10 @@ public:
     bool engineAnalysed() const { return m_engineAnalysed; }
 
 private:
+    // apply() without its last word: what it says, with the source named
+    // by its file name only (texts of a save go into the stick's log).
+    ChangeOutcome applyToStick(SaveContext &ctx);
+    QString sourceName() const;
     std::string m_sourceFile;
     QString m_stickRoot;
     QString m_pioneerRoot;

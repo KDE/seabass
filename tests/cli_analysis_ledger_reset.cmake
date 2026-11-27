@@ -12,16 +12,14 @@
 # 4. A ledger that can be read: --reset refuses, exits 1, the file stays
 #    byte for byte.
 #
-#   -DCLI=<seabass-cli> -DSCRATCH=<a directory of the test's own>
+#   -DCLI=<seabass-cli> -DWRITE_LEDGER=<write_empty_analysis_ledger>
+#   -DSCRATCH=<a directory of the test's own>
 
-foreach(required CLI SCRATCH)
+foreach(required CLI WRITE_LEDGER SCRATCH)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "cli_analysis_ledger_reset.cmake: ${required} is not set")
     endif()
 endforeach()
-if(CMAKE_VERSION VERSION_LESS 3.18)
-    message(FATAL_ERROR "cli_analysis_ledger_reset.cmake: needs CMake 3.18 for file(ARCHIVE_CREATE) of raw gzip")
-endif()
 
 set(stick "${SCRATCH}/stick")
 set(seabass "${stick}/Seabass")
@@ -95,12 +93,12 @@ if(EXISTS "${ledger}" OR NOT count EQUAL 2)
     string(APPEND failures "damaged, reset: not moved aside beside the first: ${found}\n")
 endif()
 
-# 4. An empty ledger, as Seabass writes one: gzip around its header and
-#    its #sha256 line.
-set(header "seabass-analysis\t1\n")
-string(SHA256 digest "${header}")
-file(WRITE "${SCRATCH}/analysis.tsv" "${header}#sha256\t${digest}\n")
-file(ARCHIVE_CREATE OUTPUT "${ledger}" PATHS "${SCRATCH}/analysis.tsv" FORMAT raw COMPRESSION GZip)
+# 4. An empty ledger, written by the ledger's own writer.
+execute_process(COMMAND "${WRITE_LEDGER}" "${stick}" RESULT_VARIABLE written OUTPUT_VARIABLE out ERROR_VARIABLE out
+    TIMEOUT 120)
+if(NOT written EQUAL 0 OR NOT EXISTS "${ledger}")
+    message(FATAL_ERROR "cli_analysis_ledger_reset.cmake: no empty ledger written (${written}): ${out}")
+endif()
 file(SHA256 "${ledger}" before)
 run_cli("readable, listed" 0 "It lists no track\\."
     analysis-ledger --rekordbox "${stick}/PIONEER")

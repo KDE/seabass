@@ -4,12 +4,12 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <system_error>
-#include <vector>
 
 // What the recording encoder and the recording tag writer share about the
 // files they write: the name of a temporary file, how two paths are
@@ -21,10 +21,6 @@ namespace seabass::infrastructure::audio
 // "<target's name>.<16 hex digits><suffix>". The suffix stays the last
 // part of the name, so a scan that tidies leftovers recognises it.
 std::filesystem::path uniqueTempBeside(const std::filesystem::path &target, const char *suffix);
-
-// Whether `name` is one uniqueTempBeside() gives for a target named
-// `targetName` with `suffix`.
-bool isTempNameOf(const std::string &name, const std::string &targetName, const char *suffix);
 
 // Whether something is under `path`, a dangling link included. nullopt
 // when the filesystem would not say, with its reason in `error` (a name
@@ -59,9 +55,20 @@ std::uint64_t flushExistingFile(const std::filesystem::path &path);
 // The size of the file at `path`; nullopt when it cannot be told.
 std::optional<std::uint64_t> fileSizeOf(const std::filesystem::path &path);
 
-// The regular files in `folder` whose names isTempNameOf() takes for
-// `targetName` and `suffix`. Empty when the folder cannot be read.
-std::vector<std::filesystem::path> tempsBeside(const std::filesystem::path &folder, const std::string &targetName,
-                                               const char *suffix);
+// The longest path, in UTF-16 units, that the media libraries the
+// recording encoder hands a file to (QMediaRecorder and QAudioDecoder,
+// through FFmpeg or Media Foundation) open on Windows: they take it
+// without the \\?\ prefix, so Windows's MAX_PATH of 260 units, the
+// terminating null among them, is the limit.
+inline constexpr std::size_t MaxMediaPathUnits = 259;
+
+// How many UTF-16 units `path` has, as Windows counts it.
+std::size_t utf16Units(const std::filesystem::path &path);
+
+// Why the media libraries cannot be handed the temporary file `temp` on
+// Windows, in words for the person: its path has more than
+// MaxMediaPathUnits. Empty when they can. The encoder asks it on Windows
+// only.
+std::string mediaPathProblem(const std::filesystem::path &temp);
 
 }  // namespace seabass::infrastructure::audio

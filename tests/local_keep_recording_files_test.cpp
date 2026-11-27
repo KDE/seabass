@@ -4,15 +4,12 @@
 
 // LocalKeepRecordingFiles on a real folder:
 //
-//   - sweepLeftovers() removes the encoder's leftover temporary files and
-//     the tag copies earlier builds left, older than a day, and says each;
-//     it leaves a younger one, one whose FLAC a job has in hand, one whose
-//     name only looks like one (no 16 hex digits, an audio extension after
-//     the suffix), a link named like one (and what it points to), a folder
-//     named like one, and one in a folder below. An earlier build's tag
-//     copy whose FLAC is not beside it (it can be the only copy of a kept
-//     FLAC) is never removed: an old one is named in the notes; an
-//     encoder's file without its FLAC goes as any;
+//   - sweepLeftovers() removes the encoder's leftover temporary files
+//     older than a day, with or without their FLAC beside them, and says
+//     each; it leaves a younger one, one whose FLAC a job has in hand, one
+//     whose name only looks like one (no 16 hex digits, an audio extension
+//     after the suffix), a link named like one (and what it points to), a
+//     folder named like one, and one in a folder below;
 //   - isWithin(): a folder inside the root, the root itself, a folder
 //     still to be made inside it, and one outside it;
 //   - withinByDevice(), the device rule, with device numbers given: a root
@@ -70,16 +67,16 @@ bool noteNames(const std::vector<std::string> &notes, const fs::path &path)
 void sweep(const fs::path &root)
 {
     using seabass::infrastructure::audio::RecordingEncodeTempSuffix;
-    using seabass::infrastructure::audio::RecordingTagTempSuffix;
     const fs::path dir = root / "sweep";
     fs::create_directories(dir / "below");
     const std::chrono::hours old(25);
     const std::chrono::hours young(23);
 
     const fs::path oldEncode = dir / (std::string("Set.flac.0123456789abcdef") + RecordingEncodeTempSuffix);
-    const fs::path oldTag = dir / (std::string("Set \xC3\xA9.flac.fedcba9876543210") + RecordingTagTempSuffix);
+    const fs::path oldOutsideAscii =
+        dir / (std::string("Set \xC3\xA9.flac.fedcba9876543210") + RecordingEncodeTempSuffix);
     const fs::path youngEncode = dir / (std::string("Set.flac.00000000000000aa") + RecordingEncodeTempSuffix);
-    const fs::path inHand = dir / (std::string("Busy.flac.00000000000000bb") + RecordingTagTempSuffix);
+    const fs::path inHand = dir / (std::string("Busy.flac.00000000000000bb") + RecordingEncodeTempSuffix);
     const fs::path notHex = dir / (std::string("Set.flac.0123456789abcdeX") + RecordingEncodeTempSuffix);
     const fs::path shortToken = dir / (std::string("Set.flac.0123456789abcde") + RecordingEncodeTempSuffix);
     const fs::path audioAfter = dir / (std::string("Set.flac.0123456789abcdef") + RecordingEncodeTempSuffix + ".flac");
@@ -88,20 +85,15 @@ void sweep(const fs::path &root)
     const fs::path link = dir / (std::string("Link.flac.00000000000000cc") + RecordingEncodeTempSuffix);
     const fs::path folderNamed = dir / (std::string("Dir.flac.00000000000000dd") + RecordingEncodeTempSuffix);
     const fs::path below = dir / "below" / (std::string("Set.flac.00000000000000ee") + RecordingEncodeTempSuffix);
-    // The FLAC oldTag is a copy of, beside it.
-    const fs::path oldTagFlac = dir / "Set \xC3\xA9.flac";
-    // Tag writer's copies whose FLAC is not there: an old and a young one;
-    // and an encoder's file without its FLAC.
-    const fs::path onlyCopy = dir / (std::string("Gone.flac.0000000000000011") + RecordingTagTempSuffix);
-    const fs::path youngOnlyCopy = dir / (std::string("Fresh.flac.0000000000000022") + RecordingTagTempSuffix);
+    // An encoder's file whose FLAC is not beside it: never placed, so it
+    // goes like any other.
     const fs::path encodeNoFlac = dir / (std::string("Never.flac.0000000000000033") + RecordingEncodeTempSuffix);
 
-    for (const fs::path &p : {oldEncode, oldTag, oldTagFlac, inHand, notHex, shortToken, audioAfter, music, pointedTo,
-                              below, onlyCopy, encodeNoFlac}) {
+    for (const fs::path &p : {oldEncode, oldOutsideAscii, inHand, notHex, shortToken, audioAfter, music, pointedTo,
+                              below, encodeNoFlac}) {
         writeFile(p, "bytes", old);
     }
     writeFile(youngEncode, "bytes", young);
-    writeFile(youngOnlyCopy, "bytes", young);
     std::error_code ec;
     fs::create_symlink(pointedTo, link, ec);
     check(!ec, "the test made its link (" + ec.message() + ")");
@@ -116,22 +108,12 @@ void sweep(const fs::path &root)
             return flacName == "Busy.flac";
         });
     check(!fs::exists(oldEncode) && noteNames(notes, oldEncode), "an old encoder leftover: removed and said");
-    check(!fs::exists(oldTag) && noteNames(notes, oldTag),
-          "an old tag writer leftover beside its FLAC, a name outside ASCII: removed and said");
-    check(fs::exists(oldTagFlac), "and its FLAC is left");
+    check(!fs::exists(oldOutsideAscii) && noteNames(notes, oldOutsideAscii),
+          "an old leftover with a name outside ASCII: removed and said");
+    check(fs::exists(music), "the FLAC beside a leftover is left");
     check(!fs::exists(encodeNoFlac) && noteNames(notes, encodeNoFlac),
           "an old encoder leftover without its FLAC: removed and said (unverified by definition)");
-    check(fs::exists(onlyCopy), "an old tag writer copy whose FLAC is not there: left (it may be the only copy)");
-    const std::string onlyCopyNote = "A FLAC copy from an interrupted earlier run is still in the folder under this "
-                                     "name; it may be a complete recording: " + seabass::pathToUtf8(onlyCopy);
-    bool namedPlainly = false;
-    for (const std::string &note : notes) {
-        namedPlainly = namedPlainly || note == onlyCopyNote;
-    }
-    check(namedPlainly, "and named in the notes in plain words");
-    check(fs::exists(youngOnlyCopy) && !noteNames(notes, youngOnlyCopy),
-          "a younger one whose FLAC is not there: left, not named (another Seabass may be writing it)");
-    check(notes.size() == 4, "nothing else is said: " + std::to_string(notes.size()) + " notes");
+    check(notes.size() == 3, "nothing else is said: " + std::to_string(notes.size()) + " notes");
     check(fs::exists(youngEncode), "a leftover younger than a day: left (another Seabass may be writing it)");
     check(fs::exists(inHand), "a leftover of a FLAC a job has in hand: left");
     bool askedBusy = false;

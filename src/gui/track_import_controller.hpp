@@ -372,7 +372,9 @@ private:
     // The last run's changes, for the cue review, in playlist order.
     std::vector<std::shared_ptr<ReanalyseTrackChange>> m_reviewed;
     QVariantMap m_lastReanalysis;
-    bool m_experimentalEnabled = true;
+    // Off until the page says the switch is on: nothing is staged by a
+    // controller that has not been told.
+    bool m_experimentalEnabled = false;
     ImportAnalyser m_analyserForTesting;
 };
 

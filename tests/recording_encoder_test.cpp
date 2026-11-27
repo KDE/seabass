@@ -10,8 +10,8 @@
 //     come out as a FLAC that decodes, through a decoder of the test's
 //     own, to the signal, sample for sample, every channel, no frame more
 //     or less; WAVE_FORMAT_EXTENSIBLE and RF64 headers likewise;
-//   - progress runs from 0 to 1 and never back, and the encoder works
-//     from a worker thread;
+//   - progress runs from 0 to just short of 1 (the placing is the rest)
+//     and never back, and the encoder works from a worker thread;
 //   - a WAV cut short, not a WAV, another sample format, an unfinished
 //     header: refused, nothing written;
 //   - a target that exists: refused, left as it was; a folder that is a
@@ -56,7 +56,11 @@
 //   - a temporary name too long for the filesystem: refused, saying so;
 //   - a rename through a hard link whose old name could not be removed:
 //     the second name is removed again, and when that is not possible, its
-//     path is said;
+//     path is said and reported as a leftover;
+//   - a temporary file that cannot be taken away after a failure (a folder
+//     under its name): reported as left behind, with its path;
+//   - encode() leaves the proven file unplaced and placeVerified() gives
+//     it the target's name (every encode here goes through both);
 //   - the temporary file taken away or changed after the check: refused,
 //     no empty or other file under the target's name; a file that appears
 //     at the target right before the rename: not replaced;
@@ -93,6 +97,14 @@
 
 #if defined(_WIN32)
 #define PSAPI_VERSION 2
+// Before <windows.h>: its min and max macros break std::min and std::max
+// in the headers below.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #include <psapi.h>
 #else
@@ -101,6 +113,7 @@
 
 #include "infrastructure/audio/flac_stream_info.hpp"
 #include "infrastructure/audio/qt_flac_recording_encoder.hpp"
+#include "infrastructure/audio/recording_file_steps.hpp"
 #include "infrastructure/audio/wav_pcm_file.hpp"
 #include "infrastructure/no_replace_rename.hpp"
 #include "recording_test_support.hpp"
@@ -190,25 +203,55 @@ void copyOver(const std::string &from, const std::string &to)
 
 struct Run
 {
+    // encode()'s answer, and when it encoded, placeVerified()'s: a placing
+    // that failed makes it not encoded, with the placing's error.
     application::RecordingEncodeResult result;
+    application::RecordingPlaceResult placed;
+    // The proven file encode() left under its temporary name.
+    std::string unplacedPath;
     std::vector<double> progress;
 };
+
+// Encodes `wav` and places the proven file at `flac`, as the keep job
+// does: a placing that fails leaves the file under its temporary name, and
+// the caller removes it, as the keep job does.
+Run encodeAndPlace(QtFlacRecordingEncoder &encoder, const std::string &wav, const std::string &flac,
+                   const application::RecordingEncodeOptions &options)
+{
+    Run run;
+    run.result = encoder.encode(wav, flac, options);
+    if (!run.result.encoded) {
+        return run;
+    }
+    run.unplacedPath = run.result.unplaced.path;
+    run.placed = encoder.placeVerified(run.result.unplaced, flac);
+    if (!run.placed.placed) {
+        run.result.encoded = false;
+        run.result.error = run.placed.error;
+        if (!run.placed.leftUnderTargetName) {
+            std::error_code ec;
+            fs::remove(pathFromUtf8(run.unplacedPath), ec);
+        }
+    }
+    return run;
+}
 
 Run encode(QtFlacRecordingEncoder &encoder, const std::string &wav, const std::string &flac,
            application::CancellationToken cancel = application::CancellationToken::none(),
            double cancelAt = 2.0, bool keepUnfinished = false)
 {
-    Run run;
+    std::vector<double> progress;
     application::RecordingEncodeOptions options;
     options.cancel = cancel;
     options.keepUnfinished = keepUnfinished;
-    options.progress = [&run, cancel, cancelAt](double fraction) mutable {
-        run.progress.push_back(fraction);
+    options.progress = [&progress, cancel, cancelAt](double fraction) mutable {
+        progress.push_back(fraction);
         if (fraction >= cancelAt) {
             cancel.cancel();
         }
     };
-    run.result = encoder.encode(wav, flac, options);
+    Run run = encodeAndPlace(encoder, wav, flac, options);
+    run.progress = std::move(progress);
     return run;
 }
 
@@ -257,8 +300,12 @@ void roundTrip(const std::string &dir, const WavSpec &spec)
     for (std::size_t i = 1; i < run.progress.size(); ++i) {
         monotonic = monotonic && run.progress[i] >= run.progress[i - 1];
     }
-    check(!run.progress.empty() && monotonic && run.progress.front() >= 0.0 && run.progress.back() == 1.0,
-          label + ": progress runs from 0 to 1 and never back");
+    // Short of 1: the placing, the caller's, is the rest.
+    check(!run.progress.empty() && monotonic && run.progress.front() >= 0.0 && run.progress.back() > 0.99
+              && run.progress.back() < 1.0,
+          label + ": progress runs from 0 to just short of 1 and never back");
+    check(run.result.unplaced.size > 0 && !exists(run.unplacedPath),
+          label + ": encode() left the proven file unplaced, and placeVerified() gave it the FLAC's name");
     bool checkReported = false;
     for (const double p : run.progress) {
         checkReported = checkReported || (p > 0.6 && p < 1.0);
@@ -563,8 +610,8 @@ void unfinishedHeaders(const std::string &dir)
                 check(run.result.framesDeclared == std::optional<std::uint64_t>(declared / align),
                       c.label + ": the declared length is reported");
                 const std::string both = "it declares "
-                    + infrastructure::audio::wavDuration(declared / align, c.spec.rate) + " of audio, and the file holds "
-                    + infrastructure::audio::wavDuration(c.spec.frames, c.spec.rate);
+                    + domain::recordingClock(declared / align, c.spec.rate) + " of audio, and the file holds "
+                    + domain::recordingClock(c.spec.frames, c.spec.rate);
                 check(run.result.error.find(both) != std::string::npos,
                       c.label + ": both lengths said (\"" + both + "\"): " + run.result.error);
             }
@@ -610,6 +657,31 @@ void headerReadings(const std::string &dir)
         recording_test::writeWav(wav, spec);
         return std::make_unique<WavPcmFile>(pathFromUtf8(wav), reading);
     };
+    // A finished WAV followed by a long run of zero bytes (sparse, 256 MB):
+    // refused as more than padding, and opening it reads at most a second
+    // of audio's worth of them, as the Recordings listing does for every
+    // WAV on the stick. Up to a second of zeros is still read through.
+    {
+        const std::string wav = dir + "/zero-tail.wav";
+        const WavSpec spec{48000, 2, 16, 48000};
+        recording_test::writeWav(wav, spec);
+        const std::uint64_t finished = fs::file_size(pathFromUtf8(wav));
+        fs::resize_file(pathFromUtf8(wav), finished + (std::uint64_t{256} << 20));
+        const std::uint64_t oneSecond = 48000 * 4;
+        for (const WavReading reading : {WavReading::AsDeclared, WavReading::ToEndOfFile}) {
+            const WavPcmFile file(pathFromUtf8(wav), reading);
+            check(file.state() == WavPcmFile::State::Refused
+                      && file.error().find("the header does not match the file") != std::string::npos,
+                  "a long zero tail: refused as more than padding: " + file.error());
+            check(file.bytesRead() <= 4096 + oneSecond,
+                  "and opening it read " + std::to_string(file.bytesRead()) + " bytes, not the tail");
+        }
+        fs::resize_file(pathFromUtf8(wav), finished + oneSecond);
+        const WavPcmFile padded(pathFromUtf8(wav));
+        check(padded.isOpen() && padded.bytesRead() >= oneSecond && padded.bytesRead() <= 4096 + oneSecond,
+              "a second of zeros: padding, read through (" + std::to_string(padded.bytesRead()) + " bytes)");
+        fs::remove(pathFromUtf8(wav));
+    }
     // RF64 with a data size of 0, in ds64 or in the data chunk too: not a
     // recorder that stopped, refused with a plain reason, either way.
     for (const auto chunkSize : {std::uint32_t{0xFFFFFFFFU}, std::uint32_t{0}}) {
@@ -844,7 +916,7 @@ void overFourGigabytes(const std::string &dir)
                       && file.unfinished()->framesHeld == frames && file.unfinished()->partialFrameBytes == (size - 44) % 6,
                   label + ": unfinished, no size, every whole frame held counted: " + file.error());
             check(file.error().find("does not say how long the audio is") != std::string::npos
-                      && file.error().find("holds " + infrastructure::audio::wavDuration(frames, 48000) + " of audio")
+                      && file.error().find("holds " + domain::recordingClock(frames, 48000) + " of audio")
                           != std::string::npos
                       && frames / 48000 > 4 * 3600,
                   label + ": the reason says the hours it holds: " + file.error());
@@ -904,6 +976,36 @@ void temporaryNames(const std::string &dir)
                   && name.find(".flac.") == std::string("named").size(),
               "temporary name: <FLAC>.<16 hex>.seabass-encode-tmp, no audio extension last: " + name);
         check(there, "temporary name: the recorder wrote under exactly that name");
+        // The keep job's name budget (KeepRecordingRequest::tempNameExtraBytes)
+        // is what the encoder's name really adds.
+        check(name.size() == std::string("named.flac").size() + infrastructure::audio::recordingTempNameExtraBytes(),
+              "temporary name: it adds recordingTempNameExtraBytes() to the FLAC's name: " + name);
+    }
+    // The longest path the media libraries take on Windows, counted in
+    // UTF-16 units as Windows counts it (a character past U+FFFF is two),
+    // and the plain refusal past it. Asked of the rule on every platform;
+    // the encoder applies it on Windows only.
+    {
+        using infrastructure::audio::MaxMediaPathUnits;
+        using infrastructure::audio::mediaPathProblem;
+        using infrastructure::audio::utf16Units;
+        const std::string folder = "/m/" + std::string(200, 'f');
+        const auto pathOf = [&folder](std::size_t units) {
+            return pathFromUtf8(folder + "/" + std::string(units - folder.size() - 1, 'n'));
+        };
+        check(utf16Units(pathOf(MaxMediaPathUnits)) == MaxMediaPathUnits
+                  && mediaPathProblem(pathOf(MaxMediaPathUnits)).empty(),
+              "a path of 259 units is handed to the media libraries");
+        const std::string tooLong = mediaPathProblem(pathOf(MaxMediaPathUnits + 1));
+        check(tooLong.find("260 characters long") != std::string::npos
+                  && tooLong.find("at most 259") != std::string::npos
+                  && tooLong.find(folder) != std::string::npos,
+              "one of 260 is refused, saying how long it is and how long it may be: " + tooLong);
+        // U+1F3B5 (four bytes of UTF-8, two UTF-16 units) and U+00E9 (two
+        // bytes, one unit).
+        const fs::path wide = pathFromUtf8("/m/\xF0\x9F\x8E\xB5\xC3\xA9.flac");
+        check(utf16Units(wide) == 3 + 2 + 1 + 5, "UTF-16 units are counted as Windows counts them: "
+                                                  + std::to_string(utf16Units(wide)));
     }
     // A name the FLAC fits and its temporary name does not.
     {
@@ -932,8 +1034,8 @@ void temporaryNames(const std::string &dir)
         const std::string flac = dir + "/second-name.flac";
         const Run run = encode(encoder, wav, flac);
         setNoReplaceRenameCallsForTests({});
-        check(run.result.encoded && run.result.notes.empty(),
-              "old name left by the rename: encoded, nothing to say (" + run.result.error + ")");
+        check(run.result.encoded && run.placed.notes.empty() && run.placed.leftBehind.empty(),
+              "old name left by the rename: encoded, nothing to say, nothing left (" + run.result.error + ")");
         check(noTempBeside(flac), "old name left by the rename: removed again");
     }
     // ... and when that is not possible either, its path is said. Here the
@@ -950,10 +1052,13 @@ void temporaryNames(const std::string &dir)
         const Run run = encode(encoder, wav, flac);
         setNoReplaceRenameCallsForTests({});
         const std::vector<std::string> left = tempsBeside(flac);
-        check(run.result.encoded && left.size() == 1 && run.result.notes.size() == 1
-                  && run.result.notes.front().find(left.empty() ? std::string("?") : left.front()) != std::string::npos,
+        check(run.result.encoded && left.size() == 1 && run.placed.notes.size() == 1
+                  && run.placed.notes.front().find(left.empty() ? std::string("?") : left.front()) != std::string::npos,
               "a second name that stays: encoded, and its path said: "
-                  + (run.result.notes.empty() ? std::string() : run.result.notes.front()));
+                  + (run.placed.notes.empty() ? std::string() : run.placed.notes.front()));
+        check(!left.empty() && run.placed.leftBehind == run.unplacedPath
+                  && pathToUtf8(pathFromUtf8(run.placed.leftBehind).filename()) == left.front(),
+              "a second name that stays: reported as a leftover, with its path: " + run.placed.leftBehind);
     }
 #endif
 }
@@ -1047,23 +1152,6 @@ void placement(const std::string &dir)
         check(readAll(flac) == "someone else's file", "target appeared before the rename: it is not replaced");
         check(noTempBeside(flac), "target appeared before the rename: the temporary file is taken away");
     }
-    // A progress callback that throws at the end, after the FLAC has its
-    // name: the FLAC still counts.
-    {
-        QtFlacRecordingEncoder encoder;
-        const std::string flac = dir + "/place-throwing-progress.flac";
-        application::RecordingEncodeOptions options;
-        options.progress = [](double fraction) {
-            if (fraction >= 1.0) {
-                throw std::runtime_error("the progress bar broke");
-            }
-        };
-        const auto result = encoder.encode(wav, flac, options);
-        check(result.encoded && result.error.empty(),
-              "a throwing progress at the end: still encoded (" + result.error + ")");
-        check(recording_test::compareWithSignal(recording_test::decodeAll(flac), spec).empty(),
-              "a throwing progress at the end: the FLAC is there and whole");
-    }
 }
 
 // The check is what makes a FLAC count: a damaged one never gets the
@@ -1094,6 +1182,37 @@ void damaged(const std::string &dir)
         file.seekp(static_cast<std::streamoff>(fs::file_size(pathFromUtf8(temp)) / 2));
         file.write("\x12\x34\x56\x78\x9a\xbc\xde\xf0", 8);
     });
+}
+
+// A temporary file that cannot be taken away after a failure is said
+// with its path: here a folder with a file in it is under its name by the
+// time the check runs.
+void leftovers(const std::string &dir)
+{
+    const WavSpec spec{44100, 2, 16, 44100};
+    const std::string wav = dir + "/leftover.wav";
+    recording_test::writeWav(wav, spec);
+    QtFlacRecordingEncoder encoder(5000);
+    std::string temp;
+    encoder.setBeforeCheckForTests([&temp](const std::string &path) {
+        temp = path;
+        fs::remove(pathFromUtf8(path));
+        fs::create_directory(pathFromUtf8(path));
+        std::ofstream(pathFromUtf8(path) / "in the way") << "x";
+    });
+    const std::string flac = dir + "/leftover.flac";
+    const Run run = encode(encoder, wav, flac);
+    check(!run.result.encoded && !run.result.cancelled, "a folder in the temporary file's place: not encoded");
+    check(!temp.empty() && run.result.leftBehind == temp,
+          "and what is under the temporary name is reported as left behind: \"" + run.result.leftBehind + "\"");
+    check(fs::is_directory(pathFromUtf8(temp)) && !exists(flac), "the folder is left as it is, no FLAC");
+    fs::remove_all(pathFromUtf8(temp));
+    // Nothing left: nothing said.
+    QtFlacRecordingEncoder plain(5000);
+    plain.setBeforeCheckForTests([](const std::string &path) { fs::resize_file(pathFromUtf8(path), 10); });
+    const Run removed = encode(plain, wav, dir + "/leftover-removed.flac");
+    check(!removed.result.encoded && removed.result.leftBehind.empty() && noTempBeside(dir + "/leftover-removed.flac"),
+          "a temporary file that could be removed: nothing reported left (" + removed.result.leftBehind + ")");
 }
 
 void cancels(const std::string &dir)
@@ -1127,7 +1246,7 @@ void workerThread(const std::string &dir)
     application::RecordingEncodeResult result;
     QThread *thread = QThread::create([&]() {
         QtFlacRecordingEncoder encoder;
-        result = encoder.encode(wav, flac, {});
+        result = encodeAndPlace(encoder, wav, flac, {}).result;
     });
     thread->start();
     // The main thread's loop runs meanwhile, as the GUI's would.
@@ -1186,7 +1305,7 @@ void longRecording(const std::string &dir, int minutes)
         encodedAt = p;
     };
     QtFlacRecordingEncoder encoder;
-    const auto result = encoder.encode(wav, flac, options);
+    const auto result = encodeAndPlace(encoder, wav, flac, options).result;
     const qint64 totalMs = timer.elapsed();
     const std::uint64_t after = peakMemory();
     check(result.encoded, "long: encoded (" + result.error + ")");
@@ -1241,6 +1360,7 @@ int main(int argc, char **argv)
         comparisonAlone(dir);
         placement(dir);
         damaged(dir);
+        leftovers(dir);
         cancels(dir);
         workerThread(dir);
     }

@@ -52,6 +52,8 @@ public:
     void markEnded();
     // True when the worker has ended, at once or within `deadline`.
     bool waitUntil(QDeadlineTimer deadline);
+    // Whether the worker has ended, now.
+    bool ended();
 
 private:
     QMutex m_mutex;
@@ -95,12 +97,16 @@ struct KeepRecordingParts
 // (setDeleteRunning(), from RecordingsController), and RecordingsController
 // deletes nothing while this has work (hasWork).
 //
-// Leaving the page while a job runs cancels it, as the track import's
-// preparing is cancelled: the destructor asks the job to stop, drops the
-// queue and waits up to KeepRecordingStopWaitMs for the worker to end
-// (a wait on a condition the worker sets as it returns, not a spin). The
-// encoder answers a cancel within a fraction of a second; the tag
-// writer, which hashes the audio of a long recording twice, cannot be
+// The app's one lives with the window (Main.qml), not with the page:
+// leaving the page leaves the work running, and the page shows it again
+// when it is opened again. A stick taken out while a recording on it is
+// kept or waits to be cancels the work (Main.qml asks cancel()).
+//
+// Destroyed while a job runs (the app quits), the destructor asks the job
+// to stop, drops the queue and waits up to KeepRecordingStopWaitMs for the
+// worker to end (a wait on a condition the worker sets as it returns, not
+// a spin). The encoder answers a cancel within a fraction of a second; the
+// tag writer, which hashes the audio of a long recording twice, cannot be
 // interrupted, and a worker still in it then is left to finish on its own:
 // it uses nothing of this object, and QCoreApplication waits for it at
 // exit. When the tag writer returns, the job sees the cancel before the
@@ -243,6 +249,11 @@ public:
     // For a test only: the parts each job is done with from now on;
     // {} for the real ones.
     static void setPartsForTesting(std::function<KeepRecordingParts()> make);
+    // For a test only: told, by the destructor, of each wait for a worker
+    // ("cover" or "job") whether it ended because the worker had ended
+    // (`workerEnded`, the deadline not reached) or because the deadline
+    // passed. {} for none.
+    static void setStopWaitObserverForTesting(std::function<void(const char *what, bool workerEnded)> observe);
 
 signals:
     void busyChanged();

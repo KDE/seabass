@@ -174,10 +174,11 @@ public:
     std::optional<std::uint64_t> declaredFrames;
     std::uint64_t bytesMissing = 0;
     bool declaredUnusable = false;
-    std::vector<std::string> notes;
+    // A temporary file the encoder could not take away after a failure or
+    // a cancel: reported in its answer.
+    std::string leftBehind;
     // The options the job was given.
     bool keepUnfinishedGiven = false;
-    bool leaveUnplacedGiven = false;
 
     // The placing: refused before the rename with `placeError`; renamed
     // and then another size under the name (`placeLeavesTarget`); renamed
@@ -189,6 +190,8 @@ public:
     bool throwsBeforeRename = false;
     bool throwsAfterRename = false;
     std::vector<std::string> placeNotes;
+    // A second name of the FLAC the placing left.
+    std::string placeLeftBehind;
     // What placeVerified() was handed.
     VerifiedFlac placedFile;
 
@@ -197,7 +200,6 @@ public:
     {
         journal.push_back("encode " + wavPath + " -> " + flacPath);
         keepUnfinishedGiven = options.keepUnfinished;
-        leaveUnplacedGiven = options.leaveUnplaced;
         if (during) {
             during();
         }
@@ -224,6 +226,7 @@ public:
             }
             if (options.cancel.cancelled()) {
                 result.cancelled = true;
+                result.leftBehind = leftBehind;
                 return result;
             }
             if (options.progress) {
@@ -232,12 +235,12 @@ public:
         }
         if (!error.empty()) {
             result.error = error;
+            result.leftBehind = leftBehind;
             return result;
         }
         m_files.present.insert(Temp);
         m_files.sizes[Temp] = EncodedBytes;
         result.encoded = true;
-        result.notes = notes;
         if (!noPath) {
             result.unplaced.path = Temp;
             result.unplaced.size = EncodedBytes;
@@ -252,6 +255,7 @@ public:
         placedFile = file;
         RecordingPlaceResult result;
         result.notes = placeNotes;
+        result.leftBehind = placeLeftBehind;
         if (throwsBeforeRename) {
             throw std::runtime_error("the placing broke down");
         }
@@ -452,7 +456,6 @@ void testTheWholeJobInOrder()
               && run.tags.written.year == 2026,
           "every field reaches the tag writer");
     check(run.tags.written.cover.jpeg == "JPEG" && run.tags.written.cover.width == 600, "the prepared cover too");
-    check(run.encoder.leaveUnplacedGiven, "the encoder is asked to leave its proven file unplaced");
     check(run.tags.given.path == Temp && run.tags.given.size == EncodedBytes && run.tags.given.streamInfo[0] == 0x12,
           "the tag writer is handed the encoder's proven file as the encoder described it");
     check(run.encoder.placedFile.path == Temp && run.encoder.placedFile.size == EncodedBytes + 4096,
@@ -920,8 +923,8 @@ void testAnUnfinishedRecording()
         check(run.result.status == KeepRecordingResult::Status::Failed && !run.encoder.keepUnfinishedGiven,
               "unfinished, no choice: refused, and the encoder was not told to keep it");
         check(run.result.message
-                  == "The recording was not kept: its header was not completed and does not say how long the audio "
-                     "is. The file holds 1:02:03 of audio. " + why
+                  == "The recording was not kept. Its header was not completed: it does not say how long the audio "
+                     "is, and the file holds 1:02:03 of audio. " + why
                       + " Choose \"Keep the audio the file holds\" to keep that.",
               "unfinished, no size, no choice: the message says what the file holds and how to keep it: "
                   + run.result.message);
@@ -934,8 +937,8 @@ void testAnUnfinishedRecording()
         run.encoder.declaredFrames = 48000ULL * 3600;
         run.go();
         check(run.result.message
-                  == "The recording was not kept: its header was not completed. The header declares 1:00:00 of "
-                     "audio, the file holds 42:10. " + why + " Choose \"Keep the audio the file holds\" to keep that.",
+                  == "The recording was not kept. Its header was not completed: it declares 1:00:00 of audio, and "
+                     "the file holds 42:10. " + why + " Choose \"Keep the audio the file holds\" to keep that.",
               "cut short, no choice: both lengths: " + run.result.message);
     }
     {
@@ -952,8 +955,9 @@ void testAnUnfinishedRecording()
               "unfinished, chosen: the kept length is reported");
         const std::string notes = run.result.notes.empty() ? std::string() : run.result.notes.back();
         check(notes
-                  == "The header of this recording was not completed and did not say how long the audio is, so the "
-                     "file was read to its end. The FLAC holds 1:02:03 of audio, every whole frame the file held; the "
+                  == "The header of this recording was not completed: it did not say how long the audio is, so the "
+                     "file was read to its end: it held 1:02:03 of audio. The FLAC holds 1:02:03 of audio, every "
+                     "whole frame the file held; the "
                      "last 5 bytes, less than a frame, were left out. The recording on the stick was not changed.",
               "unfinished, no size, chosen: the notes say so, that the file was read to its end, how much was kept "
               "and the partial frame left out: " + notes);
@@ -970,8 +974,8 @@ void testAnUnfinishedRecording()
         const std::string notes = run.result.notes.empty() ? std::string() : run.result.notes.back();
         check(run.result.status == KeepRecordingResult::Status::Kept
                   && notes
-                      == "The header of this recording was not completed: it declares 1:00:00 of audio, the file "
-                         "held 42:10. The FLAC holds 42:10 of audio, every whole frame the file held; the last 2 "
+                      == "The header of this recording was not completed: it declared 1:00:00 of audio, and the "
+                         "file held 42:10. The FLAC holds 42:10 of audio, every whole frame the file held; the last 2 "
                          "bytes, less than a frame, were left out. The recording on the stick was not changed.",
               "cut short, chosen: both lengths and the partial frame in the notes: " + notes);
     }
@@ -992,7 +996,7 @@ void testAnUnfinishedRecording()
         run.encoder.heldFrames = 48000ULL * 2530 + 47999;
         run.encoder.declaredFrames = 48000ULL * 3599 + 47999;
         run.go();
-        check(run.result.message.find("The header declares 59:59 of audio, the file holds 42:10.") != std::string::npos,
+        check(run.result.message.find("it declares 59:59 of audio, and the file holds 42:10.") != std::string::npos,
               "lengths are cut to whole seconds, never rounded up: " + run.result.message);
     }
     {
@@ -1004,7 +1008,7 @@ void testAnUnfinishedRecording()
         run.encoder.declaredFrames = 48000ULL * 2530 + 1100;
         run.encoder.bytesMissing = 4000;
         run.go();
-        check(run.result.message.find("The header declares 42:10 of audio, the file holds 42:10 (4000 bytes less "
+        check(run.result.message.find("it declares 42:10 of audio, and the file holds 42:10 (4000 bytes less "
                                       "than the header declares).")
                   != std::string::npos,
               "cut short by less than a second, refused: the bytes missing are said: " + run.result.message);
@@ -1017,7 +1021,8 @@ void testAnUnfinishedRecording()
         r.keepUnfinished = true;
         kept.go(r);
         const std::string notes = kept.result.notes.empty() ? std::string() : kept.result.notes.back();
-        check(notes.find("it declares 42:10 of audio, the file held 42:10 (4000 bytes less than the header declares).")
+        check(notes.find("it declared 42:10 of audio, and the file held 42:10 (4000 bytes less than the header "
+                         "declares).")
                   != std::string::npos,
               "cut short by less than a second, kept: the notes say the bytes missing: " + notes);
         Run apart;
@@ -1037,7 +1042,7 @@ void testAnUnfinishedRecording()
         run.encoder.declaredFrames = 48000ULL * 3600 * 5000;
         run.encoder.declaredUnusable = true;
         run.go();
-        check(run.result.message.find("The header's length is not usable, and the file holds 1:01 of audio.")
+        check(run.result.message.find("the header's length is not usable, and the file holds 1:01.")
                   != std::string::npos
                   && run.result.message.find("5000:00:00") == std::string::npos,
               "an absurd declared length, refused: not printed, said to be not usable: " + run.result.message);
@@ -1068,12 +1073,52 @@ void testTheSweep()
     check(run.result.notes == run.files.sweepNotes, "the sweep's notes are the job's");
     check(run.files.leftoverInHand == std::vector<bool>{true, false},
           "the job's own FLAC is in hand while it runs, another is not");
-    Run encoderNotes;
-    encoderNotes.encoder.notes = {"an encoder's note"};
-    encoderNotes.encoder.placeNotes = {"a second name"};
-    encoderNotes.go();
-    check(encoderNotes.result.notes == (std::vector<std::string>{"an encoder's note", "a second name"}),
-          "the encoder's notes and the placing's are the job's");
+    Run placeNotes;
+    placeNotes.encoder.placeNotes = {"a second name"};
+    placeNotes.go();
+    check(placeNotes.result.notes == (std::vector<std::string>{"a second name"}), "the placing's notes are the job's");
+}
+
+// What the encoder and the placing report as left in the folder is the
+// job's leftover, said with its path: the encoder's temporary file after a
+// failure or a cancel, and a second name of a FLAC that was kept.
+void testLeftoversReported()
+{
+    const std::string left = Flac + ".00000000000000aa.seabass-encode-tmp";
+    {
+        Run run;
+        run.encoder.error = "the encoded file differs from the recording at frame 7, channel 1";
+        run.encoder.leftBehind = left;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Failed && run.result.leftBehind == left
+                  && run.result.message.find(run.encoder.error) != std::string::npos
+                  && run.result.message.find("can be deleted: " + left) != std::string::npos,
+              "the encoder's temporary file it could not remove after a failure: left behind, named: "
+                  + run.result.message);
+    }
+    {
+        Run run;
+        run.encoder.cancelAt = 0.3;
+        run.encoder.leftBehind = left;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Cancelled && run.result.leftBehind == left
+                  && run.result.message.find(left) != std::string::npos,
+              "and after a cancel: left behind, named: " + run.result.message);
+    }
+    {
+        Run run;
+        run.encoder.placeLeftBehind = left;
+        run.encoder.placeNotes = {"DJ Kelp - Late Set.flac also has a second name that could not be removed: " + left};
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Kept && run.result.leftBehind == left,
+              "a second name of a kept FLAC: kept, and reported as left behind: " + run.result.leftBehind);
+    }
+    {
+        Run run;
+        run.go();
+        check(run.result.status == KeepRecordingResult::Status::Kept && run.result.leftBehind.empty(),
+              "nothing left: nothing reported");
+    }
 }
 
 // A job that ends in an exception lets go of its recording and its FLAC:
@@ -1178,6 +1223,7 @@ int main()
     testAnEncoderException();
     testAnUnfinishedRecording();
     testTheSweep();
+    testLeftoversReported();
     testTheRegistryLetsGoOnAnException();
     if (failures > 0) {
         std::cout << "keep_recording_test: " << failures << " FAILED\n";

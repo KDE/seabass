@@ -207,6 +207,7 @@ application::RecordingPlaceResult placeProven(const fs::path &temp, const fs::pa
         // Given its name through a hard link whose old name could not be
         // removed: tried once more, and said when it stays.
         if (!removeSecondName(temp, target)) {
+            result.leftBehind = pathToUtf8(temp);
             result.notes.push_back(targetName + " also has a second name that could not be removed (" + renamed.error
                                    + "): " + pathToUtf8(temp) + ". It is the same file and can be deleted.");
         }
@@ -248,7 +249,7 @@ public:
         }
         bool done = false;
         try {
-            done = encodeToTemp() && verifyTemp() && (m_options.leaveUnplaced ? leaveUnplaced() : place());
+            done = encodeToTemp() && verifyTemp() && leaveUnplaced();
         } catch (const std::exception &e) {
             fail(e.what());
         } catch (...) {
@@ -260,6 +261,7 @@ public:
                 application::RecordingEncodeResult cancelled;
                 cancelled.cancelled = true;
                 copyLayoutInto(cancelled);
+                cancelled.leftBehind = m_result.leftBehind;
                 return cancelled;
             }
             m_result.encoded = false;
@@ -267,15 +269,6 @@ public:
         }
         m_result.encoded = true;
         m_result.error.clear();
-        if (m_options.leaveUnplaced) {
-            return m_result;
-        }
-        // The FLAC is in its place and proven: a progress callback that
-        // throws now does not make it a failure.
-        try {
-            report(1.0);
-        } catch (...) {
-        }
         return m_result;
     }
 
@@ -396,6 +389,14 @@ private:
         if (*targetIsWav || *tempIsWav) {
             return refuse(targetName + " would be the recording itself");
         }
+#if defined(_WIN32)
+        // The recorder and the decoder are handed the temporary file's
+        // path as it is, and fail on one past MAX_PATH only after the
+        // recording was read: refused before.
+        if (const std::string why = mediaPathProblem(m_temp); !why.empty()) {
+            return refuse(why);
+        }
+#endif
         const std::optional<bool> there = somethingAt(m_target, &lookedAt);
         if (!there) {
             return refuse(lookError(targetName, lookedAt));
@@ -827,26 +828,6 @@ private:
         return true;
     }
 
-    // Makes the proven file durable and gives it the target's name.
-    bool place()
-    {
-        if (m_options.cancel.cancelled()) {
-            m_cancelled = true;
-            return false;
-        }
-        const application::RecordingPlaceResult placed =
-            placeProven(m_temp, m_target, m_checkedSize, m_checkedInfo.raw, m_hooks);
-        // Renamed: the temporary name is the FLAC's now (or a second name
-        // of it, said in the notes), and is never removed as the job's.
-        if (placed.placed || placed.leftUnderTargetName) {
-            m_tempMayExist = false;
-        }
-        for (const std::string &note : placed.notes) {
-            m_result.notes.push_back(note);
-        }
-        return placed.placed || fail(placed.error);
-    }
-
     // The proven file stays under its temporary name, and is the caller's
     // from here on.
     bool leaveUnplaced()
@@ -862,14 +843,32 @@ private:
         return true;
     }
 
+    // Takes the temporary file away again. What is still there afterwards,
+    // or might be, is said in the result (leftBehind): a file that could
+    // not be removed, something else under its name, or a name the
+    // filesystem would not answer for.
     void discardTemp()
     {
-        if (!m_tempMayExist || sameFile(m_temp, m_wavPath) != std::optional<bool>(false)) {
+        if (!m_tempMayExist) {
             return;
         }
+        m_tempMayExist = false;
+        const std::string tempPath = pathToUtf8(m_temp);
+        const std::optional<bool> isWav = sameFile(m_temp, m_wavPath);
+        if (isWav == std::optional<bool>(true)) {
+            return;  // never: prepare() refused that; the recording is never removed
+        }
         std::error_code ec;
-        if (fs::symlink_status(longPathSafe(m_temp), ec).type() == fs::file_type::regular) {
-            fs::remove(longPathSafe(m_temp), ec);
+        const fs::file_status status = fs::symlink_status(longPathSafe(m_temp), ec);
+        if (status.type() == fs::file_type::not_found) {
+            return;
+        }
+        if (!isWav || ec || status.type() != fs::file_type::regular) {
+            m_result.leftBehind = tempPath;
+            return;
+        }
+        if (!fs::remove(longPathSafe(m_temp), ec) || ec) {
+            m_result.leftBehind = tempPath;
         }
     }
 };

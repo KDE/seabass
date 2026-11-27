@@ -315,6 +315,128 @@ int main(int argc, char **argv)
         std::cout << "case 6 (a rewrite of the same size and time by any of Seabass's writers is read again) OK\n";
     }
 
+    // Every fixture track with an analysis file, and its .DAT.
+    std::vector<std::pair<std::string, fs::path>> analysed;
+    for (const auto &track : tracks) {
+        if (auto path = index.pathFor(static_cast<std::uint32_t>(std::stoul(track.sourceId)))) {
+            analysed.emplace_back(track.sourceId,
+                                  pioneer
+                                      / seabass::pathFromUtf8(
+                                          seabass::infrastructure::rekordbox::anlzRelativePath(*path, false)));
+        }
+    }
+    assert(analysed.size() >= 3 && "the fixture has tracks enough to keep some and drop one");
+    // A folder no track sits in, the `i`th.
+    const auto elsewhere = [&](const char *tag, int i) {
+        return seabass::pathToUtf8(pioneer / "USBANLZ" / tag / std::to_string(i) / "ANLZ0000.DAT");
+    };
+    namespace infra = seabass::infrastructure;
+
+    // ---- 7. thousands of written folders cost one pass ------------------
+    // A Sync writing cues to thousands of tracks, or an Undo Last Save,
+    // notes thousands of analysis files; the next row drawn drops their
+    // entries. One read of the keys, whatever the count of folders, and
+    // only the entries that go are deleted. The folder is matched in any
+    // case, so a write named in capitals drops the entry kept in lower.
+    {
+        TrackAnalysisCache cache(dbFile);
+        for (const auto &[trackId, datFile] : analysed) {
+            cache.rekordboxAnalysis(root, trackId, &index);
+        }
+        const int kept = static_cast<int>(analysed.size());
+        for (const auto &[trackId, datFile] : analysed) {
+            cache.rekordboxAnalysis(root, trackId, &index);
+        }
+        const auto primed = cache.counters();
+        assert(primed.stores >= kept && "every analysed track kept");
+        assert(infra::analysisFileWritesHeldNow() == 0 && "the only reader took every write");
+
+        constexpr int Folders = 5000;
+        for (int i = 0; i < Folders; ++i) {
+            infra::noteAnalysisFileWritten(elsewhere("SYNC", i));
+        }
+        const QString shouted = QString::fromStdString(seabass::pathToUtf8(analysed.front().second)).toUpper();
+        infra::noteAnalysisFileWritten(shouted.toStdString());
+        assert(infra::analysisFileWritesHeldNow() == Folders + 1);
+
+        cache.rekordboxAnalysis(root, analysed.front().first, &index);
+        const auto after = cache.counters();
+        assert(after.reads == primed.reads + 1 && "the written track's entry went, in any case");
+        const int statements = after.forgetStatements - primed.forgetStatements;
+        const int keysRead = after.forgetKeysRead - primed.forgetKeysRead;
+        std::cout << "  5001 written folders: " << statements << " statements, " << keysRead << " keys read\n";
+        // The keys read, a transaction around the one delete, the sum.
+        assert(statements == 5 && "one pass, not a statement a folder");
+        assert(keysRead == kept && "each key read once");
+        assert(infra::analysisFileWritesHeldNow() == 0 && "the writes taken are let go");
+        for (std::size_t i = 1; i < analysed.size(); ++i) {
+            cache.rekordboxAnalysis(root, analysed[i].first, &index);
+        }
+        assert(cache.counters().reads == after.reads && "the other tracks' entries stay");
+        std::cout << "case 7 (5,000 written folders: one read of the keys, the writes let go) OK\n";
+    }
+
+    // ---- 8. the writes held: until every reader took them, and capped --
+    {
+        // No cache alive: the writes are held for the one made next.
+        const std::size_t heldBefore = infra::analysisFileWritesHeldNow();
+        infra::noteAnalysisFileWritten(seabass::pathToUtf8(analysed.front().second));
+        assert(infra::analysisFileWritesHeldNow() == heldBefore + 1 && "held while no reader looks");
+        {
+            TrackAnalysisCache cache(dbFile);
+            const int readsBefore = cache.counters().reads;
+            cache.rekordboxAnalysis(root, analysed.front().first, &index);
+            assert(cache.counters().reads == readsBefore + 1 && "a write before the cache was made is seen");
+        }
+
+        // Two caches: a write is held until both took it.
+        {
+            TrackAnalysisCache one(dbFile);
+            TrackAnalysisCache two(dbFile);
+            one.rekordboxAnalysis(root, analysed[1].first, &index);
+            two.rekordboxAnalysis(root, analysed[1].first, &index);
+            assert(infra::analysisFileWritesHeldNow() == 0);
+            infra::noteAnalysisFileWritten(seabass::pathToUtf8(analysed[1].second));
+            one.rekordboxAnalysis(root, analysed[1].first, &index);
+            assert(infra::analysisFileWritesHeldNow() == 1 && "held for the cache that has not looked");
+            const int readsBefore = two.counters().reads;
+            two.rekordboxAnalysis(root, analysed[1].first, &index);
+            assert(two.counters().reads == readsBefore + 1 && "the second cache saw the write too");
+            assert(infra::analysisFileWritesHeldNow() == 0 && "let go once both took it");
+        }
+
+        // A cache alive that does not look, past the cap: the paths held
+        // stay within it, and the cache then drops every entry, those of
+        // folders never named among them.
+        {
+            TrackAnalysisCache cache(dbFile);
+            for (const auto &[trackId, datFile] : analysed) {
+                cache.rekordboxAnalysis(root, trackId, &index);
+            }
+            for (const auto &[trackId, datFile] : analysed) {
+                cache.rekordboxAnalysis(root, trackId, &index);
+            }
+            const auto primed = cache.counters();
+            assert(primed.hits >= static_cast<int>(analysed.size()) && "every entry kept");
+            for (std::size_t i = 0; i <= infra::AnalysisFileWritesHeld; ++i) {
+                infra::noteAnalysisFileWritten(elsewhere("RESTORE", static_cast<int>(i)));
+                assert(infra::analysisFileWritesHeldNow() <= infra::AnalysisFileWritesHeld);
+            }
+            assert(infra::analysisFileWritesHeldNow() == 0 && "the cap forgets the paths held");
+            cache.rekordboxAnalysis(root, analysed.back().first, &index);
+            const auto after = cache.counters();
+            assert(after.reads == primed.reads + 1 && "anything may have changed: the entry is read again");
+            assert(after.forgetStatements - primed.forgetStatements == 1 && after.forgetKeysRead == primed.forgetKeysRead
+                   && "every entry dropped in one statement");
+            for (std::size_t i = 0; i + 1 < analysed.size(); ++i) {
+                cache.rekordboxAnalysis(root, analysed[i].first, &index);
+            }
+            assert(cache.counters().reads == after.reads + static_cast<int>(analysed.size()) - 1
+                   && "no entry outlived the cap");
+        }
+        std::cout << "case 8 (writes held until every cache took them, and never more than the cap) OK\n";
+    }
+
     fs::remove_all(scratch);
     std::cout << "track_analysis_cache_test: all OK\n";
     return 0;

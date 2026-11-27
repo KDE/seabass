@@ -34,8 +34,9 @@ namespace seabass::application
 // had the FLAC's name. Once placed the job is done, and a cancel that
 // comes then changes nothing. Something is left in the folder only when
 // it is said (KeepRecordingResult::leftBehind): a temporary file that
-// could not be removed, or a file under the FLAC's name that does not
-// have the size of the checked file after the rename. The recording on
+// could not be removed, a file under the FLAC's name that does not have
+// the size of the checked file after the rename, or a second name of a
+// kept FLAC that could not be removed. The recording on
 // the stick is only ever read: by the encoder, and here for its size. The
 // folder itself stays when it was made for the job. A file under the
 // target's name is never replaced. A job for a recording
@@ -84,12 +85,9 @@ public:
     virtual std::string removeFile(const std::string &path) = 0;
     // Removes Seabass's own leftover temporary files in `folder` (not
     // below it, links never followed): regular files named as the encoder
-    // names its file, or as the tag writer of earlier builds named its
-    // copy, older than a day, whose FLAC's name `inHand` does not claim
-    // for a job of this process. Such a tag copy whose FLAC is not beside
-    // it is never removed (an earlier build's interrupted replace can have
-    // left it as the only copy of a kept FLAC): it is named instead. Answers a sentence per file removed, found and not
-    // removable, or left for that reason.
+    // names its file, older than a day, whose FLAC's name `inHand` does
+    // not claim for a job of this process. Answers a sentence per file
+    // removed, and per file found and not removable.
     virtual std::vector<std::string>
     sweepLeftovers(const std::string &folder, const std::function<bool(const std::string &flacName)> &inHand) = 0;
 };
@@ -156,10 +154,13 @@ struct KeepRecordingResult
     // cancelled, unless a file was left in the folder, which is then said
     // here too, with its path.
     std::string message;
-    // When not kept: a file this job left in the folder, the path of its
-    // temporary file that could not be removed or of a file under the
-    // FLAC's name that does not have the checked size after the rename.
-    // Empty when nothing was left.
+    // A file this job left in the folder, said with its path in the
+    // message or the notes too. When not kept: its temporary file that
+    // could not be removed (by the job, or by the encoder after a failure
+    // or a cancel), or a file under the FLAC's name that does not have the
+    // checked size after the rename. When kept: a second name of the FLAC
+    // that the rename through a hard link left and that could not be
+    // removed. Empty when nothing was left.
     std::string leftBehind;
     // Things to know about the job, kept or not, a sentence each: the
     // recording's header was not completed and how much of it was kept,

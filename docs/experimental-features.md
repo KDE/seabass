@@ -174,10 +174,21 @@ from day one.
   what the file holds) is said to be not usable rather than printed. A header that declares less than the file holds, or a finished
   file followed by more than a second of zero bytes or bytes it does not
   know, is refused with both lengths; RF64 takes its size from ds64 only.
-  Leftover temporary files (`*.seabass-encode-tmp`, and `*.seabass-tag-tmp`
-  from earlier builds) older than a day are swept from the target folder
-  at the start of a job, except such a tag copy whose FLAC is not beside
-  it, which the job's notes name instead. Shown only with Experimental on. Verified with synthetic WAVs
+  A WAV's header is read for this only with Experimental on: then the
+  listing opens each WAV (its header, the chunks after the audio, and at
+  most a second of audio's worth of zero bytes after it) for the rows'
+  header states, and lengths are cut to whole seconds as the texts of a
+  kept job count them. With Experimental off the page is the released one:
+  no header is read, the rows say nothing of one, the length is rounded to
+  the nearest second, and nothing is offered to keep. The keep controller
+  lives with the window, not the page: the work goes on when the page is
+  left and its strip is there again when the page is opened again; taking
+  out the stick a recording being kept (or waiting) is on cancels the work.
+  Leftover temporary files (`*.seabass-encode-tmp`) older than a day are
+  swept from the target folder at the start of a job. A file a job leaves
+  in the folder (a temporary file that could not be removed, or a second
+  name of a kept FLAC that a rename through a hard link left) is named in
+  the strip with its path. Verified with synthetic WAVs
   (`keep_recording_test`, `keep_recording_controller_test`,
   `recording_encoder_test`, `recording_tag_writer_test`,
   `local_keep_recording_files_test`); no real recording has been kept

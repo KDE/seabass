@@ -18,10 +18,16 @@ import SeabassGui
 // Keep this recording (experimental): a recording becomes a FLAC with
 // tags and a cover in a folder on this computer, through the form below
 // and a KeepRecordingController, beside the page in the passive progress
-// strip. The recording on the stick stays as it is. The strip stays while
-// a job runs or waits, even when Experimental is switched off meanwhile,
-// and lists what ended until it is closed. The delete confirmation names
-// every ticked recording a keep was asked for and did not end kept.
+// strip. The recording on the stick stays as it is. The controller lives
+// with the window: the work goes on when the page is left, and the strip
+// shows it again when the page is opened again. The strip stays while a
+// job runs or waits, even when Experimental is switched off meanwhile, and
+// lists what ended until it is closed. The delete confirmation names every
+// ticked recording a keep was asked for and did not end kept.
+//
+// With Experimental off the page is the released one: no Keep button, and
+// the rows say nothing of a WAV's header (the controller does not read
+// it) and give the length rounded to the second.
 Page {
     id: root
     required property string stickLabel
@@ -60,10 +66,11 @@ Page {
     }
     // "1:07:13" or "7:13"; "" when unknown. Cut to whole seconds as a
     // clock shows them, never rounded up: the C++ texts (the notes of a
-    // kept job, the reasons) count the same way.
-    function duration(seconds) {
+    // kept job, the reasons) count the same way. `rounded`: to the
+    // nearest second instead, as the released page gives a row's length.
+    function duration(seconds, rounded) {
         if (seconds === undefined || seconds < 0) return "";
-        const total = Math.floor(seconds);
+        const total = rounded === true ? Math.round(seconds) : Math.floor(seconds);
         const h = Math.floor(total / 3600);
         const m = Math.floor((total % 3600) / 60);
         const s = total % 60;
@@ -77,8 +84,7 @@ Page {
             || root.duration(declaredSeconds) !== root.duration(heldSeconds)) {
             return "";
         }
-        return missingBytes === 1 ? qsTr("1 byte less than the header declares")
-            : qsTr("%1 bytes less than the header declares").arg(missingBytes);
+        return qsTr("%n byte(s) less than the header declares", "", missingBytes);
     }
     // Sessions/ is Engine OS's, the REC folders a Pioneer or AlphaTheta
     // deck's: the play key takes that deck's form.
@@ -741,11 +747,13 @@ Page {
                     if (row.modified && !isNaN(row.modified.getTime())) {
                         parts.push(row.modified.toLocaleString(Qt.locale(), Locale.ShortFormat));
                     }
-                    if (row.holdsNoAudio) {
+                    // What the header says is Keep's (experimental): the
+                    // released page says nothing of it.
+                    if (root.keepEnabled && row.holdsNoAudio) {
                         parts.push(qsTr("holds no audio"));
                         return parts.join(" · ");
                     }
-                    if (row.unfinished) {
+                    if (root.keepEnabled && row.unfinished) {
                         const missing = root.missingNote(row.declaredSeconds, row.heldSeconds, row.missingBytes);
                         parts.push(row.declaredUnusable
                             ? qsTr("header not completed: its length is not usable, the file holds %1")
@@ -761,7 +769,7 @@ Page {
                                 .arg(root.duration(row.heldSeconds)));
                         return parts.join(" · ");
                     }
-                    const length = root.duration(row.durationSeconds);
+                    const length = root.duration(row.durationSeconds, !root.keepEnabled);
                     if (length.length > 0) {
                         parts.push(length);
                     }
@@ -887,11 +895,13 @@ Page {
                     const jobs = root.keepFinishedJobs;
                     if (jobs.length > 1) {
                         return root.keepNotKeptCount === 0 ? qsTr("Kept %n recording(s)", "", jobs.length)
-                            : qsTr("%1 of %2 recordings not kept").arg(root.keepNotKeptCount).arg(jobs.length);
+                            : qsTr("%1 of %n recording(s) not kept", "", jobs.length).arg(root.keepNotKeptCount);
                     }
                     const left = (last.leftBehind ?? "").length > 0;
                     if (state === "kept") {
-                        return qsTr("Kept %1 as %2").arg(last.recording).arg(last.fileName);
+                        return left ? qsTr("Kept %1 as %2, and a second file was left in %3").arg(last.recording)
+                                          .arg(last.fileName).arg(last.folder)
+                            : qsTr("Kept %1 as %2").arg(last.recording).arg(last.fileName);
                     }
                     if (state === "cancelled") {
                         return left ? qsTr("Stopped: %1 was not kept, and a file was left in %2").arg(last.recording)
@@ -942,7 +952,7 @@ Page {
             // kept, leftovers swept); a failure's message before them.
             note: finishedShown ? [state === "kept" ? "" : (last.message ?? "")].concat(last.notes ?? [])
                     .filter(line => line.length > 0).join("\n")
-                : qsTr("The recording on the stick is only read. Leaving this page stops the work.")
+                : qsTr("The recording on the stick is only read. The work goes on when you leave this page.")
             actions: !finishedShown ? []
                 : state === "kept" ? [{key: "show", text: qsTr("Show in Folder")}, {key: "close", text: qsTr("Close")}]
                 : [{key: "close", text: qsTr("Close")}]
