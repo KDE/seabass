@@ -29,7 +29,6 @@ namespace
 
 using internal::Pair;
 using internal::prepare;
-using internal::TransformRoom;
 using internal::transformRows;
 using internal::Twiddles;
 
@@ -117,7 +116,7 @@ double quantile(std::vector<double> values, double share)
     return values[lower] + (at - static_cast<double>(lower)) * (values[upper] - values[lower]);
 }
 
-void fft(std::vector<std::complex<double>> &data, bool inverse, TransformRoom *lent = nullptr)
+void fft(std::vector<std::complex<double>> &data, bool inverse)
 {
     const std::size_t n = data.size();
     if (n < 2) {
@@ -125,34 +124,31 @@ void fft(std::vector<std::complex<double>> &data, bool inverse, TransformRoom *l
     }
     // Kept from call to call, one set of twiddles each way, for the
     // lengths that come again and again: the listening and the tempo
-    // curve transform 16384 values many times a track. The long
-    // transform of a whole track works in what its caller lends it, or
-    // in room of its own that it lets go of: kept, the thread held 70 MB
-    // after a mix of an hour, until it ended (measured).
+    // curve transform 16384 values many times a track. A longer one
+    // works in room of its own and lets go of it (the long transforms of
+    // a whole track are autocorrelation()'s, which does without this).
     constexpr std::size_t LargestKept = 16384;
-    struct Kept
+    struct Room
     {
         std::array<Twiddles, 2> twiddles;
         std::vector<double> re;
         std::vector<double> im;
     };
-    thread_local Kept kept;
-    TransformRoom once;
+    thread_local Room kept;
+    Room once;
     const bool keep = n / 2 <= LargestKept;
-    TransformRoom &room = lent != nullptr ? *lent : once;
-    Twiddles &twiddles = keep ? kept.twiddles[inverse ? 1 : 0] : room.twiddles;
-    prepare(twiddles, n, inverse);
+    Room &room = keep ? kept : once;
+    Twiddles &twiddles = room.twiddles[inverse ? 1 : 0];
+    prepare(twiddles, n, inverse, keep);
     // Real parts and imaginary parts in rows of their own, in the order
     // the butterflies want them: a stage is then the same few lines of
     // arithmetic on neighbours, two at a time. Each value is worked out
     // as the product and the sums of complex numbers are, in the same
     // order, so none differs.
-    std::vector<double> &reRow = keep ? kept.re : room.re;
-    std::vector<double> &imRow = keep ? kept.im : room.im;
-    reRow.resize(n);
-    imRow.resize(n);
-    double *const re = reRow.data();
-    double *const im = imRow.data();
+    room.re.resize(n);
+    room.im.resize(n);
+    double *const re = room.re.data();
+    double *const im = room.im.data();
     const std::uint32_t *const order = twiddles.order.data();
     for (std::size_t i = 0; i < n; ++i) {
         re[i] = data[order[i]].real();
@@ -184,19 +180,39 @@ std::vector<double> autocorrelation(const std::vector<double> &x, std::size_t lo
         mean += value;
     }
     mean /= static_cast<double>(x.size());
-    std::vector<std::complex<double>> z(n);
-    for (std::size_t i = 0; i < x.size(); ++i) {
-        z[i] = x[i] - mean;
+    // The transform there, each value's size squared, and the transform
+    // back, of a whole track: done on the transform's own rows, with one
+    // set of twiddles made over for the way back, so that no more is held
+    // than the values twice (real and imaginary), the longest stage's
+    // twiddles and the order. A minute of music is 60000 values; through
+    // fft(), with the values as complex numbers beside the rows, an hour
+    // held twice as much.
+    Twiddles twiddles;
+    prepare(twiddles, n, false, false);
+    std::vector<double> re(n);
+    std::vector<double> im(n, 0.0);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t from = twiddles.order[i];
+        re[i] = from < x.size() ? x[from] - mean : 0.0;
     }
-    TransformRoom room;
-    fft(z, false, &room);
-    for (std::complex<double> &value : z) {
-        value = std::norm(value);
+    transformRows(re.data(), im.data(), n, twiddles);
+    // Back into the order the butterflies want: the order is its own
+    // way back, so each pair of places changes over once.
+    for (std::size_t i = 0; i < n; ++i) {
+        re[i] = re[i] * re[i] + im[i] * im[i];
+        im[i] = 0.0;
     }
-    fft(z, true, &room);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t other = twiddles.order[i];
+        if (i < other) {
+            std::swap(re[i], re[other]);
+        }
+    }
+    prepare(twiddles, n, true, false);
+    transformRows(re.data(), im.data(), n, twiddles);
     std::vector<double> result(longest + 1);
     for (std::size_t lag = 0; lag <= longest; ++lag) {
-        result[lag] = z[lag].real();
+        result[lag] = re[lag] / static_cast<double>(n);
     }
     return result;
 }

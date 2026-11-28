@@ -123,7 +123,7 @@ public:
         for (std::size_t i = 0; i < FrameSamples; ++i) {
             m_window[i] = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(FrameSamples - 1));
         }
-        internal::prepare(m_twiddles, FrameSamples, false);
+        internal::prepare(m_twiddles, FrameSamples, false, true);
         m_magnitude.resize(m_high + 2);
         m_audio.reserve(FrameSamples);
     }

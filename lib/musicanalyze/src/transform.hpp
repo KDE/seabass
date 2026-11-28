@@ -58,58 +58,71 @@ inline void putPair(double *to, Pair pair)
     std::memcpy(to, &pair, sizeof pair);
 }
 
-// What a transform of one length and one direction is done with. The
-// twiddles, each stage's own in a row: the stage of butterflies `half`
-// apart has its `half` values from index half - 1 on, real parts and
-// imaginary parts apart. And the order the butterflies want the values
-// in: value i of it is value order[i] of what is transformed.
+// What a transform of one length and one direction is done with: the
+// twiddles, real parts and imaginary parts apart, and the order the
+// butterflies want the values in (value i of it is value order[i] of
+// what is transformed).
+//
+// A stage of butterflies `half` apart has `half` twiddles. The stages
+// under `ownRows` apart have theirs in a row of their own, from index
+// half - 1 on, read one after the other. The longer stages read every
+// so-many-th of the longest stage's row, which starts at `longestAt`. A
+// transform as long as those done again and again (rowsForAll) gives
+// every stage its own row; the one long transform of a whole track only
+// the close stages, since a row for each would hold as much again as the
+// longest does.
 struct Twiddles
 {
     std::size_t length = 0;
     bool inverse = false;
+    std::size_t ownRows = 0;
+    std::size_t longestAt = 0;
     std::vector<double> re;
     std::vector<double> im;
     std::vector<std::uint32_t> order;
 };
 
+// The stages of a transform that are done a piece of the values at a
+// time (see transformRows()), and so the least that have rows of their
+// own.
+constexpr std::size_t TransformPieceValues = 1024;
+
 // Makes `twiddles` those of a transform of n values that way. Every
 // twiddle is worked out from its angle (one built by repeated
-// multiplication drifts), once: the stages share them, a shorter stage
-// using every so-many-th of the longest one's.
-inline void prepare(Twiddles &twiddles, std::size_t n, bool inverse)
+// multiplication drifts), once: the shorter stages take every
+// so-many-th of the longest one's.
+inline void prepare(Twiddles &twiddles, std::size_t n, bool inverse, bool rowsForAll)
 {
-    if (twiddles.length == n && twiddles.inverse == inverse) {
+    const std::size_t longest = n / 2;
+    const std::size_t ownRows = rowsForAll ? n : std::min(n, TransformPieceValues);
+    if (twiddles.length == n && twiddles.inverse == inverse && twiddles.ownRows == ownRows) {
         return;
     }
-    if (twiddles.length == n) {
-        // The other way round has the same angles with the other sign:
-        // the same cosines, and the sines with theirs turned, which is
-        // what working them out again gives (a sine is odd to the bit),
-        // without a sine and a cosine a value.
-        for (double &value : twiddles.im) {
-            value = -value;
-        }
-        twiddles.inverse = inverse;
-        return;
-    }
+    const bool sameOrder = twiddles.length == n;
     twiddles.length = n;
     twiddles.inverse = inverse;
-    twiddles.re.resize(n - 1);
-    twiddles.im.resize(n - 1);
+    twiddles.ownRows = ownRows;
+    // The longest stage's row is its own row where every stage has one,
+    // and comes after the close stages' rows where not.
+    twiddles.longestAt = std::min(ownRows, longest) - 1;
+    twiddles.re.resize(twiddles.longestAt + longest);
+    twiddles.im.resize(twiddles.longestAt + longest);
     const double sign = inverse ? 1.0 : -1.0;
-    const std::size_t longest = n / 2;
     for (std::size_t k = 0; k < longest; ++k) {
         const std::complex<double> value =
             std::polar(1.0, sign * 2.0 * std::numbers::pi * static_cast<double>(k) / static_cast<double>(n));
-        twiddles.re[longest - 1 + k] = value.real();
-        twiddles.im[longest - 1 + k] = value.imag();
+        twiddles.re[twiddles.longestAt + k] = value.real();
+        twiddles.im[twiddles.longestAt + k] = value.imag();
     }
-    for (std::size_t half = 1; half < longest; half <<= 1) {
+    for (std::size_t half = 1; half < std::min(ownRows, longest); half <<= 1) {
         const std::size_t stride = longest / half;
         for (std::size_t k = 0; k < half; ++k) {
-            twiddles.re[half - 1 + k] = twiddles.re[longest - 1 + k * stride];
-            twiddles.im[half - 1 + k] = twiddles.im[longest - 1 + k * stride];
+            twiddles.re[half - 1 + k] = twiddles.re[twiddles.longestAt + k * stride];
+            twiddles.im[half - 1 + k] = twiddles.im[twiddles.longestAt + k * stride];
         }
+    }
+    if (sameOrder) {
+        return;
     }
     // Counting with the bits the other way round. Worked out once and
     // kept: found again for every value of every transform, it took
@@ -126,23 +139,16 @@ inline void prepare(Twiddles &twiddles, std::size_t n, bool inverse)
     }
 }
 
-// What a caller with two transforms of one long length (there and back)
-// lends them, so the second need not work out what the first did.
-struct TransformRoom
-{
-    Twiddles twiddles;
-    std::vector<double> re;
-    std::vector<double> im;
-};
-
 // The stages of a transform whose butterflies are `fromHalf` apart and
 // more, up to those of pieces `upTo` long, over `n` values in the order
 // the butterflies want them.
 inline void stages(double *re, double *im, std::size_t n, std::size_t fromHalf, std::size_t upTo, const Twiddles &twiddles)
 {
     for (std::size_t half = fromHalf; half < upTo; half <<= 1) {
-        const double *const wr = twiddles.re.data() + (half - 1);
-        const double *const wi = twiddles.im.data() + (half - 1);
+        const bool ownRow = half < twiddles.ownRows;
+        const std::size_t stride = ownRow ? 1 : twiddles.length / 2 / half;
+        const double *const wr = twiddles.re.data() + (ownRow ? half - 1 : twiddles.longestAt);
+        const double *const wi = twiddles.im.data() + (ownRow ? half - 1 : twiddles.longestAt);
         for (std::size_t start = 0; start < n; start += 2 * half) {
             double *const ar = re + start;
             double *const ai = im + start;
@@ -162,8 +168,8 @@ inline void stages(double *re, double *im, std::size_t n, std::size_t fromHalf, 
                 const Pair lowIm = pairAt(ai + k);
                 const Pair highRe = pairAt(br + k);
                 const Pair highIm = pairAt(bi + k);
-                const Pair turnRe = pairAt(wr + k);
-                const Pair turnIm = pairAt(wi + k);
+                const Pair turnRe = ownRow ? pairAt(wr + k) : Pair{wr[k * stride], wr[(k + 1) * stride]};
+                const Pair turnIm = ownRow ? pairAt(wi + k) : Pair{wi[k * stride], wi[(k + 1) * stride]};
                 const Pair tr = turnRe * highRe - turnIm * highIm;
                 const Pair ti = turnRe * highIm + turnIm * highRe;
                 putPair(br + k, lowRe - tr);
@@ -187,8 +193,7 @@ inline void stages(double *re, double *im, std::size_t n, std::size_t fromHalf, 
 // the stages before it made of its two values.
 inline void transformRows(double *re, double *im, std::size_t n, const Twiddles &twiddles)
 {
-    constexpr std::size_t PieceValues = 1024;
-    const std::size_t piece = std::min(n, PieceValues);
+    const std::size_t piece = std::min(n, TransformPieceValues);
     for (std::size_t from = 0; from < n; from += piece) {
         stages(re + from, im + from, piece, 1, piece, twiddles);
     }
