@@ -13,10 +13,14 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QTemporaryDir>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -84,6 +88,40 @@ void compare(const std::string &path, const std::string &label, double &qtMs, do
               << " differ (worst " << worst << "), damaged packets " << ours.damagedPackets() << "\n";
 }
 
+// A stereo WAV of 32-bit samples, each channel its own noise over the
+// whole 32 bits: what no fixture has. A 32-bit sample does not fit a
+// float, so a decoder that adds the channels before it rounds them
+// gives, now and then, the float next to the one of a decoder that
+// rounds first; the two must round alike.
+bool writeNoiseWav32(const QString &file)
+{
+    const std::uint32_t frames = 22050;
+    QByteArray out;
+    const auto put = [&out](std::uint32_t value, int bytes) {
+        for (int i = 0; i < bytes; ++i) {
+            out.append(static_cast<char>((value >> (8 * i)) & 0xFF));
+        }
+    };
+    out.append("RIFF");
+    put(36 + frames * 8, 4);
+    out.append("WAVEfmt ");
+    put(16, 4);
+    put(1, 2);
+    put(2, 2);
+    put(44100, 4);
+    put(44100 * 8, 4);
+    put(8, 2);
+    put(32, 2);
+    out.append("data");
+    put(frames * 8, 4);
+    std::mt19937 rng(11);
+    for (std::uint32_t i = 0; i < frames * 2; ++i) {
+        put(static_cast<std::uint32_t>(rng()), 4);
+    }
+    QFile wav(file);
+    return wav.open(QIODevice::WriteOnly) && wav.write(out) == out.size();
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -121,6 +159,16 @@ int main(int argc, char **argv)
             ++compared;
         }
     }
+    {
+        QTemporaryDir scratch;
+        const QString wav = scratch.filePath("noise-32-bit-stereo.wav");
+        check(scratch.isValid() && writeNoiseWav32(wav), "a 32-bit WAV to compare");
+        double qtMs = 0.0;
+        double oursMs = 0.0;
+        compare(wav.toStdString(), "noise-32-bit-stereo.wav", qtMs, oursMs);
+        ++compared;
+    }
+
     // A file that is not there, and one that is not audio.
     FfmpegPcmSource missing(std::string(argv[1]) + "/no-such-file.mp3");
     std::vector<float> chunk(64);

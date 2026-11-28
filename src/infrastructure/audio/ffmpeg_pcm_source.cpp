@@ -118,7 +118,12 @@ struct FfmpegPcmSource::State
                     error = "the decoder gave samples in a format this cannot read";
                     return false;
                 }
-                sum += value;
+                // Each channel as a float before the channels are added,
+                // as the app's other decoder has them: a 32-bit or a
+                // double sample does not fit a float, and the mean of
+                // two unrounded ones is now and then the float next to
+                // the mean of the two rounded.
+                sum += static_cast<float>(value);
             }
             samples.push_back(static_cast<float>(sum / channels));
         }
