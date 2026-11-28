@@ -922,6 +922,18 @@ int main()
         }
         assert(refused);
         assert(value("SELECT count(*) FROM cue WHERE content_id IN (30, 31)") == 0);
+        // Clean Up's removal of that copy is told it is two spellings, not
+        // that there is no row: the type and the words both say so, and
+        // nothing is removed.
+        std::string twoSpellings;
+        try {
+            writer.removeTrackByPathReplacingWith(twice, akki);
+        } catch (const OneLibraryRowInTwoSpellings &e) {
+            twoSpellings = e.what();
+        }
+        std::cerr << "two spellings: " << twoSpellings << "\n";
+        assert(twoSpellings.find("in two spellings") != std::string::npos);
+        assert(value("SELECT count(*) FROM content WHERE content_id IN (30, 31)") == 2);
 
         // exFAT folds case beyond ASCII too.
         // Through pathFromUtf8: a narrow literal appended to a path is read

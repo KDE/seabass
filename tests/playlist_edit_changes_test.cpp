@@ -1103,28 +1103,66 @@ int main(int argc, char **argv)
 
     // 17. "Delete playlist and its tracks" names each file in every
     //     library on the stick: a row a library had none for is a stand-in
-    //     (Entry::standIns). x97 and x98 are in Engine only, x99 nowhere.
-    //     x97's rekordbox and OneLibrary rows are stand-ins: it goes. By
-    //     one rule for all three, a real row (one the plan read) that is
-    //     not found at Save fails the change before anything is removed,
-    //     naming the file and the library: x98's real OneLibrary row, x98's
-    //     real rekordbox row, x99's real Engine row. So does OneLibrary
-    //     naming x97 in two spellings, stand-in or not. The change is
-    //     applied directly, outside the save loop's rollback: a removal
-    //     made before the failure would still be in the m.db it writes
-    //     through. Library Health's entries carry only the rows of the
+    //     (Entry::standIns). x96 is in all three, in no playlist; x97 and
+    //     x98 are in Engine only, x99 nowhere. x97's rekordbox and
+    //     OneLibrary rows are stand-ins: it goes. By one rule for all
+    //     three, a real row (one the plan read) that is not found at Save
+    //     fails the change before anything is removed, naming the file and
+    //     the library: x98's real OneLibrary row, x98's real rekordbox row,
+    //     x99's real Engine row. x96 goes first in each of those, so a
+    //     removal made before the failure shows in every library. The
+    //     change is applied directly, outside the save loop's rollback: a
+    //     removal made before the failure would still be in the databases
+    //     it writes through. OneLibrary gaining x97 in two spellings, one
+    //     of them in a playlist, keeps x97: every row of the file's key is
+    //     the file. Library Health's entries carry only the rows of the
     //     libraries that have the file, none a stand-in: x98's Engine row
     //     alone, beside a02 in all three, goes from Engine.
     {
         std::map<std::string, std::int64_t> extra;
         {
             auto db = djinterop::engine::load_database(pathToUtf8(library));
-            for (const char *name : {"x97.mp3", "x98.mp3"}) {
+            for (const char *name : {"x96.mp3", "x97.mp3", "x98.mp3"}) {
                 djinterop::track_snapshot s;
                 s.relative_path = std::string("../Contents/Extra/") + name;
                 extra[name] = db.create_track(s).id();
             }
         }
+        const std::string oneLibraryDb = infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer));
+        const auto oneLibraryExec = [&](const std::string &sql) {
+            infrastructure::onelibrary::SqlCipherLibrary lib;
+            infrastructure::onelibrary::SqlCipherDb db(lib, oneLibraryDb, /*readOnly=*/false);
+            db.exec(infrastructure::onelibrary::oneLibraryKeyPragma(oneLibraryDb));
+            db.exec(sql);
+        };
+        // x96 in rekordbox and OneLibrary as well, in no playlist.
+        const std::string pdbFile = pathToUtf8(pioneer / "rekordbox" / "export.pdb");
+        {
+            infrastructure::rekordbox::PdbRowWriter rows(pdbFile);
+            infrastructure::rekordbox::PdbRowWriter::NewTrack x96;
+            x96.pathOnStick = "/Contents/Extra/x96.mp3";
+            x96.title = "x96";
+            x96.date = "2026-11-28";
+            rows.addTrack(x96);
+            assert(rows.commit());
+        }
+        oneLibraryExec("INSERT INTO content (content_id, title, path) VALUES (9601, 'x96', '/Contents/Extra/x96.mp3')");
+        const auto x96In = [&](const std::string &pdbAt, const fs::path &engineAt) {
+            QStringList in;
+            if (!infrastructure::rekordbox::PdbRowWriter(pdbAt).trackIdsWithFilePath("/Contents/Extra/x96.mp3").empty()) {
+                in << QStringLiteral("rekordbox");
+            }
+            for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pathToUtf8(pioneer))) {
+                if (id == 9601) {
+                    in << QStringLiteral("onelibrary");
+                }
+            }
+            if (djinterop::engine::load_database(pathToUtf8(engineAt)).track_by_id(extra["x96.mp3"]).has_value()) {
+                in << QStringLiteral("engine");
+            }
+            return in;
+        };
+        assert(x96In(pdbFile, library) == all && "precondition: x96 in all three");
         const auto entryFor = [&](const char *name, const QStringList &standIns) {
             DeleteTracksChange::Entry entry;
             entry.filePath = pathToUtf8(stick / "Contents" / "Extra" / name);
@@ -1147,20 +1185,26 @@ int main(int argc, char **argv)
         };
         const auto failsBeforeRemoving = [&](const DeleteTracksChange::Entry &failing, const QString &words) {
             SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
-            const auto change = DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone", {entryFor("x97.mp3", standIns), failing});
+            const auto change = DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone",
+                                                                {entryFor("x96.mp3", {}), entryFor("x97.mp3", standIns), failing});
             const ChangeOutcome outcome = change->apply(ctx);
             std::cerr << "case 17: " << outcome.error.toStdString() << "\n";
             assert(!outcome.ok && "the change fails");
             assert(outcome.error
                        == words.arg(QString::fromStdString(failing.filePath))
-                              + QStringLiteral(" since Seabass read the stick, so no track was deleted. Check the stick "
+                              + QStringLiteral(" since Seabass read the stick, so nothing was saved. Check the stick "
                                                "again, then delete the tracks again.")
                    && "naming the library and the file, and what to do");
             FormatWriteSession *engineWrites = existingFormatWriteSession(ctx, "engine", libraryQ.toStdString());
-            assert(engineWrites != nullptr && "the change wrote Engine through this session");
+            FormatWriteSession *pdbWrites = existingFormatWriteSession(ctx, "rekordbox", pioneerQ.toStdString());
+            assert(engineWrites != nullptr && pdbWrites != nullptr && "the change wrote through these sessions");
             auto db = djinterop::engine::load_database(engineWrites->writeRoot());
             assert(db.track_by_id(extra["x97.mp3"]).has_value() && db.track_by_id(extra["x98.mp3"]).has_value()
                    && "nothing removed, x97 neither");
+            const QStringList x96Now =
+                x96In(pathToUtf8(pathFromUtf8(pdbWrites->writeRoot()) / "rekordbox" / "export.pdb"), pathFromUtf8(engineWrites->writeRoot()));
+            std::cerr << "case 17: x96 in " << x96Now.join(QStringLiteral(", ")).toStdString() << "\n";
+            assert(x96Now == all && "x96, before the failing entry, is still in all three");
         };
         failsBeforeRemoving(entryFor("x98.mp3", QStringList{QStringLiteral("rekordbox")}),
                             QStringLiteral("OneLibrary no longer lists \"%1\""));
@@ -1168,34 +1212,44 @@ int main(int argc, char **argv)
                             QStringLiteral("rekordbox no longer lists \"%1\""));
         failsBeforeRemoving(entryFor("x99.mp3", standIns), QStringLiteral("Engine no longer lists \"%1\""));
         {
-            // OneLibrary gains x97 in two spellings, neither the file's own.
-            const std::string dbPath = infrastructure::onelibrary::OneLibraryCueWriter::dbPathFor(pathToUtf8(pioneer));
-            const auto exec = [&](const std::string &sql) {
-                infrastructure::onelibrary::SqlCipherLibrary lib;
-                infrastructure::onelibrary::SqlCipherDb db(lib, dbPath, /*readOnly=*/false);
-                db.exec(infrastructure::onelibrary::oneLibraryKeyPragma(dbPath));
-                db.exec(sql);
-            };
-            exec("INSERT INTO content (content_id, title, path) VALUES (9701, 'x97', '/Contents/Extra/X97.mp3'), "
-                 "(9702, 'x97', '/Contents/EXTRA/x97.mp3')");
+            // OneLibrary gains x97 in two spellings, neither the file's
+            // own, one of them in a playlist: every row of the key is the
+            // file, so x97 is in a playlist there and stays everywhere.
+            oneLibraryExec("INSERT INTO content (content_id, title, path) VALUES (9701, 'x97', '/Contents/Extra/X97.mp3'), "
+                           "(9702, 'x97', '/Contents/EXTRA/x97.mp3')");
             {
-                SaveContext ctx(token, application::NullProgressReporter::instance(), nullptr, {}, libraryQ);
-                const auto change = DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone", {entryFor("x97.mp3", standIns)});
-                const ChangeOutcome outcome = change->apply(ctx);
-                std::cerr << "case 17: " << outcome.error.toStdString() << "\n";
-                assert(!outcome.ok
-                       && outcome.error
-                              == QStringLiteral("OneLibrary lists two spellings of \"%1\" since Seabass read the stick, so "
-                                                "no track was deleted. Check the stick again, then delete the tracks again.")
-                                     .arg(QString::fromStdString(entryFor("x97.mp3", standIns).filePath))
-                       && "two spellings are no stand-in's missing row");
+                infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+                w.createPlaylist("", "Holds X97", false);
             }
-            exec("DELETE FROM content WHERE content_id IN (9701, 9702)");
+            oneLibraryExec("INSERT INTO playlist_content (playlist_id, content_id, sequenceNo) SELECT playlist_id, 9702, 1 "
+                           "FROM playlist WHERE name = 'Holds X97'");
+            const auto kept = save(std::shared_ptr<PendingChange>(
+                DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone", {entryFor("x97.mp3", standIns)})));
+            assert(kept.skippedIds.size() == 1 && "x97 is listed in OneLibrary: a skip");
+            assert(engineHas("x97.mp3") && "x97 stays in Engine");
+            const auto contentLeft = [&] {
+                int left = 0;
+                for (const auto &[id, path] : infrastructure::onelibrary::oneLibraryContentPaths(pathToUtf8(pioneer))) {
+                    left += id == 9701 || id == 9702 ? 1 : 0;
+                }
+                return left;
+            };
+            assert(contentLeft() == 2 && "both OneLibrary spellings stay");
+            {
+                infrastructure::onelibrary::OneLibraryCueWriter w(pathToUtf8(pioneer));
+                assert(w.deletePlaylist("Holds X97") == 1);
+            }
+            // Out of the playlist, both spellings go with the rest of x97.
+            const auto gone = save(std::shared_ptr<PendingChange>(
+                DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone", {entryFor("x97.mp3", standIns)})));
+            assert(gone.appliedIds.size() == 1 && gone.skippedIds.isEmpty() && "x97 in no playlist anywhere goes");
+            assert(contentLeft() == 0 && !engineHas("x97.mp3") && "from both OneLibrary spellings and from Engine");
         }
-        const auto result = save(std::shared_ptr<PendingChange>(
-            DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone", {entryFor("x97.mp3", standIns)})));
-        assert(result.appliedIds.size() == 1 && "an Engine-only track with stand-in rows goes");
-        assert(!engineHas("x97.mp3") && engineHas("x98.mp3"));
+        const auto result =
+            save(std::shared_ptr<PendingChange>(DeleteTracksChange::forPlaylist(pioneerQ, libraryQ, "Gone", {entryFor("x96.mp3", {})})));
+        assert(result.appliedIds.size() == 1 && result.skippedIds.isEmpty() && "x96 goes");
+        assert(x96In(pdbFile, library).isEmpty() && "from all three");
+        assert(engineHas("x98.mp3"));
 
         DeleteTracksChange::Entry a02{file(A02), "Tone A02", "Tone Artist 02", {}};
         for (const QString &format : all) {
@@ -1211,9 +1265,9 @@ int main(int argc, char **argv)
         assert(health.appliedIds.size() == 1 && "Library Health's delete of a file only Engine has is no failure");
         assert(!engineHas("x98.mp3") && engineRowsNaming(library, engineId[A02.relative]) > 0 && "x98 goes, a02 stays");
     }
-    std::cout << "case 17 (a stand-in row a library has none for is nothing to remove; a real row missing in any library, "
-                 "or two spellings in OneLibrary, fails the change before anything is removed; Library Health's rows "
-                 "are all real) OK\n";
+    std::cout << "case 17 (a stand-in row a library has none for is nothing to remove; a real row missing in any library "
+                 "fails the change before anything is removed; every spelling of a file in a library is the file; Library "
+                 "Health's rows are all real) OK\n";
 
     // 18. A library that is not on the stick is not one that cannot be
     //     read: none is named unreadable, and the others are read as ever.

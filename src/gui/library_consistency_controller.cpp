@@ -1732,11 +1732,11 @@ int LibraryConsistencyController::repairItemCountHint(const QString &format) con
     return count;
 }
 
-void LibraryConsistencyController::stageIssue(int index)
+bool LibraryConsistencyController::stageIssue(int index)
 {
     const auto &issues = m_model.issues();
     if (index < 0 || static_cast<size_t>(index) >= issues.size()) {
-        return;
+        return false;
     }
     const auto &issue = issues[static_cast<size_t>(index)];
     QString format = issueFormat(issue);
@@ -1746,20 +1746,53 @@ void LibraryConsistencyController::stageIssue(int index)
     } else if (issue.kind == LibraryConsistencyIssue::Kind::Missing && format == "onelibrary") {
         change = std::make_unique<DeleteOrphanChange>(m_rekordboxPath, issue);
     } else {
-        return;
+        return false;
+    }
+    for (const auto &row : issue.brokenGroup) {
+        if (noPlaylistDeleteHolds(application::normalizedPathKey(row.filePath))) {
+            setErrorMessage(QStringLiteral("\"%1\" is staged for deletion as a track in no playlist, so it cannot be "
+                                           "repaired in the same save. Unstage that delete first, or save it first.")
+                                .arg(QString::fromStdString(row.title.empty() ? row.filePath : row.title)));
+            return false;
+        }
     }
     if (!ensureSessionForStaging()) {
-        return;
+        return false;
     }
     QString key = issueKeyFor(issue);
     QString changeId = change->id();
     QString description = change->description();
     if (!m_session->stage(std::move(change))) {
-        return;  // the session reported the lock refusal; the page shows it
+        return false;  // the session reported the lock refusal; the page shows it
     }
     m_stagedIssues[key] = {changeId, description};
     m_model.setStaged(index, true, description);
     emit issuesChanged();
+    return true;
+}
+
+std::set<std::string> LibraryConsistencyController::filesWithStagedRowChanges() const
+{
+    std::set<std::string> keys;
+    for (const auto &[key, kind] : m_stagedMovedFiles) {
+        if (kind == QLatin1String("relink")) {
+            keys.insert(key);
+        }
+    }
+    for (const auto &issue : m_model.issues()) {
+        if (m_stagedIssues.count(issueKeyFor(issue)) != 0) {
+            for (const auto &row : issue.brokenGroup) {
+                keys.insert(application::normalizedPathKey(row.filePath));
+            }
+        }
+    }
+    return keys;
+}
+
+bool LibraryConsistencyController::noPlaylistDeleteHolds(const std::string &fileKey) const
+{
+    return std::any_of(m_stagedNoPlaylistFiles.begin(), m_stagedNoPlaylistFiles.end(),
+                       [&](const std::string &file) { return application::normalizedPathKey(file) == fileKey; });
 }
 
 void LibraryConsistencyController::repairAll()
@@ -1776,9 +1809,9 @@ void LibraryConsistencyController::repairAll()
         if (issue.kind != LibraryConsistencyIssue::Kind::Repairable || m_stagedIssues.count(issueKeyFor(issue))) {
             continue;
         }
-        stageIssue(static_cast<int>(i));
-        staged++;
-        if (m_session && !m_session->lockHeld()) {
+        if (stageIssue(static_cast<int>(i))) {
+            staged++;
+        } else if (m_session && !m_session->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
         }
     }
@@ -2601,10 +2634,19 @@ void LibraryConsistencyController::deleteTracksInNoPlaylist(const QStringList &f
     for (const QString &f : filePaths) {
         wanted.insert(f.toStdString());
     }
+    // A file whose rows a relink, a repair or an orphan's delete staged here
+    // changes is left out, and said: by the delete's turn at Save its rows
+    // would be gone or point elsewhere, and the whole save would fail.
+    const std::set<std::string> changing = filesWithStagedRowChanges();
     std::vector<DeleteTracksChange::Entry> entries;
     std::set<std::string> staged;
+    QStringList leftOut;
     for (const auto &t : m_noPlaylist.tracks) {
         if (wanted.count(t.filePath)) {
+            if (changing.count(application::normalizedPathKey(t.filePath)) != 0) {
+                leftOut << QString::fromStdString(t.title.empty() ? t.filePath : t.title);
+                continue;
+            }
             entries.push_back({t.filePath, t.title, t.artist, t.rows});
             staged.insert(t.filePath);
         }
@@ -2614,7 +2656,22 @@ void LibraryConsistencyController::deleteTracksInNoPlaylist(const QStringList &f
     if (!m_stagedNoPlaylistFiles.empty()) {
         unstageTracksInNoPlaylist();
     }
-    if (entries.empty() || !ensureSessionForStaging()) {
+    const QString leftOutWords =
+        leftOut.isEmpty() ? QString()
+        : leftOut.size() == 1
+            ? QStringLiteral("\"%1\" is not deleted: a repair staged on this page changes its rows. Save that "
+                             "first, then delete it.")
+                  .arg(leftOut.front())
+            : QStringLiteral("%1 tracks are not deleted: a repair staged on this page changes their rows. Save that "
+                             "first, then delete them.")
+                  .arg(leftOut.size());
+    if (entries.empty()) {
+        if (!leftOutWords.isEmpty()) {
+            setErrorMessage(leftOutWords);
+        }
+        return;
+    }
+    if (!ensureSessionForStaging()) {
         return;
     }
     if (!m_session->stage(std::make_unique<DeleteTracksChange>(m_rekordboxPath, m_enginePath, std::move(entries)))) {
@@ -2624,7 +2681,8 @@ void LibraryConsistencyController::deleteTracksInNoPlaylist(const QStringList &f
     m_stagedNoPlaylistFiles = std::move(staged);
     emit playlistsChanged();
     setStagedStatusMessage(QStringLiteral("Staged deleting %1 track(s) that are in no playlist. Press Save to write it.")
-                               .arg(m_stagedNoPlaylistFiles.size()));
+                               .arg(m_stagedNoPlaylistFiles.size())
+                           + (leftOutWords.isEmpty() ? QString() : QStringLiteral(" ") + leftOutWords));
 }
 
 void LibraryConsistencyController::unstageTracksInNoPlaylist()
@@ -3022,6 +3080,15 @@ bool LibraryConsistencyController::stageMovedFile(const MovedFileEntry &entry, b
                             .arg(QString::fromStdString(entry.finding.title()),
                                  entry.finding.candidates.empty() ? QStringLiteral("no matching file")
                                                                    : QStringLiteral("more than one file that could be it")));
+        return false;
+    }
+    if (relink && noPlaylistDeleteHolds(application::normalizedPathKey(entry.finding.expectedPath))) {
+        setErrorMessage(QStringLiteral("\"%1\" is staged for deletion as a track in no playlist, so the library "
+                                       "cannot be pointed at %2 in the same save. Unstage that delete first, or save it "
+                                       "first.")
+                            .arg(QString::fromStdString(entry.finding.title().empty() ? entry.finding.expectedPath
+                                                                                      : entry.finding.title()),
+                                 QString::fromStdString(one->file.filePath)));
         return false;
     }
     if (relink && !entry.relinkRefusal.empty()) {

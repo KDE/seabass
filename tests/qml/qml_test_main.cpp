@@ -2578,6 +2578,40 @@ public:
         consistency->setMovedFilesForTesting(stick + QStringLiteral("/PIONEER"), {}, std::move(entries));
     }
 
+    // One moved-file finding on the stick at `stick` for the rekordbox row
+    // of `expectedPath` (titled `title`), with `candidate` as its one sure
+    // match: a track the scan lists that Library Health may also list as
+    // in no playlist.
+    Q_INVOKABLE void plantMovedFile(QObject *controller, const QString &stick, const QString &expectedPath,
+                                    const QString &title, const QString &candidate)
+    {
+        auto *consistency = qobject_cast<seabass::gui::LibraryConsistencyController *>(controller);
+        if (consistency == nullptr) {
+            return;
+        }
+        seabass::domain::Track row;
+        row.format = "rekordbox";
+        row.sourceId = "1";
+        row.title = title.toStdString();
+        row.filePath = expectedPath.toStdString();
+        seabass::domain::Track file;
+        file.format = "disk";
+        file.isUnreferenced = true;
+        file.sourceId = candidate.toStdString();
+        file.filePath = candidate.toStdString();
+        file.filename = seabass::pathToUtf8(seabass::gui::pathFromQString(candidate).filename());
+        file.fileSizeBytes = 1000;
+        seabass::gui::MovedFileEntry entry;
+        entry.finding.expectedPath = row.filePath;
+        entry.finding.rows = {row};
+        entry.finding.candidates.push_back(
+            {file, seabass::domain::MovedFileCandidate::Confidence::High, "the same tags and length"});
+        std::vector<seabass::gui::MovedFileEntry> entries;
+        entries.push_back(std::move(entry));
+        consistency->setMovedFilesForTesting(stick + QStringLiteral("/PIONEER"), stick + QStringLiteral("/Engine Library"),
+                                             std::move(entries));
+    }
+
     // A value put straight into the settings store (the sandbox this
     // binary made), past every setter's validation: what a settings file
     // edited by hand, or written by another build, can hold. An invalid

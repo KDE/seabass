@@ -815,7 +815,18 @@ private:
     void attachSession();
     bool ensureSessionForStaging();
     int repairItemCountHint(const QString &format) const;
-    void stageIssue(int index);
+    // False when staging was refused; errorMessage says why.
+    bool stageIssue(int index);
+    // The files (application::normalizedPathKey) whose rows another change
+    // staged on this page rewrites or removes: a relink points them at
+    // another file, a repair or an orphan's delete takes the broken row
+    // out. Deleting such a file as a track in no playlist in the same save
+    // would look for rows that are gone by its turn, or take them from
+    // under the other change, and the save would fail.
+    std::set<std::string> filesWithStagedRowChanges() const;
+    // Whether the delete of tracks in no playlist staged now holds a file
+    // of `fileKey`.
+    bool noPlaylistDeleteHolds(const std::string &fileKey) const;
     void stageJunkCue(int index);
     int indexOfIssueKey(const QString &issueKey) const;
     int indexOfJunkKey(const QString &junkKey) const;

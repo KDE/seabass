@@ -4734,6 +4734,20 @@ if(TARGET seabass_edit)
     add_test(NAME playlist_edit_changes_test COMMAND playlist_edit_changes_test
         ${CMAKE_SOURCE_DIR}/tests/fixtures/pdb_playlist_tree ${CMAKE_SOURCE_DIR}/tests/fixtures/onelibrary_playlist_tree)
 
+    # Delete Tracks finds each library's rows at Save the way the plan read
+    # them: rows stored out of normal form, in two letter cases, and a
+    # stand-in library gaining the file, on a copy of a real stick.
+    add_executable(delete_tracks_spelling_test tests/delete_tracks_spelling_test.cpp src/gui/stick_catalogs.cpp)
+    target_include_directories(delete_tracks_spelling_test PRIVATE src tests)
+    target_link_libraries(delete_tracks_spelling_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB DjInterop SQLite::SQLite3)
+    if(NOT WIN32)
+        target_link_libraries(delete_tracks_spelling_test PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    add_test(NAME delete_tracks_spelling_test COMMAND delete_tracks_spelling_test
+        ${CMAKE_SOURCE_DIR}/tests/fixtures/anonymized_library)
+    set_tests_properties(delete_tracks_spelling_test PROPERTIES LABELS "integration"
+        ENVIRONMENT "SEABASS_IGNORE_REMOVABLE_MEDIA=1")
+
     add_executable(level_cue_table_change_test tests/level_cue_table_change_test.cpp)
     target_include_directories(level_cue_table_change_test PRIVATE src tests)
     target_link_libraries(level_cue_table_change_test PRIVATE seabass_edit Qt6::Core ZLIB::ZLIB)

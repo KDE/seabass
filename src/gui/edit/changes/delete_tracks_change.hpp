@@ -35,6 +35,12 @@ namespace seabass::gui
 // gives each entry a row for every library the stick has, whether or not
 // the library listed the file when it was asked: the check at Save then
 // looks the file up in each of them as it is by then.
+//
+// At Save a library's rows for a file are the rows its reader would list
+// for it: every row whose stored path, joined as that reader joins it,
+// has the file's application::normalizedPathKey. However many spellings
+// a library has of the file, all are the file: it stays when any of them
+// is in a playlist, and goes from all of them otherwise.
 class DeleteTracksChange : public PendingChange
 {
 public:

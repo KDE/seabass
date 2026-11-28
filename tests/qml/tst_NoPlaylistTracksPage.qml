@@ -156,4 +156,144 @@ TestCase {
         compare(findChild(t.page, "pick_/S/Contents/a.mp3").visible, false);
         compare(t.controller.calls.length, 0);
     }
+    // tests/qml/ -> tests/fixtures/anonymized_library (see tst_JunkCuePage).
+    readonly property string fixtureRoot: {
+        const url = Qt.resolvedUrl("../fixtures/anonymized_library").toString();
+        return decodeURIComponent(url.replace(/^file:\/\//, "").replace(/^\/([A-Za-z]:)/, "$1"));
+    }
+
+    Component {
+        id: realControllerComponent
+        LibraryConsistencyController {}
+    }
+
+    // Whatever a test staged in a real session is not handed to the next.
+    function cleanup() {
+        EditSessionRegistry.discardAll();
+    }
+
+    // A copy of the fixture, checked by the real controller.
+    function checkedStick() {
+        const stick = stickFixture.stickCopy(testCase.fixtureRoot);
+        verify(stick.length > 0, "the fixture must copy");
+        const controller = createTemporaryObject(realControllerComponent, testCase);
+        controller.scan(stick + "/PIONEER", stick + "/Engine Library", "");
+        tryVerify(() => !controller.busy, 300000, "the check finishes");
+        verify(controller.playlistsChecked && controller.stickHasPlaylists, "precondition: the playlists were checked");
+        return {stick: stick, controller: controller};
+    }
+
+    // The real controller's entries, through a real save: a file only
+    // Engine lists beside one only rekordbox and OneLibrary list (the
+    // fixture's Engine library shares no file with the other two). Each
+    // goes from the libraries that list it, and no library without it is
+    // asked about it.
+    function test_theRealControllerDeletesFilesOnlySomeLibrariesList() {
+        const checked = checkedStick();
+        const controller = checked.controller;
+        const engineOnly = controller.noPlaylistTracks.find((t) => t.libraries === "Engine");
+        const pioneerOnly = controller.noPlaylistTracks.find((t) => t.libraries.indexOf("Engine") < 0);
+        verify(engineOnly !== undefined && pioneerOnly !== undefined, "precondition: a file of each kind in no playlist");
+        const paths = [String(engineOnly.filePath), String(pioneerOnly.filePath)];
+        const before = controller.noPlaylistTrackCount;
+        controller.deleteTracksInNoPlaylist(paths);
+        compare(controller.errorMessage, "");
+        compare(controller.noPlaylistStagedCount, 2);
+        const session = EditSessionRegistry.sessionFor(EditSessionRegistry.libraryIdForPath(checked.stick + "/PIONEER"),
+                                                       "TESTSTICK");
+        verify(session !== null);
+        compare(session.pendingCount, 1);
+        let summary = null;
+        session.saveFinished.connect((result) => { summary = result; });
+        session.save();
+        tryVerify(() => summary !== null, 120000, "the save finishes");
+        compare(summary.error, "", "the save wrote it: " + JSON.stringify(summary));
+        tryVerify(() => !controller.busy && controller.playlistsChecked && controller.noPlaylistTrackCount < before, 300000,
+                  "the check after the save finishes");
+        compare(controller.noPlaylistTrackCount, before - 2, "the two are gone, every other stays");
+        for (const path of paths) {
+            verify(!controller.noPlaylistTracks.some((t) => t.filePath === path), path + " is gone");
+        }
+    }
+
+    // A file whose rows another repair staged on this page changes is not
+    // deleted in the same save, either way round, and the page says why:
+    // by the delete's turn its rows would be gone or point elsewhere, and
+    // the whole save would fail. A relink points the rows elsewhere (a
+    // move back does not touch them); an orphan's delete takes OneLibrary's
+    // row out.
+    function test_aFileARepairChangesIsNotDeletedInTheSameSave() {
+        const checked = checkedStick();
+        const controller = checked.controller;
+        const listed = controller.noPlaylistTracks.filter((t) => t.libraries === "rekordbox, OneLibrary");
+        verify(listed.length >= 3, "precondition: files in rekordbox and OneLibrary in no playlist");
+        const moved = String(listed[0].filePath);
+        const other = String(listed[1].filePath);
+        controllerFixture.plantMovedFile(controller, checked.stick, moved, String(listed[0].title),
+                                         checked.stick + "/Contents/Elsewhere/moved.mp3");
+        controller.relinkMovedFile(moved);
+        compare(controller.errorMessage, "");
+        compare(controller.movedFileStagedCount, 1);
+        controller.deleteTracksInNoPlaylist([moved, other]);
+        compare(controller.noPlaylistStagedCount, 1, "only the other file is staged");
+        verify(controller.noPlaylistTracks.find((t) => t.filePath === other).staged);
+        verify(!controller.noPlaylistTracks.find((t) => t.filePath === moved).staged);
+        verify(controller.statusMessage.indexOf("is not deleted: a repair staged on this page changes its rows. Save that "
+                                                + "first, then delete it.") >= 0, controller.statusMessage);
+        verify(noDashes(controller.statusMessage));
+
+        controller.unstageTracksInNoPlaylist();
+        controller.unstageMovedFile(moved);
+        controller.deleteTracksInNoPlaylist([moved]);
+        compare(controller.noPlaylistStagedCount, 1);
+        controller.relinkMovedFile(moved);
+        compare(controller.movedFileStagedCount, 0, "the relink is refused while the delete holds the file");
+        verify(controller.errorMessage.indexOf("is staged for deletion as a track in no playlist, so the library cannot be "
+                                               + "pointed at") >= 0, controller.errorMessage);
+        verify(noDashes(controller.errorMessage));
+        controller.moveFileBack(moved);
+        compare(controller.errorMessage, "", "moving the file back changes no row: offered");
+        compare(controller.movedFileStagedCount, 1);
+        controller.unstageMovedFile(moved);
+        controller.unstageTracksInNoPlaylist();
+
+        // OneLibrary's row of a file with no file on the stick is an orphan
+        // Library Health offers to delete: one in no playlist.
+        const model = controller.issues;
+        const kindRole = Qt.UserRole + 1;
+        const formatRole = Qt.UserRole + 2;
+        const brokenRole = Qt.UserRole + 4;
+        let orphan = -1;
+        let orphanPath = "";
+        for (let i = 0; i < model.count && orphan < 0; ++i) {
+            const index = model.index(i, 0);
+            if (model.data(index, kindRole) !== "missing" || model.data(index, formatRole) !== "onelibrary") {
+                continue;
+            }
+            for (const broken of model.data(index, brokenRole)) {
+                const path = String(broken.filePath);
+                if (listed.some((t) => t.filePath === path) && path !== moved) {
+                    orphan = i;
+                    orphanPath = path;
+                    break;
+                }
+            }
+        }
+        verify(orphan >= 0, "precondition: an orphan OneLibrary row of a file in no playlist");
+        controller.deleteOrphan(orphan);
+        compare(controller.errorMessage, "");
+        compare(controller.stagedIssueCount, 1);
+        controller.deleteTracksInNoPlaylist([orphanPath]);
+        compare(controller.noPlaylistStagedCount, 0, "the delete is not staged");
+        verify(controller.errorMessage.indexOf("is not deleted: a repair staged on this page changes its rows") >= 0,
+               controller.errorMessage);
+        controller.unstageIssue(orphan);
+        controller.deleteTracksInNoPlaylist([orphanPath]);
+        compare(controller.noPlaylistStagedCount, 1);
+        controller.deleteOrphan(orphan);
+        compare(controller.stagedIssueCount, 0, "the orphan's delete is refused while the delete holds the file");
+        verify(controller.errorMessage.indexOf("is staged for deletion as a track in no playlist, so it cannot be repaired "
+                                               + "in the same save") >= 0, controller.errorMessage);
+        verify(noDashes(controller.errorMessage));
+    }
 }

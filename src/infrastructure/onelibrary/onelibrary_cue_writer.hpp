@@ -282,6 +282,9 @@ public:
     // bug in this codebase's own OneLibrary-mirror call sites before this
     // second method was added to fix it.
     void removeTrackByPath(const std::string &filePath);
+    // The same removal for these content rows, as a caller that chose them
+    // itself (contentPaths()) names them; an id with no row is skipped.
+    void removeTracksByContentIds(const std::vector<int64_t> &contentIds);
 
     // Same removal as removeTrackByPath(), except the doomed row's
     // playlist memberships are reassigned to survivorFilePath's row
@@ -517,6 +520,8 @@ public:
     // Whether any playlist holds a content row for the file. False when no
     // row lists the file.
     bool isInAnyPlaylist(const std::string &filePath);
+    // Whether any playlist holds one of these content rows.
+    bool isAnyInPlaylist(const std::vector<int64_t> &contentIds);
 
     // Creates a playlist (or folder) named `name` in the folder at
     // parentPath ("" for the top level), at `position` in that level

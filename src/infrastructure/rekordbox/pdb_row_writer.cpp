@@ -4059,6 +4059,45 @@ std::vector<uint32_t> PdbRowWriter::trackIdsWithFilePath(const std::string &path
     return ids;
 }
 
+std::vector<std::pair<uint32_t, std::string>> PdbRowWriter::trackFilePaths() const
+{
+    std::vector<std::pair<uint32_t, std::string>> rows;
+    if (m_indexed && m_format == Format::Export) {
+        const TrackTableIndex &tracks = trackIndex();
+        if (!tracks.unreadablePath.empty()) {
+            std::rethrow_exception(tracks.unreadablePath.begin()->second.error);
+        }
+        for (const auto &[order, row] : tracks.rowsInOrder) {
+            rows.emplace_back(row.first, trimmedPath(row.second));
+        }
+        return rows;
+    }
+    std::istringstream iss(m_buffer);
+    kaitai::kstream ks(&iss);
+    Pdb pdb(false, &ks);
+    for (const auto &table : *pdb.tables()) {
+        if (table->type() != Pdb::PAGE_TYPE_TRACKS) {
+            continue;
+        }
+        countWalk();
+        forEachDataPage(*table, [&](Pdb::page_t *page) {
+            for (const auto &group : *page->row_groups()) {
+                for (const auto &row : *group->rows()) {
+                    countRow();
+                    if (!row->present()) {
+                        continue;
+                    }
+                    auto *t = dynamic_cast<Pdb::track_row_t *>(row->body());
+                    if (t) {
+                        rows.emplace_back(t->id(), trimmedPath(sqlText(t->file_path())));
+                    }
+                }
+            }
+        });
+    }
+    return rows;
+}
+
 std::vector<PdbRowWriter::PlaylistTreeNode> PdbRowWriter::playlistTree() const
 {
     std::vector<PlaylistTreeNode> nodes;

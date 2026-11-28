@@ -767,10 +767,17 @@ void OneLibraryCueWriter::removeTrackByPath(const std::string &filePath)
     // for the reasoning.
     checkNotStale();
 
-    std::string contentPath = toContentPath(m_stickRoot, filePath);
-    SqlCipherDb &db = writeConnection();
     // Every row listing the file; see contentIdsAt().
-    const std::vector<int64_t> contentIds = contentIdsAt(db, contentPath);
+    removeTracksByContentIds(contentIdsAt(writeConnection(), toContentPath(m_stickRoot, filePath)));
+}
+
+void OneLibraryCueWriter::removeTracksByContentIds(const std::vector<int64_t> &contentIds)
+{
+    checkNotStale();
+    if (contentIds.empty()) {
+        return;
+    }
+    SqlCipherDb &db = writeConnection();
     {
         db.exec("BEGIN IMMEDIATE;");
         try {
@@ -924,6 +931,12 @@ void OneLibraryCueWriter::removeTrackByPathReplacingWith(const std::string &doom
     std::vector<int64_t> doomedIds;
     try {
         doomedIds = contentIdsAt(db, doomedContentPath);
+    } catch (const OneLibraryRowInTwoSpellings &) {
+        // Not "no row": rows name the copy in two spellings, and the
+        // caller is told so, still as a OneLibraryRowMissing to one that
+        // takes it as one.
+        throw OneLibraryRowInTwoSpellings("onelibrary: content rows name the copy being removed in two spellings, path "
+                                          + doomedContentPath);
     } catch (const OneLibraryRowMissing &) {
         throw OneLibraryRowMissing("onelibrary: no content row for the copy being removed, path "
                                    + doomedContentPath);
@@ -1324,8 +1337,13 @@ std::vector<std::pair<int64_t, int64_t>> OneLibraryCueWriter::playlistContent(co
 
 bool OneLibraryCueWriter::isInAnyPlaylist(const std::string &filePath)
 {
+    return isAnyInPlaylist(contentIdsAt(verifyConnection(), toContentPath(m_stickRoot, filePath)));
+}
+
+bool OneLibraryCueWriter::isAnyInPlaylist(const std::vector<int64_t> &contentIds)
+{
     SqlCipherDb &db = verifyConnection();
-    for (const int64_t contentId : contentIdsAt(db, toContentPath(m_stickRoot, filePath))) {
+    for (const int64_t contentId : contentIds) {
         SqlCipherStatement count(db, "SELECT count(*) FROM playlist_content WHERE content_id = ?");
         count.bindInt64(1, contentId);
         count.step();

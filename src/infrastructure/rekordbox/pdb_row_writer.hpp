@@ -568,6 +568,11 @@ public:
     // export.pdb spells it ("/Contents/Artist/track.mp3"), space padding
     // ignored. More than one when the file was imported twice.
     std::vector<uint32_t> trackIdsWithFilePath(const std::string &pathOnStick) const;
+    // Every present track row's id and file_path as stored, space padding
+    // trimmed, in table order: for a caller that matches rows to a file by
+    // its own rule rather than by the exact bytes. Throws as
+    // trackIdsWithFilePath() does when a row's file_path cannot be read.
+    std::vector<std::pair<uint32_t, std::string>> trackFilePaths() const;
     // Whether any playlist has an entry for the track.
     bool trackInAnyPlaylist(uint32_t trackId) const;
 

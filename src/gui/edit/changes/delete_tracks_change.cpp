@@ -5,11 +5,14 @@
 #include "gui/edit/changes/delete_tracks_change.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <set>
 #include <stdexcept>
 
+#include "application/path_key.hpp"
 #include "domain/sync_planning.hpp"
 #include "gui/edit/changes/change_helpers.hpp"
 #include "gui/edit/format_write_session.hpp"
@@ -19,6 +22,7 @@
 #include "infrastructure/onelibrary/onelibrary_cue_writer.hpp"
 #include "infrastructure/paths/seabass_paths.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
+#include "infrastructure/rekordbox/pdb_lookup.hpp"
 #include "infrastructure/rekordbox/pdb_row_writer.hpp"
 
 namespace seabass::gui
@@ -39,12 +43,25 @@ std::string engineDbOf(const std::string &enginePath)
     return pathToUtf8(pathFromUtf8(enginePath) / "Database2" / "m.db");
 }
 
-// "/Contents/..." as export.pdb spells a file on the stick.
-std::string pathOnStick(const std::string &pioneerRoot, const std::string &filePath)
+// normalizedPathKey of the path `readersPath` makes, as a reader spells a
+// stored path; empty when it cannot be made (bytes that are not UTF-8,
+// which the reader could not have listed either).
+template<typename ReadersPath>
+std::string keyOf(ReadersPath &&readersPath)
 {
-    std::error_code ec;
-    const auto relative = std::filesystem::relative(pathFromUtf8(filePath), pathFromUtf8(pioneerRoot).parent_path(), ec);
-    return ec ? filePath : "/" + pathToGenericUtf8(relative);
+    try {
+        return application::normalizedPathKey(readersPath());
+    } catch (const std::exception &) {
+        return {};
+    }
+}
+
+// The ids `byKey` holds for `key`, none when it holds none.
+template<typename ByKey>
+typename ByKey::mapped_type rowsOf(const ByKey &byKey, const std::string &key)
+{
+    const auto found = byKey.find(key);
+    return found == byKey.end() ? typename ByKey::mapped_type() : found->second;
 }
 
 }  // namespace
@@ -183,71 +200,103 @@ ChangeOutcome DeleteTracksChange::apply(SaveContext &ctx)
             }
         }
 
-        // Every row looked up again now, by its own file path in its own
-        // library: ids from the scan could name other tracks by now (a
-        // re-export renumbers them), and each library spells the path its
-        // own way.
+        // Every row looked up again now: ids from the scan could name other
+        // tracks by now (a re-export renumbers them). Each library's rows
+        // are keyed the way the plan grouped what it read, by
+        // normalizedPathKey of the path that library's reader makes of the
+        // stored one, so a row is found here exactly when the plan would
+        // have listed it for the file: a stored path with a doubled
+        // separator, a "." or another letter case is the same file there
+        // as here.
+        //
+        // One rule for all three libraries, before anything is removed:
+        // every row of the file's key is the file, however many spellings
+        // a library has of it. The file stays when any of them is in a
+        // playlist, and goes from all of them otherwise. A stand-in row
+        // (Browse names the file in every library on the stick, see
+        // Entry::standIns) with no row of the key now has nothing to
+        // remove; a library the plan read a row from that has none now
+        // fails the save.
+        const std::string readersStickRoot =
+            pioneer.empty() ? std::string() : infrastructure::paths::normalStickRootForCatalogPath(pioneer);
+        // export.pdb and OneLibrary's readers join a stored path the same way.
+        const auto pioneerKeyOf = [&](const std::string &stored) {
+            return stored.empty() ? std::string()
+                                  : keyOf([&] { return infrastructure::rekordbox::trackFilePathOnStick(readersStickRoot, stored); });
+        };
+        std::map<std::string, std::vector<uint32_t>> rekordboxByKey;
+        if (pdb) {
+            for (const auto &row : pdb->trackFilePaths()) {
+                if (const std::string key = pioneerKeyOf(row.second); !key.empty()) {
+                    rekordboxByKey[key].push_back(row.first);
+                }
+            }
+        }
+        std::map<std::string, std::vector<std::int64_t>> oneLibraryByKey;
+        if (oneLibrary) {
+            for (const auto &row : oneLibrary->contentPaths()) {
+                if (const std::string key = pioneerKeyOf(row.second); !key.empty()) {
+                    oneLibraryByKey[key].push_back(row.first);
+                }
+            }
+        }
+        std::map<std::string, std::vector<std::int64_t>> engineByKey;
+        if (engineSession) {
+            const std::filesystem::path library = pathFromUtf8(engineSession->realRoot());
+            for (const auto &row : infrastructure::engine::engineTrackPaths(engineSession->writeRoot())) {
+                if (const std::string key = keyOf([&] { return pathToUtf8((library / pathFromUtf8(row.second)).lexically_normal()); });
+                    !key.empty()) {
+                    engineByKey[key].push_back(row.first);
+                }
+            }
+        }
         struct Resolved
         {
             const Entry *entry = nullptr;
-            std::vector<uint32_t> rekordboxIds;
-            std::vector<std::string> oneLibraryPaths;
-            std::vector<std::int64_t> engineIds;
+            std::set<uint32_t> rekordboxIds;
+            std::set<std::int64_t> oneLibraryIds;
+            std::set<std::int64_t> engineIds;
         };
-        // One rule for all three libraries, before anything is removed: a
-        // stand-in row (Browse names the file in every library on the
-        // stick, see Entry::standIns) that the library still has no row
-        // for is in none of its playlists and has nothing to remove. A
-        // row the plan read that is not found now fails the save, and so
-        // does OneLibrary naming the file in two spellings, stand-in or
-        // not: the file could still be listed there.
-        const auto changedSince = [](const Entry &e, const std::string &format, const char *what) {
-            return std::runtime_error(domain::catalogDisplayName(format) + " " + what + " \"" + e.filePath
-                                      + "\" since Seabass read the stick, so no track was deleted. "
+        const auto changedSince = [](const Entry &e, const std::string &format) {
+            return std::runtime_error(domain::catalogDisplayName(format) + " no longer lists \"" + e.filePath
+                                      + "\" since Seabass read the stick, so nothing was saved. "
                                         "Check the stick again, then delete the tracks again.");
         };
         std::vector<Resolved> doomed;
         for (const auto &e : m_entries) {
             Resolved r;
             r.entry = &e;
-            bool listed = false;
             for (const auto &row : e.rows) {
                 if (row.filePath.empty()) {
                     continue;
                 }
+                const std::string key = application::normalizedPathKey(row.filePath);
                 const bool standIn = std::find(e.standIns.begin(), e.standIns.end(), row.format) != e.standIns.end();
+                bool found = true;
                 if (row.format == "rekordbox" && pdb) {
-                    const std::vector<uint32_t> ids = pdb->trackIdsWithFilePath(pathOnStick(pioneer, row.filePath));
-                    if (ids.empty() && !standIn) {
-                        throw changedSince(e, row.format, "no longer lists");
-                    }
-                    for (const uint32_t id : ids) {
-                        listed = listed || pdb->trackInAnyPlaylist(id);
-                        r.rekordboxIds.push_back(id);
-                    }
+                    const auto ids = rowsOf(rekordboxByKey, key);
+                    found = !ids.empty();
+                    r.rekordboxIds.insert(ids.begin(), ids.end());
                 } else if (row.format == "onelibrary" && oneLibrary) {
-                    try {
-                        listed = listed || oneLibrary->isInAnyPlaylist(row.filePath);
-                        r.oneLibraryPaths.push_back(row.filePath);
-                    } catch (const infrastructure::onelibrary::OneLibraryRowInTwoSpellings &) {
-                        throw changedSince(e, row.format, "lists two spellings of");
-                    } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
-                        if (!standIn) {
-                            throw changedSince(e, row.format, "no longer lists");
-                        }
-                    }
+                    const auto ids = rowsOf(oneLibraryByKey, key);
+                    found = !ids.empty();
+                    r.oneLibraryIds.insert(ids.begin(), ids.end());
                 } else if (row.format == "engine" && engineSession) {
-                    const std::vector<std::int64_t> ids =
-                        infrastructure::engine::engineTrackIdsForFile(engineSession->writeRoot(), engineSession->realRoot(), row.filePath);
-                    if (ids.empty() && !standIn) {
-                        throw changedSince(e, row.format, "no longer lists");
-                    }
-                    for (const std::int64_t id : ids) {
-                        listed = listed || engineListed.count(id) > 0;
-                        r.engineIds.push_back(id);
-                    }
+                    const auto ids = rowsOf(engineByKey, key);
+                    found = !ids.empty();
+                    r.engineIds.insert(ids.begin(), ids.end());
+                }
+                if (!found && !standIn) {
+                    throw changedSince(e, row.format);
                 }
             }
+            bool listed = std::any_of(r.rekordboxIds.begin(), r.rekordboxIds.end(),
+                                      [&](uint32_t id) { return pdb->trackInAnyPlaylist(id); })
+                          || std::any_of(r.engineIds.begin(), r.engineIds.end(),
+                                         [&](std::int64_t id) { return engineListed.count(id) > 0; });
+            listed = listed
+                     || (!r.oneLibraryIds.empty()
+                         && oneLibrary->isAnyInPlaylist(std::vector<std::int64_t>(r.oneLibraryIds.begin(), r.oneLibraryIds.end())));
             if (listed) {
                 ctx.log().record(std::string(Label) + ": \"" + e.filePath + "\" is in a playlist now, left alone");
             } else {
@@ -275,13 +324,10 @@ ChangeOutcome DeleteTracksChange::apply(SaveContext &ctx)
                     removedFrom[i] = removedFrom[i].empty() ? "rekordbox" : removedFrom[i];
                 }
             }
-            for (const std::string &path : doomed[i].oneLibraryPaths) {
-                try {
-                    oneLibrary->removeTrackByPath(path);
-                    removedFrom[i] = removedFrom[i].empty() ? "onelibrary" : removedFrom[i];
-                } catch (const infrastructure::onelibrary::OneLibraryRowMissing &) {
-                    // Gone since the scan: nothing to remove.
-                }
+            if (!doomed[i].oneLibraryIds.empty()) {
+                oneLibrary->removeTracksByContentIds(
+                    std::vector<std::int64_t>(doomed[i].oneLibraryIds.begin(), doomed[i].oneLibraryIds.end()));
+                removedFrom[i] = removedFrom[i].empty() ? "onelibrary" : removedFrom[i];
             }
             if (!doomed[i].engineIds.empty()) {
                 engineIds.insert(engineIds.end(), doomed[i].engineIds.begin(), doomed[i].engineIds.end());
