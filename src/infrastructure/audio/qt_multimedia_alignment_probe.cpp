@@ -4,12 +4,18 @@
 
 #include "infrastructure/audio/qt_multimedia_alignment_probe.hpp"
 
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+#include "infrastructure/audio/analysis_pcm_source.hpp"
+#include "infrastructure/audio/ffmpeg_audio_reader.hpp"
+#endif
+
 #include "infrastructure/audio/qt_decoder_start.hpp"
 
 #include <QAudioBuffer>
 #include <QAudioDecoder>
 #include <QAudioFormat>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QString>
@@ -253,9 +259,70 @@ std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe
     return samples;
 }
 
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+// The same decode through the decoder on FFmpeg's libraries: the mean of
+// the channels of every frame into the same resampler, as decodeOnce()
+// makes it of Qt's buffers.
+std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decodeThroughFfmpeg(
+    const std::string &absoluteFilePath) const
+{
+    FfmpegAudioReader reader(absoluteFilePath);
+    if (!reader.error().empty()) {
+        return nullptr;
+    }
+    QElapsedTimer taken;
+    taken.start();
+    std::optional<domain::alignment::Resampler> resampler;
+    domain::alignment::KeptSamplesBuilder kept(domain::alignment::AnalysisRate);
+    int sampleRate = 0;
+    while (const std::optional<FfmpegAudioReader::Chunk> chunk = reader.next()) {
+        if (taken.elapsed() > m_timeoutMs) {
+            return nullptr;
+        }
+        if (chunk->channels <= 0 || chunk->sampleRate <= 0) {
+            continue;
+        }
+        if (sampleRate == 0) {
+            sampleRate = chunk->sampleRate;
+            resampler.emplace(static_cast<double>(sampleRate), domain::alignment::AnalysisRate);
+        } else if (chunk->sampleRate != sampleRate) {
+            return nullptr;
+        }
+        const std::size_t channels = static_cast<std::size_t>(chunk->channels);
+        for (std::size_t frame = 0; frame < chunk->frames; ++frame) {
+            double sum = 0.0;
+            for (std::size_t channel = 0; channel < channels; ++channel) {
+                sum += static_cast<double>(chunk->samples[frame * channels + channel]);
+            }
+            resampler->push(static_cast<float>(sum / chunk->channels));
+        }
+        const std::vector<float> ready = resampler->drain();
+        kept.append(ready);
+    }
+    if (!reader.error().empty() || !resampler) {
+        return nullptr;
+    }
+    const std::vector<float> rest = resampler->finish();
+    kept.append(rest);
+    auto samples = std::make_shared<domain::alignment::KeptSamples>(kept.finish());
+    if (samples->total == 0) {
+        return nullptr;
+    }
+    return samples;
+}
+#endif
+
 std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decode(
     const std::string &absoluteFilePath) const
 {
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+    if (ownDecoderInUse()) {
+        if (absoluteFilePath.empty() || !QFileInfo::exists(QString::fromStdString(absoluteFilePath))) {
+            return nullptr;
+        }
+        return decodeThroughFfmpeg(absoluteFilePath);
+    }
+#endif
     std::shared_ptr<const domain::alignment::KeptSamples> samples;
     decoder_start::run(absoluteFilePath, [&](const decoder_start::Attempt &attempt) {
         bool gaveNothing = false;

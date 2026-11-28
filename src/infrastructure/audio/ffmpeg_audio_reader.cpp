@@ -1,0 +1,286 @@
+// SPDX-FileCopyrightText: 2026 Sebastian Kügler <sebas@kde.org>
+//
+// SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
+
+#include "infrastructure/audio/ffmpeg_audio_reader.hpp"
+
+#include <algorithm>
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/samplefmt.h>
+}
+
+namespace seabass::infrastructure::audio
+{
+
+namespace
+{
+
+// A file with more damaged packets than this is not decoded to its end:
+// it is not audio with a scratch in it any more.
+constexpr int MostDamagedPackets = 1000;
+
+std::string ffmpegError(const char *what, int code)
+{
+    char text[AV_ERROR_MAX_STRING_SIZE] = {};
+    av_strerror(code, text, sizeof text);
+    return std::string(what) + ": " + text;
+}
+
+// One sample of a frame as a -1..1 value. `plane` is the channel's own
+// for a planar format and the one interleaved plane otherwise, `index`
+// the sample's place in it.
+bool sampleValue(AVSampleFormat format, const std::uint8_t *plane, std::size_t index, double &value)
+{
+    switch (format) {
+    case AV_SAMPLE_FMT_U8:
+    case AV_SAMPLE_FMT_U8P:
+        value = (plane[index] - 128.0) / 128.0;
+        return true;
+    case AV_SAMPLE_FMT_S16:
+    case AV_SAMPLE_FMT_S16P:
+        value = reinterpret_cast<const std::int16_t *>(plane)[index] / 32768.0;
+        return true;
+    case AV_SAMPLE_FMT_S32:
+    case AV_SAMPLE_FMT_S32P:
+        value = reinterpret_cast<const std::int32_t *>(plane)[index] / 2147483648.0;
+        return true;
+    case AV_SAMPLE_FMT_S64:
+    case AV_SAMPLE_FMT_S64P:
+        // To a float in one step, as a resampler does it: by way of a
+        // double it would be rounded twice.
+        value = static_cast<float>(reinterpret_cast<const std::int64_t *>(plane)[index]) * (1.0f / 9223372036854775808.0f);
+        return true;
+    case AV_SAMPLE_FMT_FLT:
+    case AV_SAMPLE_FMT_FLTP:
+        value = reinterpret_cast<const float *>(plane)[index];
+        return true;
+    case AV_SAMPLE_FMT_DBL:
+    case AV_SAMPLE_FMT_DBLP:
+        value = reinterpret_cast<const double *>(plane)[index];
+        return true;
+    default:
+        return false;
+    }
+}
+
+}  // namespace
+
+struct FfmpegAudioReader::State
+{
+    using Chunk = FfmpegAudioReader::Chunk;
+
+    AVFormatContext *format = nullptr;
+    AVCodecContext *codec = nullptr;
+    AVPacket *packet = nullptr;
+    AVFrame *frame = nullptr;
+    int stream = -1;
+    int damaged = 0;
+    std::string error;
+    // The frame last handed out, converted.
+    std::vector<float> samples;
+    // No more packets: the decoder is being emptied.
+    bool draining = false;
+    bool finished = false;
+
+    ~State()
+    {
+        av_frame_free(&frame);
+        av_packet_free(&packet);
+        avcodec_free_context(&codec);
+        avformat_close_input(&format);
+    }
+
+    // The frame as floats, its channels side by side. Each sample is
+    // rounded to a float here, before anyone adds channels up, as the
+    // app's other decoder has them: a 32-bit or a double sample does not
+    // fit a float, and the mean of two unrounded ones is now and then
+    // the float next to the mean of the two rounded.
+    bool take(const AVFrame *decoded, Chunk &chunk)
+    {
+        const int channels = decoded->ch_layout.nb_channels;
+        if (channels <= 0 || decoded->nb_samples <= 0) {
+            return false;
+        }
+        const AVSampleFormat sampleFormat = static_cast<AVSampleFormat>(decoded->format);
+        const bool planar = av_sample_fmt_is_planar(sampleFormat) != 0;
+        const std::size_t count = static_cast<std::size_t>(decoded->nb_samples);
+        samples.resize(count * static_cast<std::size_t>(channels));
+        for (std::size_t i = 0; i < count; ++i) {
+            for (int channel = 0; channel < channels; ++channel) {
+                double value = 0.0;
+                const std::uint8_t *plane = planar ? decoded->extended_data[channel] : decoded->extended_data[0];
+                const std::size_t index = planar ? i : i * static_cast<std::size_t>(channels) + static_cast<std::size_t>(channel);
+                if (!sampleValue(sampleFormat, plane, index, value)) {
+                    error = "the decoder gave samples in a format this cannot read";
+                    return false;
+                }
+                samples[i * static_cast<std::size_t>(channels) + static_cast<std::size_t>(channel)] = static_cast<float>(value);
+            }
+        }
+        chunk.samples = samples.data();
+        chunk.frames = count;
+        chunk.channels = channels;
+        chunk.sampleRate = decoded->sample_rate;
+        return true;
+    }
+
+    // Decodes until a frame has come, the file has ended, or an error
+    // is set.
+    std::optional<Chunk> decodeNext()
+    {
+        while (!finished && error.empty()) {
+            const int received = avcodec_receive_frame(codec, frame);
+            if (received == 0) {
+                Chunk chunk;
+                const bool taken = take(frame, chunk);
+                av_frame_unref(frame);
+                if (taken) {
+                    return chunk;
+                }
+                continue;
+            }
+            if (received == AVERROR_EOF) {
+                finished = true;
+                return std::nullopt;
+            }
+            if (received != AVERROR(EAGAIN)) {
+                // A frame the decoder could not make of what it was
+                // given: damaged audio. Left out, as a packet it refuses
+                // is below, and the decode goes on; a decoder that
+                // refuses everything ends it.
+                if (++damaged > MostDamagedPackets) {
+                    error = ffmpegError("decoding failed", received);
+                    return std::nullopt;
+                }
+                continue;
+            }
+            // The decoder wants more: the next packet of the audio
+            // stream, or the word that there is none.
+            if (draining) {
+                // Emptied and still asking: nothing more will come.
+                finished = true;
+                return std::nullopt;
+            }
+            const int read = av_read_frame(format, packet);
+            if (read < 0) {
+                if (read != AVERROR_EOF) {
+                    error = ffmpegError("reading the file failed", read);
+                    return std::nullopt;
+                }
+                draining = true;
+                avcodec_send_packet(codec, nullptr);
+                continue;
+            }
+            if (packet->stream_index == stream) {
+                const int sent = avcodec_send_packet(codec, packet);
+                if (sent == AVERROR(EAGAIN)) {
+                    // Cannot be: the decoder has just asked for a packet.
+                    // Said rather than lost, should the loop ever change.
+                    error = "the decoder took no packet after asking for one";
+                } else if (sent < 0 && sent != AVERROR_EOF) {
+                    // A damaged packet: left out, and the decode goes on,
+                    // as a player's does. What comes after it is then
+                    // earlier by what the packet held: damagedPackets()
+                    // says that this happened.
+                    if (++damaged > MostDamagedPackets) {
+                        error = ffmpegError("decoding failed", sent);
+                    }
+                }
+            }
+            av_packet_unref(packet);
+        }
+        return std::nullopt;
+    }
+};
+
+FfmpegAudioReader::FfmpegAudioReader(const std::string &absoluteFilePath)
+    : d(std::make_unique<State>())
+{
+    if (absoluteFilePath.empty()) {
+        d->error = "no such file: " + absoluteFilePath;
+        return;
+    }
+    // The path as UTF-8, which is what libavformat takes on every
+    // platform.
+    // Files and nothing else: a file that is really a playlist of
+    // addresses must not send this program onto the network.
+    AVDictionary *options = nullptr;
+    av_dict_set(&options, "protocol_whitelist", "file", 0);
+    int result = avformat_open_input(&d->format, absoluteFilePath.c_str(), nullptr, &options);
+    av_dict_free(&options);
+    if (result < 0) {
+        d->error = ffmpegError("the file could not be opened", result);
+        return;
+    }
+    result = avformat_find_stream_info(d->format, nullptr);
+    if (result < 0) {
+        d->error = ffmpegError("the file's streams could not be read", result);
+        return;
+    }
+    const AVCodec *decoder = nullptr;
+    d->stream = av_find_best_stream(d->format, AVMEDIA_TYPE_AUDIO, -1, -1, &decoder, 0);
+    if (d->stream < 0 || decoder == nullptr) {
+        d->error = "the file has no audio this can decode";
+        return;
+    }
+    d->codec = avcodec_alloc_context3(decoder);
+    d->packet = av_packet_alloc();
+    d->frame = av_frame_alloc();
+    if (d->codec == nullptr || d->packet == nullptr || d->frame == nullptr) {
+        d->error = "out of memory";
+        return;
+    }
+    result = avcodec_parameters_to_context(d->codec, d->format->streams[d->stream]->codecpar);
+    if (result < 0) {
+        d->error = ffmpegError("the decoder could not be set up", result);
+        return;
+    }
+    // The stream's time base, so that the decoder can drop an encoder's
+    // delay by the packets' own word (an MP3's, an AAC's).
+    d->codec->pkt_timebase = d->format->streams[d->stream]->time_base;
+    // One thread, on purpose: nothing rewrites the context beside us, and
+    // a frame comes out as soon as its packet went in.
+    d->codec->thread_count = 1;
+    result = avcodec_open2(d->codec, decoder, nullptr);
+    if (result < 0) {
+        d->error = ffmpegError("the decoder could not be opened", result);
+        return;
+    }
+}
+
+FfmpegAudioReader::~FfmpegAudioReader() = default;
+
+std::optional<FfmpegAudioReader::Chunk> FfmpegAudioReader::next()
+{
+    if (d->codec == nullptr || d->frame == nullptr || d->packet == nullptr) {
+        return std::nullopt;
+    }
+    return d->decodeNext();
+}
+
+std::string FfmpegAudioReader::error() const
+{
+    return d->error;
+}
+
+long long FfmpegAudioReader::durationMs() const
+{
+    if (d->format == nullptr || d->format->duration <= 0) {
+        return 0;
+    }
+    return static_cast<long long>(d->format->duration / (AV_TIME_BASE / 1000));
+}
+
+int FfmpegAudioReader::damagedPackets() const
+{
+    return d->damaged;
+}
+
+}  // namespace seabass::infrastructure::audio

@@ -4,40 +4,59 @@
 
 #include "infrastructure/audio/analysis_pcm_source.hpp"
 
+#include <atomic>
+
 #ifdef SEABASS_HAVE_FFMPEG_DECODER
 #include "infrastructure/audio/ffmpeg_pcm_source.hpp"
-#else
-#include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
 #endif
+#include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
 
 namespace seabass::infrastructure::audio
 {
 
+namespace
+{
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+std::atomic<bool> g_ownDecoder{true};
+#endif
+}  // namespace
+
+bool ownDecoderInUse()
+{
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+    return g_ownDecoder;
+#else
+    return false;
+#endif
+}
+
+void setOwnDecoderInUseForTesting(bool inUse)
+{
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+    g_ownDecoder = inUse;
+#else
+    (void)inUse;
+#endif
+}
+
 std::unique_ptr<domain::PcmSource> openAnalysisPcmSource(const std::string &absoluteFilePath)
 {
 #ifdef SEABASS_HAVE_FFMPEG_DECODER
-    return std::make_unique<FfmpegPcmSource>(absoluteFilePath);
-#else
-    return std::make_unique<QtMultimediaPcmSource>(absoluteFilePath);
+    if (ownDecoderInUse()) {
+        return std::make_unique<FfmpegPcmSource>(absoluteFilePath);
+    }
 #endif
+    return std::make_unique<QtMultimediaPcmSource>(absoluteFilePath);
 }
 
 bool analysisDecodingAvailable()
 {
-#ifdef SEABASS_HAVE_FFMPEG_DECODER
-    return true;
-#else
-    return QtMultimediaPcmSource::decodingAvailable();
-#endif
+    return ownDecoderInUse() || QtMultimediaPcmSource::decodingAvailable();
 }
 
 const char *analysisDecoderName()
 {
-#ifdef SEABASS_HAVE_FFMPEG_DECODER
-    return "FFmpeg";
-#else
-    return "Qt Multimedia";
-#endif
+    return ownDecoderInUse() ? "FFmpeg" : "Qt Multimedia";
 }
 
 }  // namespace seabass::infrastructure::audio

@@ -1121,7 +1121,9 @@ if(TARGET Qt6::Multimedia)
         endif()
     endif()
     if(SEABASS_FFMPEG_DECODER AND SEABASS_FFMPEG_FOUND)
-        add_library(seabass_audio_ffmpeg STATIC src/infrastructure/audio/ffmpeg_pcm_source.cpp)
+        add_library(seabass_audio_ffmpeg STATIC
+            src/infrastructure/audio/ffmpeg_audio_reader.cpp
+            src/infrastructure/audio/ffmpeg_pcm_source.cpp)
         target_include_directories(seabass_audio_ffmpeg PUBLIC src)
         target_link_libraries(seabass_audio_ffmpeg PUBLIC PkgConfig::SEABASS_FFMPEG)
         set_target_properties(seabass_audio_ffmpeg PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -5948,6 +5950,15 @@ if(TARGET seabass_audio_qt)
             ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click
             ${CMAKE_SOURCE_DIR}/tests/fixtures/decoders)
         set_tests_properties(ffmpeg_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        # And the three classes that decode for something other than
+        # analysis, each through both decoders.
+        add_executable(ffmpeg_decoders_test tests/ffmpeg_decoders_test.cpp)
+        target_include_directories(ffmpeg_decoders_test PRIVATE src)
+        target_link_libraries(ffmpeg_decoders_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
+        add_test(NAME ffmpeg_decoders_test COMMAND ffmpeg_decoders_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/decoders)
+        set_tests_properties(ffmpeg_decoders_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 600)
     endif()
 endif()
 

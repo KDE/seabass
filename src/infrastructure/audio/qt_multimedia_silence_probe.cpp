@@ -4,12 +4,18 @@
 
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
 
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+#include "infrastructure/audio/analysis_pcm_source.hpp"
+#include "infrastructure/audio/ffmpeg_audio_reader.hpp"
+#endif
+
 #include "infrastructure/audio/qt_decoder_start.hpp"
 
 #include <QAudioBuffer>
 #include <QAudioDecoder>
 #include <QAudioFormat>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QString>
@@ -54,6 +60,29 @@ double sampleMagnitude(const QAudioBuffer &buffer, qsizetype frame, int channel)
         break;
     }
     return -1.0;  // "cannot read this", distinct from a real 0.0
+}
+
+// The span of a file decoded end to end: how long it is, and how much
+// of its start and its end stayed under the threshold.
+domain::AudioContentSpan spanOf(qint64 framesSeen, qint64 firstLoudFrame, qint64 lastLoudFrame, int sampleRate)
+{
+    domain::AudioContentSpan span;
+    span.totalSeconds = static_cast<double>(framesSeen) / sampleRate;
+    if (firstLoudFrame < 0) {
+        // Decoded end to end and never rose above the threshold. Silent
+        // start to finish, reported as exactly that: total length, all
+        // of it leading silence, no content. The caller refuses to match
+        // on a zero-length content span, which is the right answer --
+        // a file of pure silence is no more a copy of one recording than
+        // of any other. (The library this project was built against had
+        // 114 such files.)
+        span.leadingSilenceSeconds = span.totalSeconds;
+        span.trailingSilenceSeconds = 0.0;
+        return span;
+    }
+    span.leadingSilenceSeconds = static_cast<double>(firstLoudFrame) / sampleRate;
+    span.trailingSilenceSeconds = static_cast<double>(framesSeen - 1 - lastLoudFrame) / sampleRate;
+    return span;
 }
 
 }  // namespace
@@ -227,27 +256,69 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measureOnce(co
         return std::nullopt;
     }
 
-    domain::AudioContentSpan span;
-    span.totalSeconds = static_cast<double>(framesSeen) / sampleRate;
-    if (firstLoudFrame < 0) {
-        // Decoded end to end and never rose above the threshold. Silent
-        // start to finish, reported as exactly that: total length, all
-        // of it leading silence, no content. The caller refuses to match
-        // on a zero-length content span, which is the right answer --
-        // a file of pure silence is no more a copy of one recording than
-        // of any other. (The library this project was built against had
-        // 114 such files.)
-        span.leadingSilenceSeconds = span.totalSeconds;
-        span.trailingSilenceSeconds = 0.0;
-        return span;
-    }
-    span.leadingSilenceSeconds = static_cast<double>(firstLoudFrame) / sampleRate;
-    span.trailingSilenceSeconds = static_cast<double>(framesSeen - 1 - lastLoudFrame) / sampleRate;
-    return span;
+    return spanOf(framesSeen, firstLoudFrame, lastLoudFrame, sampleRate);
 }
+
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+// The same measure through the decoder on FFmpeg's libraries: the same
+// frames, the same peak of the channels, the same counts as measureOnce()
+// makes of Qt's buffers. One thread and no waiting, so the timeout is
+// looked at between two frames.
+std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measureThroughFfmpeg(const std::string &absoluteFilePath)
+{
+    FfmpegAudioReader reader(absoluteFilePath);
+    if (!reader.error().empty()) {
+        return std::nullopt;
+    }
+    QElapsedTimer taken;
+    taken.start();
+    qint64 framesSeen = 0;
+    qint64 firstLoudFrame = -1;
+    qint64 lastLoudFrame = -1;
+    int sampleRate = 0;
+    while (const std::optional<FfmpegAudioReader::Chunk> chunk = reader.next()) {
+        if (taken.elapsed() > m_timeoutMs) {
+            return std::nullopt;
+        }
+        if (chunk->channels <= 0 || chunk->sampleRate <= 0) {
+            continue;
+        }
+        sampleRate = chunk->sampleRate;
+        const std::size_t channels = static_cast<std::size_t>(chunk->channels);
+        for (std::size_t frame = 0; frame < chunk->frames; ++frame) {
+            double peak = 0.0;
+            for (std::size_t channel = 0; channel < channels; ++channel) {
+                const double magnitude = std::abs(static_cast<double>(chunk->samples[frame * channels + channel]));
+                if (magnitude > peak) {
+                    peak = magnitude;
+                }
+            }
+            if (peak > m_silenceThreshold) {
+                if (firstLoudFrame < 0) {
+                    firstLoudFrame = framesSeen + static_cast<qint64>(frame);
+                }
+                lastLoudFrame = framesSeen + static_cast<qint64>(frame);
+            }
+        }
+        framesSeen += static_cast<qint64>(chunk->frames);
+    }
+    if (!reader.error().empty() || sampleRate <= 0 || framesSeen <= 0) {
+        return std::nullopt;
+    }
+    return spanOf(framesSeen, firstLoudFrame, lastLoudFrame, sampleRate);
+}
+#endif
 
 std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const std::string &absoluteFilePath)
 {
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+    if (ownDecoderInUse()) {
+        if (absoluteFilePath.empty() || !QFileInfo::exists(QString::fromStdString(absoluteFilePath))) {
+            return std::nullopt;
+        }
+        return measureThroughFfmpeg(absoluteFilePath);
+    }
+#endif
     std::optional<domain::AudioContentSpan> span;
     decoder_start::run(absoluteFilePath, [&](const decoder_start::Attempt &attempt) {
         bool gaveNothing = false;

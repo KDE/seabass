@@ -60,6 +60,10 @@ public:
     std::optional<domain::AudioContentSpan> measure(const std::string &absoluteFilePath) override;
 
 private:
+    // The same through the decoder on FFmpeg's libraries, where this
+    // build has it (analysis_pcm_source.hpp: ownDecoderInUse()).
+    std::optional<domain::AudioContentSpan> measureThroughFfmpeg(const std::string &absoluteFilePath);
+
     // One start of the decoder; `gaveNothing` where it said nothing at
     // all before its first sample, which measure() starts again.
     std::optional<domain::AudioContentSpan> measureOnce(const std::string &absoluteFilePath,

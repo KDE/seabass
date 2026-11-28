@@ -4,12 +4,18 @@
 
 #include "infrastructure/audio/qt_multimedia_detail_waveform.hpp"
 
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+#include "infrastructure/audio/analysis_pcm_source.hpp"
+#include "infrastructure/audio/ffmpeg_audio_reader.hpp"
+#endif
+
 #include "infrastructure/audio/qt_decoder_start.hpp"
 
 #include <QAudioBuffer>
 #include <QAudioDecoder>
 #include <QAudioFormat>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QString>
@@ -183,6 +189,57 @@ bool decodeMonoOnce(const std::string &absoluteFilePath,
     return done && !failed && sampleRate > 0 && decoder.error() == QAudioDecoder::NoError;
 }
 
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+// The same through the decoder on FFmpeg's libraries: the channels of
+// every frame added up and divided as toMono() does it for Qt's float
+// buffers, in floats. One thread and no waiting, so the cancel and the
+// timeout are looked at between two frames.
+bool decodeMonoThroughFfmpeg(const std::string &absoluteFilePath,
+                             const std::function<void(const float *samples, std::size_t count, int sampleRate)> &sink,
+                             const std::function<bool()> &cancelled, int timeoutMs,
+                             const std::function<void(long long durationMs)> &durationKnown)
+{
+    if (absoluteFilePath.empty() || !QFileInfo::exists(QString::fromStdString(absoluteFilePath))) {
+        return false;
+    }
+    FfmpegAudioReader reader(absoluteFilePath);
+    if (!reader.error().empty()) {
+        return false;
+    }
+    if (durationKnown && reader.durationMs() > 0) {
+        durationKnown(reader.durationMs());
+    }
+    QElapsedTimer taken;
+    taken.start();
+    int sampleRate = 0;
+    std::vector<float> mono;
+    while (const std::optional<FfmpegAudioReader::Chunk> chunk = reader.next()) {
+        if ((cancelled && cancelled()) || taken.elapsed() > timeoutMs) {
+            return false;
+        }
+        if (chunk->channels <= 0 || chunk->sampleRate <= 0) {
+            continue;
+        }
+        if (sampleRate == 0) {
+            sampleRate = chunk->sampleRate;
+        } else if (chunk->sampleRate != sampleRate) {
+            return false;
+        }
+        const std::size_t channels = static_cast<std::size_t>(chunk->channels);
+        mono.assign(chunk->frames, 0.0F);
+        for (std::size_t frame = 0; frame < chunk->frames; ++frame) {
+            float sum = 0.0F;
+            for (std::size_t channel = 0; channel < channels; ++channel) {
+                sum += chunk->samples[frame * channels + channel];
+            }
+            mono[frame] = sum / static_cast<float>(chunk->channels);
+        }
+        sink(mono.data(), mono.size(), sampleRate);
+    }
+    return reader.error().empty() && sampleRate > 0;
+}
+#endif
+
 }  // namespace
 
 bool decodeMono(const std::string &absoluteFilePath,
@@ -190,6 +247,11 @@ bool decodeMono(const std::string &absoluteFilePath,
                 const std::function<bool()> &cancelled, int timeoutMs,
                 const std::function<void(long long durationMs)> &durationKnown)
 {
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+    if (ownDecoderInUse()) {
+        return decodeMonoThroughFfmpeg(absoluteFilePath, sink, cancelled, timeoutMs, durationKnown);
+    }
+#endif
     bool decoded = false;
     decoder_start::run(absoluteFilePath, [&](const decoder_start::Attempt &attempt) {
         bool gaveNothing = false;

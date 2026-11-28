@@ -68,6 +68,9 @@ public:
 
 private:
     std::shared_ptr<const domain::alignment::KeptSamples> decode(const std::string &absoluteFilePath) const;
+    // The same through the decoder on FFmpeg's libraries, where this
+    // build has it (analysis_pcm_source.hpp: ownDecoderInUse()).
+    std::shared_ptr<const domain::alignment::KeptSamples> decodeThroughFfmpeg(const std::string &absoluteFilePath) const;
     // One start of the decoder; `gaveNothing` where it said nothing at
     // all before its first sample, which decode() starts again.
     std::shared_ptr<const domain::alignment::KeptSamples> decodeOnce(const std::string &absoluteFilePath,

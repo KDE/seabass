@@ -25,4 +25,16 @@ bool analysisDecodingAvailable();
 // "FFmpeg" or "Qt Multimedia": for a log line and for the tests.
 const char *analysisDecoderName();
 
+// Whether the decoder on FFmpeg's libraries is the one in use: true
+// where this build has it, unless a test said otherwise. The classes
+// that decode for something other than analysis ask it too (the silence
+// probe, the alignment probe, the detail waveform), each keeping its Qt
+// Multimedia path beside the other for builds without the libraries and
+// for the tests that hold the two to the same answers.
+bool ownDecoderInUse();
+
+// For tests: decode through Qt Multimedia although this build has the
+// other (false), or back (true). Nothing happens in a build without it.
+void setOwnDecoderInUseForTesting(bool inUse);
+
 }  // namespace seabass::infrastructure::audio
