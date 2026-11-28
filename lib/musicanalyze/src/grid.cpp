@@ -1554,14 +1554,58 @@ std::vector<double> leveled(const std::vector<double> &onsets)
     return result;
 }
 
+// The onset function with every rise spread over the milliseconds around
+// it (a Gaussian of this sigma: most of a rise within 10 ms either way,
+// all of it within 30). The tempo curve reads that and not the function
+// as it is. A rise is a few milliseconds wide, and 8 s of a
+// track repeat at a lag only as far as their hits come back to within
+// that width: a drum machine's do, a drummer's come back within some
+// 10 ms. (In varied music the gaps between rekordbox's own beats differ
+// by 8 ms where 8 s of the function as it is repeat, and by 11 ms
+// where they do not.) Measured beside the analyser on the windows of
+// 218 followed tracks of varied music, each window on its own: the
+// function as it is has rekordbox's tempo on 94 in a hundred of the
+// windows that repeat and on 59 of those that do not; spread over
+// 10 ms, on 96 and on 71, and six in ten of the second kind then
+// repeat by the test below. 5 ms gains two thirds of that, 20 ms no more,
+// and at 40 ms the tempo is lost. Where in the beat a hit is, is read
+// from the function as it is.
+constexpr double CurveHearsWithinMs = 10.0;
+
+std::vector<double> broadened(const std::vector<double> &onsets, double sigmaMs)
+{
+    const auto reach = static_cast<std::ptrdiff_t>(std::ceil(3.0 * sigmaMs));
+    std::vector<double> weights(static_cast<std::size_t>(2 * reach + 1));
+    double sum = 0.0;
+    for (std::ptrdiff_t k = -reach; k <= reach; ++k) {
+        const double weight = std::exp(-0.5 * static_cast<double>(k * k) / (sigmaMs * sigmaMs));
+        weights[static_cast<std::size_t>(k + reach)] = weight;
+        sum += weight;
+    }
+    const auto n = static_cast<std::ptrdiff_t>(onsets.size());
+    std::vector<double> result(onsets.size(), 0.0);
+    for (std::ptrdiff_t i = 0; i < n; ++i) {
+        // What lies before the track's start and after its end is
+        // nothing: the first and last milliseconds come out lower.
+        double value = 0.0;
+        for (std::ptrdiff_t k = std::max<std::ptrdiff_t>(-reach, -i); k <= reach && i + k < n; ++k) {
+            value += weights[static_cast<std::size_t>(k + reach)] * onsets[static_cast<std::size_t>(i + k)];
+        }
+        result[static_cast<std::size_t>(i)] = value / sum;
+    }
+    return result;
+}
+
 // The beat period along the track: a value every 2 s.
 struct TempoCurve
 {
     std::vector<double> centersMs;
     std::vector<double> periodsMs;
-    // Whether the 8 s around each center repeat at their lag at all: a
-    // rhythm, at whatever tempo near the track's. A breakdown of pads, an
-    // intro without drums and a held chord do not.
+    // Whether the 8 s around each center repeat at their lag at all, as
+    // the curve hears them (hits that come back to within what
+    // CurveHearsWithinMs allows repeat): a rhythm, at whatever tempo near
+    // the track's. A breakdown of pads, an intro without drums and a held
+    // chord do not.
     std::vector<bool> rhythm;
 
     bool rhythmAt(double timeMs) const
@@ -2405,7 +2449,8 @@ GridAnalysis gridFromOnsets(const Onsets &both, const TempoRange &range)
     // regular in the audio at all (noise, speech) leaves it at 0, with a
     // grid that means nothing.
     double sure = 0.0;
-    if (const std::optional<TempoCurve> curve = tempoCurve(leveled(both.forTempo), period, allowed)) {
+    if (const std::optional<TempoCurve> curve =
+            tempoCurve(broadened(leveled(both.forTempo), CurveHearsWithinMs), period, allowed)) {
         const std::vector<WindowReading> readings = readWindows(onsets, period, phase);
         std::vector<double> offsets;
         std::size_t withRhythm = 0;

@@ -1470,9 +1470,9 @@ windows read together with their neighbours (274, 277, 271; with the
 looser test 281). The last takes a third and more off the windows with
 a wrong tempo and a sixth off the windows apart, and moves no count: a
 track with
-one slip left is still a track that runs apart. Open: why the onset
-function has no rhythm in a window where two other analysers find the
-tempo.
+one slip left is still a track that runs apart. Why the onset function
+has no rhythm in a window where two other analysers find the tempo is
+the section after next.
 
 ### A second library of electronic music, his ear on it, and the grid set on its clicks
 
@@ -1577,6 +1577,76 @@ free, and the same megabyte cost two and a half).
 Open on this library: a grid that is late against clicks its beats
 agree on could go all the way back to them (seven tracks of the two
 tuning halves; his ear first), and the three faults named above.
+### Why the tempo curve found no rhythm in played music, and that it hears 10 ms wide now
+
+On varied music most of what is wrong with a followed grid goes back to
+the tempo curve (28 November). Of the 8 s windows of the 218 followed
+tracks of the three varied tuning sets it found a rhythm in 41 in a
+hundred, and had rekordbox's tempo there on 95; in the others it carried
+the period through from its neighbours, which is over 1.5 percent off
+rekordbox's tempo there on almost four in ten, and on those Beat This has
+rekordbox's tempo ten times for once that it has the curve's. Four in
+five of the windows in which a followed grid is apart from rekordbox's
+are windows without a rhythm of their own.
+
+The cause is how wide a hit is. A rise of the onset function is a few
+milliseconds wide, and 8 s repeat at a lag only as far as their hits
+come back to within that width. A drum machine's do. A band's do not:
+the gaps between rekordbox's own beats differ by 8 ms in the windows
+that repeat as they are and by 11 ms in those that do not (the middle of
+their spread). With every rise spread by a Gaussian of 10 ms before the
+curve reads the function, and only the curve (where in the beat a hit
+is, is read from the function as it is), a window on its own has
+rekordbox's tempo on 96 in a hundred of the first kind, for 94, and on
+71 of the second, for 59; six in ten of the second kind then pass the
+curve's test for a period of their own, and are right on 83 in a
+hundred. 5 ms gains two thirds of that, 20 ms no more, 40 ms loses the
+tempo,
+and a width that grows with the beat is no better than one in
+milliseconds.
+
+What it is not, each measured on the same windows: the bands (the
+analyser's own high bands read as sharply are right less often than its
+five together, 44 to 51 in a hundred for 59; a spectral flux of 24
+bands is right on 64, and its frames are 23 ms long: it hears wide by
+its making), the length of the window (16 s as it is: 63), a
+tempo that moves inside the window (a slope fitted inside finds
+nothing, and 4 s windows cost more than they find). What is left is one
+weak window in eight that no variant gets right: there Beat This has
+rekordbox's period on four in ten, and rekordbox's period is no peak of
+the function at all on eight in ten. Not one reference there, and not
+in this way of listening.
+
+By tracks, within 10 ms of rekordbox's, before and after:
+
+| | tuning half | half kept aside |
+|---|---|---|
+| CD rips | 153, then 172 of 368 | 154, then 177 of 362 |
+| second playlist | 67, then 68 of 126 | 50, then 51 of 105 |
+| first variety list (all tuning) | 59, then 57 of 110 | |
+| indie playlist | 86, then 86 of 130 | 109, then 109 of 150 |
+| collection | 660, then 659 of 751 | 626, then 626 of 724 |
+| club stick | 459, then 458 of 535 | 485, then 485 of 554 |
+
+On the CD rips another tempo than rekordbox's goes from 79 tracks to 74
+and from 75 to 59, and over 10 ms off from 32 to 18 and from 23 to 13:
+tracks in most of which no rhythm was found, which had a straight grid
+for that and are followed now (183 of the tuning half were followed,
+230 are). A straight grid that stays straight does not change.
+
+Beside it in the lab, tuning sets (939 of 1,355 within 10 ms before):
+10 ms 956; 20 ms 958, with more grids running apart; 10 ms and a lag
+scored with four of its multiples 955, and one track left without
+beats; 10 ms for the following alone, the decision whether to follow
+left to the function as it is, 950; for the beat path alone 942. (What
+was tried before the cause was known is in the section before last.)
+
+By Sebastian's decisions on the tuning halves the gain is smaller,
+1,039 right of 1,317 for 1,033: a grid he approved that comes out
+otherwise counts as lost until he has seen it. Nine tracks on which he
+had preferred our grid to rekordbox's do (three of the collection, two
+of the first variety list, four of the CD rips); both versions of each
+are with him to look at and listen to.
 
 ## Denon again: the new music, and the players
 

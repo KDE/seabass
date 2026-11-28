@@ -29,7 +29,11 @@ namespace musicanalyze
 // 2,831 tracks, see grid.cpp), and no grid is looked for under 8 kHz.
 // Grid 3: a straight grid is set on the click of its hits (by up to
 // 5 ms, see HitBeforeTheClickMs in grid.hpp).
-inline constexpr int GridRevision = 3;
+// Grid 4: the tempo curve reads the onset function with every rise
+// spread over some 10 ms either way (CurveHearsWithinMs in grid.cpp):
+// other followed grids, other tracks followed, and another confidence
+// where a rhythm is found in more of a track.
+inline constexpr int GridRevision = 4;
 inline constexpr int KeyRevision = 1;
 inline constexpr int WaveformRevision = 1;
 

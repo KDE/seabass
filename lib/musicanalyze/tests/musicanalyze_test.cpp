@@ -195,6 +195,31 @@ Audio climbing(int rate, double fromBpm, double toBpm, double seconds, double fi
     return audio;
 }
 
+// A passage as a band plays it: a soft kick on every beat of a tempo that
+// swings by 2 percent either way, every kick up to 12 ms early or late,
+// a hat between them up to 12 ms off its kick, and under louder hits
+// (two a second) that keep no time at all. `beats` gets the moments of
+// the kicks, in ms.
+Audio looselyPlayed(int rate, double seconds, std::vector<double> &beats)
+{
+    Audio audio = silence(rate, seconds);
+    Noise early(7);
+    Noise sound(8);
+    for (double at = 0.4; at < seconds - 0.6;) {
+        const double bpm = 104.0 * (1.0 + 0.02 * std::sin(2.0 * std::numbers::pi * at / 23.0));
+        const double hit = at + 0.012 * early.next();
+        beats.push_back(hit * 1000.0);
+        addKick(audio, hit, 0.35);
+        addBurst(audio, hit + 30.0 / bpm + 0.012 * early.next(), 0.175, 0.05, false, sound);
+        at += 60.0 / bpm;
+    }
+    Noise where(9);
+    for (int i = 0; i < static_cast<int>(2.0 * seconds); ++i) {
+        addBurst(audio, 0.5 * (where.next() + 1.0) * (seconds - 1.0), 0.6, 0.12, true, sound);
+    }
+    return audio;
+}
+
 // Four chords, two seconds each, round and round: each note a tone with
 // two overtones, the chord's root an octave down under it. The notes are
 // MIDI numbers.
@@ -316,6 +341,8 @@ std::vector<Line> resultsNow()
     const Audio house126at48 = house(48000, 126.0, 60.0, 0.25);
     const Audio turns170 = kickAndSnare(44100, 170.0, 60.0, 0.4);
     const Audio climb = climbing(44100, 118.0, 128.0, 90.0, 0.3);
+    std::vector<double> played;
+    const Audio loose = looselyPlayed(44100, 100.0, played);
     // A minor, D minor, E, A minor; and E flat, A flat, B flat, E flat.
     const Audio aMinor = chords(44100, {{57, 60, 64}, {50, 53, 57}, {52, 56, 59}, {57, 60, 64}}, 40.0);
     const Audio eFlat = chords(44100, {{51, 55, 58}, {56, 60, 63}, {58, 62, 65}, {51, 55, 58}}, 40.0);
@@ -324,6 +351,7 @@ std::vector<Line> resultsNow()
             gridLine("kick-and-snare-170", turns170),
             gridLine("kick-and-snare-170-range-60-110", turns170, TempoRange{60.0, 110.0}),
             gridLine("climbing-118-to-128", climb),
+            gridLine("loosely-played", loose),
             keyLine("chords-a-minor", aMinor),
             keyLine("chords-e-flat", eFlat),
             waveformLine("house-126", house126),
@@ -890,6 +918,60 @@ void aMovedGridHasEveryBeatInTheAudio()
               + (tail.beats.empty() ? std::string("none") : number(tail.beats.back().timeMs, 3)) + " ms of " + number(endMs, 3));
 }
 
+// The tempo of a passage whose hits come back to within some 10 ms and
+// not to the millisecond is heard, and its grid follows the beats: as
+// many beats as were played, and most of them within 25 ms of one. (No
+// 8 s of it repeat to the millisecond; a straight grid, which is what a
+// track without a rhythm is given, is on such beats one time in four.)
+void aTempoIsHeardThoughNoHitIsOnTheMillisecond()
+{
+    std::vector<double> beats;
+    const Audio audio = looselyPlayed(44100, 100.0, beats);
+    const GridAnalysis grid = gridFromSamples(audio.samples, audio.rate);
+    std::size_t near = 0;
+    for (const double beat : beats) {
+        double nearest = 1e9;
+        for (const Beat &ours : grid.beats) {
+            nearest = std::min(nearest, std::abs(ours.timeMs - beat));
+        }
+        near += nearest <= 25.0 ? 1 : 0;
+    }
+    check(grid.error.empty() && grid.followsTempo, "a loosely played passage under hits that keep no time is followed");
+    check(beats.size() > 150 && 10 * near >= 6 * beats.size(),
+          "its grid is on the beats: " + std::to_string(near) + " of " + std::to_string(beats.size()) + " played beats have one of ours within 25 ms");
+    check(20 * grid.beats.size() >= 19 * beats.size() && 20 * grid.beats.size() <= 21 * beats.size(),
+          "it has as many beats as were played, to a twentieth: " + std::to_string(grid.beats.size()) + " for " + std::to_string(beats.size()));
+}
+
+// What keeps no time is no rhythm to a curve that hears 10 ms wide
+// either: hits anywhere, so many a second, and noise. No grid of theirs
+// follows anything, and none is sure of itself.
+void whatKeepsNoTimeIsNoRhythm()
+{
+    for (const std::uint32_t seed : {9u, 21u}) {
+        for (const int aSecond : {2, 5}) {
+            Audio audio = silence(44100, 100.0);
+            Noise sound(8);
+            Noise where(seed);
+            for (int i = 0; i < aSecond * 100; ++i) {
+                addBurst(audio, 0.5 * (where.next() + 1.0) * 99.0, 0.6, 0.12, i % 2 == 0, sound);
+            }
+            const GridAnalysis grid = gridFromSamples(audio.samples, audio.rate);
+            check(grid.error.empty() && !grid.followsTempo && grid.confidence == 0.0,
+                  std::to_string(aSecond) + " hits a second that keep no time: no grid followed, and none sure (confidence "
+                      + number(grid.confidence, 3) + ")");
+        }
+    }
+    Audio hiss = silence(44100, 100.0);
+    Noise noise(5);
+    for (float &sample : hiss.samples) {
+        sample = static_cast<float>(0.3 * noise.next());
+    }
+    const GridAnalysis grid = gridFromSamples(hiss.samples, hiss.rate);
+    check(grid.error.empty() && !grid.followsTempo && grid.confidence == 0.0,
+          "noise: no grid followed, and none sure (confidence " + number(grid.confidence, 3) + ")");
+}
+
 void theVersionIsTheHeaders()
 {
     const std::string expected = std::to_string(MUSICANALYZE_VERSION_MAJOR) + "." + std::to_string(MUSICANALYZE_VERSION_MINOR) + "."
@@ -919,6 +1001,8 @@ int main(int argc, char **argv)
     everySampleRateGivesTheGrid();
     aStraightGridIsSetOnItsClicks();
     aMovedGridHasEveryBeatInTheAudio();
+    aTempoIsHeardThoughNoHitIsOnTheMillisecond();
+    whatKeepsNoTimeIsNoRhythm();
     checkResults(arguments[0]);
     if (failures != 0) {
         std::cerr << failures << " failed\n";

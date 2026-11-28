@@ -179,7 +179,11 @@ constexpr int GridLowestSampleRateHz = 8000;
 // A tempo that moves: where the straight grid explains fewer than three
 // quarters of the windows that lie in a stretch with a rhythm (their own
 // peak within 10 ms of it), the track is followed instead. A tempo
-// curve is read from it every 2 s, and from the strongest window outwards
+// curve is read from it every 2 s (from the onset function with every
+// rise spread over some 10 ms either way: a drummer's hits do not come
+// back to the millisecond, and 8 s of them repeat only for a listener
+// who allows for that), and from the
+// strongest window outwards
 // each next window of eight beats corrects the grid when its peak is
 // clearly the beat the grid expects; where it is not (a breakdown, a
 // fill) the grid goes on at the curve's tempo and the beats in between
