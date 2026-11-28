@@ -146,6 +146,7 @@ set(SEABASS_GUI_QML_FILES
     qml/FormatLabels.qml
     qml/CamelotWheelPosition.qml
     qml/Main.qml
+    qml/MetronomeWindow.qml
     qml/StickListPage.qml
     qml/ScanPage.qml
     qml/TrackDetailPage.qml
@@ -227,6 +228,8 @@ set(SEABASS_GUI_QML_FILES
 set(SEABASS_GUI_SOURCES
     media_controller.hpp
     media_controller.cpp
+    metronome_track.hpp
+    metronome_track.cpp
     scan_controller.hpp
     scan_controller.cpp
     duplicates_controller.hpp

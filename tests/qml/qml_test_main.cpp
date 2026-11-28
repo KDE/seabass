@@ -103,6 +103,7 @@
 #include <QtQuickTest/quicktest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -323,6 +324,52 @@ public:
         sqlite3_finalize(stmt);
         sqlite3_close(db);
         return ok;
+    }
+
+    // A mono 16-bit WAV at 22050 Hz with a beat in it: `seconds` long, a
+    // short low thump with a click on top every beat of `bpm`, the first
+    // at 0.25 s.
+    Q_INVOKABLE bool writeBeatWav(const QString &file, double seconds, double bpm)
+    {
+        const int rate = 22050;
+        const std::uint32_t frames = static_cast<std::uint32_t>(seconds * rate);
+        std::vector<double> samples(frames, 0.0);
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<double> noise(-1.0, 1.0);
+        for (double at = 0.25; at < seconds; at += 60.0 / bpm) {
+            const std::uint32_t first = static_cast<std::uint32_t>(at * rate);
+            for (std::uint32_t i = first; i < frames && i < first + rate / 5; ++i) {
+                const double t = static_cast<double>(i - first) / rate;
+                samples[i] += 0.7 * std::sin(2.0 * 3.141592653589793 * 90.0 * t) * std::exp(-t * 25.0)
+                    + 0.25 * noise(rng) * std::exp(-t * 300.0);
+            }
+        }
+        std::vector<char> out;
+        auto put = [&out](std::uint32_t value, int bytes) {
+            for (int i = 0; i < bytes; ++i) {
+                out.push_back(static_cast<char>((value >> (8 * i)) & 0xFF));
+            }
+        };
+        out.insert(out.end(), {'R', 'I', 'F', 'F'});
+        put(36 + frames * 2, 4);
+        out.insert(out.end(), {'W', 'A', 'V', 'E', 'f', 'm', 't', ' '});
+        put(16, 4);
+        put(1, 2);
+        put(1, 2);
+        put(static_cast<std::uint32_t>(rate), 4);
+        put(static_cast<std::uint32_t>(rate) * 2, 4);
+        put(2, 2);
+        put(16, 2);
+        out.insert(out.end(), {'d', 'a', 't', 'a'});
+        put(frames * 2, 4);
+        for (const double sample : samples) {
+            put(static_cast<std::uint16_t>(static_cast<std::int16_t>(std::clamp(sample, -1.0, 1.0) * 30000.0)), 2);
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(seabass::gui::pathFromQString(file).parent_path(), ec);
+        std::ofstream stream(seabass::gui::pathFromQString(file), std::ios::binary);
+        stream.write(out.data(), static_cast<std::streamsize>(out.size()));
+        return static_cast<bool>(stream);
     }
 
     // A mono 16-bit WAV at 22050 Hz: `leadSamples` of silence, then

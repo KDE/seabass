@@ -2778,6 +2778,11 @@ target_link_libraries(cue_beat_alignment_test PRIVATE seabass_core_testing)
 target_include_directories(cue_beat_alignment_test PRIVATE src)
 add_test(NAME cue_beat_alignment_test COMMAND cue_beat_alignment_test)
 
+add_executable(beat_timeline_test tests/beat_timeline_test.cpp)
+target_link_libraries(beat_timeline_test PRIVATE seabass_core_testing)
+target_include_directories(beat_timeline_test PRIVATE src)
+add_test(NAME beat_timeline_test COMMAND beat_timeline_test)
+
 add_executable(playlist_tracks_deletion_test tests/playlist_tracks_deletion_test.cpp)
 target_link_libraries(playlist_tracks_deletion_test PRIVATE seabass_core_testing)
 target_include_directories(playlist_tracks_deletion_test PRIVATE src)

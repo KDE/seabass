@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-only OR GPL-3.0-only OR LicenseRef-KDE-Accepted-GPL
 
+#include <QDir>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
@@ -9,6 +10,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThreadPool>
+#include <QUrl>
 
 #include <memory>
 
@@ -212,7 +214,25 @@ int main(int argc, char **argv)
         []() { QCoreApplication::exit(-1); }, Qt::QueuedConnection);
     // Cover art through the cache on the computer: ArtworkImage.qml.
     seabass::gui::registerCoverImageProvider(engine.get());
-    engine->loadFromModule("SeabassGui", "Main");
+    // `seabass --metronome [file]`: the robot that jumps to a track's
+    // beat, in place of the app's own window. It reads the one file and
+    // opens no stick.
+    const QStringList arguments = app.arguments();
+    if (arguments.contains(QStringLiteral("--metronome"))) {
+        // The first argument that is no option is the file: a path,
+        // from here if it is a relative one, or a file: address.
+        QUrl file;
+        for (qsizetype i = 1; i < arguments.size(); ++i) {
+            if (!arguments.at(i).startsWith(QLatin1Char('-'))) {
+                file = QUrl::fromUserInput(arguments.at(i), QDir::currentPath(), QUrl::AssumeLocalFile);
+                break;
+            }
+        }
+        engine->setInitialProperties({{QStringLiteral("firstFile"), file}});
+        engine->loadFromModule("SeabassGui", "MetronomeWindow");
+    } else {
+        engine->loadFromModule("SeabassGui", "Main");
+    }
 
     int result = app.exec();
 
