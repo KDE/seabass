@@ -5909,6 +5909,29 @@ if(TARGET seabass_audio_qt)
     target_link_libraries(qt_decoder_start_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
     add_test(NAME qt_decoder_start_test COMMAND qt_decoder_start_test ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment)
     set_tests_properties(qt_decoder_start_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # A prototype: a decoder of our own on FFmpeg's libraries, compared
+    # sample for sample with the one the app uses (ticket 154). Built
+    # only where pkg-config finds the libraries; the app does not link it.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(SEABASS_FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil)
+    endif()
+    if(SEABASS_FFMPEG_FOUND)
+        add_library(seabass_audio_ffmpeg STATIC src/infrastructure/audio/ffmpeg_pcm_source.cpp)
+        target_include_directories(seabass_audio_ffmpeg PUBLIC src)
+        target_link_libraries(seabass_audio_ffmpeg PUBLIC PkgConfig::SEABASS_FFMPEG)
+        set_target_properties(seabass_audio_ffmpeg PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+        add_executable(ffmpeg_pcm_source_test tests/ffmpeg_pcm_source_test.cpp)
+        target_include_directories(ffmpeg_pcm_source_test PRIVATE src)
+        target_link_libraries(ffmpeg_pcm_source_test PRIVATE seabass_audio_ffmpeg seabass_audio_qt Qt6::Core)
+        add_test(NAME ffmpeg_pcm_source_test COMMAND ffmpeg_pcm_source_test
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click)
+        set_tests_properties(ffmpeg_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+        message(STATUS "ffmpeg_pcm_source: built (libavformat, libavcodec, libavutil found)")
+    else()
+        message(STATUS "ffmpeg_pcm_source: not built (needs pkg-config modules libavformat libavcodec libavutil)")
+    endif()
 endif()
 
 # Keeping a recording: WAVs the test writes (tones and noise, 16 and 24
