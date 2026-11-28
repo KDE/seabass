@@ -867,14 +867,14 @@ void aStraightGridIsSetOnItsClicks()
     // Clicks 10 and 14 ms after the kick begins are both over 5 ms from
     // where the onsets put the grid: it goes 5 ms towards them and no
     // further. And as far the other way, for clicks before it.
-    const double far = placed(10.0, 0.0);
-    const double farther = placed(14.0, 0.0);
-    check(std::abs(far - (byOnsets + 5.0)) < 0.2 && std::abs(farther - (byOnsets + 5.0)) < 0.2,
-          "a grid goes 5 ms towards its clicks at most: from " + number(byOnsets, 3) + " to " + number(far, 3) + " and " + number(farther, 3));
-    const double before = placed(-12.0, 0.0);
-    const double longBefore = placed(-16.0, 0.0);
-    check(std::abs(before - (byOnsets - 5.0)) < 0.2 && std::abs(longBefore - (byOnsets - 5.0)) < 0.2,
-          "a grid goes 5 ms back towards its clicks at most: from " + number(byOnsets, 3) + " to " + number(before, 3) + " and " + number(longBefore, 3));
+    const double after10 = placed(10.0, 0.0);
+    const double after14 = placed(14.0, 0.0);
+    check(std::abs(after10 - (byOnsets + 5.0)) < 0.2 && std::abs(after14 - (byOnsets + 5.0)) < 0.2,
+          "a grid goes 5 ms towards its clicks at most: from " + number(byOnsets, 3) + " to " + number(after10, 3) + " and " + number(after14, 3));
+    const double before12 = placed(-12.0, 0.0);
+    const double before16 = placed(-16.0, 0.0);
+    check(std::abs(before12 - (byOnsets - 5.0)) < 0.2 && std::abs(before16 - (byOnsets - 5.0)) < 0.2,
+          "a grid goes 5 ms back towards its clicks at most: from " + number(byOnsets, 3) + " to " + number(before12, 3) + " and " + number(before16, 3));
 
     // A grid that follows the tempo is not set on its clicks: each of
     // its beats is set on its own onset, and clicks 3 ms before the
@@ -928,17 +928,17 @@ void aTempoIsHeardThoughNoHitIsOnTheMillisecond()
     std::vector<double> beats;
     const Audio audio = looselyPlayed(44100, 100.0, beats);
     const GridAnalysis grid = gridFromSamples(audio.samples, audio.rate);
-    std::size_t near = 0;
+    std::size_t withOne = 0;
     for (const double beat : beats) {
         double nearest = 1e9;
         for (const Beat &ours : grid.beats) {
             nearest = std::min(nearest, std::abs(ours.timeMs - beat));
         }
-        near += nearest <= 25.0 ? 1 : 0;
+        withOne += nearest <= 25.0 ? 1 : 0;
     }
     check(grid.error.empty() && grid.followsTempo, "a loosely played passage under hits that keep no time is followed");
-    check(beats.size() > 150 && 10 * near >= 6 * beats.size(),
-          "its grid is on the beats: " + std::to_string(near) + " of " + std::to_string(beats.size()) + " played beats have one of ours within 25 ms");
+    check(beats.size() > 150 && 10 * withOne >= 6 * beats.size(),
+          "its grid is on the beats: " + std::to_string(withOne) + " of " + std::to_string(beats.size()) + " played beats have one of ours within 25 ms");
     check(20 * grid.beats.size() >= 19 * beats.size() && 20 * grid.beats.size() <= 21 * beats.size(),
           "it has as many beats as were played, to a twentieth: " + std::to_string(grid.beats.size()) + " for " + std::to_string(beats.size()));
 }

@@ -65,13 +65,13 @@ Decoding is the caller's: the library takes samples, not files.
 ## What it costs
 
 Measured on one core of a desktop machine of 2024, optimized build: a
-track of four minutes takes about 0.8 s for the grid, 0.7 s for the key
-and 0.1 s for the waveform.
+track of four minutes takes about 0.65 s for the grid, 0.25 s for the
+key and 0.1 s for the waveform.
 
 Memory, fed in pieces (the peak of a process that does nothing else, at
-44.1 or 48 kHz): about 45 MB whatever the length, and 3.5 MB for every
-minute of music on top. Four minutes: 56 MB. An hour: 245 MB. Two hours:
-445 MB. At 96 kHz the first number is some 40 MB more. Handed a whole
+44.1 or 48 kHz): about 45 MB whatever the length, and 4.3 MB for every
+minute of music on top. Four minutes: 62 MB. An hour: 308 MB. Two hours:
+562 MB. At 96 kHz the first number is some 50 MB more. Handed a whole
 track in one piece, the samples themselves come on top of that, 10 MB a
 minute at 44.1 kHz.
 
@@ -92,7 +92,7 @@ project around it uses.
 
 Two things are numbered, in `include/musicanalyze/version.hpp`:
 
-- The library's **version** (0.3.0) is about its interface. Before 1.0 a
+- The library's **version** (0.4.0) is about its interface. Before 1.0 a
   new minor version may change it.
 - A **revision** each for the grid, the key and the waveform is about
   results: it goes up with every change after which the same audio can

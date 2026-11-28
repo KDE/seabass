@@ -142,7 +142,7 @@ void fft(std::vector<std::complex<double>> &data, bool inverse)
     prepare(twiddles, n, inverse, keep);
     // Real parts and imaginary parts in rows of their own, in the order
     // the butterflies want them: a stage is then the same few lines of
-    // arithmetic on neighbours, two at a time. Each value is worked out
+    // arithmetic on neighbors, two at a time. Each value is worked out
     // as the product and the sums of complex numbers are, in the same
     // order, so none differs.
     room.re.resize(n);
@@ -1562,7 +1562,7 @@ std::vector<double> leveled(const std::vector<double> &onsets)
 // that width: a drum machine's do, a drummer's come back within some
 // 10 ms. (In varied music the gaps between rekordbox's own beats differ
 // by 8 ms where 8 s of the function as it is repeat, and by 11 ms
-// where they do not.) Measured beside the analyser on the windows of
+// where they do not.) Measured beside the analyzer on the windows of
 // 218 followed tracks of varied music, each window on its own: the
 // function as it is has rekordbox's tempo on 94 in a hundred of the
 // windows that repeat and on 59 of those that do not; spread over

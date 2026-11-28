@@ -7,7 +7,7 @@
 // The library's version: what its interface is. The only place it is
 // written down; the build reads it from these three lines.
 #define MUSICANALYZE_VERSION_MAJOR 0
-#define MUSICANALYZE_VERSION_MINOR 3
+#define MUSICANALYZE_VERSION_MINOR 4
 #define MUSICANALYZE_VERSION_PATCH 0
 
 namespace musicanalyze
