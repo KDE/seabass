@@ -1115,7 +1115,9 @@ if(TARGET Qt6::Multimedia)
     if(SEABASS_FFMPEG_DECODER)
         find_package(PkgConfig QUIET)
         if(PkgConfig_FOUND)
-            pkg_check_modules(SEABASS_FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil)
+            # FFmpeg 5.1 at the least: a frame's channel layout as this reads it.
+            pkg_check_modules(SEABASS_FFMPEG QUIET IMPORTED_TARGET
+                "libavformat>=59.27.100" "libavcodec>=59.37.100" "libavutil>=57.28.100")
         endif()
     endif()
     if(SEABASS_FFMPEG_DECODER AND SEABASS_FFMPEG_FOUND)
@@ -5943,7 +5945,8 @@ if(TARGET seabass_audio_qt)
         target_include_directories(ffmpeg_pcm_source_test PRIVATE src)
         target_link_libraries(ffmpeg_pcm_source_test PRIVATE seabass_audio_ffmpeg seabass_audio_qt Qt6::Core)
         add_test(NAME ffmpeg_pcm_source_test COMMAND ffmpeg_pcm_source_test
-            ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click)
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click
+            ${CMAKE_SOURCE_DIR}/tests/fixtures/decoders)
         set_tests_properties(ffmpeg_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
 endif()

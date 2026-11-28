@@ -21,6 +21,10 @@ namespace seabass::infrastructure::audio
 namespace
 {
 
+// A file with more damaged packets than this is not decoded to its end:
+// it is not audio with a scratch in it any more.
+constexpr int MostDamagedPackets = 1000;
+
 std::string ffmpegError(const char *what, int code)
 {
     char text[AV_ERROR_MAX_STRING_SIZE] = {};
@@ -48,7 +52,9 @@ bool sampleValue(AVSampleFormat format, const std::uint8_t *plane, std::size_t i
         return true;
     case AV_SAMPLE_FMT_S64:
     case AV_SAMPLE_FMT_S64P:
-        value = static_cast<double>(reinterpret_cast<const std::int64_t *>(plane)[index]) / 9223372036854775808.0;
+        // To a float in one step, as a resampler does it: by way of a
+        // double it would be rounded twice.
+        value = static_cast<float>(reinterpret_cast<const std::int64_t *>(plane)[index]) * (1.0f / 9223372036854775808.0f);
         return true;
     case AV_SAMPLE_FMT_FLT:
     case AV_SAMPLE_FMT_FLTP:
@@ -151,8 +157,15 @@ struct FfmpegPcmSource::State
                 return;
             }
             if (received != AVERROR(EAGAIN)) {
-                error = ffmpegError("decoding failed", received);
-                return;
+                // A frame the decoder could not make of what it was
+                // given: damaged audio. Left out, as a packet it refuses
+                // is below, and the decode goes on; a decoder that
+                // refuses everything ends it.
+                if (++damaged > MostDamagedPackets) {
+                    error = ffmpegError("decoding failed", received);
+                    return;
+                }
+                continue;
             }
             // The decoder wants more: the next packet of the audio
             // stream, or the word that there is none.
@@ -173,11 +186,18 @@ struct FfmpegPcmSource::State
             }
             if (packet->stream_index == stream) {
                 const int sent = avcodec_send_packet(codec, packet);
-                if (sent == AVERROR_INVALIDDATA) {
-                    // A damaged packet: left out, and the decode goes on.
-                    ++damaged;
-                } else if (sent < 0 && sent != AVERROR(EAGAIN)) {
-                    error = ffmpegError("decoding failed", sent);
+                if (sent == AVERROR(EAGAIN)) {
+                    // Cannot be: the decoder has just asked for a packet.
+                    // Said rather than lost, should the loop ever change.
+                    error = "the decoder took no packet after asking for one";
+                } else if (sent < 0 && sent != AVERROR_EOF) {
+                    // A damaged packet: left out, and the decode goes on,
+                    // as a player's does. What comes after it is then
+                    // earlier by what the packet held: damagedPackets()
+                    // says that this happened.
+                    if (++damaged > MostDamagedPackets) {
+                        error = ffmpegError("decoding failed", sent);
+                    }
                 }
             }
             av_packet_unref(packet);
@@ -194,7 +214,12 @@ FfmpegPcmSource::FfmpegPcmSource(const std::string &absoluteFilePath)
     }
     // The path as UTF-8, which is what libavformat takes on every
     // platform.
-    int result = avformat_open_input(&d->format, absoluteFilePath.c_str(), nullptr, nullptr);
+    // Files and nothing else: a file that is really a playlist of
+    // addresses must not send this program onto the network.
+    AVDictionary *options = nullptr;
+    av_dict_set(&options, "protocol_whitelist", "file", 0);
+    int result = avformat_open_input(&d->format, absoluteFilePath.c_str(), nullptr, &options);
+    av_dict_free(&options);
     if (result < 0) {
         d->error = ffmpegError("the file could not be opened", result);
         return;

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <random>
 #include <string>
@@ -84,39 +85,53 @@ void compare(const std::string &path, const std::string &label, double &qtMs, do
     }
     check(differing == 0,
           label + ": " + std::to_string(differing) + " samples differ, the worst by " + std::to_string(worst));
+    // No fixture is damaged audio: a packet left out would be a decoder
+    // that reads a sound file wrongly.
+    check(ours.damagedPackets() == 0, label + ": " + std::to_string(ours.damagedPackets()) + " packets refused as damaged");
     std::cout << label << ": " << got.size() << " samples at " << ours.sampleRate() << " Hz, " << differing
               << " differ (worst " << worst << "), damaged packets " << ours.damagedPackets() << "\n";
 }
 
-// A stereo WAV of 32-bit samples, each channel its own noise over the
-// whole 32 bits: what no fixture has. A 32-bit sample does not fit a
-// float, so a decoder that adds the channels before it rounds them
-// gives, now and then, the float next to the one of a decoder that
-// rounds first; the two must round alike.
-bool writeNoiseWav32(const QString &file)
+// A WAV of noise that the test writes, each channel its own: what the
+// fixtures have little of. `format` 1 is integers of `bits` (8 unsigned,
+// 16, 24, 32), 3 is 32-bit floats. The 32-bit ones matter most: such a
+// sample does not fit a float, so a decoder that adds the channels
+// before it rounds them gives, now and then, the float next to the one
+// of a decoder that rounds first; the two must round alike.
+bool writeNoiseWav(const QString &file, int format, int bits, int channels)
 {
     const std::uint32_t frames = 22050;
+    const std::uint32_t bytes = static_cast<std::uint32_t>(bits / 8);
+    const std::uint32_t frameBytes = bytes * static_cast<std::uint32_t>(channels);
     QByteArray out;
-    const auto put = [&out](std::uint32_t value, int bytes) {
-        for (int i = 0; i < bytes; ++i) {
+    const auto put = [&out](std::uint32_t value, int count) {
+        for (int i = 0; i < count; ++i) {
             out.append(static_cast<char>((value >> (8 * i)) & 0xFF));
         }
     };
     out.append("RIFF");
-    put(36 + frames * 8, 4);
+    put(36 + frames * frameBytes, 4);
     out.append("WAVEfmt ");
     put(16, 4);
-    put(1, 2);
-    put(2, 2);
+    put(static_cast<std::uint32_t>(format), 2);
+    put(static_cast<std::uint32_t>(channels), 2);
     put(44100, 4);
-    put(44100 * 8, 4);
-    put(8, 2);
-    put(32, 2);
+    put(44100 * frameBytes, 4);
+    put(frameBytes, 2);
+    put(static_cast<std::uint32_t>(bits), 2);
     out.append("data");
-    put(frames * 8, 4);
-    std::mt19937 rng(11);
-    for (std::uint32_t i = 0; i < frames * 2; ++i) {
-        put(static_cast<std::uint32_t>(rng()), 4);
+    put(frames * frameBytes, 4);
+    std::mt19937 rng(static_cast<unsigned>(11 + bits + 100 * channels + format));
+    std::uniform_real_distribution<float> level(-0.9f, 0.9f);
+    for (std::uint32_t i = 0; i < frames * static_cast<std::uint32_t>(channels); ++i) {
+        if (format == 3) {
+            const float value = level(rng);
+            std::uint32_t raw = 0;
+            std::memcpy(&raw, &value, sizeof raw);
+            put(raw, 4);
+        } else {
+            put(static_cast<std::uint32_t>(rng()), static_cast<int>(bytes));
+        }
     }
     QFile wav(file);
     return wav.open(QIODevice::WriteOnly) && wav.write(out) == out.size();
@@ -150,7 +165,7 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; ++i) {
         const QDir dir(QString::fromLocal8Bit(argv[i]));
         const QStringList files =
-            dir.entryList({"*.mp3", "*.flac", "*.wav", "*.m4a"}, QDir::Files, QDir::Name);
+            dir.entryList({"*.mp3", "*.flac", "*.wav", "*.m4a", "*.ogg", "*.aiff"}, QDir::Files, QDir::Name);
         check(!files.isEmpty(), std::string("audio files in ") + argv[i]);
         for (const QString &name : files) {
             double qtMs = 0.0;
@@ -161,18 +176,33 @@ int main(int argc, char **argv)
     }
     {
         QTemporaryDir scratch;
-        const QString wav = scratch.filePath("noise-32-bit-stereo.wav");
-        check(scratch.isValid() && writeNoiseWav32(wav), "a 32-bit WAV to compare");
-        double qtMs = 0.0;
-        double oursMs = 0.0;
-        compare(wav.toStdString(), "noise-32-bit-stereo.wav", qtMs, oursMs);
-        ++compared;
+        check(scratch.isValid(), "a scratch folder for the WAVs");
+        struct Kind
+        {
+            const char *name;
+            int format;
+            int bits;
+            int channels;
+        };
+        for (const Kind &kind : {Kind{"noise-8-bit-stereo.wav", 1, 8, 2}, Kind{"noise-16-bit-stereo.wav", 1, 16, 2},
+                                 Kind{"noise-24-bit-stereo.wav", 1, 24, 2}, Kind{"noise-32-bit-stereo.wav", 1, 32, 2},
+                                 Kind{"noise-float-stereo.wav", 3, 32, 2}, Kind{"noise-16-bit-mono.wav", 1, 16, 1},
+                                 Kind{"noise-16-bit-three-channels.wav", 1, 16, 3},
+                                 Kind{"noise-32-bit-six-channels.wav", 1, 32, 6}}) {
+            const QString wav = scratch.filePath(kind.name);
+            check(writeNoiseWav(wav, kind.format, kind.bits, kind.channels), std::string(kind.name) + " is written");
+            double qtMs = 0.0;
+            double oursMs = 0.0;
+            compare(wav.toStdString(), kind.name, qtMs, oursMs);
+            ++compared;
+        }
     }
 
     // A file that is not there, and one that is not audio.
     FfmpegPcmSource missing(std::string(argv[1]) + "/no-such-file.mp3");
     std::vector<float> chunk(64);
     check(!missing.error().empty() && missing.sampleRate() == 0 && missing.read(chunk) == 0, "a missing file is an error");
+    check(QFile::exists(QString::fromLocal8Bit(argv[1]) + "/README.md"), "the file that is not audio is there");
     FfmpegPcmSource notAudio(std::string(argv[1]) + "/README.md");
     check(!notAudio.error().empty() && notAudio.read(chunk) == 0, "a file that is not audio is an error");
 
