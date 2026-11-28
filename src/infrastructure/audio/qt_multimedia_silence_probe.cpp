@@ -89,6 +89,12 @@ domain::AudioContentSpan spanOf(qint64 framesSeen, qint64 firstLoudFrame, qint64
 
 bool QtMultimediaSilenceProbe::decodingAvailable()
 {
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+    // The decoder on FFmpeg's libraries needs nothing of Qt Multimedia.
+    if (ownDecoderInUse()) {
+        return true;
+    }
+#endif
     if (QCoreApplication::instance() == nullptr) {
         return false;
     }
@@ -266,18 +272,21 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measureOnce(co
 // looked at between two frames.
 std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measureThroughFfmpeg(const std::string &absoluteFilePath)
 {
-    FfmpegAudioReader reader(absoluteFilePath);
+    // The hard stop, on a read that does not come back as well: the
+    // reader asks this while it reads.
+    QElapsedTimer taken;
+    taken.start();
+    const int timeoutMs = m_timeoutMs;
+    FfmpegAudioReader reader(absoluteFilePath, [&taken, timeoutMs] { return taken.elapsed() >= timeoutMs; });
     if (!reader.error().empty()) {
         return std::nullopt;
     }
-    QElapsedTimer taken;
-    taken.start();
     qint64 framesSeen = 0;
     qint64 firstLoudFrame = -1;
     qint64 lastLoudFrame = -1;
     int sampleRate = 0;
     while (const std::optional<FfmpegAudioReader::Chunk> chunk = reader.next()) {
-        if (taken.elapsed() > m_timeoutMs) {
+        if (taken.elapsed() >= m_timeoutMs) {
             return std::nullopt;
         }
         if (chunk->channels <= 0 || chunk->sampleRate <= 0) {

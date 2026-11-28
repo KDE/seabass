@@ -33,6 +33,11 @@ const char *analysisDecoderName();
 // for the tests that hold the two to the same answers.
 bool ownDecoderInUse();
 
+// The decoder on FFmpeg's libraries by its version ("lavc 60.31.102"),
+// for a record of which decoder made a measurement; empty where it is
+// not the one in use.
+std::string ownDecoderVersion();
+
 // For tests: decode through Qt Multimedia although this build has the
 // other (false), or back (true). Nothing happens in a build without it.
 void setOwnDecoderInUseForTesting(bool inUse);

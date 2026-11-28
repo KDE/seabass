@@ -24,6 +24,7 @@
 #include "infrastructure/audio/analysis_pcm_source.hpp"
 #include "infrastructure/audio/qt_multimedia_alignment_probe.hpp"
 #include "infrastructure/audio/qt_multimedia_detail_waveform.hpp"
+#include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
 
 using namespace seabass::infrastructure::audio;
@@ -81,13 +82,13 @@ void compare(const std::string &path, const std::string &label)
     // Through Qt Multimedia.
     setOwnDecoderInUseForTesting(false);
     check(!ownDecoderInUse(), "the test can ask for Qt's decoder");
-    const std::optional<seabass::domain::AudioContentSpan> qtSpan = QtMultimediaSilenceProbe().measure(path);
+    const std::optional<seabass::domain::AudioContentSpan> qtSpan = QtMultimediaSilenceProbe(-60.0, 120000).measure(path);
     const auto qtKept = QtMultimediaAlignmentProbe().decoded(path);
     const Mono qtMono = detail(path);
     // And through FFmpeg's libraries.
     setOwnDecoderInUseForTesting(true);
     check(ownDecoderInUse(), "this build has the decoder on FFmpeg's libraries");
-    const std::optional<seabass::domain::AudioContentSpan> span = QtMultimediaSilenceProbe().measure(path);
+    const std::optional<seabass::domain::AudioContentSpan> span = QtMultimediaSilenceProbe(-60.0, 120000).measure(path);
     const auto kept = QtMultimediaAlignmentProbe().decoded(path);
     const Mono mono = detail(path);
 
@@ -113,13 +114,15 @@ int main(int argc, char **argv)
         std::cerr << "usage: ffmpeg_decoders_test DIR...\n";
         return 2;
     }
-    if (!QtMultimediaSilenceProbe::decodingAvailable()) {
+    // Qt's own, asked of a class that has no other decoder: the probes
+    // say "available" for the decoder on FFmpeg's libraries too.
+    if (!QtMultimediaPcmSource::decodingAvailable()) {
         std::cerr << "FAILED: no audio decoding backend to compare with\n";
         return 1;
     }
     int compared = 0;
     for (int i = 1; i < argc; ++i) {
-        const QDir dir(QString::fromLocal8Bit(argv[i]));
+        const QDir dir(QCoreApplication::arguments().at(i));
         const QStringList files =
             dir.entryList({"*.mp3", "*.flac", "*.wav", "*.m4a", "*.ogg", "*.aiff"}, QDir::Files, QDir::Name);
         check(!files.isEmpty(), std::string("audio files in ") + argv[i]);
@@ -137,6 +140,36 @@ int main(int argc, char **argv)
         check(!QtMultimediaAlignmentProbe().decoded(path), name + ": nothing kept for alignment");
         check(!detail(path).decoded, name + ": no detail waveform");
     }
+    // What ends a decode early ends it through both decoders: a timeout
+    // that has run out before the first sample, and a cancel after some.
+    const std::string longFile = std::string(argv[1]) + "/L-ref.flac";
+    for (const bool own : {false, true}) {
+        setOwnDecoderInUseForTesting(own);
+        const std::string through = own ? "FFmpeg: " : "Qt: ";
+        check(!QtMultimediaSilenceProbe(-60.0, 0).measure(longFile).has_value(), through + "no silence span in no time");
+        check(!QtMultimediaAlignmentProbe(0).decoded(longFile), through + "nothing kept for alignment in no time");
+        std::size_t fed = 0;
+        check(!decodeMono(longFile, [&](const float *, std::size_t count, int) { fed += count; }, {}, 0),
+              through + "no detail waveform in no time");
+        fed = 0;
+        std::size_t fedAtCancel = 0;
+        bool cancelSeen = false;
+        const bool decoded = decodeMono(
+            longFile, [&](const float *, std::size_t count, int) { fed += count; },
+            [&] {
+                if (fed >= 20000 && !cancelSeen) {
+                    cancelSeen = true;
+                    fedAtCancel = fed;
+                }
+                return cancelSeen;
+            });
+        check(!decoded && cancelSeen, through + "a cancelled detail waveform is no waveform");
+        check(fed == fedAtCancel && fed < 937125,
+              through + "and nothing is fed after the cancel: " + std::to_string(fed) + " then, " + std::to_string(fedAtCancel)
+                  + " at the cancel");
+    }
+    setOwnDecoderInUseForTesting(true);
+
     if (failures > 0) {
         std::cerr << failures << " check(s) FAILED over " << compared << " files\n";
         return 1;

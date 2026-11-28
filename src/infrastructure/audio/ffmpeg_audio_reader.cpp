@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
+#include <utility>
 #include <optional>
 #include <vector>
 
@@ -14,6 +16,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/samplefmt.h>
+#include <libavutil/version.h>
 }
 
 namespace seabass::infrastructure::audio
@@ -80,6 +83,7 @@ struct FfmpegAudioReader::State
     AVCodecContext *codec = nullptr;
     AVPacket *packet = nullptr;
     AVFrame *frame = nullptr;
+    std::function<bool()> interrupted;
     int stream = -1;
     int damaged = 0;
     std::string error;
@@ -200,9 +204,17 @@ struct FfmpegAudioReader::State
     }
 };
 
-FfmpegAudioReader::FfmpegAudioReader(const std::string &absoluteFilePath)
+std::string FfmpegAudioReader::libraryVersion()
+{
+    const unsigned version = avcodec_version();
+    return "lavc " + std::to_string(AV_VERSION_MAJOR(version)) + "." + std::to_string(AV_VERSION_MINOR(version)) + "."
+        + std::to_string(AV_VERSION_MICRO(version));
+}
+
+FfmpegAudioReader::FfmpegAudioReader(const std::string &absoluteFilePath, std::function<bool()> interrupted)
     : d(std::make_unique<State>())
 {
+    d->interrupted = std::move(interrupted);
     if (absoluteFilePath.empty()) {
         d->error = "no such file: " + absoluteFilePath;
         return;
@@ -213,6 +225,20 @@ FfmpegAudioReader::FfmpegAudioReader(const std::string &absoluteFilePath)
     // addresses must not send this program onto the network.
     AVDictionary *options = nullptr;
     av_dict_set(&options, "protocol_whitelist", "file", 0);
+    // The caller's word that it has waited long enough, asked by the
+    // library while it reads: set before the file is opened, which
+    // reads too.
+    d->format = avformat_alloc_context();
+    if (d->format == nullptr) {
+        av_dict_free(&options);
+        d->error = "out of memory";
+        return;
+    }
+    d->format->interrupt_callback.callback = [](void *state) -> int {
+        const State *self = static_cast<const State *>(state);
+        return self->interrupted && self->interrupted() ? 1 : 0;
+    };
+    d->format->interrupt_callback.opaque = d.get();
     int result = avformat_open_input(&d->format, absoluteFilePath.c_str(), nullptr, &options);
     av_dict_free(&options);
     if (result < 0) {

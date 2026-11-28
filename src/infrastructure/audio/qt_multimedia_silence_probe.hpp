@@ -33,6 +33,14 @@ struct Attempt;
 // must keep linking no Qt.
 //
 // Needs a QCoreApplication (it runs a nested QEventLoop) but no GUI.
+//
+// Two decoders, one answer: where this build has the decoder on FFmpeg's
+// libraries (analysis_pcm_source.hpp: ownDecoderInUse()) the file is read
+// through that, in the calling thread, with no QAudioDecoder, no event
+// loop and no QCoreApplication needed; otherwise through Qt Multimedia
+// as described above. ffmpeg_decoders_test holds the two to the same
+// answer for the same file. The timeout bounds the whole decode on both,
+// a read that does not come back included.
 class QtMultimediaSilenceProbe : public domain::AudioContentProbe
 {
 public:

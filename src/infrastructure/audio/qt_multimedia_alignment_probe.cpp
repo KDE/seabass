@@ -266,17 +266,20 @@ std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe
 std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decodeThroughFfmpeg(
     const std::string &absoluteFilePath) const
 {
-    FfmpegAudioReader reader(absoluteFilePath);
+    // The backstop, on a read that does not come back as well: the
+    // reader asks this while it reads.
+    QElapsedTimer taken;
+    taken.start();
+    const int timeoutMs = m_timeoutMs;
+    FfmpegAudioReader reader(absoluteFilePath, [&taken, timeoutMs] { return taken.elapsed() >= timeoutMs; });
     if (!reader.error().empty()) {
         return nullptr;
     }
-    QElapsedTimer taken;
-    taken.start();
     std::optional<domain::alignment::Resampler> resampler;
     domain::alignment::KeptSamplesBuilder kept(domain::alignment::AnalysisRate);
     int sampleRate = 0;
     while (const std::optional<FfmpegAudioReader::Chunk> chunk = reader.next()) {
-        if (taken.elapsed() > m_timeoutMs) {
+        if (taken.elapsed() >= m_timeoutMs) {
             return nullptr;
         }
         if (chunk->channels <= 0 || chunk->sampleRate <= 0) {

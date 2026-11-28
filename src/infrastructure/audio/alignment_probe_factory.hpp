@@ -14,6 +14,7 @@
 #include <QByteArray>
 #include <QtGlobal>
 
+#include "infrastructure/audio/analysis_pcm_source.hpp"
 #include "infrastructure/audio/qt_multimedia_alignment_probe.hpp"
 #endif
 
@@ -42,9 +43,19 @@ inline AudioDecoding audioDecoding()
 // distribution's Qt links, are not visible here: two machines with the
 // same Qt that differ in those share lines. "none" in a build without a
 // decoder.
+//
+// Where the decoder on FFmpeg's libraries is the one in use
+// (analysis_pcm_source.hpp), it is named instead, by the libraries'
+// version: "ffmpeg lavc 60.31.102". Lines measured through Qt's decoder
+// are then measured once more; they would have been the same on this
+// machine, and need not be on another.
 inline std::string alignmentDecoderName()
 {
 #ifdef SEABASS_HAVE_QT_AUDIO
+    const std::string own = ownDecoderVersion();
+    if (!own.empty()) {
+        return "ffmpeg " + own;
+    }
     const QByteArray backend = qgetenv("QT_MEDIA_BACKEND");
     return (backend.isEmpty() ? std::string("default") : backend.toStdString()) + " qt" + qVersion();
 #else

@@ -7,6 +7,7 @@
 #include <atomic>
 
 #ifdef SEABASS_HAVE_FFMPEG_DECODER
+#include "infrastructure/audio/ffmpeg_audio_reader.hpp"
 #include "infrastructure/audio/ffmpeg_pcm_source.hpp"
 #endif
 #include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
@@ -37,6 +38,16 @@ void setOwnDecoderInUseForTesting(bool inUse)
 #else
     (void)inUse;
 #endif
+}
+
+std::string ownDecoderVersion()
+{
+#ifdef SEABASS_HAVE_FFMPEG_DECODER
+    if (ownDecoderInUse()) {
+        return FfmpegAudioReader::libraryVersion();
+    }
+#endif
+    return {};
 }
 
 std::unique_ptr<domain::PcmSource> openAnalysisPcmSource(const std::string &absoluteFilePath)

@@ -5958,7 +5958,7 @@ if(TARGET seabass_audio_qt)
         add_test(NAME ffmpeg_decoders_test COMMAND ffmpeg_decoders_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click
             ${CMAKE_SOURCE_DIR}/tests/fixtures/decoders)
-        set_tests_properties(ffmpeg_decoders_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 600)
+        set_tests_properties(ffmpeg_decoders_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
 endif()
 

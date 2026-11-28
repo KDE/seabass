@@ -202,19 +202,22 @@ bool decodeMonoThroughFfmpeg(const std::string &absoluteFilePath,
     if (absoluteFilePath.empty() || !QFileInfo::exists(QString::fromStdString(absoluteFilePath))) {
         return false;
     }
-    FfmpegAudioReader reader(absoluteFilePath);
+    // The cancel and the timeout, on a read that does not come back as
+    // well: the reader asks this while it reads.
+    QElapsedTimer taken;
+    taken.start();
+    const auto stop = [&] { return (cancelled && cancelled()) || taken.elapsed() >= timeoutMs; };
+    FfmpegAudioReader reader(absoluteFilePath, stop);
     if (!reader.error().empty()) {
         return false;
     }
     if (durationKnown && reader.durationMs() > 0) {
         durationKnown(reader.durationMs());
     }
-    QElapsedTimer taken;
-    taken.start();
     int sampleRate = 0;
     std::vector<float> mono;
     while (const std::optional<FfmpegAudioReader::Chunk> chunk = reader.next()) {
-        if ((cancelled && cancelled()) || taken.elapsed() > timeoutMs) {
+        if (stop()) {
             return false;
         }
         if (chunk->channels <= 0 || chunk->sampleRate <= 0) {

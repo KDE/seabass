@@ -32,7 +32,9 @@ namespace seabass::infrastructure::audio
 // last one, as QtMultimediaPcmSource for the same file, since both are
 // libavcodec with its defaults (an MP3's encoder delay is dropped by the
 // decoder in both). ffmpeg_pcm_source_test compares the two over the
-// fixtures; a difference there is an AnalysisInputRevision. That holds
+// fixtures, and ffmpeg_decoders_test the silence probe, the alignment
+// probe and the detail waveform; a difference there is an
+// AnalysisInputRevision. That holds
 // while both are the same FFmpeg: Qt Multimedia's plugin and this link
 // the system's one here, and decoders do change between FFmpeg's major
 // versions (7.1 has another AAC decoder).

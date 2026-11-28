@@ -38,6 +38,13 @@ namespace seabass::infrastructure::audio
 // no backend, unreadable, a rate that changes partway, timed out, or
 // `cancelled` said so (asked at every buffer). `durationKnown`, when
 // given, is told the decoder's idea of the length in ms once it has one.
+//
+// Two decoders, one answer: where this build has the decoder on FFmpeg's
+// libraries (analysis_pcm_source.hpp: ownDecoderInUse()) the file is read
+// through that, in the calling thread, and otherwise through Qt
+// Multimedia; ffmpeg_decoders_test holds the two to the same samples.
+// The cancel and the timeout end the decode on both, a read that does
+// not come back included.
 bool decodeMono(const std::string &absoluteFilePath,
                 const std::function<void(const float *samples, std::size_t count, int sampleRate)> &sink,
                 const std::function<bool()> &cancelled = {}, int timeoutMs = 120000,

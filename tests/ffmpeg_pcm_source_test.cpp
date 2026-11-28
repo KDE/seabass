@@ -163,7 +163,7 @@ int main(int argc, char **argv)
         return failures > 0 ? 1 : 0;
     }
     for (int i = 1; i < argc; ++i) {
-        const QDir dir(QString::fromLocal8Bit(argv[i]));
+        const QDir dir(QCoreApplication::arguments().at(i));
         const QStringList files =
             dir.entryList({"*.mp3", "*.flac", "*.wav", "*.m4a", "*.ogg", "*.aiff"}, QDir::Files, QDir::Name);
         check(!files.isEmpty(), std::string("audio files in ") + argv[i]);
@@ -202,7 +202,7 @@ int main(int argc, char **argv)
     FfmpegPcmSource missing(std::string(argv[1]) + "/no-such-file.mp3");
     std::vector<float> chunk(64);
     check(!missing.error().empty() && missing.sampleRate() == 0 && missing.read(chunk) == 0, "a missing file is an error");
-    check(QFile::exists(QString::fromLocal8Bit(argv[1]) + "/README.md"), "the file that is not audio is there");
+    check(QFile::exists(QCoreApplication::arguments().at(1) + "/README.md"), "the file that is not audio is there");
     FfmpegPcmSource notAudio(std::string(argv[1]) + "/README.md");
     check(!notAudio.error().empty() && notAudio.read(chunk) == 0, "a file that is not audio is an error");
 

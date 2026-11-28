@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,7 +25,18 @@ class FfmpegAudioReader
 {
 public:
     // Opens the file; error() says why not.
-    explicit FfmpegAudioReader(const std::string &absoluteFilePath);
+    //
+    // `interrupted` is asked while a read of the file is going on, the
+    // opening included, and ends it when it says true: next() then has
+    // nothing more and error() says the read failed. It is how a caller
+    // keeps its timeout and its cancel on a stick that has stopped
+    // answering, where a read would otherwise last as long as the
+    // system lets it. Called often; it should be quick.
+    explicit FfmpegAudioReader(const std::string &absoluteFilePath, std::function<bool()> interrupted = {});
+
+    // The libraries doing the decoding, for a record of which decoder a
+    // measurement was made with: "lavc 60.31.102".
+    static std::string libraryVersion();
     ~FfmpegAudioReader();
     FfmpegAudioReader(const FfmpegAudioReader &) = delete;
     FfmpegAudioReader &operator=(const FfmpegAudioReader &) = delete;

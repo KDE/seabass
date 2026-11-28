@@ -122,6 +122,7 @@ int main(int argc, char **argv)
         std::cerr << "usage: qt_decoder_start_test ALIGNMENT_DIR\n";
         return 2;
     }
+    setOwnDecoderInUseForTesting(false);
     if (!QtMultimediaSilenceProbe::decodingAvailable()) {
         std::cerr << "FAILED: no audio decoding backend\n";
         return 1;
