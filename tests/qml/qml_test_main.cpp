@@ -374,6 +374,36 @@ public:
         return static_cast<bool>(stream);
     }
 
+    // Makes Engine row `toId` of a library copy a copy of row `fromId` as
+    // the duplicate finder sees one: the same title, artist, length and
+    // file size, with its own path kept. For a case that needs a
+    // duplicate pair the fixture does not hold.
+    Q_INVOKABLE bool makeEngineDuplicate(const QString &library, int fromId, int toId)
+    {
+        sqlite3 *db = nullptr;
+        if (sqlite3_open(seabass::pathToUtf8(seabass::gui::pathFromQString(library) / "Database2" / "m.db").c_str(), &db)
+            != SQLITE_OK) {
+            sqlite3_close(db);
+            return false;
+        }
+        sqlite3_stmt *stmt = nullptr;
+        bool ok = sqlite3_prepare_v2(db,
+                                     "UPDATE Track SET title = (SELECT title FROM Track WHERE id = ?1), "
+                                     "artist = (SELECT artist FROM Track WHERE id = ?1), "
+                                     "length = (SELECT length FROM Track WHERE id = ?1), "
+                                     "fileBytes = (SELECT fileBytes FROM Track WHERE id = ?1) WHERE id = ?2;",
+                                     -1, &stmt, nullptr)
+            == SQLITE_OK;
+        if (ok) {
+            sqlite3_bind_int(stmt, 1, fromId);
+            sqlite3_bind_int(stmt, 2, toId);
+            ok = sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) == 1;
+        }
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        return ok;
+    }
+
     // A mono 16-bit WAV at 22050 Hz: `leadSamples` of silence, then
     // `seconds` of noise from `seed`. Two files of one seed are one piece
     // of music, the second as many samples later as its lead says.

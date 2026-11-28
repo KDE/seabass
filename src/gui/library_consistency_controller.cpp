@@ -1756,6 +1756,17 @@ bool LibraryConsistencyController::stageIssue(int index)
             return false;
         }
     }
+    // The repair moves the broken rows' playlist entries and cues onto the
+    // survivor: with the survivor's rows deleted first, it would fail at
+    // Save and take the whole save back with it.
+    if (issue.survivor && noPlaylistDeleteHolds(application::normalizedPathKey(issue.survivor->filePath))) {
+        const auto &survivor = *issue.survivor;
+        setErrorMessage(QStringLiteral("\"%1\" is staged for deletion as a track in no playlist, and this repair would "
+                                       "move another copy's playlist entries and cues onto it. Unstage that delete "
+                                       "first, or save it first.")
+                            .arg(QString::fromStdString(survivor.title.empty() ? survivor.filePath : survivor.title)));
+        return false;
+    }
     if (!ensureSessionForStaging()) {
         return false;
     }
@@ -1784,6 +1795,11 @@ std::set<std::string> LibraryConsistencyController::filesWithStagedRowChanges() 
             for (const auto &row : issue.brokenGroup) {
                 keys.insert(application::normalizedPathKey(row.filePath));
             }
+            // A repair also changes its survivor's rows: they take the
+            // broken rows' playlist entries and cues.
+            if (issue.survivor) {
+                keys.insert(application::normalizedPathKey(issue.survivor->filePath));
+            }
         }
     }
     return keys;
@@ -1803,6 +1819,10 @@ void LibraryConsistencyController::repairAll()
     setErrorMessage({});
     setStatusMessage({});
     int staged = 0;
+    // Each refusal says why in errorMessage, and the next overwrites it:
+    // keep the first, and say how many were left out.
+    int refused = 0;
+    QString firstRefusal;
     const size_t count = m_model.issues().size();
     for (size_t i = 0; i < count; ++i) {
         const auto &issue = m_model.issues()[i];
@@ -1813,7 +1833,15 @@ void LibraryConsistencyController::repairAll()
             staged++;
         } else if (m_session && !m_session->lockHeld()) {
             return;  // refused at the first one; no point trying the rest
+        } else {
+            refused++;
+            if (firstRefusal.isEmpty()) {
+                firstRefusal = errorMessage();
+            }
         }
+    }
+    if (refused > 1 && !firstRefusal.isEmpty()) {
+        setErrorMessage(QStringLiteral("%1 repairs were not staged. The first of them: %2").arg(refused).arg(firstRefusal));
     }
     if (staged > 0) {
         setStagedStatusMessage(

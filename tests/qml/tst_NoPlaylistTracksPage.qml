@@ -296,4 +296,101 @@ TestCase {
                                                + "in the same save") >= 0, controller.errorMessage);
         verify(noDashes(controller.errorMessage));
     }
+
+    // A repair also changes its survivor's rows: the broken copy's
+    // playlist entries and cues move onto it. So a survivor in no playlist
+    // is not deleted beside that repair, either way round: by the repair's
+    // turn at Save its rows would be gone, and the whole save would fail.
+    // The fixture's stick copy holds no audio and no Engine duplicates, so
+    // two Engine tracks in no playlist get a file each, and two broken
+    // Engine rows without cues are made copies of them: two repairable
+    // issues, each with a survivor in no playlist.
+    function test_aRepairsSurvivorIsNotDeletedInTheSameSave() {
+        const checked = checkedStick();
+        const controller = checked.controller;
+        const model = controller.issues;
+        const kindRole = Qt.UserRole + 1;
+        const formatRole = Qt.UserRole + 2;
+        const survivorRole = Qt.UserRole + 3;
+        const brokenRole = Qt.UserRole + 4;
+        const stagedRole = Qt.UserRole + 7;
+        const inNoPlaylist = (path) => controller.noPlaylistTracks.some((t) => t.filePath === path);
+        // Engine rows the check lists as missing, one per issue.
+        const engineRows = [];
+        for (let i = 0; i < model.count; ++i) {
+            const index = model.index(i, 0);
+            const broken = model.data(index, brokenRole);
+            if (model.data(index, kindRole) === "missing" && model.data(index, formatRole) === "engine"
+                && broken.length === 1) {
+                engineRows.push(broken[0]);
+            }
+        }
+        const survivors = engineRows.filter((r) => controller.noPlaylistTracks.some(
+            (t) => t.filePath === String(r.filePath) && t.libraries === "Engine")).slice(0, 2);
+        const doomed = engineRows.filter((r) => r.cues.length === 0 && !inNoPlaylist(String(r.filePath))).slice(0, 2);
+        verify(survivors.length === 2 && doomed.length === 2, "precondition: Engine rows of both kinds");
+        const library = checked.stick + "/Engine Library";
+        const paths = [];
+        for (let k = 0; k < 2; ++k) {
+            const path = String(survivors[k].filePath);
+            verify(stickFixture.makeDirectory(path.substring(0, path.lastIndexOf("/"))));
+            verify(stickFixture.touchNew(path), path);
+            verify(artworkFixture.makeEngineDuplicate(library, Number(survivors[k].sourceId), Number(doomed[k].sourceId)));
+            paths.push(path);
+        }
+        controller.scan(checked.stick + "/PIONEER", library, "");
+        tryVerify(() => !controller.busy, 300000, "the check after planting finishes");
+        const repairOf = (path) => {
+            for (let i = 0; i < model.count; ++i) {
+                const index = model.index(i, 0);
+                if (model.data(index, kindRole) === "repairable" && String(model.data(index, survivorRole).filePath) === path) {
+                    return i;
+                }
+            }
+            return -1;
+        };
+        const repair = repairOf(paths[0]);
+        verify(repair >= 0 && repairOf(paths[1]) >= 0, "precondition: a repair onto each planted file");
+        verify(inNoPlaylist(paths[0]) && inNoPlaylist(paths[1]), "precondition: both survivors are in no playlist");
+        const staged = (path) => model.data(model.index(repairOf(path), 0), stagedRole);
+
+        // Delete first: the repair onto it is refused, one by one and all
+        // at once, and Repair all says how many it left out.
+        controller.deleteTracksInNoPlaylist(paths);
+        compare(controller.errorMessage, "");
+        compare(controller.noPlaylistStagedCount, 2);
+        controller.repairOne(repair);
+        compare(controller.stagedIssueCount, 0, "the repair is refused while the delete holds its survivor");
+        verify(!staged(paths[0]));
+        verify(controller.errorMessage.indexOf("is staged for deletion as a track in no playlist, and this repair would "
+                                               + "move another copy's playlist entries and cues onto it.") >= 0,
+               controller.errorMessage);
+        verify(noDashes(controller.errorMessage));
+        controller.repairAll();
+        verify(!staged(paths[0]) && !staged(paths[1]), "Repair all leaves both out");
+        verify(controller.errorMessage.indexOf("2 repairs were not staged. The first of them: \"") === 0,
+               controller.errorMessage);
+        verify(controller.errorMessage.indexOf("and this repair would move another copy's playlist entries") >= 0,
+               controller.errorMessage);
+        verify(noDashes(controller.errorMessage));
+        controller.unstageTracksInNoPlaylist();
+        for (let i = 0; i < model.count; ++i) {
+            if (model.data(model.index(i, 0), stagedRole)) {
+                controller.unstageIssue(i);
+            }
+        }
+        compare(controller.stagedIssueCount, 0);
+
+        // Repair first: the delete leaves its survivor out and says why.
+        controller.repairOne(repair);
+        compare(controller.errorMessage, "");
+        verify(staged(paths[0]));
+        controller.deleteTracksInNoPlaylist(paths);
+        compare(controller.noPlaylistStagedCount, 1, "only the other survivor is staged");
+        verify(!controller.noPlaylistTracks.find((t) => t.filePath === paths[0]).staged);
+        verify(controller.noPlaylistTracks.find((t) => t.filePath === paths[1]).staged);
+        verify(controller.statusMessage.indexOf("is not deleted: a repair staged on this page changes its rows. Save that "
+                                                + "first, then delete it.") >= 0, controller.statusMessage);
+        verify(noDashes(controller.statusMessage));
+    }
 }
