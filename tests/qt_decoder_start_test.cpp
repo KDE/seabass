@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "infrastructure/audio/analysis_pcm_source.hpp"
 #include "infrastructure/audio/qt_decoder_start.hpp"
 #include "infrastructure/audio/qt_multimedia_alignment_probe.hpp"
 #include "infrastructure/audio/qt_multimedia_detail_waveform.hpp"
@@ -125,6 +126,10 @@ int main(int argc, char **argv)
         std::cerr << "FAILED: no audio decoding backend\n";
         return 1;
     }
+    // The three classes through Qt Multimedia, whose fault this is about:
+    // a build with the decoder on FFmpeg's libraries would otherwise take
+    // that, which has no silent start to start again from.
+    setOwnDecoderInUseForTesting(false);
     const std::string dir = argv[1];
     const std::string file = dir + "/a-ref.flac";
     const std::string notAudio = dir + "/README.md";
