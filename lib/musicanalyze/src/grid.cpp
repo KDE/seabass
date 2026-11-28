@@ -10,6 +10,7 @@
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <initializer_list>
 #include <iterator>
 #include <limits>
@@ -327,6 +328,168 @@ private:
     std::vector<double> m_held;
 };
 
+// Two values worked on as one. The bands are filtered side by side, two
+// to an instruction where the processor has them (SSE2, NEON); each of
+// the two is worked out exactly as it would be alone, so nothing changes
+// in any value. Where the compiler has no such type, a pair of doubles
+// with the same arithmetic.
+#if defined(__GNUC__) || defined(__clang__)
+using Pair = double __attribute__((vector_size(16)));
+#else
+struct Pair
+{
+    double first;
+    double second;
+};
+inline Pair operator*(Pair a, Pair b)
+{
+    return {a.first * b.first, a.second * b.second};
+}
+inline Pair operator+(Pair a, Pair b)
+{
+    return {a.first + b.first, a.second + b.second};
+}
+inline Pair operator-(Pair a, Pair b)
+{
+    return {a.first - b.first, a.second - b.second};
+}
+#endif
+
+// BothWays for several filters of one signal at once: `Signals` chains
+// of `Count` sections each, all given the same input, each with an output
+// of its own. What each gives is what a BothWays of its own would give,
+// to the bit: the same blocks at the same samples, the same arithmetic
+// in the same order. It is the bands' filters that an analysis spends
+// most of its time in, and five of them one after the other leave half
+// of what the processor can do unused.
+template <std::size_t Count, std::size_t Signals>
+class BothWaysTogether
+{
+public:
+    BothWaysTogether(const std::array<std::array<Biquad, Count>, Signals> &filters, double rate)
+        : m_ahead(std::max<std::size_t>(1, static_cast<std::size_t>(AheadSeconds * rate))),
+          m_block(std::max<std::size_t>(1, static_cast<std::size_t>(BlockSeconds * rate)))
+    {
+        // An odd one out is paired with a chain that passes its input
+        // on, whose output nobody reads.
+        for (std::size_t p = 0; p < Pairs; ++p) {
+            for (std::size_t f = 0; f < Count; ++f) {
+                const Biquad &a = filters[2 * p][f];
+                const Biquad b = 2 * p + 1 < Signals ? filters[2 * p + 1][f] : Biquad{};
+                m_sections[p][f] = {Pair{a.b0, b.b0}, Pair{a.b1, b.b1}, Pair{a.b2, b.b2}, Pair{a.a1, b.a1}, Pair{a.a2, b.a2}};
+            }
+        }
+    }
+
+    // Takes `in` and adds to each of `out` what is done by it.
+    void feed(std::span<const double> in, const std::array<std::vector<double> *, Signals> &out)
+    {
+        // In the loop's own hands, as in BothWays::feed().
+        const Sections sections = m_sections;
+        std::size_t at = 0;
+        while (at < in.size()) {
+            const std::size_t take = std::min(in.size() - at, m_block + m_ahead - m_count);
+            m_held.resize((m_count + take) * Width);
+            Memory z1 = m_z1;
+            Memory z2 = m_z2;
+            double *held = m_held.data() + m_count * Width;
+            const double *from = in.data() + at;
+            for (std::size_t i = 0; i < take; ++i) {
+                const Pair value{from[i], from[i]};
+                for (std::size_t p = 0; p < Pairs; ++p) {
+                    const Pair done = step(sections[p], z1[p], z2[p], value);
+                    std::memcpy(held + i * Width + 2 * p, &done, sizeof done);
+                }
+            }
+            m_z1 = z1;
+            m_z2 = z2;
+            m_count += take;
+            at += take;
+            if (m_count == m_block + m_ahead) {
+                backwards(m_block, out);
+            }
+        }
+    }
+
+    // The signal has ended: adds the rest to each of `out`.
+    void finish(const std::array<std::vector<double> *, Signals> &out) { backwards(m_count, out); }
+
+private:
+    static constexpr std::size_t Pairs = (Signals + 1) / 2;
+    static constexpr std::size_t Width = 2 * Pairs;
+    struct Section
+    {
+        Pair b0;
+        Pair b1;
+        Pair b2;
+        Pair a1;
+        Pair a2;
+    };
+    using Sections = std::array<std::array<Section, Count>, Pairs>;
+    using Memory = std::array<std::array<Pair, Count>, Pairs>;
+
+    // step() above, for two signals.
+    static Pair step(const std::array<Section, Count> &sections, std::array<Pair, Count> &z1, std::array<Pair, Count> &z2,
+                     Pair value)
+    {
+        for (std::size_t f = 0; f < Count; ++f) {
+            const Pair out = sections[f].b0 * value + z1[f];
+            z1[f] = sections[f].b1 * value - sections[f].a1 * out + z2[f];
+            z2[f] = sections[f].b2 * value - sections[f].a2 * out;
+            value = out;
+        }
+        return value;
+    }
+
+    // Backwards over all that is held, as BothWays::backwards().
+    void backwards(std::size_t count, const std::array<std::vector<double> *, Signals> &out)
+    {
+        const Sections sections = m_sections;
+        Memory z1{};
+        Memory z2{};
+        std::array<double *, Signals> given{};
+        for (std::size_t s = 0; s < Signals; ++s) {
+            const std::size_t base = out[s]->size();
+            out[s]->resize(base + count);
+            given[s] = out[s]->data() + base;
+        }
+        const double *held = m_held.data();
+        // What lies ahead is only run through; what is asked for is kept.
+        for (std::size_t i = m_count; i-- > count;) {
+            for (std::size_t p = 0; p < Pairs; ++p) {
+                Pair value;
+                std::memcpy(&value, held + i * Width + 2 * p, sizeof value);
+                step(sections[p], z1[p], z2[p], value);
+            }
+        }
+        for (std::size_t i = count; i-- > 0;) {
+            for (std::size_t p = 0; p < Pairs; ++p) {
+                Pair value;
+                std::memcpy(&value, held + i * Width + 2 * p, sizeof value);
+                const Pair done = step(sections[p], z1[p], z2[p], value);
+                std::array<double, 2> both;
+                std::memcpy(both.data(), &done, sizeof done);
+                given[2 * p][i] = both[0];
+                if (2 * p + 1 < Signals) {
+                    given[2 * p + 1][i] = both[1];
+                }
+            }
+        }
+        m_held.erase(m_held.begin(), m_held.begin() + static_cast<std::ptrdiff_t>(count * Width));
+        m_count -= count;
+    }
+
+    Sections m_sections{};
+    Memory m_z1{};
+    Memory m_z2{};
+    std::size_t m_ahead;
+    std::size_t m_block;
+    // What went forwards and has not gone backwards yet: m_count samples,
+    // the signals' values of a sample side by side.
+    std::vector<double> m_held;
+    std::size_t m_count = 0;
+};
+
 // The power of a band that has nothing above 400 Hz, without the ripple
 // of its square: the squared size of its analytic signal (the band, and
 // the band a quarter of a cycle on). The band is thinned to about 1400
@@ -443,23 +606,34 @@ private:
 class BandListener
 {
 public:
+    // The band's filter: what a band listens to is the audio through
+    // these, both ways (OnsetListener filters all the bands together).
+    static std::array<Biquad, 4> filters(const std::array<double, 2> &edges, double rate)
+    {
+        return std::array{highpass(edges[0], rate, ButterworthFourthQ[0]), highpass(edges[0], rate, ButterworthFourthQ[1]),
+                          lowpass(std::min(edges[1], 0.45 * rate), rate, ButterworthFourthQ[0]),
+                          lowpass(std::min(edges[1], 0.45 * rate), rate, ButterworthFourthQ[1])};
+    }
+
     BandListener(const std::array<double, 2> &edges, double rate)
-        : m_band(std::array{highpass(edges[0], rate, ButterworthFourthQ[0]), highpass(edges[0], rate, ButterworthFourthQ[1]),
-                            lowpass(std::min(edges[1], 0.45 * rate), rate, ButterworthFourthQ[0]),
-                            lowpass(std::min(edges[1], 0.45 * rate), rate, ButterworthFourthQ[1])},
-                 rate),
-          m_rippleFree(edges[1] <= PowerBySquareFromHz && rate >= 4.0 * PowerBySquareFromHz), m_ripple(rate),
+        : m_rippleFree(edges[1] <= PowerBySquareFromHz && rate >= 4.0 * PowerBySquareFromHz), m_ripple(rate),
           // The band's power comes at this many values a second.
           m_powerRate(m_rippleFree ? rate / static_cast<double>(m_ripple.step()) : rate),
           m_smooth(std::array{lowpass(EnvelopeSmoothingHz, m_powerRate, std::numbers::sqrt2 / 2.0)}, m_powerRate)
     {
     }
 
-    // The audio, at the rate given, in pieces of any length.
-    void feed(std::span<const double> audio)
+    // Where the next piece of the band goes: emptied, to be filled with
+    // the audio through the band's filter, in pieces of any length, and
+    // then listened() to or, the last of them, finish()ed.
+    std::vector<double> &next()
     {
         m_filtered.clear();
-        m_band.feed(audio, m_filtered);
+        return m_filtered;
+    }
+
+    void listened()
+    {
         powered(false);
         envelopes(false, 0);
     }
@@ -467,8 +641,6 @@ public:
     // The audio has ended and makes `milliseconds` values.
     void finish(std::size_t milliseconds)
     {
-        m_filtered.clear();
-        m_band.finish(m_filtered);
         powered(true);
         envelopes(true, milliseconds);
         while (rises.size() < milliseconds) {
@@ -549,7 +721,6 @@ private:
         }
     }
 
-    BothWays<4> m_band;
     bool m_rippleFree;
     RippleFreePower m_ripple;
     double m_powerRate;
@@ -593,9 +764,12 @@ public:
             m_rate /= 2.0;
         }
         m_bands.reserve(Bands.size());
-        for (const auto &edges : Bands) {
-            m_bands.emplace_back(edges, m_rate);
+        std::array<std::array<Biquad, 4>, Bands.size()> filters;
+        for (std::size_t b = 0; b < Bands.size(); ++b) {
+            m_bands.emplace_back(Bands[b], m_rate);
+            filters[b] = BandListener::filters(Bands[b], m_rate);
         }
+        m_filters.emplace(filters, m_rate);
     }
 
     void feed(std::span<const float> samples)
@@ -634,6 +808,7 @@ public:
             return Onsets{};
         }
         const auto milliseconds = static_cast<std::size_t>(static_cast<double>(m_count - 1) * 1000.0 / m_rate);
+        m_filters->finish(nextOfEach());
         for (BandListener &band : m_bands) {
             band.finish(milliseconds);
         }
@@ -694,14 +869,26 @@ private:
     void heard()
     {
         m_count += m_piece.size();
+        m_filters->feed(m_piece, nextOfEach());
         for (BandListener &band : m_bands) {
-            band.feed(m_piece);
+            band.listened();
         }
+    }
+
+    std::array<std::vector<double> *, Bands.size()> nextOfEach()
+    {
+        std::array<std::vector<double> *, Bands.size()> next{};
+        for (std::size_t b = 0; b < Bands.size(); ++b) {
+            next[b] = &m_bands[b].next();
+        }
+        return next;
     }
 
     double m_rate;
     std::optional<BothWays<2>> m_halving;
     std::vector<BandListener> m_bands;
+    // Every band's filter, worked together.
+    std::optional<BothWaysTogether<4, Bands.size()>> m_filters;
     std::vector<double> m_piece;
     std::vector<double> m_lowPassed;
     std::size_t m_lowPassedSeen = 0;
