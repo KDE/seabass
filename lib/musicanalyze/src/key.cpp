@@ -4,6 +4,8 @@
 
 #include "musicanalyze/key.hpp"
 
+#include "transform.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -90,34 +92,6 @@ private:
     double m_z1 = 0.0, m_z2 = 0.0;
 };
 
-// In place, a power of two long.
-void transform(std::vector<std::complex<double>> &data, const std::vector<std::complex<double>> &twiddle)
-{
-    const std::size_t n = data.size();
-    for (std::size_t i = 1, j = 0; i < n; ++i) {
-        std::size_t bit = n >> 1;
-        for (; (j & bit) != 0; bit >>= 1) {
-            j ^= bit;
-        }
-        j ^= bit;
-        if (i < j) {
-            std::swap(data[i], data[j]);
-        }
-    }
-    for (std::size_t length = 2; length <= n; length <<= 1) {
-        const std::size_t half = length / 2;
-        const std::size_t stride = n / length;
-        for (std::size_t start = 0; start < n; start += length) {
-            for (std::size_t k = 0; k < half; ++k) {
-                const std::complex<double> odd = data[start + k + half] * twiddle[k * stride];
-                const std::complex<double> even = data[start + k];
-                data[start + k] = even + odd;
-                data[start + k + half] = even - odd;
-            }
-        }
-    }
-}
-
 // How much of each third of a semitone a track has, from C2 up five
 // octaves, read as the track comes: feed() its audio in pieces, in
 // order, then finish(). What is held meanwhile is one frame of the
@@ -141,8 +115,7 @@ public:
           // The four sections of an eighth-order Butterworth.
           m_sections{LowPass(0.4 * m_rate, sampleRateHz, Q[0]), LowPass(0.4 * m_rate, sampleRateHz, Q[1]),
                      LowPass(0.4 * m_rate, sampleRateHz, Q[2]), LowPass(0.4 * m_rate, sampleRateHz, Q[3])},
-          m_binHz(m_rate / static_cast<double>(FrameSamples)), m_window(FrameSamples), m_twiddle(FrameSamples / 2),
-          m_frame(FrameSamples)
+          m_binHz(m_rate / static_cast<double>(FrameSamples)), m_window(FrameSamples), m_re(FrameSamples), m_im(FrameSamples)
     {
         const auto firstBinAt = [&](double hz) { return static_cast<std::size_t>(std::ceil(hz / m_binHz)); };
         m_low = std::max<std::size_t>(firstBinAt(m_c2 * std::pow(2.0, -0.5 / 12.0)), 2);
@@ -150,9 +123,7 @@ public:
         for (std::size_t i = 0; i < FrameSamples; ++i) {
             m_window[i] = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(FrameSamples - 1));
         }
-        for (std::size_t k = 0; k < FrameSamples / 2; ++k) {
-            m_twiddle[k] = std::polar(1.0, -2.0 * std::numbers::pi * static_cast<double>(k) / static_cast<double>(FrameSamples));
-        }
+        internal::prepare(m_twiddles, FrameSamples, false);
         m_magnitude.resize(m_high + 2);
         m_audio.reserve(FrameSamples);
     }
@@ -162,23 +133,33 @@ public:
         if (m_high <= m_low) {
             return;
         }
+        // The filters in the loop's own hands while it runs: left in
+        // the object, every sample kept would have to be taken for a
+        // change to them. And the samples kept are counted down to, not
+        // asked for with a division each.
+        std::array<LowPass, 4> sections = m_sections;
+        std::size_t untilKept = m_untilKept;
+        const bool thinned = m_step > 1;
         for (const float sample : samples) {
             // A sample that is no number (a decoder's slip) is silence.
             double x = std::isfinite(sample) ? static_cast<double>(sample) : 0.0;
-            if (m_step > 1) {
-                for (LowPass &section : m_sections) {
+            if (thinned) {
+                for (LowPass &section : sections) {
                     x = section.process(x);
                 }
             }
-            if (m_seen % m_step == 0) {
+            if (untilKept == 0) {
+                untilKept = m_step;
                 m_audio.push_back(x);
                 if (m_audio.size() == FrameSamples) {
                     frame();
                     m_audio.erase(m_audio.begin(), m_audio.begin() + FrameStep);
                 }
             }
-            ++m_seen;
+            --untilKept;
         }
+        m_sections = sections;
+        m_untilKept = untilKept;
     }
 
     // Empty where there is nothing to read a key from: not one whole
@@ -197,12 +178,16 @@ private:
     // The frame that m_audio holds, added to the sums.
     void frame()
     {
+        // Into the order the transform's butterflies want, real parts
+        // and imaginary parts (none) in rows of their own.
+        const std::uint32_t *const order = m_twiddles.order.data();
         for (std::size_t i = 0; i < FrameSamples; ++i) {
-            m_frame[i] = m_audio[i] * m_window[i];
+            m_re[i] = m_audio[order[i]] * m_window[order[i]];
         }
-        transform(m_frame, m_twiddle);
+        std::fill(m_im.begin(), m_im.end(), 0.0);
+        internal::transformRows(m_re.data(), m_im.data(), FrameSamples, m_twiddles);
         for (std::size_t k = m_low - 2; k <= m_high + 1; ++k) {
-            m_magnitude[k] = std::abs(m_frame[k]);
+            m_magnitude[k] = std::abs(std::complex<double>(m_re[k], m_im[k]));
         }
         std::array<double, Thirds> inFrame{};
         double sum = 0.0;
@@ -235,12 +220,15 @@ private:
     std::size_t m_low = 0;
     std::size_t m_high = 0;
     std::vector<double> m_window;
-    std::vector<std::complex<double>> m_twiddle;
-    std::vector<std::complex<double>> m_frame;
+    internal::Twiddles m_twiddles;
+    // The frame being transformed.
+    std::vector<double> m_re;
+    std::vector<double> m_im;
     std::vector<double> m_magnitude;
     // The thinned audio from the start of the next frame on.
     std::vector<double> m_audio;
-    std::size_t m_seen = 0;
+    // How many samples come before the next one kept.
+    std::size_t m_untilKept = 0;
     std::size_t m_frames = 0;
     std::array<double, Thirds> m_total{};
 };
