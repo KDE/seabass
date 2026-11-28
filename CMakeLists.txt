@@ -1106,6 +1106,27 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(TARGET Qt6::Multimedia)
+    # A decoder of our own on FFmpeg's libraries (ffmpeg_pcm_source.hpp),
+    # for what an analysis reads: built where pkg-config finds them, and
+    # then the one openAnalysisPcmSource() hands out. Without them, or
+    # with -DSEABASS_FFMPEG_DECODER=OFF, analysis decodes through Qt
+    # Multimedia as before.
+    option(SEABASS_FFMPEG_DECODER "Decode for analysis through FFmpeg's libraries directly" ON)
+    if(SEABASS_FFMPEG_DECODER)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(SEABASS_FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil)
+        endif()
+    endif()
+    if(SEABASS_FFMPEG_DECODER AND SEABASS_FFMPEG_FOUND)
+        add_library(seabass_audio_ffmpeg STATIC src/infrastructure/audio/ffmpeg_pcm_source.cpp)
+        target_include_directories(seabass_audio_ffmpeg PUBLIC src)
+        target_link_libraries(seabass_audio_ffmpeg PUBLIC PkgConfig::SEABASS_FFMPEG)
+        set_target_properties(seabass_audio_ffmpeg PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        message(STATUS "Analysis decoder: FFmpeg's libraries (libavformat, libavcodec, libavutil found)")
+    else()
+        message(STATUS "Analysis decoder: Qt Multimedia (no libavformat, libavcodec, libavutil by pkg-config, or switched off)")
+    endif()
     add_library(seabass_audio_qt STATIC
         src/infrastructure/audio/qt_multimedia_duration_probe.cpp
         src/infrastructure/audio/qt_multimedia_silence_probe.cpp
@@ -1121,6 +1142,11 @@ if(TARGET Qt6::Multimedia)
     target_include_directories(seabass_audio_qt PUBLIC src)
     target_link_libraries(seabass_audio_qt PUBLIC Qt6::Core Qt6::Multimedia seabass_mp3_lead_in)
     target_compile_definitions(seabass_audio_qt PUBLIC SEABASS_HAVE_QT_AUDIO)
+    target_sources(seabass_audio_qt PRIVATE src/infrastructure/audio/analysis_pcm_source.cpp)
+    if(TARGET seabass_audio_ffmpeg)
+        target_link_libraries(seabass_audio_qt PUBLIC seabass_audio_ffmpeg)
+        target_compile_definitions(seabass_audio_qt PUBLIC SEABASS_HAVE_FFMPEG_DECODER)
+    endif()
     # seabass-cli is declared above this point, so it is linked here
     # rather than at its own definition.
     target_link_libraries(seabass-cli PRIVATE seabass_audio_qt)
@@ -5910,27 +5936,15 @@ if(TARGET seabass_audio_qt)
     add_test(NAME qt_decoder_start_test COMMAND qt_decoder_start_test ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment)
     set_tests_properties(qt_decoder_start_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-    # A prototype: a decoder of our own on FFmpeg's libraries, compared
-    # sample for sample with the one the app uses (ticket 154). Built
-    # only where pkg-config finds the libraries; the app does not link it.
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(SEABASS_FFMPEG QUIET IMPORTED_TARGET libavformat libavcodec libavutil)
-    endif()
-    if(SEABASS_FFMPEG_FOUND)
-        add_library(seabass_audio_ffmpeg STATIC src/infrastructure/audio/ffmpeg_pcm_source.cpp)
-        target_include_directories(seabass_audio_ffmpeg PUBLIC src)
-        target_link_libraries(seabass_audio_ffmpeg PUBLIC PkgConfig::SEABASS_FFMPEG)
-        set_target_properties(seabass_audio_ffmpeg PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    # The decoder on FFmpeg's libraries, compared sample for sample with
+    # Qt Multimedia's (ticket 154).
+    if(TARGET seabass_audio_ffmpeg)
         add_executable(ffmpeg_pcm_source_test tests/ffmpeg_pcm_source_test.cpp)
         target_include_directories(ffmpeg_pcm_source_test PRIVATE src)
         target_link_libraries(ffmpeg_pcm_source_test PRIVATE seabass_audio_ffmpeg seabass_audio_qt Qt6::Core)
         add_test(NAME ffmpeg_pcm_source_test COMMAND ffmpeg_pcm_source_test
             ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click)
         set_tests_properties(ffmpeg_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-        message(STATUS "ffmpeg_pcm_source: built (libavformat, libavcodec, libavutil found)")
-    else()
-        message(STATUS "ffmpeg_pcm_source: not built (needs pkg-config modules libavformat libavcodec libavutil)")
     endif()
 endif()
 

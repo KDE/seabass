@@ -20,6 +20,7 @@
 #include "domain/audio_analysis.hpp"
 #include "domain/pcm_source.hpp"
 
+#include "infrastructure/audio/analysis_pcm_source.hpp"
 #include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
 #include "infrastructure/local/analysis_ledger_file.hpp"
 #include "infrastructure/paths/utf8_path.hpp"
@@ -171,7 +172,7 @@ std::shared_ptr<const ImportAnalysis> analyseForImport(const std::string &audioF
     return analyseSourceForImport(
         audioFile,
         [&audioFile]() -> std::unique_ptr<domain::PcmSource> {
-            return std::make_unique<infrastructure::audio::QtMultimediaPcmSource>(audioFile);
+            return infrastructure::audio::openAnalysisPcmSource(audioFile);
         },
         cancel, range, AnalysisMemoryGate::shared());
 #else

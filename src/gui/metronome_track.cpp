@@ -15,7 +15,7 @@
 #include "async_request.hpp"
 #include "domain/beat_timeline.hpp"
 #include "future_result.hpp"
-#include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
+#include "infrastructure/audio/analysis_pcm_source.hpp"
 #include "musicanalyze/analysis.hpp"
 #include "seabass_settings.hpp"
 
@@ -102,11 +102,12 @@ MetronomeTrack::Result MetronomeTrack::analyseFile(const QString &path, double l
         result.error = QStringLiteral("Stopped");
         return result;
     }
-    if (!infrastructure::audio::QtMultimediaPcmSource::decodingAvailable()) {
+    if (!infrastructure::audio::analysisDecodingAvailable()) {
         result.error = QStringLiteral("This computer has no audio decoder Seabass can use");
         return result;
     }
-    infrastructure::audio::QtMultimediaPcmSource decoder(path.toStdString());
+    const std::unique_ptr<domain::PcmSource> opened = infrastructure::audio::openAnalysisPcmSource(path.toStdString());
+    domain::PcmSource &decoder = *opened;
     if (decoder.sampleRate() <= 0) {
         result.error = QStringLiteral("This file could not be decoded");
         return result;
