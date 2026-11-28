@@ -77,8 +77,9 @@ struct GridAnalysis
 // as measured; its straight grids are not, see below.
 inline constexpr double FollowedGridEarlierMs = 3.0;
 
-// A straight grid is given out this much later than the place the
-// onsets peak at. Calibration against rekordbox's straight grids on
+// A straight grid that is not set on its hits (HitBeforeTheClickMs
+// below) is given out this much later than the place the onsets peak
+// at. Calibration against rekordbox's straight grids on
 // the tuning half of a collection of 1475 tracks: as measured, ours
 // sit 2.2 ms before its grids at the median, tightly (half of the
 // tracks between 2.9 and 1.4 ms), so that the 3 ms inside which a
@@ -96,6 +97,37 @@ inline constexpr double FollowedGridEarlierMs = 3.0;
 // early, 591 within 3 ms.
 inline constexpr double StraightGridLaterMs = 1.2;
 
+// A straight grid is set this much before the click of its hits: the
+// moment the audio from 2 to 8 kHz rises fastest around a beat, where
+// the beats of a track agree on that moment to within 5 ms (grid.cpp
+// says how it is measured). By 5 ms at most.
+//
+// The onsets place a grid by the weight of a hit, and how far that is
+// from its click differs from one kick to the next by a few
+// milliseconds; rekordbox's straight grids keep to the click. Against
+// the tuning halves of two libraries of electronic music, analyzed by
+// two people's rekordbox (a collection of 1475 tracks and a stick of
+// 1089), the click lies at rekordbox's beat and 0.6 ms after it at the
+// middle track, and for half of the tracks within a quarter and a
+// third of a millisecond of that. A grid placed by the onsets alone is
+// 1.4 and 0.8 ms before rekordbox's at the middle track, with half of
+// the tracks spread over 1.3 and 2 ms.
+//
+// 0.7 ms: of the 1106 straight grids within 10 ms of rekordbox's in the
+// two tuning halves, 787 are then within 1 ms of it, where the onsets
+// alone put 425 there, and half of each library's lie within 0.6 and
+// 0.9 ms of each other; of all the grids of the two halves 1023 are
+// within 3 ms (979). In the halves kept aside: 785 of 1101 within 1 ms
+// (450), and 1005 within 3 ms (992). Later than rekordbox's are 3 in
+// a hundred of the first library's grids (10) and 26 of the second's
+// (30). At 0 ms, the middle of the first library, a few more of its
+// grids come within 3 ms and four in ten of them are late: early is
+// the safe side, as above.
+//
+// Followed grids are not set so: each of their beats is set on its own
+// onset.
+inline constexpr double HitBeforeTheClickMs = 0.7;
+
 // The lowest sample rate a grid is found at. The highest of the bands
 // the analyzer listens to begins at 1.5 kHz, and under 3 kHz its filters
 // are no filters at all; from 8 kHz, as for the key and the waveform,
@@ -108,7 +140,9 @@ constexpr int GridLowestSampleRateHz = 8000;
 // envelope of each, and of the envelopes only the rises. Summed, they are
 // the onset function, one value a millisecond. What is above 5 kHz is
 // left out on purpose: on dance music the hats in it sit between the
-// beats, and an onset function that hears them puts the grid there. For
+// beats, and an onset function that hears them puts the grid there. (The
+// audio from 2 to 8 kHz is kept besides, for setting a found grid on
+// its hits; it has no say in where the beats are looked for.) For
 // the place of the beat (not for the tempo) the band under 70 Hz is left
 // out too: the bass line plays between the beats as often as on them.
 //
@@ -135,7 +169,10 @@ constexpr int GridLowestSampleRateHz = 8000;
 // beats and each window says how far its own peak is from that place; a
 // line through those says how much the period is off and by how much the
 // place, and the two are corrected. Windows without a peak near the place
-// (a breakdown, a fill) say nothing.
+// (a breakdown, a fill) say nothing. Last, the grid is set on the click
+// of its hits, read in the audio from 2 to 8 kHz to a quarter of a
+// millisecond, where the track's beats have their clicks at one place
+// (HitBeforeTheClickMs above).
 //
 // No whole-number rule: the tempo is what was measured.
 //
@@ -154,7 +191,7 @@ constexpr int GridLowestSampleRateHz = 8000;
 // 25 ms.
 //
 // What it does not do yet: say which beat starts the bar (beatInBar is
-// 0), or refine the beat on the samples of the transient.
+// 0).
 //
 // `samples` are mono, full scale 1.0, sample 0 at 0 ms of the beats that
 // come back; they are read once and not kept. No samples, no sample
@@ -165,7 +202,7 @@ GridAnalysis gridFromSamples(std::span<const float> samples, int sampleRateHz, T
 // them in order, of any length, then finish(). The grid is the one
 // gridFromSamples() makes of the pieces joined (which is this, fed
 // once). What is held meanwhile is a few seconds of audio and what was
-// heard so far (about 40 MB, and 3.5 MB a minute of music), and never the
+// heard so far (about 45 MB, and 4.2 MB a minute of music), and never the
 // track. No sample rate or one too low, or nothing fed: the error says
 // so.
 class BeatGridAnalyzer

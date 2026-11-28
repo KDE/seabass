@@ -1436,6 +1436,148 @@ fifth; the least sure half holds 70 % of the wrong keys. Worth a list,
 and no more exact than that. (Clips of two minutes at a low bit rate,
 and electronic music only.)
 
+### The tempo's choice with the ear as the truth, and why a followed grid slips
+
+With the answers from the pictures gone as a truth on tempo, the rules
+for choosing among a tempo's relatives were scored again (27 November;
+tuning halves, the ear where he listened, rekordbox elsewhere). A tempo
+or its double: of 308 pairs on straight grids the faster one is the
+true one on 275, and by the slower tempo of the pair on 97 to 99 in a
+hundred under 76 BPM, 93 at 76 to 80, 81 at 80 to 84, 63 at 84 to 88
+and 35 at 88 to 92. A margin for "in doubt the double" that grows with
+the tempo is right on 1,022 tracks where the flat 0.75 is right on
+1,017 of 1,058, and loses five when it is fitted on four sets and
+judged on the fifth. A choice fitted over every candidate (how sharply
+the track folds there and at its levels, the tempo, the family) is
+right on 1,048 where the rule as it is has 1,043 of 1,149, with the
+true tempo among the candidates on 1,102. Nothing to change.
+
+What is left on varied music is mostly the followed grid. On the three
+varied tuning sets 279 of 604 grids are within 10 ms of rekordbox's; of
+the CD rips' 183 followed ones 62 are, 63 run apart from it and 45 end
+at another tempo. Per window of the tempo curve (8 s, 218 followed
+tracks, 29,045 windows): the curve finds a rhythm in 41 in a hundred of
+them and has rekordbox's tempo there on 96; in the other 59 it has no
+period of its own and takes the one between its neighbours, which is
+over 1.5 percent off rekordbox's tempo on 37 in a hundred of those
+windows, and there Beat This has rekordbox's tempo on 4,471 and the
+curve's on 436. Four in five of the windows where our grid is apart
+from rekordbox's are windows without a rhythm of their own. Tried on
+that, each a whole run: a window's own period from a looser test (275
+and 276 within 10 ms for 279), the path's onsets lent by the beats
+around them (280, 278), the mean taken off them (280), the curve's
+windows read together with their neighbours (274, 277, 271; with the
+looser test 281). The last takes a third and more off the windows with
+a wrong tempo and a sixth off the windows apart, and moves no count: a
+track with
+one slip left is still a track that runs apart. Open: why the onset
+function has no rhythm in a window where two other analysers find the
+tempo.
+
+### A second library of electronic music, his ear on it, and the grid set on its clicks
+
+A stick of club and house music, analysed by its owner's rekordbox (its
+Normal analysis: one straight grid a track), read from a backup of the
+stick and never from the stick: 1,089 tracks with a grid and their
+audio, a tuning half of 535 and a half kept aside of 554. The analyser
+as it was, tuning half: within 3 ms of rekordbox's 388, 3 to 10 ms 71,
+running apart 11, over 10 ms off 42, half a beat out 20, another tempo
+3. Our straight grids are 0.7 ms before this rekordbox's at the middle
+track, where they are 1.4 ms before the collection's.
+
+The two classes of difference were looked at before anything was
+changed, and both turned out to be rekordbox's for the most part. Half
+a beat out: on the 20 tracks the bands a kick lives in (150 Hz to
+2 kHz) have their attack on our beat on 16 and 12 and on rekordbox's on
+1 and none, as they have it on the beat of 56 and 57 of 60 tracks on
+which the two grids agree; heard with a click on each grid (28
+November), ours is on the beat on 13, rekordbox's on 1, and 6 cannot be
+told. Over 10 ms off: the tempo is the same to the thousandth and ours
+is the earlier one on nine in ten. On 23 of them, 11 to 35 ms early,
+the whole attack of the kick lies at our line, its click included, and
+rekordbox's line is where the kick's body comes up (the audio from 70
+to 150 Hz): long kicks. Seen on a picture of four beats and heard with
+a click on each grid: by the ear ours on 22 and both on one, by the eye
+ours on 20, rekordbox's on 2, one not to be told. The beat of a kick is
+its attack, then, which is what erring early was for: a grid on the
+body cuts a loop into the kick. On the tracks where the two grids
+agree, rekordbox is on the click whatever the body does (its line
+0.9 ms after the click and 0.06 ms more for each millisecond the body
+trails it, 148 tracks): the body is where its grid ends up on some long
+kicks, and no habit of it.
+
+By the count of the section on listening, this tuning half: rekordbox
+right on 494 and wrong on 35, ours right on 506 and wrong on 23, six
+not decided; only tracks on which the grids differ were heard, and
+every other one counts for rekordbox. Of the 22 against ours (19 over
+10 ms off that nobody heard, 3 at another tempo), 11 are a grid of
+rekordbox's at a tempo a hair off (the click keeps its place against
+our beats through the track and wanders against its), 2 more are long
+kicks, and three are faults of ours: a followed grid that wanders, a
+grid 18 ms late on which ours is the one on the body, and one whose
+first third is 91 ms off.
+
+The click itself turned out to be what rekordbox's straight grids keep
+to. Around every beat of a straight grid of ours, the moment the audio
+from 2 to 8 kHz rises fastest, and of those the middle over the half of
+the beats on which that band is strongest: on the tuning halves of the
+collection and of the stick it lies at rekordbox's beat and 0.6 ms
+after it at the middle track, and half of the tracks are within a
+quarter and a third of a millisecond of that. The same of the audio
+under 180 Hz lies 30 to 60 ms after the beat and goes with nothing, and
+of all the audio together 4 and 6 ms after it with half of the tracks
+spread over 9 ms. The onsets,
+which place a grid by the weight of the hit, are 1.4 and 0.8 ms before
+rekordbox's with half of the tracks spread over 1.4 and 1.9 ms.
+
+So a straight grid is set on its clicks (`HitBeforeTheClickMs`, grid
+revision 3): where the beats agree on the click to within 5 ms (the
+middle half of them), 0.7 ms before it, by 5 ms at most. Straight
+grids within 10 ms of rekordbox's, before and after:
+
+| | within 1 ms | half of them within | later than rekordbox's |
+|---|---|---|---|
+| collection, tuning half (655) | 213, then 466 | 1.4 ms, then 0.6 | 10 in a hundred, then 3 |
+| stick, tuning half (450) | 212, then 321 | 1.9 ms, then 0.9 | 30, then 26 |
+| collection, half kept aside (620) | 215, then 444 | 1.4 ms, then 0.6 | 10, then 5 |
+| stick, half kept aside (481) | 235, then 341 | 1.6 ms, then 0.9 | 25, then 24 |
+
+Within 3 ms, of all the grids of a half: collection 591 to 620 of 751
+and 566 to 574 of 724, stick 388 to 403 of 535 and 426 to 431 of 554:
+most were inside 3 ms before, and the gain is smaller on the halves
+kept aside than on the ones the rule was chosen on. No grid changes its
+class otherwise (two of the stick's that were over 10 ms off no longer
+are, and none leaves 10 ms), none its shape, no key changes.
+
+On varied music the sets hold rekordbox's Dynamic grids, which sit some
+3.6 ms before its Normal ones: a straight grid of ours is 1.5 to 3.2 ms
+later than those at the middle track as it is, and set on its clicks
+0.1 to 0.5 ms more. Of the varied tuning halves' grids 238 are then
+within 3 ms where 250 were, of 734, and one more runs apart; of the
+halves kept aside 184 where 192 were, of 617, and one more is over
+10 ms off. Against rekordbox's Normal
+analysis of the first variety list, which is the like-for-like
+measure and the only one there is, nothing moves: 15 of 59 straight
+grids within 3 ms before and after.
+
+Beside the rule, on the tuning halves: 0 ms for 0.7 puts ten more of
+the collection's grids within 3 ms and four in ten of them after
+rekordbox's; going all the way to clicks further than 5 ms puts more
+grids over 10 ms off than it brings within 3 ms, and not going at all
+leaves a few outside that 5 ms bring in; a grid moved only later (and
+never earlier) has eight more within 3 ms and one in five after
+rekordbox's instead of one in eight. Reading the click as its one
+steepest step, or leaving the band open above 8 kHz, gives the same
+counts to a track or two; the band has its top so that a file's sample
+rate does not change it. An analysis holds a megabyte more for each
+minute of music (the band's size in quarters of a millisecond, in one
+block: kept in pieces among the bands' rises it held on to what they
+free, and the same megabyte cost two and a half).
+
+Open on this library: a grid that is late against clicks its beats
+agree on could go all the way back to them (seven tracks of the two
+tuning halves; his ear first), and the three faults named above.
+
 ## Denon again: the new music, and the players
 
 **Engine DJ Desktop on the new sets** (tuning halves; again one

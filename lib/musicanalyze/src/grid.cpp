@@ -738,19 +738,119 @@ private:
     double m_levels = 0.0;
 };
 
+// The band a hit is placed in: the audio from 2 to 8 kHz, where a kick
+// has its click and a snare its crack. Its size (how far the band is
+// from zero, whichever way) as the mean over bins of a quarter of a
+// millisecond, for the whole track: bin i holds the audio from i / 4 ms
+// to (i + 1) / 4 ms. The band is filtered both ways, as every band here,
+// so the click stays where it is in time. It has a top so that it is
+// the same band, near enough, whatever the sample rate: left open, it
+// would end where the rate does, at 9 kHz for a file at 44.1 kHz and
+// at 19 for one at 96, with the hats in it. (Under 18 kHz of sample
+// rate it does end where the rate does: at 8 kHz there is the audio
+// from 2 to 3.6 kHz. And a rate between 40 and 44.1 kHz, halved here,
+// has a little less of the band's top end.)
+//
+// This is not part of the onset function, which smooths at 60 Hz and
+// reads a value a millisecond: that finds the beat to a few milliseconds
+// wherever the weight of a hit is, and a hit's weight is its body, which
+// swells over ten or twenty milliseconds after the click. What is kept
+// here is 16 kB a second of audio, and it is read only around the beats
+// of a grid that has been found (hitPlace() below). It is kept in one
+// vector and not in pieces as the bands' rises are: it is still held
+// when those are let go, and pieces of it lying among theirs would keep
+// what they free from being used for anything large.
+constexpr double HitBandFromHz = 2000.0;
+constexpr double HitBandToHz = 8000.0;
+constexpr std::size_t HitBinsAMs = 4;
+
+using HitSizes = std::vector<float>;
+
+class HitListener
+{
+public:
+    explicit HitListener(double rate)
+        : m_binsASample(1000.0 * static_cast<double>(HitBinsAMs) / rate),
+          m_band(std::array{highpass(HitBandFromHz, rate, ButterworthFourthQ[0]), highpass(HitBandFromHz, rate, ButterworthFourthQ[1]),
+                            lowpass(std::min(HitBandToHz, 0.45 * rate), rate, ButterworthFourthQ[0]),
+                            lowpass(std::min(HitBandToHz, 0.45 * rate), rate, ButterworthFourthQ[1])},
+                 rate)
+    {
+    }
+
+    // The audio, at the rate given, in pieces of any length.
+    void feed(std::span<const double> audio)
+    {
+        m_filtered.clear();
+        m_band.feed(audio, m_filtered);
+        binned();
+    }
+
+    // The audio has ended: the sizes, and none are held any more.
+    HitSizes finish()
+    {
+        m_filtered.clear();
+        m_band.finish(m_filtered);
+        binned();
+        if (m_inBin > 0) {
+            m_sizes.push_back(static_cast<float>(m_sum / static_cast<double>(m_inBin)));
+        }
+        HitSizes sizes = std::move(m_sizes);
+        m_sizes = HitSizes{};
+        m_seen = 0;
+        m_bin = 0;
+        m_sum = 0.0;
+        m_inBin = 0;
+        return sizes;
+    }
+
+private:
+    // What came through the band filter (m_filtered) into its bins. A
+    // bin is given out when a sample of a later one comes. The rates a
+    // grid is found at have two samples and more to a bin; a bin that
+    // no sample fell into would be given out empty all the same, so
+    // that bin i is the audio at i / 4 ms whatever the rate.
+    void binned()
+    {
+        for (const double value : m_filtered) {
+            const auto bin = static_cast<std::size_t>(static_cast<double>(m_seen) * m_binsASample);
+            while (m_bin < bin) {
+                m_sizes.push_back(m_inBin > 0 ? static_cast<float>(m_sum / static_cast<double>(m_inBin)) : 0.0f);
+                ++m_bin;
+                m_sum = 0.0;
+                m_inBin = 0;
+            }
+            m_sum += std::abs(value);
+            ++m_inBin;
+            ++m_seen;
+        }
+    }
+
+    double m_binsASample;
+    BothWays<4> m_band;
+    std::vector<double> m_filtered;
+    HitSizes m_sizes;
+    std::size_t m_seen = 0;
+    std::size_t m_bin = 0;
+    double m_sum = 0.0;
+    std::size_t m_inBin = 0;
+};
+
 // The onset function twice over: every band, which is what the tempo is
 // read from, and the bands from 70 Hz, which is what says where in the
-// beat the beat is.
+// beat the beat is. And the sizes of the band a hit is placed in.
 struct Onsets
 {
     std::vector<double> forTempo;
     std::vector<double> forBeat;
+    HitSizes hits;
 };
 
 // A track listened to as it comes: feed() its audio in pieces, in order,
 // then finish() gives the onset function, one value a millisecond, value
 // i at i ms of the audio. What it holds meanwhile is a few seconds of
-// audio for each band and the rises found so far.
+// audio for each band, the rises found so far, and the sizes of the
+// band a hit is placed in.
 class OnsetListener
 {
 public:
@@ -772,6 +872,7 @@ public:
             filters[b] = BandListener::filters(Bands[b], m_rate);
         }
         m_filters.emplace(filters, m_rate);
+        m_hits.emplace(m_rate);
     }
 
     void feed(std::span<const float> samples)
@@ -806,6 +907,7 @@ public:
             everyOther();
             heard();
         }
+        HitSizes hits = m_hits->finish();
         if (m_count < 2) {
             return Onsets{};
         }
@@ -851,6 +953,7 @@ public:
             // A band's rises are let go of as soon as they are counted.
             band.rises.clear();
         }
+        onsets.hits = std::move(hits);
         return onsets;
     }
 
@@ -875,6 +978,7 @@ private:
         for (BandListener &band : m_bands) {
             band.listened();
         }
+        m_hits->feed(m_piece);
     }
 
     std::array<std::vector<double> *, Bands.size()> nextOfEach()
@@ -891,6 +995,8 @@ private:
     std::vector<BandListener> m_bands;
     // Every band's filter, worked together.
     std::optional<BothWaysTogether<4, Bands.size()>> m_filters;
+    // Made once the rate the bands are read at is known.
+    std::optional<HitListener> m_hits;
     std::vector<double> m_piece;
     std::vector<double> m_lowPassed;
     std::size_t m_lowPassedSeen = 0;
@@ -2080,6 +2186,110 @@ void setOnOnsets(std::vector<double> &beats, const std::vector<double> &onsets)
     beats.swap(distinct);
 }
 
+// Where the hits lie against a grid's beats, finer than the onset
+// function says it: around each beat, 20 ms either way, the moment the
+// hit band's size rises fastest. That is the click of a kick, and the
+// crack of a snare. The size is smoothed over a millisecond (four
+// bins) and its rise taken from one bin to the next; a rise is not one
+// such step but a run of them (a click that is there within one bin
+// makes four equal steps, the smoothing being four bins long), and its
+// moment is the middle of the steps around the steepest that are at
+// least half as steep, each counted by its height.
+//
+// `place` is the middle of that over the stronger half of the beats (by
+// the band's highest size near the beat: the beats with a hit on them,
+// and not those of a breakdown), in ms after the beat; `spread` is how
+// far the beats differ in it, the middle half of them. On a track from a
+// drum machine the clicks come at one place to a few tenths of a
+// millisecond; where the band has hats and voices and no click on the
+// beat, the steepest rise is somewhere else at every beat and the
+// spread says so. How loud the band is does not count, only that the
+// beats agree: a band with nothing regular in it does not agree with
+// itself. Nothing where under 16 beats have the band around them at
+// all.
+struct HitPlace
+{
+    double place = 0.0;
+    double spread = 0.0;
+};
+
+std::optional<HitPlace> hitPlace(const std::vector<double> &beats, const HitSizes &sizes)
+{
+    constexpr double ReachMs = 20.0;
+    const double bins = static_cast<double>(HitBinsAMs);
+    const auto reach = static_cast<std::ptrdiff_t>(ReachMs * bins);
+    const auto count = static_cast<std::ptrdiff_t>(sizes.size());
+    // smoothed(i): the size over the four bins around the start of bin
+    // i, two before it and two from it on. step(i): from that to the
+    // same around the start of the next bin, which is the size two bins
+    // on less the size two bins back; it is the rise at the middle of
+    // bin i.
+    const auto smoothed = [&sizes](std::ptrdiff_t i) {
+        const auto at = static_cast<std::size_t>(i);
+        return (static_cast<double>(sizes[at - 2]) + static_cast<double>(sizes[at - 1]) + static_cast<double>(sizes[at])
+                + static_cast<double>(sizes[at + 1]))
+            / 4.0;
+    };
+    const auto step = [&sizes](std::ptrdiff_t i) {
+        const auto at = static_cast<std::size_t>(i);
+        return (static_cast<double>(sizes[at + 2]) - static_cast<double>(sizes[at - 2])) / 4.0;
+    };
+    std::vector<double> peaks;
+    std::vector<double> places;
+    for (const double beat : beats) {
+        if (!std::isfinite(beat) || beat < 0.0 || beat * bins >= static_cast<double>(count)) {
+            continue;
+        }
+        const auto center = static_cast<std::ptrdiff_t>(std::llround(beat * bins));
+        if (center - reach - 3 < 0 || center + reach + 3 >= count) {
+            continue;
+        }
+        double peak = 0.0;
+        double steepest = 0.0;
+        std::ptrdiff_t at = center - reach;
+        for (std::ptrdiff_t i = center - reach; i <= center + reach; ++i) {
+            peak = std::max(peak, smoothed(i));
+            const double value = step(i);
+            if (value > steepest) {
+                steepest = value;
+                at = i;
+            }
+        }
+        if (!(peak > 0.0) || !(steepest > 0.0)) {
+            continue;
+        }
+        std::ptrdiff_t from = at;
+        std::ptrdiff_t to = at;
+        while (from > center - reach && step(from - 1) >= 0.5 * steepest) {
+            --from;
+        }
+        while (to < center + reach && step(to + 1) >= 0.5 * steepest) {
+            ++to;
+        }
+        double height = 0.0;
+        double weighted = 0.0;
+        for (std::ptrdiff_t i = from; i <= to; ++i) {
+            const double value = step(i);
+            height += value;
+            weighted += value * static_cast<double>(i - at);
+        }
+        const double middle = static_cast<double>(at) + weighted / height;
+        peaks.push_back(peak);
+        places.push_back((middle + 0.5) / bins - beat);
+    }
+    if (peaks.size() < 16) {
+        return std::nullopt;
+    }
+    const double strong = quantile(peaks, 0.5);
+    std::vector<double> kept;
+    for (std::size_t i = 0; i < peaks.size(); ++i) {
+        if (peaks[i] >= strong) {
+            kept.push_back(places[i]);
+        }
+    }
+    return HitPlace{quantile(kept, 0.5), quantile(kept, 0.75) - quantile(kept, 0.25)};
+}
+
 }  // namespace
 
 TempoRange usableTempoRange(TempoRange range)
@@ -2293,10 +2503,40 @@ GridAnalysis gridFromOnsets(const Onsets &both, const TempoRange &range)
             }
         }
     } else {
+        for (double &time : straight) {
+            time += StraightGridLaterMs;
+        }
+        // The grid as the onsets place it, set on its hits where the
+        // hits have one place: see HitBeforeTheClickMs for what that is
+        // measured against and what it gains. Where the clicks differ
+        // from beat to beat by 5 ms and more there is no one place to
+        // set it on, and it stays. And by 5 ms at most. Clicks further
+        // from the grid than that are as often those of another hit as
+        // of the one the grid is on, and a grid that went all the way
+        // to them would leave its beat as often as find it; 5 ms of
+        // the way is right where the click is the hit's own, and costs
+        // little where it is not.
+        constexpr double OnePlaceWithinMs = 5.0;
+        constexpr double MostMs = 5.0;
+        double onTheHit = 0.0;
+        if (const std::optional<HitPlace> hit = hitPlace(straight, both.hits); hit && hit->spread < OnePlaceWithinMs) {
+            onTheHit = std::clamp(hit->place - HitBeforeTheClickMs, -MostMs, MostMs);
+        }
+        // Every beat of the grid, as it is given out, that lies in the
+        // audio. The list above holds the beats from the first one the
+        // onsets place in the track: given out later than that, or
+        // moved, the grid may have one before it that is in the track
+        // too, and moved earlier one more at the end.
+        if (!straight.empty() && straight.front() + onTheHit - period >= 0.0) {
+            analysis.beats.push_back({straight.front() + onTheHit - period, 0});
+        }
         for (const double time : straight) {
-            if (time + StraightGridLaterMs <= last) {
-                analysis.beats.push_back({time + StraightGridLaterMs, 0});
+            if (time + onTheHit >= 0.0 && time + onTheHit <= last) {
+                analysis.beats.push_back({time + onTheHit, 0});
             }
+        }
+        if (!straight.empty() && straight.back() + onTheHit + period <= last) {
+            analysis.beats.push_back({straight.back() + onTheHit + period, 0});
         }
     }
     analysis.confidence = sure;

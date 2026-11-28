@@ -27,7 +27,9 @@ namespace musicanalyze
 // test makes, and music has more in it than that.
 // Grid 2: the audio is listened to in blocks (the same grid on 2,828 of
 // 2,831 tracks, see grid.cpp), and no grid is looked for under 8 kHz.
-inline constexpr int GridRevision = 2;
+// Grid 3: a straight grid is set on the click of its hits (by up to
+// 5 ms, see HitBeforeTheClickMs in grid.hpp).
+inline constexpr int GridRevision = 3;
 inline constexpr int KeyRevision = 1;
 inline constexpr int WaveformRevision = 1;
 

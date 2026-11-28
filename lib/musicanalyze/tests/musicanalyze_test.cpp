@@ -28,6 +28,7 @@
 #include <iostream>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <string>
@@ -124,6 +125,38 @@ Audio house(int rate, double bpm, double seconds, double firstBeat)
     return audio;
 }
 
+// A click: a millisecond of a tone, swelling and fading. At 8 kHz it is
+// above the bands the onset function is made of (the highest ends at
+// 5 kHz and lets a fortieth of it through), so that it has next to no
+// say in where the beats are looked for, and at the top of the band a
+// grid is set on its hits by.
+void addClick(Audio &audio, double atSeconds, double gain, double hz = 8000.0)
+{
+    const auto start = static_cast<std::size_t>(atSeconds * audio.rate);
+    const auto length = static_cast<std::size_t>(0.001 * audio.rate);
+    for (std::size_t i = 0; i < length && start + i < audio.samples.size(); ++i) {
+        const double t = static_cast<double>(i) / audio.rate;
+        const double swell = 0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(length));
+        audio.samples[start + i] += static_cast<float>(gain * swell * std::sin(2.0 * std::numbers::pi * hz * t));
+    }
+}
+
+// house() with a click on every kick, `clickAfterMs` after the kick
+// begins; with `scatterMs`, each click up to that much earlier or later
+// than that, differently at every beat. The clicks stop at
+// `clicksUntil` seconds, and are tones at `hz`.
+Audio clicking(int rate, double bpm, double seconds, double firstBeat, double clickAfterMs, double scatterMs,
+               double clicksUntil = 1e9, double hz = 8000.0)
+{
+    Audio audio = house(rate, bpm, seconds, firstBeat);
+    Noise noise(4);
+    const double beat = 60.0 / bpm;
+    for (double at = firstBeat; at < seconds - 0.5 && at < clicksUntil; at += beat) {
+        addClick(audio, at + (clickAfterMs + scatterMs * noise.next()) / 1000.0, 0.25, hz);
+    }
+    return audio;
+}
+
 // A kick and a snare taking turns, a hat on every beat between: the
 // rhythm that can be counted at the tempo or at its half.
 Audio kickAndSnare(int rate, double bpm, double seconds, double firstBeat)
@@ -144,14 +177,18 @@ Audio kickAndSnare(int rate, double bpm, double seconds, double firstBeat)
 }
 
 // A kick on every beat of a tempo that climbs evenly from one to the
-// other: what a straight grid cannot follow.
-Audio climbing(int rate, double fromBpm, double toBpm, double seconds, double firstBeat)
+// other: what a straight grid cannot follow. With `clickAfterMs`, a
+// click that long after every kick begins.
+Audio climbing(int rate, double fromBpm, double toBpm, double seconds, double firstBeat, std::optional<double> clickAfterMs = std::nullopt)
 {
     Audio audio = silence(rate, seconds);
     Noise noise(3);
     for (double at = firstBeat; at < seconds - 0.5;) {
         const double bpm = fromBpm + (toBpm - fromBpm) * at / seconds;
         addKick(audio, at, 0.7);
+        if (clickAfterMs) {
+            addClick(audio, at + *clickAfterMs / 1000.0, 0.25);
+        }
         addBurst(audio, at + 30.0 / bpm, 0.15, 0.05, false, noise);
         at += 60.0 / bpm;
     }
@@ -609,7 +646,10 @@ void audioInPiecesIsTheAudioWhole()
 {
     // Long enough for the filters that run backwards to do so in several
     // blocks, at a rate that is halved first and at one that is not.
-    for (const Audio &audio : {climbing(44100, 118.0, 128.0, 75.0, 0.3), house(32000, 126.0, 50.0, 0.25)}) {
+    // And a track whose grid is set on its clicks, so that the band the
+    // clicks are read in is in it.
+    for (const Audio &audio :
+         {climbing(44100, 118.0, 128.0, 75.0, 0.3), house(32000, 126.0, 50.0, 0.25), clicking(44100, 126.0, 50.0, 0.25, 1.0, 0.0)}) {
         const std::string at = " at " + std::to_string(audio.rate) + " Hz";
         const GridAnalysis whole = gridFromSamples(audio.samples, audio.rate);
         BeatGridAnalyzer grid(audio.rate);
@@ -680,10 +720,32 @@ void audioInPiecesIsTheAudioWhole()
           "an analyzer fed nothing: errors, and nothing made up");
 }
 
+// Where a grid sits against the kicks of house() or clicking(): the
+// middle, over its beats, of how many ms a beat is after the beginning
+// of the kick nearest to it.
+double afterTheKicks(const GridAnalysis &grid, double bpm, double firstBeat)
+{
+    const double beat = 60000.0 / bpm;
+    std::vector<double> after;
+    for (const Beat &at : grid.beats) {
+        const double kick = firstBeat * 1000.0 + std::round((at.timeMs - firstBeat * 1000.0) / beat) * beat;
+        after.push_back(at.timeMs - kick);
+    }
+    if (after.empty()) {
+        return 1e9;
+    }
+    std::sort(after.begin(), after.end());
+    return after[after.size() / 2];
+}
+
 // One track made at every sample rate a file comes in, and at the lowest
 // one read: the same grid, wherever the bands' filters and the halving
-// of the rate fall. (Measured when this was written: every beat within
-// 0.05 ms of where 44.1 kHz has it.)
+// of the rate fall. And the same of a track whose kicks carry a click,
+// at 3 kHz so that the lowest rate holds it: at every rate the grid is
+// set on the click. From 22 kHz of sample rate, which holds 10 kHz,
+// there is a far louder tick up there as well, 2 ms before every kick:
+// that is above the band a grid is set on its hits by, and the grid
+// stays on the click.
 void everySampleRateGivesTheGrid()
 {
     const Audio reference = house(44100, 126.0, 40.0, 0.25);
@@ -705,6 +767,127 @@ void everySampleRateGivesTheGrid()
                   + std::to_string(expected.beats.size()) + ", farthest by " + number(farthest, 3) + " ms");
         check(analysis.waveform.entries.size() == 6000 && analysis.key.error.empty(), "a waveform of 40 s and a key looked for" + at);
     }
+
+    const auto withClicks = [](int rate) {
+        Audio audio = clicking(rate, 126.0, 40.0, 0.25, 1.0, 0.0, 1e9, 3000.0);
+        if (rate >= 22050) {
+            for (double at = 0.25; at < 40.0 - 0.5; at += 60.0 / 126.0) {
+                addClick(audio, at - 0.002, 1.0, 10000.0);
+            }
+        }
+        return gridFromSamples(audio.samples, audio.rate);
+    };
+    const GridAnalysis expectedOnClicks = withClicks(44100);
+    const double onTheClick = afterTheKicks(expectedOnClicks, 126.0, 0.25);
+    check(std::abs(onTheClick - (1.0 - HitBeforeTheClickMs)) < 0.15,
+          "a grid is set on clicks at 3 kHz as on any, at 44.1 kHz: " + number(onTheClick, 3) + " ms after the kicks");
+    for (const int rate : {GridLowestSampleRateHz, 11025, 22050, 32000, 48000, 96000, 192000}) {
+        const GridAnalysis grid = withClicks(rate);
+        double farthest = 0.0;
+        const bool sameCount = grid.beats.size() == expectedOnClicks.beats.size() && grid.beats.size() > 80;
+        for (std::size_t i = 0; sameCount && i < grid.beats.size(); ++i) {
+            farthest = std::max(farthest, std::abs(grid.beats[i].timeMs - expectedOnClicks.beats[i].timeMs));
+        }
+        check(sameCount && farthest < 0.3,
+              "the beats of a track with clicks are where 44.1 kHz has them at " + std::to_string(rate) + " Hz: farthest by "
+                  + number(farthest, 3) + " ms");
+    }
+}
+
+// A straight grid is set on the clicks of its hits: it goes where they
+// go, a millisecond for a millisecond, as long as the beats agree on
+// where the click is, and by 5 ms at most.
+void aStraightGridIsSetOnItsClicks()
+{
+    const double bpm = 126.0;
+    const double first = 0.25;
+    const auto placed = [&](double clickAfterMs, double scatterMs) {
+        const Audio audio = clicking(44100, bpm, 40.0, first, clickAfterMs, scatterMs);
+        const GridAnalysis grid = gridFromSamples(audio.samples, audio.rate);
+        check(grid.error.empty() && !grid.followsTempo && grid.beats.size() > 80,
+              "a kick with a click " + number(clickAfterMs, 0) + " ms after it begins has its straight grid");
+        return afterTheKicks(grid, bpm, first);
+    };
+    // Clicks that agree on no place (each up to 12 ms either way) leave
+    // the grid where the onsets put it: that is where a grid without
+    // this would be, and what the others are measured from.
+    const double byOnsets = placed(1.0, 12.0);
+    const double byOnsetsToo = placed(3.0, 12.0);
+    check(std::abs(byOnsets - byOnsetsToo) < 0.2,
+          "clicks that agree on no place move nothing, wherever their middle is: " + number(byOnsets, 3) + " and " + number(byOnsetsToo, 3));
+    check(std::abs(byOnsets + 3.4) < 0.2, "the onsets put the grid of this kick 3.4 ms before the kick begins: " + number(byOnsets, 3));
+    // The moment a click is taken to be at is where its size, summed
+    // over a millisecond, grows fastest: for one that swells and fades
+    // within a millisecond that is where it begins. (The onsets put
+    // this kick's grid some 3 ms before the kick begins, so a click a
+    // millisecond either side of that beginning is within the 5 ms.)
+    for (const double clickAfterMs : {-1.0, 1.0}) {
+        const double at = placed(clickAfterMs, 0.0);
+        check(std::abs(at - (clickAfterMs - HitBeforeTheClickMs)) < 0.15,
+              "a grid is " + number(HitBeforeTheClickMs, 1) + " ms before the clicks of its kicks, " + number(clickAfterMs, 0)
+                  + " ms after they begin: " + number(at, 3) + " ms after them");
+    }
+    // Beats without a click (over half of the track here, from 18 s on)
+    // do not decide the place: it is that of the half of the beats on
+    // which the band is strongest, and nearly all of those have a click.
+    {
+        const Audio audio = clicking(44100, bpm, 40.0, first, 1.0, 0.0, 18.0);
+        const double at = afterTheKicks(gridFromSamples(audio.samples, audio.rate), bpm, first);
+        check(std::abs(at - (1.0 - HitBeforeTheClickMs)) < 0.15,
+              "a grid is set on its clicks though over half of the track has none: " + number(at, 3) + " ms after the kicks");
+    }
+    // Clicks 10 and 14 ms after the kick begins are both over 5 ms from
+    // where the onsets put the grid: it goes 5 ms towards them and no
+    // further. And as far the other way, for clicks before it.
+    const double far = placed(10.0, 0.0);
+    const double farther = placed(14.0, 0.0);
+    check(std::abs(far - (byOnsets + 5.0)) < 0.2 && std::abs(farther - (byOnsets + 5.0)) < 0.2,
+          "a grid goes 5 ms towards its clicks at most: from " + number(byOnsets, 3) + " to " + number(far, 3) + " and " + number(farther, 3));
+    const double before = placed(-12.0, 0.0);
+    const double longBefore = placed(-16.0, 0.0);
+    check(std::abs(before - (byOnsets - 5.0)) < 0.2 && std::abs(longBefore - (byOnsets - 5.0)) < 0.2,
+          "a grid goes 5 ms back towards its clicks at most: from " + number(byOnsets, 3) + " to " + number(before, 3) + " and " + number(longBefore, 3));
+
+    // A grid that follows the tempo is not set on its clicks: each of
+    // its beats is set on its own onset, and clicks 3 ms before the
+    // kicks and 3 ms after them make one grid.
+    const Audio clicksBefore = climbing(44100, 118.0, 128.0, 75.0, 0.3, -3.0);
+    const Audio clicksAfter = climbing(44100, 118.0, 128.0, 75.0, 0.3, 3.0);
+    const GridAnalysis followedBefore = gridFromSamples(clicksBefore.samples, clicksBefore.rate);
+    const GridAnalysis followedAfter = gridFromSamples(clicksAfter.samples, clicksAfter.rate);
+    const bool followedBoth = followedBefore.followsTempo && followedAfter.followsTempo && followedBefore.beats.size() > 80
+                              && followedBefore.beats.size() == followedAfter.beats.size();
+    double apart = 0.0;
+    for (std::size_t i = 0; followedBoth && i < followedBefore.beats.size(); ++i) {
+        apart = std::max(apart, std::abs(followedBefore.beats[i].timeMs - followedAfter.beats[i].timeMs));
+    }
+    check(followedBoth && apart < 0.5, "a grid that follows the tempo does not go with its clicks: farthest apart by " + number(apart, 3) + " ms");
+}
+
+// A grid that was moved has every beat that lies in the audio, as one
+// that was not: a beat the move brings in at the start or at the end is
+// there.
+void aMovedGridHasEveryBeatInTheAudio()
+{
+    const double bpm = 126.0;
+    const double beat = 60000.0 / bpm;
+    // The first kick 2 ms into the track: the onsets put its beat before
+    // the track begins, and clicks 4 ms after the kicks bring it in.
+    const Audio early = clicking(44100, bpm, 40.0, 0.002, 4.0, 0.0);
+    const GridAnalysis head = gridFromSamples(early.samples, early.rate);
+    check(head.beats.size() > 80 && head.beats.front().timeMs >= 0.0 && head.beats.front().timeMs < 10.0,
+          "a beat the move brings into the start of the track is there: the first beat at "
+              + (head.beats.empty() ? std::string("none") : number(head.beats.front().timeMs, 3)) + " ms");
+    // The track ends 2 ms before a beat as the onsets place it (some
+    // 3.4 ms before a kick would begin there), and clicks 12 ms before
+    // the kicks take the grid 5 ms back: that beat is in the track.
+    const double first = 0.25;
+    const double endMs = first * 1000.0 - 3.4 + 84.0 * beat - 2.0;
+    const Audio late = clicking(44100, bpm, endMs / 1000.0, first, -12.0, 0.0);
+    const GridAnalysis tail = gridFromSamples(late.samples, late.rate);
+    check(tail.beats.size() > 80 && tail.beats.back().timeMs <= endMs && tail.beats.back().timeMs > endMs - 10.0,
+          "a beat the move brings into the end of the track is there: the last beat at "
+              + (tail.beats.empty() ? std::string("none") : number(tail.beats.back().timeMs, 3)) + " ms of " + number(endMs, 3));
 }
 
 void theVersionIsTheHeaders()
@@ -734,6 +917,8 @@ int main(int argc, char **argv)
     piecesGiveTheWhole();
     audioInPiecesIsTheAudioWhole();
     everySampleRateGivesTheGrid();
+    aStraightGridIsSetOnItsClicks();
+    aMovedGridHasEveryBeatInTheAudio();
     checkResults(arguments[0]);
     if (failures != 0) {
         std::cerr << failures << " failed\n";

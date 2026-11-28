@@ -54,8 +54,8 @@ Analysis analyze(std::span<const float> samples, int sampleRateHz, TempoRange ra
 // them in order, of any length, then finish(). The result is the one
 // analyze() gives for the pieces joined (which is this, fed once). What
 // is held meanwhile is a few seconds of audio and what was heard so far
-// (about 45 MB, and 3.5 MB a minute of music), and never the track: a mix
-// of two hours takes under 500 MB, where its samples alone are 1.3 GB.
+// (about 45 MB, and 4.3 MB a minute of music), and never the track: a mix
+// of two hours takes under 600 MB, where its samples alone are 1.3 GB.
 class Analyzer
 {
 public:
