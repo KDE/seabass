@@ -11,6 +11,11 @@
 namespace seabass::infrastructure::audio
 {
 
+namespace decoder_start
+{
+struct Attempt;
+}
+
 // Finds where a track's music starts and stops by decoding it with
 // QAudioDecoder (QtMultimedia's FFmpeg backend) and looking for the
 // first and last sample above a silence threshold.
@@ -55,6 +60,11 @@ public:
     std::optional<domain::AudioContentSpan> measure(const std::string &absoluteFilePath) override;
 
 private:
+    // One start of the decoder; `gaveNothing` where it said nothing at
+    // all before its first sample, which measure() starts again.
+    std::optional<domain::AudioContentSpan> measureOnce(const std::string &absoluteFilePath,
+                                                        const decoder_start::Attempt &attempt, bool &gaveNothing);
+
     double m_silenceThreshold;  // linear amplitude, 0..1
     int m_timeoutMs;
 };

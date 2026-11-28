@@ -51,6 +51,11 @@ public:
     // file: a caller may take its time between reads. A damaged file can
     // leave the backend never answering at all, and a scan must not hang
     // on it.
+    //
+    // A decoder that gives nothing at all before its first sample, and
+    // reports no fault, is a fault of the backend's that a sound file
+    // meets now and then: the file is then opened again, three times in
+    // all (qt_decoder_start.hpp). openAttempts() says how often.
     explicit QtMultimediaPcmSource(const std::string &absoluteFilePath, int stallTimeoutMs = 10000);
     ~QtMultimediaPcmSource() override;
     QtMultimediaPcmSource(const QtMultimediaPcmSource &) = delete;
@@ -67,6 +72,10 @@ public:
     // The most decoded samples this source has held at once, waiting to
     // be read.
     std::size_t peakHeldSamples() const;
+
+    // How often the file was opened: 1 but for the fault above, and 0
+    // where it never was (no such file, no backend).
+    int openAttempts() const;
 
 private:
     struct State;

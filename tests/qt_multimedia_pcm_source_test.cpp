@@ -34,11 +34,14 @@
 #include "domain/mp3_lead_in.hpp"
 #include "domain/pcm_source.hpp"
 #include "infrastructure/audio/mp3_lead_in_reader.hpp"
+#include "infrastructure/audio/qt_decoder_start.hpp"
 #include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
 #include "synth_track/synth_track.hpp"
 
 using namespace seabass;
 using infrastructure::audio::QtMultimediaPcmSource;
+
+namespace decoder_start = seabass::infrastructure::audio::decoder_start;
 
 namespace
 {
@@ -221,6 +224,81 @@ void errors(const std::string &dir)
           "errors come at once, not after the stall timeout: " + std::to_string(timer.elapsed()) + " ms");
 }
 
+// Everything a source gives, and its error.
+std::vector<float> all(QtMultimediaPcmSource &source)
+{
+    std::vector<float> out;
+    std::vector<float> chunk(4096);
+    for (;;) {
+        const std::size_t got = source.read(chunk);
+        if (got == 0) {
+            break;
+        }
+        out.insert(out.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(got));
+    }
+    return out;
+}
+
+// A decoder that gives nothing before its first sample (the backend's
+// fault that a sound file meets now and then) is opened again, and what
+// comes then is the file, whole and from its first sample.
+void opensAgain(const std::string &dir)
+{
+    const std::string file = dir + "/L-ref.flac";
+    QtMultimediaPcmSource plain(file);
+    const std::vector<float> expected = all(plain);
+    check(plain.error().empty() && plain.openAttempts() == 1 && expected.size() == 937125,
+          "a sound file opens at the first attempt: " + std::to_string(plain.openAttempts()) + " " + plain.error());
+
+    // One attempt and two attempts that give nothing (each waited for
+    // 100 ms here, where the app waits three seconds): the next one has
+    // the file, to the sample. The attempt that decodes keeps the
+    // app's own times, so a slow runner does not look like the fault.
+    for (int silent = 1; silent <= 2; ++silent) {
+        decoder_start::setSilentAttemptsForTesting(silent, 100);
+        QElapsedTimer timer;
+        timer.start();
+        QtMultimediaPcmSource source(file);
+        const qint64 opened = timer.elapsed();
+        decoder_start::setSilentAttemptsForTesting(0);
+        check(source.error().empty() && source.sampleRate() == 11025,
+              std::to_string(silent) + " silent attempt(s): the file is open after them: " + source.error());
+        check(source.openAttempts() == silent + 1,
+              std::to_string(silent) + " silent attempt(s): opened " + std::to_string(source.openAttempts()) + " times");
+        // A coarse timer may ring a twentieth early.
+        check(opened >= 90 * silent, std::to_string(silent) + " silent attempt(s) were each waited for: "
+                                         + std::to_string(opened) + " ms");
+        check(all(source) == expected, std::to_string(silent) + " silent attempt(s): the same samples as a plain decode");
+    }
+
+    // Three: given up, with the stall as the error and no samples, and
+    // not tried a fourth time. The last attempt is waited for the whole
+    // stall timeout (400 ms here) and not for the shorter time of the
+    // two before it: 100 + 100 + 400.
+    decoder_start::setSilentAttemptsForTesting(3, 100);
+    QElapsedTimer timer;
+    timer.start();
+    QtMultimediaPcmSource never(file, 400);
+    const qint64 gaveUp = timer.elapsed();
+    decoder_start::setSilentAttemptsForTesting(0);
+    std::vector<float> chunk(64);
+    check(never.openAttempts() == 3 && never.sampleRate() == 0 && never.read(chunk) == 0
+              && never.error().find("gave nothing for 400 ms") != std::string::npos,
+          "three silent attempts are an error: " + std::to_string(never.openAttempts()) + " " + never.error());
+    check(gaveUp >= 540, "the last attempt has the whole stall timeout: " + std::to_string(gaveUp) + " ms");
+
+    // A file the decoder refuses is not a stall: refused once.
+    QtMultimediaPcmSource notAudio(dir + "/README.md");
+    check(!notAudio.error().empty() && notAudio.openAttempts() == 1,
+          "a file that is not audio is not tried again: " + std::to_string(notAudio.openAttempts()));
+    QtMultimediaPcmSource missing(dir + "/no-such-file.flac");
+    check(missing.openAttempts() == 0, "a file that is not there is never opened");
+
+    // And the source after a fault is an ordinary one again.
+    QtMultimediaPcmSource after(file);
+    check(after.openAttempts() == 1 && all(after) == expected, "the next source is not silenced");
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -249,6 +327,7 @@ int main(int argc, char **argv)
     synthRoundTrip(scratch.path().toStdString(), "house-124-48k");
     streaming(argv[2]);
     errors(argv[2]);
+    opensAgain(argv[2]);
     if (failures > 0) {
         std::cerr << failures << " check(s) FAILED\n";
         return 1;

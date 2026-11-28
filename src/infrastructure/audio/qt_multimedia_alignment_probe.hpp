@@ -17,6 +17,11 @@
 namespace seabass::infrastructure::audio
 {
 
+namespace decoder_start
+{
+struct Attempt;
+}
+
 // Lines two copies of a song up by decoding both in full with
 // QAudioDecoder (QtMultimedia's FFmpeg backend) and handing the samples
 // to domain/audio_alignment, where the correlation and the rule that
@@ -63,6 +68,11 @@ public:
 
 private:
     std::shared_ptr<const domain::alignment::KeptSamples> decode(const std::string &absoluteFilePath) const;
+    // One start of the decoder; `gaveNothing` where it said nothing at
+    // all before its first sample, which decode() starts again.
+    std::shared_ptr<const domain::alignment::KeptSamples> decodeOnce(const std::string &absoluteFilePath,
+                                                                     const decoder_start::Attempt &attempt,
+                                                                     bool &gaveNothing) const;
 
     struct Entry
     {

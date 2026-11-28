@@ -4,6 +4,8 @@
 
 #include "infrastructure/audio/qt_multimedia_silence_probe.hpp"
 
+#include "infrastructure/audio/qt_decoder_start.hpp"
+
 #include <QAudioBuffer>
 #include <QAudioDecoder>
 #include <QAudioFormat>
@@ -70,8 +72,11 @@ QtMultimediaSilenceProbe::QtMultimediaSilenceProbe(double silenceDb, int timeout
 {
 }
 
-std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const std::string &absoluteFilePath)
+std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measureOnce(const std::string &absoluteFilePath,
+                                                                              const decoder_start::Attempt &attempt,
+                                                                              bool &gaveNothing)
 {
+    gaveNothing = false;
     if (absoluteFilePath.empty()) {
         return std::nullopt;
     }
@@ -96,6 +101,7 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
         return std::nullopt;
     }
     QEventLoop loop;
+    decoder_start::FirstSampleWatch watch(attempt, loop, m_timeoutMs);
 
     // Frame counts rather than timestamps. QAudioBuffer::startTime() is
     // not reliable across backends for a container whose first packet
@@ -108,6 +114,9 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
     bool unreadableFormat = false;
 
     QObject::connect(&decoder, &QAudioDecoder::bufferReady, &loop, [&]() {
+        if (!watch.heard()) {
+            return;
+        }
         while (decoder.bufferAvailable()) {
             const QAudioBuffer buffer = decoder.read();
             if (!buffer.isValid()) {
@@ -155,6 +164,9 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
     // an answer already given.
     bool done = false;
     QObject::connect(&decoder, &QAudioDecoder::finished, &loop, [&]() {
+        if (!watch.heard()) {
+            return;
+        }
         done = true;
         loop.quit();
     });
@@ -162,6 +174,9 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
     // the getter `error()`; without it the address is ambiguous.
     QObject::connect(&decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), &loop,
                       [&](QAudioDecoder::Error) {
+                          if (!watch.heard()) {
+                              return;
+                          }
                           done = true;
                           loop.quit();
                       });
@@ -190,12 +205,20 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
     timeout.start(m_timeoutMs);
 
     decoder.setSource(QUrl::fromLocalFile(path));
-    decoder.start();
+    if (!attempt.silenced) {
+        decoder.start();
+    }
     // Only wait if there is still something to wait for -- see `done`.
     if (!done) {
         loop.exec();
     }
     decoder.stop();
+    // A decoder that said nothing at all is not this file's answer:
+    // measure() starts it again (qt_decoder_start.hpp).
+    if (watch.gaveNothing()) {
+        gaveNothing = true;
+        return std::nullopt;
+    }
 
     if (timedOut || unreadableFormat || decoder.error() != QAudioDecoder::NoError) {
         return std::nullopt;
@@ -220,6 +243,17 @@ std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const 
     }
     span.leadingSilenceSeconds = static_cast<double>(firstLoudFrame) / sampleRate;
     span.trailingSilenceSeconds = static_cast<double>(framesSeen - 1 - lastLoudFrame) / sampleRate;
+    return span;
+}
+
+std::optional<domain::AudioContentSpan> QtMultimediaSilenceProbe::measure(const std::string &absoluteFilePath)
+{
+    std::optional<domain::AudioContentSpan> span;
+    decoder_start::run(absoluteFilePath, [&](const decoder_start::Attempt &attempt) {
+        bool gaveNothing = false;
+        span = measureOnce(absoluteFilePath, attempt, gaveNothing);
+        return gaveNothing;
+    });
     return span;
 }
 

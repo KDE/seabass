@@ -4,6 +4,8 @@
 
 #include "infrastructure/audio/qt_multimedia_alignment_probe.hpp"
 
+#include "infrastructure/audio/qt_decoder_start.hpp"
+
 #include <QAudioBuffer>
 #include <QAudioDecoder>
 #include <QAudioFormat>
@@ -113,9 +115,10 @@ domain::AudioAlignmentProbe::Answer QtMultimediaAlignmentProbe::align(const std:
     return shift ? Answer::linedUp(*shift) : Answer::notLinedUp();
 }
 
-std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decode(
-    const std::string &absoluteFilePath) const
+std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decodeOnce(
+    const std::string &absoluteFilePath, const decoder_start::Attempt &attempt, bool &gaveNothing) const
 {
+    gaveNothing = false;
     if (absoluteFilePath.empty()) {
         return nullptr;
     }
@@ -128,6 +131,7 @@ std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe
         return nullptr;
     }
     QEventLoop loop;
+    decoder_start::FirstSampleWatch watch(attempt, loop, m_timeoutMs);
 
     // Frames are counted from the first buffer, not read off
     // QAudioBuffer::startTime(): the silence probe's reasoning, and the
@@ -138,6 +142,9 @@ std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe
     bool unreadable = false;
 
     QObject::connect(&decoder, &QAudioDecoder::bufferReady, &loop, [&]() {
+        if (!watch.heard()) {
+            return;
+        }
         while (decoder.bufferAvailable()) {
             const QAudioBuffer buffer = decoder.read();
             if (!buffer.isValid() || unreadable) {
@@ -183,11 +190,17 @@ std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe
     // bare quit(): start() can emit either of these synchronously.
     bool done = false;
     QObject::connect(&decoder, &QAudioDecoder::finished, &loop, [&]() {
+        if (!watch.heard()) {
+            return;
+        }
         done = true;
         loop.quit();
     });
     QObject::connect(&decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), &loop,
                      [&](QAudioDecoder::Error) {
+                         if (!watch.heard()) {
+                             return;
+                         }
                          done = true;
                          loop.quit();
                      });
@@ -212,11 +225,19 @@ std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe
     timeout.start(m_timeoutMs);
 
     decoder.setSource(QUrl::fromLocalFile(path));
-    decoder.start();
+    if (!attempt.silenced) {
+        decoder.start();
+    }
     if (!done) {
         loop.exec();
     }
     decoder.stop();
+    // A decoder that said nothing at all is not this file's answer:
+    // decode() starts it again (qt_decoder_start.hpp).
+    if (watch.gaveNothing()) {
+        gaveNothing = true;
+        return nullptr;
+    }
 
     // Only a whole file: a partial decode would line up its start and
     // have nothing to say about its end.
@@ -229,6 +250,18 @@ std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe
     if (samples->total == 0) {
         return nullptr;
     }
+    return samples;
+}
+
+std::shared_ptr<const domain::alignment::KeptSamples> QtMultimediaAlignmentProbe::decode(
+    const std::string &absoluteFilePath) const
+{
+    std::shared_ptr<const domain::alignment::KeptSamples> samples;
+    decoder_start::run(absoluteFilePath, [&](const decoder_start::Attempt &attempt) {
+        bool gaveNothing = false;
+        samples = decodeOnce(absoluteFilePath, attempt, gaveNothing);
+        return gaveNothing;
+    });
     return samples;
 }
 

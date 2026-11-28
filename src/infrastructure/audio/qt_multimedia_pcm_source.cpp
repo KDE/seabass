@@ -4,6 +4,8 @@
 
 #include "infrastructure/audio/qt_multimedia_pcm_source.hpp"
 
+#include "infrastructure/audio/qt_decoder_start.hpp"
+
 #include <QAudioBuffer>
 #include <QAudioDecoder>
 #include <QAudioFormat>
@@ -17,6 +19,7 @@
 #include <algorithm>
 #include <limits>
 #include <optional>
+#include <memory>
 #include <vector>
 
 namespace seabass::infrastructure::audio
@@ -51,8 +54,13 @@ std::optional<float> sampleValue(const QAudioBuffer &buffer, qsizetype index)
 
 struct QtMultimediaPcmSource::State
 {
-    QAudioDecoder decoder;
+    // Made anew for every attempt at opening the file (see open()).
+    std::unique_ptr<QAudioDecoder> made;
     int stallTimeoutMs = 10000;
+    // How long this wait may last: stallTimeoutMs, but for the first
+    // sample of an attempt that another follows.
+    int waitMs = 10000;
+    int attempts = 0;
     int sampleRate = 0;
     std::string error;
     // Decoded and not yet read: samples[position..].
@@ -65,8 +73,8 @@ struct QtMultimediaPcmSource::State
     // read, with `error` set.
     bool takeBuffers()
     {
-        while (decoder.bufferAvailable()) {
-            const QAudioBuffer buffer = decoder.read();
+        while (made->bufferAvailable()) {
+            const QAudioBuffer buffer = made->read();
             if (!buffer.isValid()) {
                 continue;
             }
@@ -115,6 +123,9 @@ struct QtMultimediaPcmSource::State
     // entered at all.
     QEventLoop *loop = nullptr;
     bool answered = false;
+    // The error is the stall timer's: nothing came, and the decoder
+    // itself reported no fault.
+    bool gaveNothing = false;
 
     void answer()
     {
@@ -126,38 +137,79 @@ struct QtMultimediaPcmSource::State
 
     void connectDecoder()
     {
-        QObject::connect(&decoder, &QAudioDecoder::bufferReady, &decoder, [this]() {
+        QObject::connect(made.get(), &QAudioDecoder::bufferReady, made.get(), [this]() {
             if (!takeBuffers()) {
-                decoder.stop();
+                made->stop();
             }
             answer();
         });
-        QObject::connect(&decoder, &QAudioDecoder::finished, &decoder, [this]() {
+        QObject::connect(made.get(), &QAudioDecoder::finished, made.get(), [this]() {
             if (takeBuffers()) {
                 finished = true;
             }
             answer();
         });
-        QObject::connect(&decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), &decoder,
+        QObject::connect(made.get(), QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), made.get(),
                          [this](QAudioDecoder::Error) {
                              if (error.empty()) {
-                                 error = "decoding failed: " + decoder.errorString().toStdString();
+                                 error = "decoding failed: " + made->errorString().toStdString();
                              }
                              answer();
                          });
     }
 
+    // One attempt at the file: a decoder of its own, started, and waited
+    // for up to its first sample. `mute` (a test's) leaves the decoder
+    // unstarted, which is what the fault looks like from here: no
+    // buffer, no end, no error.
+    void open(const QString &path, bool mute)
+    {
+        if (made) {
+            made->stop();
+        }
+        made = std::make_unique<QAudioDecoder>();
+        error.clear();
+        gaveNothing = false;
+        finished = false;
+        sampleRate = 0;
+        samples.clear();
+        position = 0;
+        peakHeld = 0;
+        // Mono floats are what the port hands on; asked for here so that
+        // the backend mixes down. A backend that ignores it is handled by
+        // takeBuffers(), which mixes and converts whatever arrives.
+        QAudioFormat wanted;
+        wanted.setSampleFormat(QAudioFormat::Float);
+        wanted.setChannelCount(1);
+        made->setAudioFormat(wanted);
+        made->setSource(QUrl::fromLocalFile(path));
+        connectDecoder();
+        if (!mute) {
+            made->start();
+        }
+        // A backend that refuses the file may say so from start() itself.
+        if (error.empty() && made->error() != QAudioDecoder::NoError) {
+            error = "decoding failed: " + made->errorString().toStdString();
+        }
+        while (sampleRate == 0 && !finished && error.empty()) {
+            waitForMore();
+        }
+        if (sampleRate == 0 && error.empty()) {
+            error = "the decoder gave no audio";
+        }
+    }
+
     // Runs the event loop until a buffer has come, the decoder is done or
-    // has failed, or nothing came for stallTimeoutMs.
+    // has failed, or nothing came for waitMs.
     void waitForMore()
     {
         if (finished || !error.empty()) {
             return;
         }
         answered = false;
-        if (decoder.bufferAvailable()) {
+        if (made->bufferAvailable()) {
             if (!takeBuffers()) {
-                decoder.stop();
+                made->stop();
             }
             return;
         }
@@ -166,18 +218,19 @@ struct QtMultimediaPcmSource::State
         stall.setSingleShot(true);
         QObject::connect(&stall, &QTimer::timeout, &events, [this]() {
             if (error.empty()) {
-                error = "the decoder gave nothing for " + std::to_string(stallTimeoutMs) + " ms";
+                error = "the decoder gave nothing for " + std::to_string(waitMs) + " ms";
+                gaveNothing = true;
             }
             answer();
         });
-        stall.start(stallTimeoutMs);
+        stall.start(waitMs);
         loop = &events;
         if (!answered) {
             events.exec();
         }
         loop = nullptr;
         if (!error.empty()) {
-            decoder.stop();
+            made->stop();
         }
     }
 };
@@ -205,36 +258,35 @@ QtMultimediaPcmSource::QtMultimediaPcmSource(const std::string &absoluteFilePath
         d->error = "no QCoreApplication: the decoder needs an event loop";
         return;
     }
-    if (!d->decoder.isSupported()) {
+    if (!QAudioDecoder().isSupported()) {
         d->error = "no audio decoding backend (QAudioDecoder::isSupported() is false)";
         return;
     }
-    // Mono floats are what the port hands on; asked for here so that the
-    // backend mixes down. A backend that ignores it is handled by
-    // takeBuffers(), which mixes and converts whatever arrives.
-    QAudioFormat wanted;
-    wanted.setSampleFormat(QAudioFormat::Float);
-    wanted.setChannelCount(1);
-    d->decoder.setAudioFormat(wanted);
-    d->decoder.setSource(QUrl::fromLocalFile(path));
-    d->connectDecoder();
-    d->decoder.start();
-    // A backend that refuses the file may say so from start() itself.
-    if (d->error.empty() && d->decoder.error() != QAudioDecoder::NoError) {
-        d->error = "decoding failed: " + d->decoder.errorString().toStdString();
-    }
-    while (d->sampleRate == 0 && !d->finished && d->error.empty()) {
-        d->waitForMore();
-    }
-    if (d->sampleRate == 0 && d->error.empty()) {
-        d->error = "the decoder gave no audio";
-    }
+    // Started again where the decoder gave nothing at all before its
+    // first sample (qt_decoder_start.hpp says what that is and what was
+    // measured). An attempt before the last waits a few seconds for the
+    // first sample, the last one the whole stall timeout.
+    d->attempts = decoder_start::run(absoluteFilePath, [&](const decoder_start::Attempt &attempt) {
+        d->waitMs = attempt.firstSampleWaitMs > 0 ? std::min(attempt.firstSampleWaitMs, d->stallTimeoutMs)
+                                                  : d->stallTimeoutMs;
+        d->open(path, attempt.silenced);
+        // Whatever came after the wait ran out belongs to an attempt
+        // that is over: nothing has been handed on yet, and open()
+        // begins the next one from nothing.
+        return d->gaveNothing;
+    });
+    d->waitMs = d->stallTimeoutMs;
+}
+
+int QtMultimediaPcmSource::openAttempts() const
+{
+    return d->attempts;
 }
 
 QtMultimediaPcmSource::~QtMultimediaPcmSource()
 {
-    if (d) {
-        d->decoder.stop();
+    if (d && d->made) {
+        d->made->stop();
     }
 }
 

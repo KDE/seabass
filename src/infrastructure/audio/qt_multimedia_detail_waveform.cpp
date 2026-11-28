@@ -4,6 +4,8 @@
 
 #include "infrastructure/audio/qt_multimedia_detail_waveform.hpp"
 
+#include "infrastructure/audio/qt_decoder_start.hpp"
+
 #include <QAudioBuffer>
 #include <QAudioDecoder>
 #include <QAudioFormat>
@@ -60,13 +62,15 @@ bool toMono(const QAudioBuffer &buffer, std::vector<float> &mono)
     return true;
 }
 
-}  // namespace
-
-bool decodeMono(const std::string &absoluteFilePath,
-                const std::function<void(const float *samples, std::size_t count, int sampleRate)> &sink,
-                const std::function<bool()> &cancelled, int timeoutMs,
-                const std::function<void(long long durationMs)> &durationKnown)
+// One start of the decoder; `gaveNothing` where it said nothing at all
+// before its first sample, which decodeMono() starts again.
+bool decodeMonoOnce(const std::string &absoluteFilePath,
+                    const std::function<void(const float *samples, std::size_t count, int sampleRate)> &sink,
+                    const std::function<bool()> &cancelled, int timeoutMs,
+                    const std::function<void(long long durationMs)> &durationKnown, const decoder_start::Attempt &attempt,
+                    bool &gaveNothing)
 {
+    gaveNothing = false;
     if (absoluteFilePath.empty() || QCoreApplication::instance() == nullptr) {
         return false;
     }
@@ -79,6 +83,7 @@ bool decodeMono(const std::string &absoluteFilePath,
         return false;
     }
     QEventLoop loop;
+    decoder_start::FirstSampleWatch watch(attempt, loop, timeoutMs);
     int sampleRate = 0;
     bool failed = false;
     bool done = false;
@@ -87,6 +92,9 @@ bool decodeMono(const std::string &absoluteFilePath,
     // Frames counted from the first buffer the decoder hands over, as
     // qt_decoder_timeline_test measures the timeline by.
     QObject::connect(&decoder, &QAudioDecoder::bufferReady, &loop, [&]() {
+        if (!watch.heard()) {
+            return;
+        }
         while (decoder.bufferAvailable()) {
             const QAudioBuffer buffer = decoder.read();
             if (failed || !buffer.isValid()) {
@@ -119,11 +127,17 @@ bool decodeMono(const std::string &absoluteFilePath,
     // start() can emit either of these synchronously; see
     // QtMultimediaSilenceProbe::measure().
     QObject::connect(&decoder, &QAudioDecoder::finished, &loop, [&]() {
+        if (!watch.heard()) {
+            return;
+        }
         done = true;
         loop.quit();
     });
     QObject::connect(&decoder, QOverload<QAudioDecoder::Error>::of(&QAudioDecoder::error), &loop,
                      [&](QAudioDecoder::Error) {
+                         if (!watch.heard()) {
+                             return;
+                         }
                          failed = true;
                          done = true;
                          loop.quit();
@@ -153,12 +167,37 @@ bool decodeMono(const std::string &absoluteFilePath,
     wanted.setChannelCount(1);
     decoder.setAudioFormat(wanted);
     decoder.setSource(QUrl::fromLocalFile(path));
-    decoder.start();
+    if (!attempt.silenced) {
+        decoder.start();
+    }
     if (!done && !failed) {
         loop.exec();
     }
     decoder.stop();
+    // A decoder that said nothing at all is not this file's answer (and
+    // the sink has had nothing): decodeMono() starts it again.
+    if (watch.gaveNothing()) {
+        gaveNothing = true;
+        return false;
+    }
     return done && !failed && sampleRate > 0 && decoder.error() == QAudioDecoder::NoError;
+}
+
+}  // namespace
+
+bool decodeMono(const std::string &absoluteFilePath,
+                const std::function<void(const float *samples, std::size_t count, int sampleRate)> &sink,
+                const std::function<bool()> &cancelled, int timeoutMs,
+                const std::function<void(long long durationMs)> &durationKnown)
+{
+    bool decoded = false;
+    decoder_start::run(absoluteFilePath, [&](const decoder_start::Attempt &attempt) {
+        bool gaveNothing = false;
+        decoded = decodeMonoOnce(absoluteFilePath, sink, cancelled, timeoutMs, durationKnown, attempt, gaveNothing);
+        // A cancel while it waited is not a reason to start again.
+        return gaveNothing && !(cancelled && cancelled());
+    });
+    return decoded;
 }
 
 domain::DetailWaveform audioDetailWaveform(const std::string &absoluteFilePath, const std::function<bool()> &cancelled)
@@ -191,5 +230,6 @@ domain::DetailWaveform audioDetailWaveform(const std::string &absoluteFilePath, 
     }
     return builder->finish();
 }
+
 
 }  // namespace seabass::infrastructure::audio

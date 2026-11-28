@@ -5902,6 +5902,13 @@ if(TARGET seabass_audio_qt)
         ${CMAKE_SOURCE_DIR}/tests/fixtures/mp3-click ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment
         ${CMAKE_BINARY_DIR}/test-scratch)
     set_tests_properties(qt_multimedia_pcm_source_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # The other three decoders start again after a start that gave
+    # nothing, as the PCM source does.
+    add_executable(qt_decoder_start_test tests/qt_decoder_start_test.cpp)
+    target_include_directories(qt_decoder_start_test PRIVATE src)
+    target_link_libraries(qt_decoder_start_test PRIVATE seabass_audio_qt seabass_core Qt6::Core)
+    add_test(NAME qt_decoder_start_test COMMAND qt_decoder_start_test ${CMAKE_SOURCE_DIR}/tests/fixtures/alignment)
+    set_tests_properties(qt_decoder_start_test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
 # Keeping a recording: WAVs the test writes (tones and noise, 16 and 24
