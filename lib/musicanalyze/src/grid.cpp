@@ -346,20 +346,22 @@ public:
     // to `out` the power that is done by it.
     void feed(std::span<const double> band, std::vector<double> &out)
     {
-        for (const double value : band) {
-            if (m_seen % m_step == 0) {
-                m_thinned.push_back(value);
-                // A piece is transformed once there is a value beyond
-                // it: the last piece of a band is kept to its end, and
-                // only then is this known not to be it.
-                if (m_thinned.size() > Piece) {
-                    transformed(false, out);
-                    m_thinned.erase(m_thinned.begin(), m_thinned.begin() + Piece / 2);
-                    m_first = false;
-                }
+        // Every m_step-th value of the band, counted on from call to
+        // call: stepped to, since asking of every value whether it is
+        // one (a division each) cost a tenth of an analysis.
+        std::size_t at = m_untilNext;
+        for (; at < band.size(); at += m_step) {
+            m_thinned.push_back(band[at]);
+            // A piece is transformed once there is a value beyond it:
+            // the last piece of a band is kept to its end, and only
+            // then is this known not to be it.
+            if (m_thinned.size() > Piece) {
+                transformed(false, out);
+                m_thinned.erase(m_thinned.begin(), m_thinned.begin() + Piece / 2);
+                m_first = false;
             }
-            ++m_seen;
         }
+        m_untilNext = at - band.size();
     }
 
     // The band has ended: adds the rest to `out`.
@@ -399,7 +401,8 @@ private:
     }
 
     std::size_t m_step;
-    std::size_t m_seen = 0;
+    // How many values of the band come before the next one taken.
+    std::size_t m_untilNext = 0;
     bool m_first = true;
     std::vector<double> m_thinned;
     std::vector<std::complex<double>> m_z;
@@ -679,13 +682,12 @@ private:
     // sample of the track, into m_piece.
     void everyOther()
     {
-        m_piece.clear();
-        for (const double value : m_lowPassed) {
-            if (m_lowPassedSeen % 2 == 0) {
-                m_piece.push_back(value);
-            }
-            ++m_lowPassedSeen;
+        const std::size_t first = m_lowPassedSeen % 2;
+        m_piece.resize((m_lowPassed.size() + 1 - first) / 2);
+        for (std::size_t i = 0; i < m_piece.size(); ++i) {
+            m_piece[i] = m_lowPassed[first + 2 * i];
         }
+        m_lowPassedSeen += m_lowPassed.size();
     }
 
     // m_piece, the audio at the rate the bands are read at, to every band.
